@@ -6,3 +6,6 @@ openpyxl
 asyncpg==0.29.0
 sqlalchemy==2.0.23
 python-dotenv==1.0.0
+psycopg[binary]==3.1.18
+psycopg_pool==3.1.4
+python-multipart==0.0.6
