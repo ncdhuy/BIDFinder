@@ -463,6 +463,10 @@ app.add_middleware(
 # def get_search_form():
 #     return FileResponse("search-form.js", media_type="application/javascript")
 
+@app.get("/health")
+async def health():
+    return {"ok": True}
+
 @app.get("/api/metadata")
 async def get_metadata():
     """Trả về metadata"""
