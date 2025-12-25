@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>BIDFinder - Hệ thống tra cứu Thuốc trúng thầu</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://unpkg.com/feather-icons"></script>
+</head>
+<body>
+    <div class="page-container">
+        <!-- HEADER -->
+        <header class="app-header">
+            <div>
+                <h1 class="app-title">
+                    <img class="app-logo" src="/assets/logo_v7.png" alt="Logo" />
+                    <span class="app-title-text">Hệ thống tra cứu Thuốc trúng thầu (Bản thử nghiệm)</span>
+                </h1>
+            </div>
+        </header>
+
+        <!-- LAYOUT CHÍNH: TRÁI SEARCH / PHẢI DATA + CHARTS -->
+        <div class="main-layout">
+            
+            <!-- CỘT TRÁI: SEARCH BAR -->
+            <!-- <aside class="sidebar-search">
+                <section class="search-section">
+                    <custom-search-form></custom-search-form>
+                </section>
+            </aside> -->
+
+            <main class="main-content">
+                
+                <!-- TABS NAVIGATION -->
+                <div class="tabs-container">
+                    <div class="tabs-group">
+                        <div class="tabs-nav">
+                            <button class="tab-btn active" data-tab="data-tab">
+                                <i data-feather="database"></i>
+                                <span>Dữ liệu</span>
+                            </button>
+                            <button class="tab-btn" data-tab="charts-tab">
+                                <i data-feather="bar-chart-2"></i>
+                                <span>Biểu đồ thống kê</span>
+                            </button>
+                        </div>
+                        
+                        <button class="btn-meta-simple" id="open-run-history" title="Lịch sử cập nhật dữ liệu">
+                            <i data-feather="refresh-ccw"></i>
+                        </button>
+
+                        <!-- Thêm vào phía trên mỗi bảng dữ liệu -->
+                        <div id="result-warning" style="display: none; background: #fef3c7; border-left: 4px solid #f59e0b; padding: 4px; margin-bottom: 4px; border-radius: 4px; font-size: 14px;">
+                            <strong>⚠️ GIỚI HẠN KẾT QUẢ TÌM KIẾM</strong><br>
+                            <!-- Chỉ hiển thị <span id="displayed-count"></span> / <span id="total-count"></span> bản ghi.  -->
+                            Vui lòng thu hẹp điều kiện tìm kiếm.
+                        </div>
+                        
+                    </div>
+                    
+                    <div class="tabs-actions">
+                        <button class="action-btn" id="open-filter-panel" title="Lọc">
+                            <i data-feather="filter"></i>
+                            <!-- <span>Lọc dữ liệu</span> -->
+                        </button>
+                        <button class="action-btn" id="open-sort-panel" title="Sắp xếp">
+                            <i data-feather="sliders"></i>
+                            <!-- <span>Sắp xếp</span> -->
+                        </button>
+                        <button class="btn-export" id="export-excel-btn" title="Xuất Excel">
+                            <i data-feather="download"></i>
+                            <!-- <span>Xuất Excel</span> -->
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- TAB 1: DATA TABLES -->
+                <div id="data-tab" class="tab-content active">
+                    <!-- Bảng DF1 -->
+                    <section class="data-section-vertical">
+                        <div class="data-card df1">
+                            <div class="data-card-header">
+                                <div>
+                                    <h2 class="data-card-title-df1">
+                                        <span class="data-card-icon blue">
+                                            <i data-feather="shield"></i>
+                                        </span>
+                                        DỮ LIỆU CHUẨN HÓA
+                                    </h2>
+                                    <!-- <p class="data-card-desc">Dữ liệu chi tiết với đầy đủ các trường thông tin</p> -->
+                                </div>
+                                <span class="data-badge badge-green" id="df1-count">0</span>
+                            </div>
+                            <div class="table-wrapper">
+                                <div class="cell-display-bar" id="std-cell-bar">
+                                    <span class="cell-display-label"></span>
+                                    <span class="cell-display-value" id="std-cell-value"></span>
+                                </div>
+                                <div class="table-scroll">
+                                    <table class="data-table" id="standard-table">
+                                        <thead>
+                                            <tr>
+                                                <!-- <th>Mã TBMT</th>
+                                                <th>Chủ đầu tư</th>
+                                                <th>Quyết định phê duyệt</th>
+                                                <th>Ngày phê duyệt</th>
+                                                <th>Ngày hết hiệu lực</th>
+                                                <th>Đơn vị tính</th>
+                                                <th>Số lượng</th>
+                                                <th>Đơn giá trúng thầu (VND)</th>
+                                                <th>Thành tiền (VND)</th>
+                                                <th>Tên thuốc</th>
+                                                <th>Tên hoạt chất</th>
+                                                <th>Nồng độ, hàm lượng</th>
+                                                <th>Đường dùng</th>
+                                                <th>Dạng bào chế</th>
+                                                <th>Quy cách</th>
+                                                <th>Nhóm thuốc</th>
+                                                <th>GĐKLH hoặc GPNK</th>
+                                                <th>Cơ sở sản xuất</th>
+                                                <th>Xuất xứ</th>
+                                                <th>Nhà thầu trúng thầu</th>
+                                                <th>Hình thức LCNT</th>
+                                                <th>Địa điểm</th>
+                                                <th>Tình trạng hiệu lực</th> -->
+                                            </tr>
+                                        </thead>
+                                        <tbody id="standard-data">
+                                            <tr>
+                                                <td colspan="19" style="text-align:left;padding:30px 700px;font-size:13px;color:#94a3b8">
+                                                    Chưa có dữ liệu. Vui lòng thực hiện tìm kiếm.
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Bảng DF2 -->
+                    <section class="data-section-vertical">
+                        <div class="data-card df2">
+                            <div class="data-card-header">
+                                <div>
+                                    <h2 class="data-card-title-df2">
+                                        <span class="data-card-icon purple">
+                                            <i data-feather="layers"></i>
+                                        </span>
+                                        DỮ LIỆU TỔNG HỢP
+                                    </h2>
+                                    <!-- <p class="data-card-desc">Dữ liệu gộp từ nhiều nguồn</p> -->
+                                </div>
+                                <span class="data-badge badge-amber" id="df2-count">0</span>
+                            </div>
+                            <div class="table-wrapper">
+                                <div class="cell-display-bar" id="ext-cell-bar">
+                                    <span class="cell-display-label"></span>
+                                    <span class="cell-display-value" id="ext-cell-value"></span>
+                                </div>
+                                <div class="table-scroll">
+                                    <table class="data-table" id="extended-table" >
+                                        <thead>
+                                            <tr>
+                                                <!-- <th>Mã TBMT</th>
+                                                <th>Chủ đầu tư</th>
+                                                <th>Quyết định phê duyệt</th>
+                                                <th>Ngày phê duyệt</th>
+                                                <th>Ngày hết hiệu lực</th>
+                                                <th>Đơn vị tính</th>
+                                                <th>Khối lượng</th>
+                                                <th>Đơn giá trúng thầu (VND)</th>
+                                                <th>Thành tiền (VND)</th>
+                                                <th>Tên hàng hóa</th>
+                                                <th>Nhãn hiệu</th>
+                                                <th>Ký mã hiệu</th>
+                                                <th>Tính năng kỹ thuật</th>
+                                                <th>Xuất xứ</th>
+                                                <th>Hãng sản xuất</th>
+                                                <th>Nhà thầu trúng thầu</th>
+                                                <th>Hình thức LCNT</th>
+                                                <th>Địa điểm</th>
+                                                <th>Tình trạng hiệu lực</th> -->
+                                            </tr>
+                                        </thead>
+                                        <tbody id="extended-data">
+                                            <tr>
+                                                <td colspan="19" style="text-align:left;padding:30px 700px;font-size:13px;color:#94a3b8">
+                                                    Chưa có dữ liệu. Vui lòng thực hiện tìm kiếm.
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- TAB 2: CHARTS -->
+                <div id="charts-tab" class="tab-content">
+                    <section class="charts-section">
+                        <div class="charts-header">
+                            <div>
+                                <h2 class="charts-title">
+                                    <i data-feather="activity" class="icon-main green"></i>
+                                    THỐNG KÊ & PHÂN TÍCH
+                                </h2>
+                                <!-- <p class="charts-subtitle">Tổng hợp theo các tiêu chí đã lọc.</p> -->
+                            </div>
+                        </div>
+                        
+                        <div class="charts-grid-4">
+                            <!-- Chart 1: Price Histogram -->
+                            <div class="chart-block">
+                                <h3>Phân bố đơn giá</h3>
+                                <canvas id="chart-price-histogram"></canvas>
+                            </div>
+                            
+                            <!-- Chart 2: Price Boxplot -->
+                            <div class="chart-block">
+                                <h3>Boxplot đơn giá</h3>
+                                <canvas id="chart-price-boxplot"></canvas>
+                            </div>
+                            
+                            <!-- Chart 3: Timeline Value -->
+                            <div class="chart-block">
+                                <h3>Tổng giá trị trúng thầu theo tháng</h3>
+                                <canvas id="chart-timeline-value"></canvas>
+                            </div>
+                            
+                            <!-- Chart 4: Value by Selection Method -->
+                            <div class="chart-block">
+                                <h3>Tổng giá trị trúng thầu theo hình thức LCNT</h3>
+                                <canvas id="chart-selection-method"></canvas>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+            </main>
+        </div>
+
+        <!-- ========== FILTER PANEL (POPUP) ========== -->
+        <div id="filter-panel" class="side-panel">
+            <div class="panel-header">
+                <div class="panel-title-group">
+                    <h3><i data-feather="filter"></i>Lọc</h3>
+                    <button id="filter-help-btn" class="help-icon" type="button" aria-label="Trợ giúp">i</button>
+                </div>
+                <button id="close-filter-panel" class="btn-close">✕</button>
+            </div>
+            <div class="panel-body">
+                <custom-search-form hide-title></custom-search-form>
+            </div>
+        </div>
+
+        <div id="filter-help-tooltip-content" style="display:none;">
+            <div class="help-tooltip-title">💡 Mẹo tìm kiếm</div>
+            <ul>
+                <li><strong>Tìm kiếm cơ bản:</strong> Nhập nhiều từ khóa để tìm KQ có tất cả từ, không phân biệt dấu và thứ tự.</li>
+                <li><strong>Toán tử <code>+</code>:</strong> Đặt dấu + trước từ khóa để hiện kết quả phải chứa từ.</li>
+                <li><strong>Toán tử <code>-</code>:</strong> Đặt dấu - trước từ khóa để loại bỏ kết quả có chứa từ.</li>
+                <li><strong>Toán tử <code>OR</code>:</strong> Dùng OR giữa các từ khóa để tìm KQ có chứa ít nhất một trong các từ.</li>
+                <li><strong>Tìm chính xác:</strong> Dùng dấu ngoặc kép <code>" "</code> để tìm cụm từ chính xác, có phân biệt dấu.</li>
+            </ul>
+        </div>
+
+
+        <!-- ========== SORT PANEL (POPUP) ========== -->
+        <div id="sort-panel" class="side-panel sort-panel-fixed">
+            <div class="panel-header">
+                <h3><i data-feather="sliders"></i> Sắp xếp</h3>
+                <button id="close-sort-panel" class="btn-close">✕</button>
+            </div>
+
+            <div class="panel-body">
+                <!-- Toolbar: nút nhỏ, căn phải, ngay dưới tiêu đề -->
+                <div class="sort-toolbar">
+                    <button id="add-sort-rule" class="btn-add-sort" type="button">+ Thêm cột</button>
+                </div>
+
+                <div id="sort-rules-list" class="sort-rules-list"></div>
+            </div>
+
+            <div class="panel-footer sort-footer">
+                <button id="reset-sort" class="btn-secondary" type="button">Đặt lại</button>
+                <button id="apply-sort" class="btn-primary" type="button">Áp dụng</button>
+            </div>
+        </div>
+
+
+        <!-- Overlay -->
+        <div id="panel-overlay" class="panel-overlay"></div>
+        
+        <!-- FOOTER -->
+        <footer class="app-footer">
+            © 2025 Hệ thống tra cứu Thuốc trúng thầu
+        </footer>
+    </div>
+
+    <!-- README MODAL -->
+    <div id="readme-modal" class="readme-modal">
+        <div class="readme-overlay"></div>
+        <div class="readme-content">
+            <button class="readme-close" id="close-readme" aria-label="Đóng">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 4L4 12M4 4L12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+            </button>
+
+            
+            <div class="readme-header">
+                <!-- <div class="readme-icon-header">🏥</div> -->
+                <h1>Chào mừng đến với Hệ thống tra cứu Thuốc trúng thầu</h1>
+                <!-- <p class="readme-subtitle">Tra cứu thông tin thuốc trúng thầu tại Việt Nam</p> -->
+            </div>
+
+            <div class="readme-body">
+                <section class="readme-section">
+                    <h2>Về ứng dụng</h2>
+                    <p>Hệ thống tra cứu Thuốc trúng thầu tại Việt Nam. Dữ liệu được thu thập và cập nhật từ <strong>Hệ thống mạng đấu thầu quốc gia</strong> (<a href="https://muasamcong.mpi.gov.vn" target="_blank">muasamcong.mpi.gov.vn</a>) - nền tảng chính thức do Bộ Tài chính quản lý.</p>
+                </section>
+
+                <section class="readme-section">
+                    <h2>Dữ liệu cung cấp</h2>
+                    <div class="readme-info-grid">
+                        <div class="readme-info-card">
+                            <div class="info-icon">💊</div>
+                            <h3>Thông tin thuốc</h3>
+                            <p>Tên thuốc, tên hoạt chất, nồng độ, hàm lượng, đường dùng, dạng bào chế, quy cách, nhóm thuốc, số đăng ký, cơ sở sản xuất, nước sản xuất</p>
+                        </div>
+                        <div class="readme-info-card">
+                            <div class="info-icon">📦</div>
+                            <h3>Thông tin sản phẩm thầu</h3>
+                            <p>Đơn vị tính, số lượng, đơn giá trúng thầu, thành tiền, nhà thầu trúng thầu</p>
+                        </div>
+                        <div class="readme-info-card">
+                            <div class="info-icon">📋</div>
+                            <h3>Thông tin thầu</h3>
+                            <p>Mã TBMT, chủ đầu tư, ngày phê duyệt, số quyết định phê duyệt, hình thức lựa chọn nhà thầu, địa điểm, tình trạng hiệu lực</p>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="readme-section">
+                    <h2>Mục đích</h2>
+                    <p>Hỗ trợ cơ quan y tế, doanh nghiệp dược tra cứu thông tin thuốc trúng thầu nhanh chóng từ nguồn dữ liệu chính thống.</p>
+                </section>
+                
+                <section class="readme-section">
+                    <h2>Lưu ý</h2>
+                    <p><strong>Dữ liệu chuẩn hóa:</strong> Các gói thầu có các trường thông tin được tách riêng và được điền tương đối nhất quán (tên thuốc, tên hoạt chất, hàm lượng, đường dùng…), nên hệ thống có thể lọc theo từng tiêu chí rõ ràng.</p>
+                    <p><strong>Dữ liệu tổng hợp:</strong> Các gói thầu dùng một biến gộp chứa nhiều thông tin và được điền không nhất quán nên cấu trúc không thống nhất. Việc tách, chuẩn hóa nội dung từ biến gộp này vượt quá khả năng xử lý nên hệ thống giữ nguyên để người dùng tra cứu, đối chiếu bổ sung.</p>
+                    <p><strong>Tìm kiếm:</strong> Kết quả tìm kiếm phụ thuộc vào cách sử dụng từ khóa (xem thêm phần <strong><em>“Mẹo tìm kiếm”</em></strong>).</p>
+                </section>
+
+            </div>
+
+            <div class="readme-footer">
+                <label class="readme-checkbox">
+                    <input type="checkbox" id="dont-show-checkbox">
+                    <span>Không hiển thị lại lần sau</span>
+                </label>
+                <button class="btn-readme-primary" id="got-it-btn">Đã hiểu</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="readme-icon" class="readme-icon" style="display: none;">
+        <button id="open-readme">
+            <span>Giới thiệu</span>
+        </button>
+    </div>
+
+    <!-- Contact Icon -->
+    <div id="contact-icon" class="contact-icon" style="display: none;">
+        <button id="open-contact">
+            <span>Liên hệ</span>
+        </button>
+    </div>
+
+    <!-- Contact Modal -->
+    <div id="contact-modal" class="readme-modal">
+        <div class="readme-overlay"></div>
+        <div class="readme-content contact-content">
+            <button class="readme-close" id="close-contact" aria-label="Đóng">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 4L4 12M4 4L12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+            </button>
+
+            <div class="readme-header">
+                <!-- <div class="readme-icon-header">👥</div> -->
+                <h1>Thông tin về đội ngũ phát triển ứng dụng</h1>
+                <!-- <p class="readme-subtitle">Thông tin về đội ngũ phát triển ứng dụng</p> -->
+            </div>
+
+            <div class="readme-body">
+                <section class="readme-section">
+                    <h2>Giới thiệu</h2>
+                    <!-- <p>Ứng dụng được phát triển bởi nhóm nghiên cứu chuyên về phân tích dữ liệu y tế và đấu thầu công, với mục tiêu đem lại công cụ tra cứu minh bạch và hiệu quả cho cộng đồng.</p> -->
+                </section>
+
+                <section class="readme-section">
+                    <h2>Thành viên</h2>
+                    <div class="team-grid">
+                        <!-- <div class="team-card">
+                            <div class="team-avatar">👨‍💻</div>
+                            <h3>Hồ Thị Thanh Huyền</h3>
+                            <p class="team-role">Lead Developer</p>
+                            <p class="team-desc">Cô bé ngủ li bì</p>
+                        </div> -->
+                        <!-- <div class="team-card">
+                            <div class="team-avatar">👨‍💻</div>
+                            <h3>Hồ Thị Thanh Huyền</h3>
+                            <p class="team-role">Lead Developer</p>
+                            <p class="team-desc">Chịu trách nhiệm thiết kế hệ thống và phát triển backend</p>
+                        </div> -->
+                        <!-- <div class="team-card">
+                            <div class="team-avatar">👩‍💻</div>
+                            <h3>Trần Thị B</h3>
+                            <p class="team-role">Frontend Developer</p>
+                            <p class="team-desc">Thiết kế giao diện và trải nghiệm người dùng</p>
+                        </div>
+                        <div class="team-card">
+                            <div class="team-avatar">👨‍🔬</div>
+                            <h3>Lê Văn C</h3>
+                            <p class="team-role">Data Analyst</p>
+                            <p class="team-desc">Phân tích và xử lý dữ liệu đấu thầu</p>
+                        </div> -->
+                    </div>
+                </section>
+
+                <section class="readme-section">
+                    <h2>Thông tin liên hệ</h2>
+                    <div class="contact-info">
+                        <div class="contact-item">
+                            <!-- <span class="contact-icon">📧</span> -->
+                            <!-- <div>
+                                <strong>Email</strong>
+                                <p>bidX@gmail.com</p>
+                            </div> -->
+                        </div>
+                        <!-- <div class="contact-item">
+                            <span class="contact-icon">🌐</span>
+                            <div>
+                                <strong>Website</strong>
+                                <p><a href="https://example.com" target="_blank">example.com</a></p>
+                            </div>
+                        </div> -->
+                        <!-- <div class="contact-item">
+                            <span class="contact-icon">📱</span>
+                            <div>
+                                <strong>GitHub</strong>
+                                <p><a href="https://github.com/yourproject" target="_blank">github.com/yourproject</a></p>
+                            </div>
+                        </div> -->
+                    </div>
+                </section>
+            </div>
+
+            <!-- <div class="readme-footer" style="justify-content: flex-start;">
+                <button class="btn-readme-primary" id="close-contact-btn">Đóng</button>
+            </div> -->
+        </div>
+    </div>
+
+    <!-- HISTORY MODAL -->
+    <div id="history-modal" class="history-modal">
+        <div class="history-overlay"></div>
+        <div class="history-content">
+            <div class="history-header">
+                <h3>
+                    <i data-feather="list"></i>
+                    Lịch sử cập nhật dữ liệu
+                </h3>
+                <button class="modal-close" id="close-history">
+                    <i data-feather="x"></i>
+                </button>
+            </div>
+            <div class="history-body">
+                <div class="history-summary">
+                    <div class="summary-item">
+                        <label>Lần cập nhật gần nhất</label>
+                        <div id="modal-last-update" class="summary-value">Đang tải...</div>
+                    </div>
+                    <div class="summary-item">
+                        <label>Trạng thái</label>
+                        <div id="modal-freshness" class="summary-value">Đang tải...</div>
+                    </div>
+                    <div class="summary-item">
+                        <label>Số quyết định đã xử lý</label>
+                        <div id="modal-boxes-total" class="summary-value">Đang tải...</div>
+                    </div>
+                </div>
+                <div id="history-list" class="history-list">
+                    <div class="history-empty">
+                        <i data-feather="clock"></i>
+                        <p>Chưa có lịch sử cập nhật</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+    <script src="https://unpkg.com/@sgratzl/chartjs-chart-boxplot@4.4.5/build/index.umd.min.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="search-form.js"></script>
+    
+    <script src="script.js"></script>
+    <script>
+        feather.replace();
+    </script>
+    
+    <script>
+    // README Modal Logic
+    (function() {
+        const modal = document.getElementById('readme-modal');
+        const icon = document.getElementById('readme-icon');
+        const closeBtn = document.getElementById('close-readme');
+        const gotItBtn = document.getElementById('got-it-btn');
+        const openBtn = document.getElementById('open-readme');
+        const dontShowCheckbox = document.getElementById('dont-show-checkbox');
+        const overlay = document.querySelector('.readme-overlay');
+
+        // Check if user has dismissed before (session-based)
+        const hasSeenReadme = sessionStorage.getItem('hasSeenReadme');
+
+        function showModal() {
+            modal.classList.add('show');
+            icon.style.display = 'none';
+            document.body.style.overflow = 'hidden';
+        }
+
+        function hideModal() {
+            modal.classList.remove('show');
+            icon.style.display = 'block';
+            document.body.style.overflow = '';
+            
+            // If "don't show again" is checked, save to localStorage
+            if (dontShowCheckbox.checked) {
+                localStorage.setItem('hideReadme', 'true');
+            }
+            
+            // Mark as seen in this session
+            sessionStorage.setItem('hasSeenReadme', 'true');
+        }
+
+        // Show modal on first load (if not permanently hidden)
+        if (!hasSeenReadme && localStorage.getItem('hideReadme') !== 'true') {
+            setTimeout(showModal, 500);
+        } else {
+            icon.style.display = 'block';
+        }
+
+        // Event listeners
+        closeBtn.addEventListener('click', hideModal);
+        gotItBtn.addEventListener('click', hideModal);
+        overlay.addEventListener('click', hideModal);
+        openBtn.addEventListener('click', showModal);
+
+        // ESC key to close
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && modal.classList.contains('show')) {
+                hideModal();
+            }
+        });
+    })();
+
+    // Contact Modal Logic
+    (function() {
+        const contactModal = document.getElementById('contact-modal');
+        const contactIcon = document.getElementById('contact-icon');
+        const closeContactBtn = document.getElementById('close-contact');
+        const closeContactBtn2 = document.getElementById('close-contact-btn');
+        const openContactBtn = document.getElementById('open-contact');
+        const contactOverlay = contactModal.querySelector('.readme-overlay');
+
+        // Show contact icon when page loads
+        contactIcon.style.display = 'block';
+
+        function showContactModal() {
+            contactModal.classList.add('show');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function hideContactModal() {
+            contactModal.classList.remove('show');
+            document.body.style.overflow = '';
+        }
+
+        openContactBtn.addEventListener('click', showContactModal);
+        closeContactBtn.addEventListener('click', hideContactModal);
+        contactOverlay.addEventListener('click', hideContactModal);
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && contactModal.classList.contains('show')) {
+                hideContactModal();
+            }
+        });
+    })();
+
+    </script>
+
+    
+
+</body>
+</html>
