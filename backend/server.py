@@ -6,10 +6,9 @@ from contextlib import asynccontextmanager
 from pydantic import BaseModel
 from typing import Optional, List
 import asyncpg
-import uvicorn
+from fastapi import Response
 import json
 from pathlib import Path
-from datetime import datetime
 import os
 import re
 
@@ -463,9 +462,12 @@ app.add_middleware(
 # def get_search_form():
 #     return FileResponse("search-form.js", media_type="application/javascript")
 
-@app.get("/health")
+
+
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health():
-    return {"ok": True}
+    return Response(status_code=200)
+
 
 @app.get("/api/metadata")
 async def get_metadata():
