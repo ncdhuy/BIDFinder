@@ -2,7 +2,6 @@ from fastapi import FastAPI, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from psycopg_pool import ConnectionPool
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
 from typing import Optional, List
@@ -434,7 +433,11 @@ app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"https://.*\.netlify\.app",
+    allow_origins=[
+        "https://*.netlify.app", 
+        "http://localhost:8001",
+        "http://127.0.0.1:8001"  # VSCode Live Server
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
