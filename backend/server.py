@@ -429,7 +429,10 @@ async def lifespan(app: FastAPI):
 # ========== FASTAPI APP ==========
 app = FastAPI(lifespan=lifespan)
 
-app.mount("/assets", StaticFiles(directory="assets"), name="assets")
+BASE_DIR = Path(__file__).resolve().parent
+assets_dir = BASE_DIR / "assets"
+if assets_dir.exists():
+    app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
 
 app.add_middleware(
     CORSMiddleware,
@@ -444,21 +447,21 @@ app.add_middleware(
     # allow_origins=["https://muasamcong.vn"]
 )
 
-@app.get("/")
-def root():
-    return FileResponse("index.html")
+# @app.get("/")
+# def root():
+#     return FileResponse("index.html")
 
-@app.get("/style.css")
-def get_css():
-    return FileResponse("style.css", media_type="text/css")
+# @app.get("/style.css")
+# def get_css():
+#     return FileResponse("style.css", media_type="text/css")
 
-@app.get("/script.js")
-def get_script():
-    return FileResponse("script.js", media_type="application/javascript")
+# @app.get("/script.js")
+# def get_script():
+#     return FileResponse("script.js", media_type="application/javascript")
 
-@app.get("/search-form.js")
-def get_search_form():
-    return FileResponse("search-form.js", media_type="application/javascript")
+# @app.get("/search-form.js")
+# def get_search_form():
+#     return FileResponse("search-form.js", media_type="application/javascript")
 
 @app.get("/api/metadata")
 async def get_metadata():
