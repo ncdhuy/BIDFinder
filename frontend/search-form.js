@@ -1,7 +1,7 @@
 const API_BASE_URL =
   (location.hostname.includes('localhost') || location.hostname.includes('127.0.0.1'))
     ? 'http://localhost:8001'
-    : 'https://bidfinder.onrender.com/';
+    : 'https://bidfinder.onrender.com';
     
 class CustomSearchForm extends HTMLElement {
     connectedCallback() {

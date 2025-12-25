@@ -437,14 +437,14 @@ if assets_dir.exists():
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://*.netlify.app", 
         "http://localhost:8001",
-        "http://127.0.0.1:8001"  # VSCode Live Server
+        "http://127.0.0.1:8001",
+        # "https://muasamcong.vn"
     ],
+    allow_origin_regex=r"^https://.*\.netlify\.app$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    # allow_origins=["https://muasamcong.vn"]
 )
 
 # @app.get("/")
