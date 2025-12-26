@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
 from typing import Optional, List
@@ -88,55 +88,140 @@ def clean_records(records):
 
 
 # ========== QUERY BUILDER ==========
-def parse_search_query(query_text: str):
+# def parse_search_query(query_text: str):        # vd: viên nén OR viên nang = "viên nén" OR "viên" OR "nang"
+#     """
+#     Parse search query với các operators:
+#     - +term: must have
+#     - -term: must not have
+#     - "phrase": exact phrase
+#     - term1 OR term2: at least one
+#     """
+#     if not query_text:
+#         return None
+    
+#     result = {
+#         'must_have': [],
+#         'must_not_have': [],
+#         'should_have': [],
+#         'phrases': []
+#     }
+    
+#     # Extract phrases
+#     phrase_pattern = r'"([^"]+)"'
+#     phrases = re.findall(phrase_pattern, query_text)
+#     result['phrases'] = phrases
+#     remaining = re.sub(phrase_pattern, '', query_text)
+    
+#     # Split by OR
+#     or_parts = remaining.split(' OR ')
+    
+#     if len(or_parts) > 1:
+#         # Has OR
+#         for part in or_parts:
+#             terms = part.strip().split()
+#             for term in terms:
+#                 if term.startswith('-'):
+#                     result['must_not_have'].append(term[1:])
+#                 elif term.startswith('+'):
+#                     result['must_have'].append(term[1:])
+#                 elif term:
+#                     result['should_have'].append(term)
+#     else:
+#         # No OR, all terms are AND
+#         terms = remaining.strip().split()
+#         for term in terms:
+#             if term.startswith('-'):
+#                 result['must_not_have'].append(term[1:])
+#             elif term.startswith('+'):
+#                 result['must_have'].append(term[1:])
+#             elif term:
+#                 result['must_have'].append(term)
+    
+#     return result
+
+def parse_search_query(query_text: str):            # vd: viên nén OR viên nang = "viên nén" OR "viên nang"
     """
-    Parse search query với các operators:
-    - +term: must have
-    - -term: must not have
-    - "phrase": exact phrase
-    - term1 OR term2: at least one
+    Parse search query with operators:
+    - +term: must have term
+    - -term: must not have term
+    - "phrase": exact phrase (kept as phrase)
+    - A OR B: OR between phrases (A and B can contain spaces without quotes)
     """
-    if not query_text:
+    if not query_text or not query_text.strip():
         return None
-    
+
     result = {
-        'must_have': [],
-        'must_not_have': [],
-        'should_have': [],
-        'phrases': []
+        "must_have": [],
+        "must_not_have": [],
+        "should_have": [],
+        "phrases": []
     }
-    
-    # Extract phrases
+
+    s = query_text.strip()
+
+    # 1) Extract quoted phrases first (kept as exact phrases)
     phrase_pattern = r'"([^"]+)"'
-    phrases = re.findall(phrase_pattern, query_text)
-    result['phrases'] = phrases
-    remaining = re.sub(phrase_pattern, '', query_text)
-    
-    # Split by OR
-    or_parts = remaining.split(' OR ')
-    
-    if len(or_parts) > 1:
-        # Has OR
-        for part in or_parts:
-            terms = part.strip().split()
-            for term in terms:
-                if term.startswith('-'):
-                    result['must_not_have'].append(term[1:])
-                elif term.startswith('+'):
-                    result['must_have'].append(term[1:])
-                elif term:
-                    result['should_have'].append(term)
+    quoted_phrases = re.findall(phrase_pattern, s)
+    result["phrases"] = [p.strip() for p in quoted_phrases if p and p.strip()]
+
+    # Replace quoted phrases with a placeholder token so we don't break OR parsing
+    # Example: foo "bar baz" OR hello  -> foo __PH0__ OR hello
+    placeholders = {}
+    for i, p in enumerate(result["phrases"]):
+        token = f"__PH{i}__"
+        placeholders[token] = p
+        s = re.sub(rf'"{re.escape(p)}"', token, s, count=1)
+
+    # Normalize OR (case-insensitive) into ' OR ' with spaces around
+    s = re.sub(r"\s+(?i:OR)\s+", " OR ", s)
+
+    # 2) If has OR: treat each OR part as a phrase (after removing +/-, which are still parsed as terms)
+    if " OR " in s:
+        parts = [p.strip() for p in s.split(" OR ") if p.strip()]
+
+        for part in parts:
+            # Extract +/- terms inside each part (still supported)
+            tokens = part.split()
+            phrase_tokens = []
+
+            for t in tokens:
+                if t.startswith("-") and len(t) > 1:
+                    result["must_not_have"].append(t[1:])
+                elif t.startswith("+") and len(t) > 1:
+                    result["must_have"].append(t[1:])
+                else:
+                    phrase_tokens.append(t)
+
+            # The remaining tokens form a phrase for should_have
+            phrase = " ".join(phrase_tokens).strip()
+            if phrase:
+                # restore placeholders if present
+                for token, real_phrase in placeholders.items():
+                    phrase = phrase.replace(token, real_phrase)
+
+                result["should_have"].append(phrase)
+
     else:
-        # No OR, all terms are AND
-        terms = remaining.strip().split()
-        for term in terms:
-            if term.startswith('-'):
-                result['must_not_have'].append(term[1:])
-            elif term.startswith('+'):
-                result['must_have'].append(term[1:])
-            elif term:
-                result['must_have'].append(term)
-    
+        # 3) No OR: keep old behavior -> split by whitespace, all terms become must_have (unless +/-)
+        tokens = s.split()
+        for t in tokens:
+            if t.startswith("-") and len(t) > 1:
+                result["must_not_have"].append(t[1:])
+            elif t.startswith("+") and len(t) > 1:
+                result["must_have"].append(t[1:])
+            else:
+                # restore placeholders if present, but if it contains spaces it would've been quoted originally
+                for token, real_phrase in placeholders.items():
+                    if t == token:
+                        t = real_phrase
+                        break
+                if t:
+                    result["must_have"].append(t)
+
+        # Also restore any remaining placeholders in must_have/must_not_have (edge cases)
+        result["must_have"] = [placeholders.get(x, x) for x in result["must_have"]]
+        result["must_not_have"] = [placeholders.get(x, x) for x in result["must_not_have"]]
+
     return result
 
 def build_text_search_condition(column: str, query_text: str, params: dict, param_counter: list):
@@ -314,7 +399,6 @@ def build_df1_query(filters: FilterRequest, sort_rules: List[SortRule], limit: i
     return query, params, count_query
 
 def build_df2_query(filters: FilterRequest, sort_rules: List[SortRule], limit: int):
-    """Tương tự df1, chỉ đổi tên columns"""
     query = 'SELECT * FROM df2_full'
     conditions = []
     params = {}
@@ -322,23 +406,41 @@ def build_df2_query(filters: FilterRequest, sort_rules: List[SortRule], limit: i
     allowed_sort = ALLOWED_SORT_DF2
 
     if filters:
-        text_filters = {
-            '"Tên hàng hóa"': filters.drugName,
-            '"Nhãn hiệu"': filters.manufacturer,
-            '"Tính năng kỹ thuật"': filters.specification,
-            '"Xuất xứ"': filters.country,
-            '"Đơn vị tính"': filters.unit,
+        # ===== 1) Nhóm field phải search trên cột "search" (concat) =====
+        # Mỗi field -> 1 condition -> tất cả AND với nhau
+        search_field_values = [
+            filters.drugName,
+            filters.activeIngredient,
+            filters.concentration,
+            filters.route,
+            filters.dosageForm,
+            filters.specification,
+            filters.drugGroup,
+            filters.regNo,
+            filters.unit,
+            filters.manufacturer,
+            filters.country,
+        ]
+
+        for val in search_field_values:
+            if val and val.strip():
+                cond = build_text_search_condition('"search"', val.strip(), params, param_counter)
+                if cond:
+                    conditions.append(cond)
+
+        # ===== 2) Nhóm field match đúng cột riêng (df2_full) =====
+        direct_text_filters = {
             '"Chủ đầu tư"': filters.investor,
             '"Quyết định phê duyệt"': filters.approvalDecision,
         }
 
-        for column, query_text in text_filters.items():
-            if query_text:
-                condition = build_text_search_condition(column, query_text, params, param_counter)
-                if condition:
-                    conditions.append(condition)
+        for column, val in direct_text_filters.items():
+            if val and val.strip():
+                cond = build_text_search_condition(column, val.strip(), params, param_counter)
+                if cond:
+                    conditions.append(cond)
 
-        # Array + exact + date (giống df1)
+        # ===== 3) Array + exact + date =====
         if filters.selectionMethod:
             p = f"p{param_counter[0]}"; param_counter[0] += 1
             params[p] = filters.selectionMethod

@@ -8,29 +8,40 @@ import numpy as np
 from dotenv import load_dotenv
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
+from psycopg2.extras import execute_values
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-DB_PARAMS = DATABASE_URL.replace('postgresql://', '').split('@')
-if len(DB_PARAMS) == 2:
-    user_pass = DB_PARAMS[0].split(':')
-    host_db = DB_PARAMS[1].split('/')
-    conn_params = {
-        'host': host_db[0].split(':')[0],
-        'port': host_db[0].split(':')[1] if ':' in host_db[0] else '5432',
-        'dbname': host_db[1],
-        'user': user_pass[0],
-        'password': user_pass[1]
-    }
-else:
-    conn_params = {
-        'host': 'localhost',
-        'port': '5432',
-        'dbname': 'bidding_data',
-        'user': 'postgres',
-        'password': ''
-    }
+def get_db_connection():
+    load_dotenv()
+    DATABASE_URL = os.getenv("DATABASE_URL")
+
+    if DATABASE_URL:
+        parsed = urlparse(DATABASE_URL)
+
+        conn_params = {
+            "host": parsed.hostname,
+            "port": parsed.port or 5432,
+            "dbname": parsed.path.lstrip("/"),   # ✅ bỏ query string
+            "user": parsed.username,
+            "password": parsed.password,
+            "sslmode": "require",               # ✅ Neon cần SSL
+        }
+
+        # optional: log nhẹ để debug
+        log_step("✅ Parsed DB", f'{conn_params["host"]}:{conn_params["port"]}/{conn_params["dbname"]}')
+        return psycopg2.connect(**conn_params)
+
+    # fallback local
+    return psycopg2.connect(
+        host="localhost",
+        port=5432,
+        dbname="biddingdata",
+        user="postgres",
+        password=""
+    )
+
 
 def log_step(step, details=""):
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -51,16 +62,20 @@ def df_to_records(df: pd.DataFrame):
         records.append(tuple(row[c] for c in cols))
     return records, cols
 
-def insert_chunk(cur, table_name, columns, records, chunk_size=1000):
+def insert_chunk(cur, table_name, columns, records, chunk_size=5000):
     if not records:
         return
+
     cols_str = ", ".join(f'"{c}"' for c in columns)
-    placeholders = ", ".join(["%s"] * len(columns))
-    sql = f'INSERT INTO {table_name} ({cols_str}) VALUES ({placeholders})'
+    sql = f'INSERT INTO "{table_name}" ({cols_str}) VALUES %s'
+
     for i in range(0, len(records), chunk_size):
-        chunk = records[i:i+chunk_size]
-        cur.executemany(sql, chunk)
-        log_step(f"📤 Insert {table_name}", f"chunk {i//chunk_size+1}: {len(chunk)} rows")
+        chunk = records[i:i + chunk_size]
+
+        # page_size = số rows per statement (đặt = len(chunk) để 1 statement/chunk)
+        execute_values(cur, sql, chunk, page_size=len(chunk))
+
+        log_step(f"📤 Insert {table_name}", f"chunk {i//chunk_size + 1}: {len(chunk)} rows")
 
 def main():
     start = time.time()
@@ -85,9 +100,9 @@ def main():
     conn = None
     try:
         log_step("🔗 Connecting PostgreSQL...")
-        conn = psycopg2.connect(**conn_params)
+        conn = get_db_connection()
         cur = conn.cursor()
-
+        
         # 2. TRUNCATE 4 tables
         log_step("🗑️ Truncating tables...", "")
         cur.execute("TRUNCATE TABLE df1_standard RESTART IDENTITY;")

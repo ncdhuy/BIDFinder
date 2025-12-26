@@ -160,7 +160,7 @@ function renderTableData(data, configKey) {
     if (!data?.length) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="${columnOrder.length}" style="text-align:center;color:#94a3b8;padding:20px">
+                <td colspan="${columnOrder.length}" style="text-align:left;padding:30px 700px;font-size:13px;color:#94a3b8"">
                     Chưa có dữ liệu. Vui lòng thực hiện tìm kiếm.
                 </td>
             </tr>

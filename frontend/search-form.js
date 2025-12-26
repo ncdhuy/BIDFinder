@@ -898,8 +898,6 @@ class CustomSearchForm extends HTMLElement {
                 // Thông tin thầu
                 investor: root.getElementById('filter-investor').value.trim(),
                 approvalDecision: root.getElementById('filter-approval-decision').value.trim(),
-                // selectionMethod: root.getElementById('filter-selection-method').value.trim(),
-                // place: root.getElementById('filter-place').value.trim(),
                 selectionMethod: getSelectedValues('filter-selection-method'),
                 place: getSelectedValues('filter-place'),
                 validity: root.getElementById('filter-validity').value.trim(),
