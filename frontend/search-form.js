@@ -711,7 +711,7 @@ class CustomSearchForm extends HTMLElement {
                         </div>
                         <div class="field">
                             <label for="filter-unit">Đơn vị tính</label>
-                            <input id="filter-unit" type="text" placeholder="Ví dụ: Hộp, Viên, Lọ">
+                            <input id="filter-unit" type="text" placeholder="VD: Hộp, Viên, Lọ">
                         </div>
                     </div>
 
