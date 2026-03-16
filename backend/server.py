@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from typing import Optional, List, Dict, Any, Literal
 
+import asyncio
 import asyncpg
 import json
 import os
@@ -16,6 +17,7 @@ load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 db_pool: Optional[asyncpg.Pool] = None
+db_pool_lock = asyncio.Lock()
 
 ssl_context = ssl.create_default_context()
 ssl_context.check_hostname = False
@@ -328,6 +330,19 @@ async def get_db_pool():
         setup=setup_connection,
         ssl=ssl_context,
     )
+
+
+async def ensure_db_pool() -> asyncpg.Pool:
+    global db_pool
+
+    if db_pool is not None:
+        return db_pool
+
+    async with db_pool_lock:
+        if db_pool is None:
+            db_pool = await get_db_pool()
+
+    return db_pool
 
 
 def clean_value(val):
@@ -685,13 +700,14 @@ async def get_filter_config():
 @app.post("/api/query")
 async def query_data(request: QueryRequest):
     try:
+        pool = await ensure_db_pool()
         filters = request.filters or FilterRequest()
         sort_rules = request.sort or []
         limit = max(1, min(request.limit or 200, 1000))
 
         result = {"success": True}
 
-        async with db_pool.acquire() as conn:
+        async with pool.acquire() as conn:
             if request.scope in ("all", "medicine"):
                 q, p, cq, cp = build_result_query("medicine", filters, sort_rules, limit)
                 rows = await conn.fetch(q, *p)
@@ -721,6 +737,7 @@ async def query_data(request: QueryRequest):
 @app.post("/api/autocomplete")
 async def autocomplete(request: AutocompleteRequest):
     try:
+        pool = await ensure_db_pool()
         keyword = (request.keyword or "").strip()
         if len(keyword) < 1:
             return JSONResponse(content={
@@ -756,7 +773,7 @@ async def autocomplete(request: AutocompleteRequest):
 
         push(keyword)
 
-        async with db_pool.acquire() as conn:
+        async with pool.acquire() as conn:
             if req.scope in ("all", "medicine"):
                 for item in await fetch_autocomplete_suggestions(conn, req, "medicine"):
                     push(item)
@@ -783,13 +800,14 @@ async def autocomplete(request: AutocompleteRequest):
 @app.get("/api/metadata")
 async def get_metadata():
     try:
+        pool = await ensure_db_pool()
         query = """
         SELECT start_time, end_time, duration_seconds, boxes_selected
         FROM run_sessions
         ORDER BY start_time DESC
         LIMIT 10
         """
-        async with db_pool.acquire() as conn:
+        async with pool.acquire() as conn:
             rows = await conn.fetch(query)
 
         history = clean_records(rows)
