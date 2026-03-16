@@ -1,0 +1,18 @@
+# 1. Chặn thư mục dữ liệu trong crawl_engine
+crawler_engine/raw_data/
+crawler_engine/test_outputs/
+crawler_engine/tmp_storage/
+
+# 2. Chặn các file môi trường chứa thông tin bảo mật (DATABASE_URL, API_KEY)
+.env
+crawler_engine/.env
+
+# 3. Chặn các file rác của Python
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# 4. Chặn các file tạm của hệ điều hành
+.DS_Store
+Thumbs.db
+.vscode/
