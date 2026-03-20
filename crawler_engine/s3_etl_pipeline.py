@@ -52,6 +52,22 @@ def get_engine():
     return create_engine(SQLALCHEMY_URL)
 
 
+def ensure_ignored_qd_table(cursor):
+    return
+
+
+def load_ignored_qd_map(cursor):
+    ignored_map = {}
+    cursor.execute("""
+        SELECT ma_tbmt, so_qd
+        FROM qd_relations
+        WHERE relation_type = 'TYPO_ERROR'
+    """)
+    for tbmt, so_qd in cursor.fetchall():
+        ignored_map.setdefault(tbmt, set()).add(so_qd)
+    return ignored_map
+
+
 def version_key(version_value):
     raw = str(version_value or "00").strip().replace("/", "-")
     parts = [p for p in raw.split("-") if p != ""]
@@ -82,7 +98,9 @@ KEYWORD_RULES = {
     "Thành tiền (VND)": ["thành tiền"],
     "Nhà thầu trúng thầu": ["nhà thầu"],
     
-    "Tên hàng hóa": ["tên hàng", "danh mục hàng"],
+    "Danh mục hàng hóa": ["tên hàng", "danh mục hàng"],
+    "Tên phần/lô": ["tên phần", "tên lô"],
+    "Mặt hàng dự thầu": ["mặt hàng dự thầu", "mặt hàng"],
     "Ký mã hiệu": ["ký mã", "mã hiệu"],
     "Tính năng kỹ thuật": ["tính năng", "kỹ thuật"],
     "Xuất xứ": ["xuất xứ", "nước sản xuất"],
@@ -163,6 +181,11 @@ def collapse_sparse_goods_rows(df: pd.DataFrame) -> pd.DataFrame:
         return False
 
     stt_col = next((c for c in df.columns if clean_col_str(c) == "stt"), None)
+    vendor_col = next((c for c in df.columns if "nhà thầu" in clean_col_str(c)), None)
+    name_col = next((
+        c for c in df.columns
+        if "tên hàng hóa" in clean_col_str(c) or "danh mục hàng hóa" in clean_col_str(c)
+    ), None)
     amount_col = next((c for c in df.columns if "thành tiền" in clean_col_str(c)), None)
     if not stt_col:
         return df
@@ -171,6 +194,40 @@ def collapse_sparse_goods_rows(df: pd.DataFrame) -> pd.DataFrame:
     df = df.loc[~total_mask].reset_index(drop=True)
     if df.empty:
         return df
+
+    # Pattern nhóm: dòng đầu có STT + Nhà thầu + thành tiền tổng, các dòng sau chứa chi tiết hàng hóa.
+    if vendor_col and name_col:
+        expanded_rows = []
+        group_header = None
+
+        for _, row in df.iterrows():
+            current = row.copy()
+            has_stt = not is_blank(current.get(stt_col))
+            has_vendor = not is_blank(current.get(vendor_col))
+            has_name = not is_blank(current.get(name_col))
+
+            is_group_header = has_stt and has_vendor and not has_name
+            is_group_detail = group_header is not None and not has_stt and has_name
+
+            if is_group_header:
+                group_header = current
+                continue
+
+            if is_group_detail:
+                for col in df.columns:
+                    if col == amount_col:
+                        continue
+                    if is_blank(current.get(col)) and not is_blank(group_header.get(col)):
+                        current[col] = group_header.get(col)
+                expanded_rows.append(current)
+                continue
+
+            expanded_rows.append(current)
+            group_header = None if has_stt else group_header
+
+        df = pd.DataFrame(expanded_rows, columns=df.columns)
+        if df.empty:
+            return df
 
     merged_rows = []
     i = 0
@@ -751,6 +808,7 @@ def process_pipeline():
     cleanup_orphaned_data()
     
     with get_db_connection() as conn, conn.cursor() as c:
+        ignored_qd_map = load_ignored_qd_map(c)
         # Lấy file READY để ETL, dùng COALESCE(so_qd_original, so_qd) vì bảng relations đã đổi tên cột
         c.execute("""
             SELECT DISTINCT COALESCE(r.so_qd_original, m.so_qd) as qd_original, m.ma_tbmt, m.schema_type, m.id as manifest_id
@@ -759,7 +817,10 @@ def process_pipeline():
               ON m.ma_tbmt = r.ma_tbmt AND m.so_qd = r.so_qd AND m.version = r.version
             WHERE m.manifest_date = %s AND m.status = 'READY'
         """, (TARGET_DATE,))
-        active_jobs = c.fetchall()
+        active_jobs = [
+            row for row in c.fetchall()
+            if row[0] not in ignored_qd_map.get(row[1], set())
+        ]
 
     if not active_jobs:
         logger.info(f"ℹ️ Không có dữ liệu 'READY' trong ngày {TARGET_DATE}.")
@@ -776,6 +837,7 @@ def process_pipeline():
     total_inserted_clusters = 0
 
     with get_db_connection() as conn, conn.cursor() as c:
+        ignored_qd_map = load_ignored_qd_map(c)
         for (tbmt, qd_original, schema_name) in clusters.keys():
             c.execute("""
                 SELECT p.so_qd, p.version, p.file_path, 
@@ -790,12 +852,17 @@ def process_pipeline():
             units_in_cluster = [
                 {'so_qd': r[0], 'version': r[1], 'file_path': r[2], 'relation_type': r[3]}
                 for r in c.fetchall()
+                if r[0] not in ignored_qd_map.get(tbmt, set())
+                and not os.path.basename(str(r[2] or "")).startswith("~$")
             ]
             
-            if not units_in_cluster: continue
+            if not units_in_cluster:
+                logger.warning(f"⚠️ ETL bỏ qua {tbmt} / {qd_original}: không tìm thấy file Excel latest trong packages.")
+                continue
 
             df_final, qd_display, cluster_ver, files_to_archive = process_qd_cluster(tbmt, qd_original, units_in_cluster, schema_name)
             if df_final is None or df_final.empty:
+                logger.warning(f"⚠️ ETL bỏ qua {tbmt} / {qd_original}: không tạo được dataframe hợp lệ từ cụm QĐ.")
                 continue
                 
             df_final = apply_numeric_cleaning(df_final)
@@ -812,15 +879,6 @@ def process_pipeline():
             df_final = df_final.drop(columns=["_dedup_hash"])
             if '_merge_key' in df_final.columns:
                 df_final = df_final.drop(columns=['_merge_key'])
-
-            table_name = SCHEMAS[schema_name]['table_name']
-            
-            # Map tên db_tbmt và db_qd chuẩn xác
-            db_tbmt = SCHEMAS[schema_name]["db_mapping"].get('Mã TBMT', 'ma_tbmt')
-            db_qd = SCHEMAS[schema_name]["db_mapping"].get('so_qd_sanitized', 'so_qd')
-            
-            c.execute(f"DELETE FROM {table_name} WHERE {db_tbmt} = %s AND {db_qd} = %s", (tbmt, qd_original))
-            conn.commit()
 
             if 'qd_display' in df_final.columns:
                 df_final['so_qd_sanitized'] = df_final['qd_display']
@@ -866,6 +924,8 @@ def process_pipeline():
                                 conn.commit()
                     except Exception as e:
                         logger.warning(f"Không thể archive file {fpath}: {e}")
+            else:
+                logger.warning(f"⚠️ ETL không ghi được DB cho {tbmt} / {qd_original} ({schema_name}). Manifest sẽ giữ trạng thái READY.")
 
     elapsed_time = round(time.time() - start_time, 2)
     logger.info(f"🎉 HOÀN TẤT ETL: Xử lý thành công {total_inserted_clusters} Cụm QĐ. Tổng thời gian: {elapsed_time}s.")

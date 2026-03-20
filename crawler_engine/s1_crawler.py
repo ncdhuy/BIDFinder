@@ -24,6 +24,7 @@ from selenium.common.exceptions import (
     NoSuchElementException,
     UnexpectedAlertPresentException,
     NoAlertPresentException,
+    SessionNotCreatedException,
 )
 import logging
 
@@ -44,6 +45,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 BASE_DIR = os.getenv("BASE_DIR")
 CHROME_PROFILE_PATH = os.getenv("CHROME_PROFILE_PATH")
 CHROMEDRIVER_PATH = os.getenv("CHROMEDRIVER_PATH")
+USE_LOCAL_CHROMEDRIVER = str(os.getenv("USE_LOCAL_CHROMEDRIVER", "false")).strip().lower() in ("1", "true", "yes", "y")
 
 if not DATABASE_URL:
     raise ValueError("❌ Thiếu biến môi trường DATABASE_URL")
@@ -51,8 +53,6 @@ if not BASE_DIR:
     raise ValueError("❌ Thiếu biến môi trường BASE_DIR")
 if not CHROME_PROFILE_PATH:
     raise ValueError("❌ Thiếu biến môi trường CHROME_PROFILE_PATH")
-if not CHROMEDRIVER_PATH:
-    raise ValueError("❌ Thiếu biến môi trường CHROMEDRIVER_PATH")
 
 DOWNLOAD_RAW = os.path.join(BASE_DIR, "raw_data", "chrome_downloads")
 os.makedirs(DOWNLOAD_RAW, exist_ok=True)
@@ -107,6 +107,7 @@ YEAR_FROM = _get_env_int("YEAR_FROM")
 YEAR_TO = _get_env_int("YEAR_TO")
 MAX_PAGES = _get_env_int("MAX_PAGES")
 MAX_TRY = _get_env_int("MAX_TRY", 7)
+MAX_PROCESSING_ERROR_RETRY_PER_DAY = _get_env_int("MAX_PROCESSING_ERROR_RETRY_PER_DAY", 2)
 
 MATCH_MODE_LABELS = {
     "all-1": "Khớp tất cả từ (Phân biệt dấu)",
@@ -444,14 +445,30 @@ class CrawlerDB:
 
     # --- LOGS & HELPERS ---
     def log_event(self, tbmt, qd_raw, version, action_type, reason):
-        if action_type != 'FILTERED_SKIP':
-            return 
-            
+        allowed_action_types = {"FILTERED_SKIP", "NO_ATTACHMENTS", "PROCESSING_ERROR"}
+        if action_type not in allowed_action_types:
+            return
+
         self._safe_execute("""
             INSERT INTO scan_logs (run_id, ma_tbmt, so_qd, version, action_type, reason, created_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
         """, (0, tbmt, qd_raw, version, action_type, reason, self._now_str()))
         self.conn.commit()
+
+    def should_skip_processing_error_today(self, tbmt, max_retry=MAX_PROCESSING_ERROR_RETRY_PER_DAY):
+        if not tbmt or max_retry is None or max_retry <= 0:
+            return False
+
+        self._safe_execute("""
+            SELECT COUNT(*) AS retry_count
+            FROM scan_logs
+            WHERE ma_tbmt=%s
+              AND action_type='PROCESSING_ERROR'
+              AND created_at::date = CURRENT_DATE
+        """, (tbmt,))
+        row = self.cursor.fetchone() or {}
+        retry_count = row.get("retry_count", 0) or 0
+        return retry_count >= max_retry
 
     def should_skip_level_1(self, tbmt, skip_days=SKIP_DAYS):
         # 1. Bị chặn từ đầu do blacklist
@@ -507,8 +524,24 @@ def init_runtime():
     if tracker is None:
         tracker = CrawlerDB()
     if driver is None:
-        service = Service(executable_path=CHROMEDRIVER_PATH, log_output=os.devnull)
-        driver = webdriver.Chrome(service=service, options=options)
+        try:
+            driver = webdriver.Chrome(options=options)
+        except Exception as first_error:
+            if USE_LOCAL_CHROMEDRIVER and CHROMEDRIVER_PATH:
+                try:
+                    logger.warning(
+                        f"⚠️ Selenium Manager không khởi tạo được Chrome ({first_error}). "
+                        "Thử fallback sang CHROMEDRIVER_PATH..."
+                    )
+                    service = Service(executable_path=CHROMEDRIVER_PATH, log_output=os.devnull)
+                    driver = webdriver.Chrome(service=service, options=options)
+                except SessionNotCreatedException as e:
+                    logger.error(
+                        f"❌ ChromeDriver tại CHROMEDRIVER_PATH không khớp version Chrome: {e.msg}"
+                    )
+                    raise
+            else:
+                raise
         wait = WebDriverWait(driver, 20)
 
 
@@ -557,8 +590,9 @@ loai_tu_gian_giao_thau = [
     "thuốc y học cổ truyền", "thuốc cổ truyền", "đông y", "sinh học",
     "dây truyền", "tủ", "thuốc thử", "phân liều", "vòng", "que", "sắc", "stent", "test", "kít", "kit",
     "sản xuất", "cứu hỏa", "lao động", "công nghiệp", "bão", "lụt", "hàng hóa dịch vụ", "phần mềm",
-    "quặng", "nhuộm", "văn phòng", "bảo quản", "bao đựng", "rác", "phủ thuốc", "thiết bị y tế dạng thuốc", "vật tư y tế dạng thuốc",
-    "vật tư y tế tiêu hao dạng thuốc", "nghiên cứu"
+    "quặng", "nhuộm", "văn phòng", "bảo quản", "bao đựng", "rác", "phủ thuốc",
+    "nghiên cứu", "kiểm nghiệm", "mỹ thuật", "nhu yếu phẩm", "tài sản", "lương thực", "in ấn", "sửa chữa", "hệ thống",
+    "thí nghiệm", "nhu yếu phẩm"
 ]
 
 loai_chu_dau_tu = [
@@ -581,6 +615,34 @@ loai_tu_gian_giao_thau.extend([
     'kiểm nghiệm', 'mỹ thuật', 'nhu yếu phẩm',
     'tài sản', 'lương thực', 'in ấn'
 ])
+
+
+def _normalize_keyword_value(value):
+    return str(value or "").strip().lower()
+
+
+def _normalize_keyword_list(values):
+    seen = []
+    for value in values:
+        normalized = _normalize_keyword_value(value)
+        if normalized and normalized not in seen:
+            seen.append(normalized)
+    return seen
+
+
+def _normalize_investor_rules(rules):
+    normalized_rules = []
+    for keyword, exclude_list in rules:
+        normalized_keyword = _normalize_keyword_value(keyword)
+        normalized_excludes = _normalize_keyword_list(exclude_list)
+        if normalized_keyword:
+            normalized_rules.append((normalized_keyword, normalized_excludes))
+    return normalized_rules
+
+
+loai_tu_gian_giao_thau = _normalize_keyword_list(loai_tu_gian_giao_thau)
+tu_khoa_luu_lai = _normalize_keyword_list(tu_khoa_luu_lai)
+loai_chu_dau_tu = _normalize_investor_rules(loai_chu_dau_tu)
 
 # ================== HELPER WAIT ELEMENT ==================
 def wait_presence(context, by, locator, timeout=10):
@@ -622,6 +684,48 @@ def get_dia_diem(box):
         return dia_diem_elem.text.strip()
     except Exception:
         return ""
+
+
+def get_chu_dau_tu(box):
+    try:
+        return box.find_element(
+            By.XPATH,
+            ".//h6[contains(normalize-space(),'Chủ đầu tư')]/span"
+        ).text.strip()
+    except Exception:
+        return ""
+
+
+def get_ten_goi_thau(box):
+    try:
+        return box.find_element(
+            By.XPATH,
+            ".//a/h5[contains(@class,'content__body__left__item__infor__contract__name')]"
+        ).text.strip()
+    except Exception:
+        return ""
+
+
+def get_linh_vuc(box):
+    try:
+        return box.find_element(
+            By.XPATH,
+            ".//h6[contains(normalize-space(),'Lĩnh vực')]/span"
+        ).text.strip()
+    except Exception:
+        return ""
+
+
+def build_box_metadata_snapshot(box, ma_tbmt, dia_diem, box_name_text, ngay_phe_duyet):
+    snapshot = {
+        "Mã TBMT": ma_tbmt,
+        "Chủ đầu tư": get_chu_dau_tu(box),
+        "Tên gói thầu": box_name_text or get_ten_goi_thau(box),
+        "Lĩnh vực": get_linh_vuc(box),
+        "Địa điểm": dia_diem,
+        "Ngày phê duyệt": ngay_phe_duyet.strftime("%d/%m/%Y") if ngay_phe_duyet else None,
+    }
+    return {k: v for k, v in snapshot.items() if v not in (None, "")}
 
 # ================== LỌC BOX ==================
 def is_luu_lai_theo_ten_goi_thau(ten_goi_thau):
@@ -667,18 +771,12 @@ def is_box_selected_or_filtered(box, index):
 
     # --- 2. LẤY THÔNG TIN TỪ BOX ĐỂ LỌC KEYWORD ---
     try:
-        ten_goi_thau = box.find_element(
-            By.XPATH, 
-            ".//a/h5[contains(@class,'content__body__left__item__infor__contract__name')]"
-        ).text.strip()
+        ten_goi_thau = get_ten_goi_thau(box)
     except: 
         ten_goi_thau = ""
     
     try:
-        ten_chu_dau_tu = box.find_element(
-            By.XPATH, 
-            ".//h6[contains(normalize-space(),'Chủ đầu tư')]/span"
-        ).text.strip()
+        ten_chu_dau_tu = get_chu_dau_tu(box)
     except: 
         ten_chu_dau_tu = ""
 
@@ -687,12 +785,8 @@ def is_box_selected_or_filtered(box, index):
 
     # --- 3. LOGIC LỌC KEYWORD ---
     
-    # Ưu tiên 1: Whitelist (Cứu các gói quan trọng dù có từ khóa xấu)
-    if is_luu_lai_theo_ten_goi_thau(t_low):
-        return True
-        
-    # Ưu tiên 2: Blacklist (Loại bỏ)
-    elif is_loai_chu_dau_tu(c_low) or is_loai_ten_goi_thau(t_low):
+    # Ưu tiên 1: Blacklist gắt (Loại bỏ trước, kể cả khi có từ whitelist)
+    if is_loai_chu_dau_tu(c_low) or is_loai_ten_goi_thau(t_low):
         # Ghi log FILTERED_SKIP vào DB => Để lần sau should_skip_level_1 chặn ngay từ đầu
         tracker.log_event(
             tbmt=ma_tbmt, 
@@ -704,7 +798,11 @@ def is_box_selected_or_filtered(box, index):
         logger.info(f"🚩 Bỏ qua {ma_tbmt} (Loại theo từ khóa)")
         logger.info("=" * 30)
         return False
-        
+
+    # Ưu tiên 2: Whitelist
+    if is_luu_lai_theo_ten_goi_thau(t_low):
+        return True
+
     else:
         # Hợp lệ
         return True
@@ -1527,10 +1625,24 @@ def _process_one_qd_flow(ma_tbmt, box_index, dia_diem, qd_text_raw, qd_element_p
 
     return any_dl, any_excel, dest_qd
 
+
+def finalize_one_qd_result(ma_tbmt, box_index, dia_diem, so_qd, ver_code, any_dl, any_excel, dest_qd, info_snapshot=None):
+    log_pdf_only_if_needed(any_dl, any_excel, ma_tbmt, so_qd, ver_code, dia_diem, dest_qd, info_snapshot=info_snapshot)
+    if not any_excel:
+        tracker.log_event(
+            tbmt=ma_tbmt,
+            qd_raw=so_qd,
+            version=ver_code,
+            action_type="NO_ATTACHMENTS",
+            reason=f"Không có Excel/Attach box {box_index}"
+        )
+        logger.warning(f"⚠️ Đã log NO_ATTACHMENTS cho {ma_tbmt} / {so_qd} / v{ver_code}")
+
 def handle_quyet_dinh_phe_duyet_all(num_cols, ma_tbmt, box_index, box_name_text, ngay_phe_duyet, dia_diem):
     any_downloaded = False
     any_excel_for_box = False
     last_qd_path = None
+    handled_qd_count = 0
     
     wait_until_not_loading(driver, timeout=10)
 
@@ -1646,6 +1758,18 @@ def handle_quyet_dinh_phe_duyet_all(num_cols, ma_tbmt, box_index, box_name_text,
                             trang_thai_specific=trang_thai_row,
                             info_snapshot=info_snapshot
                         )
+                        handled_qd_count += 1
+                        finalize_one_qd_result(
+                            ma_tbmt=ma_tbmt,
+                            box_index=box_index,
+                            dia_diem=dia_diem,
+                            so_qd=so_qd,
+                            ver_code=ver_code,
+                            any_dl=ok,
+                            any_excel=ok_excel,
+                            dest_qd=path,
+                            info_snapshot=info_snapshot
+                        )
                         
                         if ok: any_downloaded = True
                         if ok_excel: any_excel_for_box = True
@@ -1728,6 +1852,18 @@ def handle_quyet_dinh_phe_duyet_all(num_cols, ma_tbmt, box_index, box_name_text,
                 ngay_dang_tai_specific=None, trang_thai_specific=None,
                 info_snapshot=info_snapshot
             )
+            handled_qd_count += 1
+            finalize_one_qd_result(
+                ma_tbmt=ma_tbmt,
+                box_index=box_index,
+                dia_diem=dia_diem,
+                so_qd=so_qd,
+                ver_code=ver_code,
+                any_dl=ok,
+                any_excel=ok_excel,
+                dest_qd=path,
+                info_snapshot=info_snapshot
+            )
             if ok: any_downloaded = True
             if ok_excel: any_excel_for_box = True
             if path: last_qd_path = path
@@ -1740,11 +1876,9 @@ def handle_quyet_dinh_phe_duyet_all(num_cols, ma_tbmt, box_index, box_name_text,
         ):
             any_downloaded = True
             any_excel_for_box = True
-
-    log_pdf_only_if_needed(any_downloaded, any_excel_for_box, ma_tbmt, so_qd, ver_code, dia_diem, last_qd_path, info_snapshot=last_info_snapshot)
-    if not any_excel_for_box:
-        tracker.log_event(tbmt=ma_tbmt, qd_raw=so_qd, version=ver_code, action_type="NO_ATTACHMENTS", reason=f"Không có Excel/Attach box {box_index}")
-        logger.warning(f"⚠️ Đã log NO_EXCEL cho {ma_tbmt}")
+        else:
+            tracker.log_event(tbmt=ma_tbmt, qd_raw="UNKNOWN", version="00", action_type="NO_ATTACHMENTS", reason=f"Không có Excel/Attach box {box_index}")
+            logger.warning(f"⚠️ Đã log NO_ATTACHMENTS cho {ma_tbmt} / UNKNOWN / v00")
 
     return any_downloaded
 
@@ -1762,6 +1896,8 @@ def process_box(box, index):
     clear_raw_downloads()
     ma_tbmt = get_ma_tbmt(box)
     dia_diem = get_dia_diem(box)
+    box_name_text = ""
+    basic_snapshot = {}
     
     ngay_phe_duyet = get_ngay_phe_duyet_kqlcnt(box)
     if not ngay_phe_duyet:
@@ -1776,13 +1912,17 @@ def process_box(box, index):
 
     # tên box
     try:
-        box_name = box.find_element(
-            By.XPATH,
-            ".//h5[contains(@class, 'content__body__left__item__infor__contract__name')]"
-        )
-        box_name_text = box_name.text.strip()
+        box_name_text = get_ten_goi_thau(box)
     except Exception:
         box_name_text = "❌ Không lấy được tên box"
+
+    basic_snapshot = build_box_metadata_snapshot(
+        box=box,
+        ma_tbmt=ma_tbmt,
+        dia_diem=dia_diem,
+        box_name_text=box_name_text,
+        ngay_phe_duyet=ngay_phe_duyet
+    )
 
     # link chi tiết
     try:
@@ -1854,15 +1994,24 @@ def process_box(box, index):
 
     except Exception as e:
         logger.error(f"❌ Lỗi xử lý box {index}: {e}")
-        # Ghi log trực tiếp vào DB
+        error_qd = "UNKNOWN_QD"
+        error_version = "00"
+
+        try:
+            error_snapshot = dict(basic_snapshot)
+            error_snapshot["Cách thức tải về"] = "PROCESSING_ERROR"
+            tracker.save_metadata(ma_tbmt, error_qd, error_version, error_snapshot)
+        except Exception as meta_err:
+            logger.warning(f"⚠️ Không lưu được metadata lỗi cho {ma_tbmt}: {meta_err}")
+
         tracker.log_event(
             tbmt=ma_tbmt,
-            qd_raw="N/A",
-            version="N/A",
-            action_type="Lỗi xử lý",
-            reason=f"Lỗi xử lý"
+            qd_raw=error_qd,
+            version=error_version,
+            action_type="PROCESSING_ERROR",
+            reason=str(e)[:500]
         )
-        logger.warning(f"⚠️  Đã log NO_EXCEL cho {ma_tbmt}")
+        logger.warning(f"⚠️ Đã log PROCESSING_ERROR cho {ma_tbmt}")
         has_any_download = False
 
     finally:
@@ -2004,6 +2153,12 @@ def crawl_current_results(search_keyword: str):
             ma_tbmt = get_ma_tbmt(boxes[i])
             if not FORCE_FULL_SCAN and tracker.should_skip_level_1(ma_tbmt, skip_days=SKIP_DAYS):
                 logger.info(f"⏩ [MAIN SKIP] Mã TBMT {ma_tbmt} mới check gần đây (< {SKIP_DAYS} ngày), bỏ qua.")
+                logger.info("=" * 30)
+                continue
+            if not FORCE_FULL_SCAN and tracker.should_skip_processing_error_today(ma_tbmt):
+                logger.info(
+                    f"⏩ [RETRY LIMIT] {ma_tbmt} đã lỗi xử lý >= {MAX_PROCESSING_ERROR_RETRY_PER_DAY} lần trong hôm nay, bỏ qua."
+                )
                 logger.info("=" * 30)
                 continue
 

@@ -142,22 +142,24 @@ class DatabaseMigrator:
                     ma_tbmt TEXT,
                     so_qd TEXT,
                     version TEXT,
-                    nha_thau_trung_thau TEXT,
                     ma_phan_lo TEXT,
-                    ten_hang_hoa TEXT,
+                    ten_phan_lo TEXT,
+                    nha_thau_trung_thau TEXT,
+                    danh_muc_hang_hoa TEXT,
                     ky_ma_hieu TEXT,
                     nhan_hieu TEXT,
-                    nam_san_xuat TEXT,
-                    xuat_xu TEXT,
                     hang_san_xuat TEXT,
-                    tinh_nang_ky_thuat TEXT,
+                    mat_hang_du_thau TEXT,
                     don_vi_tinh TEXT,
                     khoi_luong NUMERIC,
+                    xuat_xu TEXT,
+                    nam_san_xuat TEXT,
+                    tinh_nang_ky_thuat TEXT,
                     don_gia_trung_thau NUMERIC,
                     thanh_tien NUMERIC,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     
-                    CONSTRAINT uq_goods UNIQUE(ma_tbmt, so_qd, version, ma_phan_lo, ten_hang_hoa, ky_ma_hieu, nhan_hieu, tinh_nang_ky_thuat, khoi_luong, don_gia_trung_thau)
+                    CONSTRAINT uq_goods UNIQUE(ma_tbmt, so_qd, version, ma_phan_lo, danh_muc_hang_hoa, nha_thau_trung_thau, khoi_luong, don_gia_trung_thau)
                 )
             """)
 
@@ -266,7 +268,7 @@ class DatabaseMigrator:
             # 12. Tạo GIN Index cho các cột cần làm autocomplete
             self.cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_medicines_ten_thuoc_trgm ON processed_medicines USING gin (ten_thuoc gin_trgm_ops);
-                CREATE INDEX IF NOT EXISTS idx_goods_ten_hang_hoa_trgm ON processed_goods USING gin (ten_hang_hoa gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_goods_danh_muc_hang_hoa_trgm ON processed_goods USING gin (danh_muc_hang_hoa gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_metadata_chu_dau_tu_trgm ON package_metadata USING gin (chu_dau_tu gin_trgm_ops);
             """)
 

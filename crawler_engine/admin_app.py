@@ -82,7 +82,7 @@ with tab1:
 # TAB 2: QD RELATIONS MANAGER
 # ==========================================
 with tab2:
-    st.header("Gán quan hệ Quyết Định (Gốc - Điều Chỉnh - Thay Thế)")
+    st.header("Gán quan hệ Quyết Định (Gốc - Điều Chỉnh - Thay Thế - Typo)")
     
     df_multi = pd.read_sql("""
         SELECT DISTINCT ma_tbmt
@@ -129,8 +129,8 @@ with tab2:
                     "so_qd_original": st.column_config.TextColumn("QĐ Gốc (Sửa tay)"),
                     "relation_type": st.column_config.SelectboxColumn(
                         "Loại quan hệ",
-                        help="BASE: QĐ gốc, ADJUSTMENT: Vá một phần, REPLACEMENT: Thay thế hoàn toàn, INDEPENDENT: Độc lập",
-                        options=["BASE", "ADJUSTMENT", "REPLACEMENT", "INDEPENDENT"],
+                        help="BASE: QĐ gốc, ADJUSTMENT: Vá một phần, REPLACEMENT: Thay thế hoàn toàn, INDEPENDENT: Độc lập, TYPO_ERROR: QĐ bị gõ sai từ nguồn và cần bỏ qua",
+                        options=["BASE", "ADJUSTMENT", "REPLACEMENT", "INDEPENDENT", "TYPO_ERROR"],
                         required=True
                     ),
                     "note": st.column_config.TextColumn("Ghi chú")

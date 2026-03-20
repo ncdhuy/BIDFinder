@@ -77,16 +77,19 @@ WITH df2_full AS (
         g.ma_tbmt AS "Mã TBMT",
         g.so_qd AS "Quyết định phê duyệt",
         g.version AS "Version",
+        g.ma_phan_lo AS "Mã phần/lô",
+        g.ten_phan_lo AS "Tên phần/lô",
         g.nha_thau_trung_thau AS "Nhà thầu trúng thầu",
-        g.ten_hang_hoa AS "Tên hàng hóa",
+        g.danh_muc_hang_hoa AS "Danh mục hàng hóa",
         g.ky_ma_hieu AS "Ký mã hiệu",
         g.nhan_hieu AS "Nhãn hiệu",
-        g.nam_san_xuat AS "Năm sản xuất",
-        g.xuat_xu AS "Xuất xứ",
         g.hang_san_xuat AS "Hãng sản xuất",
-        g.tinh_nang_ky_thuat AS "Tính năng kỹ thuật",
+        g.mat_hang_du_thau AS "Mặt hàng dự thầu",
         g.don_vi_tinh AS "Đơn vị tính",
         g.khoi_luong AS "Khối lượng",
+        g.xuat_xu AS "Xuất xứ",
+        g.nam_san_xuat AS "Năm sản xuất",
+        g.tinh_nang_ky_thuat AS "Tính năng kỹ thuật",
         g.don_gia_trung_thau AS "Đơn giá trúng thầu (VND)",
         g.thanh_tien AS "Thành tiền (VND)",
         p.chu_dau_tu AS "Chủ đầu tư",
@@ -102,9 +105,11 @@ WITH df2_full AS (
         END AS "Tình trạng hiệu lực",
         CONCAT_WS(
             ' | ',
-            g.ten_hang_hoa,
+            g.ten_phan_lo,
+            g.danh_muc_hang_hoa,
             g.ky_ma_hieu,
             g.nhan_hieu,
+            g.mat_hang_du_thau,
             g.tinh_nang_ky_thuat
         ) AS "Search blob"
     FROM processed_goods g
@@ -306,7 +311,7 @@ ALLOWED_SORT_DF1 = {
 ALLOWED_SORT_DF2 = {
     **BASE_SORT_MAP,
     "quantity": '"Khối lượng"',
-    "drugName": '"Tên hàng hóa"',
+    "drugName": '"Danh mục hàng hóa"',
 }
 
 

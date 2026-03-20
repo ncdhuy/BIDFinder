@@ -137,7 +137,7 @@ def setup_search_form(search_keyword: str):
         pass
 
     wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Tìm kiếm nâng cao')]"))).click()
-    select_keyword_match_mode("any-1")
+    select_keyword_match_mode("exact")
     time.sleep(0.5)
 
     input_khong_chua_tu = wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@placeholder='Áp dụng cho tất cả các trường thông tin tìm kiếm']")))

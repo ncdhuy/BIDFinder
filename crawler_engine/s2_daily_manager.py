@@ -6,7 +6,7 @@ from datetime import datetime
 from schema_config import SCHEMAS 
 from dotenv import load_dotenv
 from psycopg2.extras import execute_values
-from storage_adapter import ensure_local_file, upload_file, build_r2_key, is_r2_key
+from storage_adapter import ensure_local_file, upload_file, build_r2_key, is_r2_key, delete_object
 import logging
 import re
 
@@ -283,6 +283,18 @@ def get_db_connection():
         raise ValueError("Chưa cấu hình biến môi trường DATABASE_URL")
     return psycopg2.connect(DATABASE_URL)
 
+
+def load_ignored_qd_map(cursor):
+    ignored_map = {}
+    cursor.execute("""
+        SELECT ma_tbmt, so_qd
+        FROM qd_relations
+        WHERE relation_type = 'TYPO_ERROR'
+    """)
+    for tbmt, so_qd in cursor.fetchall():
+        ignored_map.setdefault(tbmt, set()).add(so_qd)
+    return ignored_map
+
 def get_file_size_any(path_value, temp_subdir="daily_manager_size"):
     try:
         local_path = ensure_local_file(path_value, temp_subdir=temp_subdir)
@@ -312,6 +324,230 @@ def choose_best_file(file_list):
         size = get_file_size_any(os.path.join(SOURCE_DIR, fname))
         return (p, -size, fname.lower())
     return sorted(file_list, key=score)[0] if file_list else None
+
+
+def build_qd_filename_tokens(qd_raw):
+    qd_text = str(qd_raw or "").strip()
+    if not qd_text or qd_text.upper() == "UNKNOWN":
+        return set()
+
+    qd_number = qd_text.split("/", 1)[0].strip()
+    tokens = {
+        qd_text.lower(),
+        qd_text.replace("/", "_").lower(),
+        qd_text.replace("/", "-").lower(),
+    }
+    if qd_number:
+        tokens.add(qd_number.lower())
+    return {token for token in tokens if token}
+
+
+def sanitize_filename_like_crawler(text):
+    if not text:
+        return ""
+    text = str(text)
+    for ch in r'\/:*?"<>|':
+        text = text.replace(ch, "_")
+    return text.strip()
+
+
+def extract_qd_number(text):
+    match = re.search(r"(\d+)", str(text or ""))
+    return match.group(1) if match else ""
+
+
+def parse_unit_from_filename(filename):
+    base_name = os.path.basename(str(filename or ""))
+    core_name = os.path.splitext(base_name)[0]
+
+    tbmt_match = re.search(r"(IB\d{10})", core_name, flags=re.IGNORECASE)
+    version_match = re.search(r"_v(\d{2})_", core_name, flags=re.IGNORECASE)
+    qd_match = re.search(r"_(\d+)_QĐ-([^_]+)", core_name, flags=re.IGNORECASE)
+    plain_qd_match = re.search(r"_v\d{2}_(\d+)(?:_|$)", core_name, flags=re.IGNORECASE)
+
+    tbmt = tbmt_match.group(1).upper() if tbmt_match else (base_name.split("_")[0] if "_" in base_name else "UNKNOWN_TBMT")
+    version = version_match.group(1) if version_match else "00"
+
+    if qd_match:
+        qd_number = qd_match.group(1).strip()
+        qd_suffix = qd_match.group(2).strip()
+        so_qd = f"{qd_number}/QĐ-{qd_suffix}"
+    elif plain_qd_match:
+        so_qd = plain_qd_match.group(1).strip()
+    else:
+        so_qd = "UNKNOWN"
+
+    return tbmt, so_qd, version
+
+
+def resolve_qd_from_candidates(filename, tbmt, version, qd_guess, qd_candidates):
+    if not qd_candidates:
+        return qd_guess
+
+    if qd_guess in qd_candidates:
+        return qd_guess
+
+    core_name = os.path.splitext(os.path.basename(str(filename or "")))[0]
+    prefix = f"{tbmt}_v{version}_"
+    remainder = core_name[len(prefix):] if core_name.lower().startswith(prefix.lower()) else core_name
+
+    candidate_infos = []
+    for qd in qd_candidates:
+        sanitized_qd = sanitize_filename_like_crawler(qd)
+        candidate_infos.append((qd, sanitized_qd, extract_qd_number(qd)))
+
+    for qd, sanitized_qd, _ in sorted(candidate_infos, key=lambda item: len(item[1]), reverse=True):
+        if not sanitized_qd:
+            continue
+        if remainder == sanitized_qd or remainder.startswith(sanitized_qd + "_"):
+            return qd
+
+    qd_number = extract_qd_number(qd_guess)
+    if not qd_number:
+        qd_number_patterns = [
+            r"_v\d{2}_(\d+)(?:_|$)",
+            r"(?:^|_)(?:qđ|qd)[ _-]*(?:số[ _-]*)?(\d+)",
+            r"(?:^|_)(\d+)(?:_|$)",
+        ]
+        for pattern in qd_number_patterns:
+            match = re.search(pattern, core_name, flags=re.IGNORECASE)
+            if match:
+                qd_number = match.group(1)
+                break
+
+    if qd_number:
+        matched_candidates = [qd for qd, _, num in candidate_infos if num == qd_number]
+        if len(matched_candidates) == 1:
+            return matched_candidates[0]
+
+    return qd_guess
+
+
+def infer_manual_file_type(filename):
+    ext = os.path.splitext(str(filename or ""))[1].lower()
+
+    if ext in (".xlsx", ".xls"):
+        return "excel"
+
+    if ext == ".pdf":
+        return "pdf"
+
+    return None
+
+
+def find_matched_files_for_unit(candidates, file_paths, tbmt, qd_raw, version):
+    matched_files = []
+
+    for fp in file_paths:
+        db_fname = os.path.basename(fp)
+        db_fname_no_ext = os.path.splitext(db_fname)[0]
+        for f in candidates:
+            if f not in matched_files and (f == db_fname or (len(db_fname_no_ext) > 5 and db_fname_no_ext in f)):
+                matched_files.append(f)
+
+    tbmt_token = str(tbmt or "").strip().lower()
+    version_token = f"v{str(version or '').strip()}".lower()
+    qd_tokens = build_qd_filename_tokens(qd_raw)
+
+    for f in candidates:
+        f_lower = f.lower()
+        if tbmt_token and tbmt_token not in f_lower:
+            continue
+        if version_token and version_token not in f_lower:
+            continue
+        if qd_tokens and not any(token in f_lower for token in qd_tokens):
+            continue
+        if f not in matched_files:
+            matched_files.append(f)
+
+    return matched_files
+
+
+def upsert_manual_file_to_packages(tbmt, qd_raw, version, full_path, file_type):
+    if file_type not in ("excel", "pdf"):
+        return
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT 1 FROM packages
+                WHERE ma_tbmt = %s AND so_qd = %s AND version = %s AND file_type = %s
+            """, (tbmt, qd_raw, version, file_type))
+
+            if cursor.fetchone():
+                cursor.execute("""
+                    UPDATE packages
+                    SET file_path = %s, is_latest = 1, status = 'DONE', crawled_at = CURRENT_TIMESTAMP
+                    WHERE ma_tbmt = %s AND so_qd = %s AND version = %s AND file_type = %s
+                """, (full_path, tbmt, qd_raw, version, file_type))
+            else:
+                cursor.execute("""
+                    INSERT INTO packages (ma_tbmt, so_qd, version, file_path, file_type, is_latest, status, crawled_at, num_cols)
+                    VALUES (%s, %s, %s, %s, %s, 1, 'DONE', CURRENT_TIMESTAMP, 0)
+                """, (tbmt, qd_raw, version, full_path, file_type))
+
+            conn.commit()
+
+
+def sync_manual_files_in_latest(all_physical_files, found_tbmts):
+    if not all_physical_files or not found_tbmts:
+        return
+
+    synced_count = 0
+
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT ma_tbmt, so_qd, version, file_path, file_type
+                    FROM packages
+                    WHERE ma_tbmt IN %s
+                """, (tuple(found_tbmts),))
+                package_rows = cursor.fetchall()
+                existing_units = {(row[0], row[1], row[2]) for row in package_rows}
+                existing_paths = {str(row[3]).lower() for row in package_rows if row[3]}
+                existing_basename_pairs = {
+                    (os.path.basename(str(row[3])).lower(), str(row[4]).lower())
+                    for row in package_rows
+                    if row[3] and row[4]
+                }
+
+                units_by_tbmt_ver = {}
+                for tbmt, so_qd, version in existing_units:
+                    units_by_tbmt_ver.setdefault((tbmt, version), set()).add(so_qd)
+
+        for fname in all_physical_files:
+            if fname.startswith('~$'):
+                continue
+            full_path = os.path.join(SOURCE_DIR, fname)
+            file_type = infer_manual_file_type(fname)
+            if not file_type:
+                continue
+            if full_path.lower() in existing_paths:
+                continue
+            if (fname.lower(), file_type.lower()) in existing_basename_pairs:
+                continue
+
+            tbmt, qd_raw, version = parse_unit_from_filename(fname)
+            if not tbmt or tbmt == "UNKNOWN_TBMT" or tbmt not in found_tbmts:
+                continue
+
+            qd_candidates = units_by_tbmt_ver.get((tbmt, version), set())
+            qd_raw = resolve_qd_from_candidates(fname, tbmt, version, qd_raw, qd_candidates)
+
+            if qd_raw == "UNKNOWN":
+                continue
+
+            if (tbmt, qd_raw, version) not in existing_units:
+                continue
+
+            upsert_manual_file_to_packages(tbmt, qd_raw, version, full_path, file_type)
+            synced_count += 1
+
+        if synced_count:
+            logger.info(f"⚡ Đã đồng bộ {synced_count} file thêm tay trong latest vào packages.")
+    except psycopg2.Error as e:
+        logger.warning(f"⚠️ Không thể đồng bộ file thêm tay vào packages: {e}")
 
 # =====================================================================
 # LOGIC NHẬN DIỆN VÀ MAP CỘT SCHEMA
@@ -347,6 +583,11 @@ def collapse_sparse_goods_rows(df: pd.DataFrame) -> pd.DataFrame:
         return False
 
     stt_col = next((c for c in df.columns if clean_col_str(c) == "stt"), None)
+    vendor_col = next((c for c in df.columns if "nhà thầu" in clean_col_str(c)), None)
+    name_col = next((
+        c for c in df.columns
+        if "tên hàng hóa" in clean_col_str(c) or "danh mục hàng hóa" in clean_col_str(c)
+    ), None)
     amount_col = next((c for c in df.columns if "thành tiền" in clean_col_str(c)), None)
     if not stt_col:
         return df
@@ -355,6 +596,40 @@ def collapse_sparse_goods_rows(df: pd.DataFrame) -> pd.DataFrame:
     df = df.loc[~total_mask].reset_index(drop=True)
     if df.empty:
         return df
+
+    # Pattern nhóm: dòng đầu có STT + Nhà thầu + thành tiền tổng, các dòng sau chứa chi tiết hàng hóa.
+    if vendor_col and name_col:
+        expanded_rows = []
+        group_header = None
+
+        for _, row in df.iterrows():
+            current = row.copy()
+            has_stt = not is_blank(current.get(stt_col))
+            has_vendor = not is_blank(current.get(vendor_col))
+            has_name = not is_blank(current.get(name_col))
+
+            is_group_header = has_stt and has_vendor and not has_name
+            is_group_detail = group_header is not None and not has_stt and has_name
+
+            if is_group_header:
+                group_header = current
+                continue
+
+            if is_group_detail:
+                for col in df.columns:
+                    if col == amount_col:
+                        continue
+                    if is_blank(current.get(col)) and not is_blank(group_header.get(col)):
+                        current[col] = group_header.get(col)
+                expanded_rows.append(current)
+                continue
+
+            expanded_rows.append(current)
+            group_header = None if has_stt else group_header
+
+        df = pd.DataFrame(expanded_rows, columns=df.columns)
+        if df.empty:
+            return df
 
     merged_rows = []
     i = 0
@@ -398,7 +673,9 @@ KEYWORD_RULES = {
     "Thành tiền (VND)": ["thành tiền"],
     "Nhà thầu trúng thầu": ["nhà thầu trúng thầu"],
     
-    "Tên hàng hóa": ["hàng hóa"],
+    "Danh mục hàng hóa": ["hàng hóa", "danh mục hàng"],
+    "Tên phần/lô": ["tên phần", "tên lô"],
+    "Mặt hàng dự thầu": ["mặt hàng dự thầu", "mặt hàng"],
     "Ký mã hiệu": ["ký mã", "mã hiệu"],
     "Tính năng kỹ thuật": ["tính năng", "kỹ thuật"],
     "Xuất xứ": ["xuất xứ", "nước sản xuất"],
@@ -475,9 +752,10 @@ def identify_file_status_detailed(file_path, file_ext, tbmt, all_files_in_batch)
                 mandatory = set(config.get("mandatory_columns", []))
                 missing_mandatory = mandatory - norm_cols
                 if missing_mandatory: return False, f"Thiếu cột bắt buộc: {missing_mandatory}"
-                total_cells = working_df.size
+                density_cols = [col for col in mandatory if col in working_df.columns]
+                total_cells = working_df[density_cols].size if density_cols else 0
                 if total_cells > 0:
-                    null_cells = working_df.isna().sum().sum()
+                    null_cells = working_df[density_cols].isna().sum().sum()
                     null_ratio = null_cells / total_cells
                     if null_ratio > 0.3:
                         return False, f"File quá rỗng (Tỷ lệ NULL: {null_ratio:.1%})"
@@ -543,6 +821,256 @@ def derive_status(schema_type: str) -> str:
     if schema_type == "MANUAL_FIX_REQUIRED": return "PENDING_MANUAL"
     return "UNKNOWN"
 
+
+def delete_related_physical_files(target_tbmts, tracked_paths):
+    deleted_paths = []
+    failed_paths = []
+    seen_paths = set()
+
+    for path_value in tracked_paths:
+        if not path_value or path_value in seen_paths:
+            continue
+        seen_paths.add(path_value)
+        try:
+            if is_r2_key(path_value):
+                delete_object(path_value)
+                deleted_paths.append(path_value)
+            elif os.path.exists(path_value):
+                os.remove(path_value)
+                deleted_paths.append(path_value)
+        except Exception as e:
+            failed_paths.append((path_value, str(e)))
+
+    normalized_targets = tuple(sorted(target_tbmts))
+    if normalized_targets and os.path.exists(ROOT_DATA_DIR):
+        for root, _, files in os.walk(ROOT_DATA_DIR):
+            normalized_root = root.replace("\\", "/").lower()
+            if "/latest" not in normalized_root and "/archive" not in normalized_root:
+                continue
+            for fname in files:
+                if not any(fname.startswith(tbmt) for tbmt in normalized_targets):
+                    continue
+                full_path = os.path.join(root, fname)
+                if full_path in seen_paths:
+                    continue
+                try:
+                    os.remove(full_path)
+                    deleted_paths.append(full_path)
+                    seen_paths.add(full_path)
+                except Exception as e:
+                    failed_paths.append((full_path, str(e)))
+
+    return deleted_paths, failed_paths
+
+
+def purge_related_records(ma_tbmt=None, package_phrase=None, investor_phrase=None, contractor_phrase=None, dry_run=False):
+    ma_tbmt = (ma_tbmt or "").strip()
+    package_phrase = (package_phrase or "").strip().lower()
+    investor_phrase = (investor_phrase or "").strip().lower()
+    contractor_phrase = (contractor_phrase or "").strip().lower()
+
+    if not any([ma_tbmt, package_phrase, investor_phrase, contractor_phrase]):
+        print("❌ Cần cung cấp ít nhất 1 điều kiện xóa.")
+        return
+
+    target_tbmts = set()
+    summary = {}
+    tracked_paths = set()
+
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                if ma_tbmt:
+                    target_tbmts.add(ma_tbmt)
+
+                if package_phrase or investor_phrase:
+                    clauses = []
+                    params = []
+                    if package_phrase:
+                        clauses.append("LOWER(COALESCE(ten_goi_thau, '')) LIKE %s")
+                        params.append(f"%{package_phrase}%")
+                    if investor_phrase:
+                        clauses.append("LOWER(COALESCE(chu_dau_tu, '')) LIKE %s")
+                        params.append(f"%{investor_phrase}%")
+                    if clauses:
+                        cursor.execute(
+                            f"SELECT DISTINCT ma_tbmt FROM package_metadata WHERE {' OR '.join(clauses)}",
+                            tuple(params)
+                        )
+                        target_tbmts.update(row[0] for row in cursor.fetchall() if row[0])
+
+                if contractor_phrase:
+                    like_value = f"%{contractor_phrase}%"
+                    cursor.execute("""
+                        SELECT DISTINCT ma_tbmt
+                        FROM processed_medicines
+                        WHERE LOWER(COALESCE(nha_thau_trung_thau, '')) LIKE %s
+                        UNION
+                        SELECT DISTINCT ma_tbmt
+                        FROM processed_goods
+                        WHERE LOWER(COALESCE(nha_thau_trung_thau, '')) LIKE %s
+                    """, (like_value, like_value))
+                    target_tbmts.update(row[0] for row in cursor.fetchall() if row[0])
+
+                if not target_tbmts:
+                    print("⚠️ Không tìm thấy gói thầu nào phù hợp điều kiện xóa.")
+                    return
+
+                tbmt_tuple = tuple(sorted(target_tbmts))
+                print(f"🧹 {'Xem trước' if dry_run else 'Sẽ xóa'} dữ liệu liên quan của {len(tbmt_tuple)} TBMT.")
+                print("   - Danh sách TBMT:", ", ".join(tbmt_tuple))
+
+                path_sources = [
+                    ("packages", "file_path"),
+                    ("daily_manifest", "full_path"),
+                    ("ocr_queue", "file_path"),
+                ]
+                for table_name, col_name in path_sources:
+                    cursor.execute(f"SELECT {col_name} FROM {table_name} WHERE ma_tbmt IN %s", (tbmt_tuple,))
+                    tracked_paths.update(row[0] for row in cursor.fetchall() if row[0])
+
+                delete_targets = [
+                    ("processed_medicines", "ma_tbmt"),
+                    ("processed_goods", "ma_tbmt"),
+                    ("daily_manifest", "ma_tbmt"),
+                    ("ocr_queue", "ma_tbmt"),
+                    ("scan_anomalies", "ma_tbmt"),
+                    ("scan_logs", "ma_tbmt"),
+                    ("packages", "ma_tbmt"),
+                    ("package_metadata", "ma_tbmt"),
+                    ("qd_relations", "ma_tbmt"),
+                ]
+
+                for table_name, key_col in delete_targets:
+                    cursor.execute(f"SELECT COUNT(*) FROM {table_name} WHERE {key_col} IN %s", (tbmt_tuple,))
+                    summary[table_name] = cursor.fetchone()[0]
+
+                print("📋 Số dòng liên quan theo bảng:")
+                for table_name, row_count in summary.items():
+                    if row_count:
+                        print(f"   - {table_name}: {row_count} dòng")
+
+                print(f"📁 File vật lý/path tracking tìm thấy: {len(tracked_paths)}")
+
+                if dry_run:
+                    conn.rollback()
+                    print("ℹ️ Dry-run: chưa xóa DB hay file vật lý.")
+                    return
+
+                for table_name, key_col in delete_targets:
+                    cursor.execute(f"DELETE FROM {table_name} WHERE {key_col} IN %s", (tbmt_tuple,))
+
+                conn.commit()
+
+        deleted_paths, failed_paths = delete_related_physical_files(target_tbmts, tracked_paths)
+
+        print("✅ Đã xóa xong dữ liệu liên quan.")
+        print(f"   - File vật lý đã xóa: {len(deleted_paths)}")
+        if failed_paths:
+            print(f"   - File vật lý lỗi khi xóa: {len(failed_paths)}")
+            for path_value, reason in failed_paths[:10]:
+                print(f"     * {path_value} -> {reason}")
+
+    except psycopg2.Error as e:
+        logger.error(f"❌ Lỗi purge dữ liệu: {e}")
+
+
+def ignore_qd_unit(ma_tbmt, so_qd, version, correct_qd, note=None, dry_run=False):
+    ma_tbmt = (ma_tbmt or "").strip()
+    so_qd = (so_qd or "").strip()
+    version = (version or "").strip() or "00"
+    correct_qd = (correct_qd or "").strip()
+    note = (note or "").strip()
+    if not ma_tbmt or not so_qd or not correct_qd:
+        print("❌ Cần nhập đủ Mã TBMT, Số QĐ typo và Số QĐ đúng.")
+        return
+
+    tracked_paths = set()
+    summary = {}
+
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    INSERT INTO qd_relations (ma_tbmt, so_qd, version, so_qd_original, relation_type, note)
+                    VALUES (%s, %s, %s, %s, 'TYPO_ERROR', %s)
+                    ON CONFLICT (ma_tbmt, so_qd, version)
+                    DO UPDATE SET
+                        so_qd_original = EXCLUDED.so_qd_original,
+                        relation_type = 'TYPO_ERROR',
+                        note = EXCLUDED.note,
+                        updated_at = NOW()
+                """, (ma_tbmt, so_qd, version, correct_qd, note or "Typo QĐ from source"))
+
+                path_sources = [
+                    ("packages", "file_path"),
+                    ("daily_manifest", "full_path"),
+                    ("ocr_queue", "file_path"),
+                ]
+                for table_name, col_name in path_sources:
+                    cursor.execute(
+                        f"SELECT {col_name} FROM {table_name} WHERE ma_tbmt = %s AND so_qd = %s",
+                        (ma_tbmt, so_qd)
+                    )
+                    tracked_paths.update(row[0] for row in cursor.fetchall() if row[0])
+
+                delete_specs = [
+                    ("processed_medicines", "ma_tbmt = %s AND so_qd = %s"),
+                    ("processed_goods", "ma_tbmt = %s AND so_qd = %s"),
+                    ("daily_manifest", "ma_tbmt = %s AND so_qd = %s"),
+                    ("ocr_queue", "ma_tbmt = %s AND so_qd = %s"),
+                    ("scan_anomalies", "ma_tbmt = %s AND (so_qd = %s OR files_involved ILIKE %s)"),
+                    ("scan_logs", "ma_tbmt = %s AND so_qd = %s"),
+                    ("packages", "ma_tbmt = %s AND so_qd = %s"),
+                    ("package_metadata", "ma_tbmt = %s AND so_qd = %s"),
+                    ("qd_relations", "ma_tbmt = %s AND so_qd = %s"),
+                ]
+
+                for table_name, where_clause in delete_specs:
+                    if table_name == "scan_anomalies":
+                        cursor.execute(
+                            f"SELECT COUNT(*) FROM {table_name} WHERE {where_clause}",
+                            (ma_tbmt, so_qd, f"%{so_qd}%")
+                        )
+                    else:
+                        cursor.execute(
+                            f"SELECT COUNT(*) FROM {table_name} WHERE {where_clause}",
+                            (ma_tbmt, so_qd)
+                        )
+                    summary[table_name] = cursor.fetchone()[0]
+
+                print(f"🚫 {'Xem trước' if dry_run else 'Sẽ bỏ qua'} QĐ typo {so_qd} của {ma_tbmt} -> QĐ đúng {correct_qd}.")
+                for table_name, row_count in summary.items():
+                    if row_count:
+                        print(f"   - {table_name}: {row_count} dòng")
+                print(f"   - File/path liên quan: {len(tracked_paths)}")
+
+                if dry_run:
+                    conn.rollback()
+                    print("ℹ️ Dry-run: chưa xóa dữ liệu.")
+                    return
+
+                for table_name, where_clause in delete_specs:
+                    if table_name == "scan_anomalies":
+                        cursor.execute(
+                            f"DELETE FROM {table_name} WHERE {where_clause}",
+                            (ma_tbmt, so_qd, f"%{so_qd}%")
+                        )
+                    else:
+                        cursor.execute(
+                            f"DELETE FROM {table_name} WHERE {where_clause}",
+                            (ma_tbmt, so_qd)
+                        )
+
+                conn.commit()
+
+        deleted_paths, failed_paths = delete_related_physical_files({ma_tbmt}, tracked_paths)
+        print(f"✅ Đã đánh dấu TYPO_ERROR và bỏ qua QĐ {so_qd} của {ma_tbmt}. File vật lý đã xóa: {len(deleted_paths)}")
+        if failed_paths:
+            print(f"⚠️ Có {len(failed_paths)} file/path không xóa được.")
+    except psycopg2.Error as e:
+        logger.error(f"❌ Lỗi ignore QĐ typo: {e}")
+
 def save_manifest_to_db(manifest_list):
     if not manifest_list: return
     
@@ -563,6 +1091,15 @@ def save_manifest_to_db(manifest_list):
                         INSERT INTO daily_manifest
                         (manifest_date, ma_tbmt, so_qd, version, filename, schema_type, full_path, file_size_kb, status)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT ON CONSTRAINT uq_manifest
+                        DO UPDATE SET
+                            ma_tbmt = EXCLUDED.ma_tbmt,
+                            so_qd = EXCLUDED.so_qd,
+                            version = EXCLUDED.version,
+                            schema_type = EXCLUDED.schema_type,
+                            full_path = EXCLUDED.full_path,
+                            file_size_kb = EXCLUDED.file_size_kb,
+                            status = EXCLUDED.status
                     """, (TARGET_DATE, item["TBMT"], item.get("So_qd"), item.get("Version"),
                           item["Filename"], item["Schema_Type"], item["Full_Path"], item["Size_KB"], status))
         logger.info(f"✅ Đã upsert {len(clean_list)} record vào DB [table: daily_manifest].")
@@ -605,6 +1142,7 @@ def scan_anomalies():
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
+                ignored_qd_map = load_ignored_qd_map(cursor)
                 # 0. Tải danh sách TBMT đã được cấu hình từ bảng qd_relations
                 cursor.execute("SELECT DISTINCT ma_tbmt FROM qd_relations")
                 configured_tbmts = {row[0] for row in cursor.fetchall()}
@@ -616,9 +1154,18 @@ def scan_anomalies():
                     WHERE file_path LIKE '%%' || %s || '%%'
                 """, (TARGET_DATE,))
                 db_files = cursor.fetchall()
+                units_by_tbmt_ver = {}
+                for db_path, db_tbmt, db_qd in db_files:
+                    if db_qd in ignored_qd_map.get(db_tbmt, set()):
+                        continue
+                    db_core_name = os.path.splitext(os.path.basename(db_path))[0]
+                    _, _, db_version = parse_unit_from_filename(db_core_name)
+                    units_by_tbmt_ver.setdefault((db_tbmt, db_version), set()).add(db_qd)
 
                 file_to_qd_map = {}
                 for db_path, db_tbmt, db_qd in db_files:
+                    if db_qd in ignored_qd_map.get(db_tbmt, set()):
+                        continue
                     base_name = os.path.basename(db_path)
                     core_name = os.path.splitext(base_name)[0]
                     file_to_qd_map[core_name] = (db_tbmt, db_qd)
@@ -631,8 +1178,11 @@ def scan_anomalies():
                     if core_f in file_to_qd_map:
                         tbmt, qd_raw = file_to_qd_map[core_f]
                     else:
-                        tbmt = f.split('_')[0] if '_' in f else "UNKNOWN_TBMT"
-                        qd_raw = "UNKNOWN"
+                        tbmt, qd_raw, version = parse_unit_from_filename(f)
+                        qd_candidates = units_by_tbmt_ver.get((tbmt, version), set())
+                        qd_raw = resolve_qd_from_candidates(f, tbmt, version, qd_raw, qd_candidates)
+                    if qd_raw in ignored_qd_map.get(tbmt, set()):
+                        continue
                         
                     tbmt_qd_map.setdefault(tbmt, set()).add(qd_raw)
 
@@ -644,6 +1194,8 @@ def scan_anomalies():
                         WHERE ma_tbmt IN %s AND is_latest = 1
                     """, (found_tbmts,))
                     for db_tbmt, db_qd in cursor.fetchall():
+                        if db_qd in ignored_qd_map.get(db_tbmt, set()):
+                            continue
                         tbmt_qd_map.setdefault(db_tbmt, set()).add(db_qd)
 
                 # 3. Ghi nhận lỗi
@@ -750,21 +1302,44 @@ def finalize_and_generate_manifest(batch_limit=None):
         all_physical_files = os.listdir(SOURCE_DIR)
         physical_map, found_tbmts = {}, set()
         for f in all_physical_files:
-            if not f.startswith('~$') and f.endswith(('.xlsx', '.pdf', '.doc', '.docx')):
+            if not f.startswith('~$') and f.endswith(('.xlsx', '.xls', '.pdf', '.doc', '.docx')):
                 tbmt_prefix = f.split('_')[0]
                 physical_map.setdefault(tbmt_prefix, []).append(f)
                 found_tbmts.add(tbmt_prefix)
         if not found_tbmts: return print("⚠️ Folder rỗng.")
+        sync_manual_files_in_latest(all_physical_files, found_tbmts)
     except Exception as e: return print(f"❌ Lỗi đọc folder: {e}")
 
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
+                ignored_qd_map = load_ignored_qd_map(cursor)
                 cursor.execute("""
-                    SELECT ma_tbmt, so_qd, version FROM daily_manifest
-                    WHERE manifest_date = %s AND status IN ('READY', 'PROCESSED')
+                    SELECT ma_tbmt, so_qd, version
+                    FROM daily_manifest
+                    WHERE manifest_date = %s AND status = 'PROCESSED'
                 """, (TARGET_DATE,))
-                done_units = set(row for row in cursor.fetchall())
+                processed_units = set(row for row in cursor.fetchall())
+
+                cursor.execute("""
+                    SELECT ma_tbmt, so_qd, version
+                    FROM packages
+                    WHERE ma_tbmt IN %s AND is_latest = 1 AND file_type = 'excel'
+                """, (tuple(found_tbmts),))
+                ready_excel_units = {
+                    row for row in cursor.fetchall()
+                    if row[1] not in ignored_qd_map.get(row[0], set())
+                }
+
+                cursor.execute("""
+                    SELECT ma_tbmt, so_qd, version
+                    FROM daily_manifest
+                    WHERE manifest_date = %s AND status = 'READY'
+                """, (TARGET_DATE,))
+                ready_units = {
+                    row for row in cursor.fetchall()
+                    if row in ready_excel_units
+                }
 
                 cursor.execute("""
                     SELECT ma_tbmt, so_qd, version, array_agg(file_path) AS file_paths
@@ -773,27 +1348,25 @@ def finalize_and_generate_manifest(batch_limit=None):
                     GROUP BY ma_tbmt, so_qd, version
                 """, (tuple(found_tbmts),))
                 
-                db_rows = cursor.fetchall()
+                db_rows = [
+                    row for row in cursor.fetchall()
+                    if row[1] not in ignored_qd_map.get(row[0], set())
+                ]
                 if not db_rows: return print("⚠️ Không tìm thấy metadata trong DB.")
 
                 manifest_data, processed_filenames, todo_count, all_pdfs_for_ocr = [], set(), 0, []
 
                 for tbmt, qd_raw, version, file_paths in db_rows:
-                    if (tbmt, qd_raw, version) in done_units: continue
+                    unit_key = (tbmt, qd_raw, version)
+                    if unit_key in processed_units or unit_key in ready_units:
+                        continue
                     todo_count += 1
                     if batch_limit and todo_count > batch_limit: break
 
                     candidates = physical_map.get(tbmt, [])
                     if not candidates: continue
 
-                    matched_files = []
-                    for fp in file_paths:
-                        db_fname = os.path.basename(fp)
-                        db_fname_no_ext = os.path.splitext(db_fname)[0]
-                        for f in candidates:
-                            if f not in matched_files and (f == db_fname or (len(db_fname_no_ext) > 5 and db_fname_no_ext in f)):
-                                matched_files.append(f)
-
+                    matched_files = find_matched_files_for_unit(candidates, file_paths, tbmt, qd_raw, version)
                     if not matched_files: continue
 
                     best_file = choose_best_file(matched_files)
@@ -802,6 +1375,10 @@ def finalize_and_generate_manifest(batch_limit=None):
 
                     full_path = os.path.join(SOURCE_DIR, best_file)
                     best_ext = os.path.splitext(best_file)[1].lower()
+
+                    manual_file_type = infer_manual_file_type(best_file)
+                    if manual_file_type in ('excel', 'pdf'):
+                        upsert_manual_file_to_packages(tbmt, qd_raw, version, full_path, manual_file_type)
 
                     status, reason = identify_file_status_detailed(full_path, best_ext, tbmt, matched_files)
 
@@ -973,6 +1550,52 @@ def revalidate_manual_fixes():
                 print(f"\n📊 KẾT QUẢ RE-VALIDATE: Đã sửa {fixed_count}, Còn lỗi {still_broken}")
     except psycopg2.Error as e: logger.error(f"❌ Lỗi Re-validate: {e}")
 
+
+def purge_related_records_interactive():
+    print("\n🧹 XÓA DỮ LIỆU LIÊN QUAN")
+    ma_tbmt = input("Mã TBMT cần xóa [Enter nếu không dùng]: ").strip()
+    package_phrase = input("Cụm từ trong tên gói thầu [Enter nếu không dùng]: ").strip()
+    investor_phrase = input("Cụm từ trong tên chủ đầu tư [Enter nếu không dùng]: ").strip()
+    contractor_phrase = input("Cụm từ trong tên nhà thầu [Enter nếu không dùng]: ").strip()
+    preview = input("Chạy dry-run xem trước? [Y/n]: ").strip().lower()
+    if preview in ("", "y", "yes"):
+        purge_related_records(
+            ma_tbmt=ma_tbmt,
+            package_phrase=package_phrase,
+            investor_phrase=investor_phrase,
+            contractor_phrase=contractor_phrase,
+            dry_run=True
+        )
+    confirm = input("Xác nhận xóa? Gõ DELETE để tiếp tục: ").strip()
+    if confirm != "DELETE":
+        print("ℹ️ Đã hủy thao tác xóa.")
+        return
+
+    purge_related_records(
+        ma_tbmt=ma_tbmt,
+        package_phrase=package_phrase,
+        investor_phrase=investor_phrase,
+        contractor_phrase=contractor_phrase
+    )
+
+
+def ignore_qd_unit_interactive():
+    print("\n🚫 GHI NHẬN TYPO_ERROR CHO QĐ")
+    ma_tbmt = input("Mã TBMT: ").strip()
+    so_qd = input("Số QĐ cần bỏ qua: ").strip()
+    version = input("Version của QĐ typo [Enter = 00]: ").strip() or "00"
+    correct_qd = input("Số QĐ đúng để map về trong qd_relations: ").strip()
+    note = input("Ghi chú [Enter nếu bỏ trống]: ").strip()
+    preview = input("Chạy dry-run xem trước? [Y/n]: ").strip().lower()
+    if preview in ("", "y", "yes"):
+        ignore_qd_unit(ma_tbmt, so_qd, version, correct_qd, note=note, dry_run=True)
+    confirm = input("Xác nhận bỏ qua? Gõ IGNORE để tiếp tục: ").strip()
+    if confirm != "IGNORE":
+        print("ℹ️ Đã hủy thao tác.")
+        return
+    ignore_qd_unit(ma_tbmt, so_qd, version, correct_qd, note=note, dry_run=False)
+
+
 # =====================================================================
 # MENU
 # =====================================================================
@@ -1004,13 +1627,15 @@ if __name__ == "__main__":
         print("2. Finalize & Manifest (Kiểm duyệt & Chốt sổ Data)")
         print("3. Manage Manual OCR (Nhập kết quả xử lý từ ABBYY)")
         print("4. Re-validate Manual Fixes (Check lại file vừa sửa tay)")
+        print("5. Purge Related Records (Xóa dữ liệu liên quan)")
         print("0. Thoát")
         
-        c = input("👉 Chọn task (0-4): ").strip()
+        c = input("👉 Chọn task (0-5): ").strip()
         if c == "0": break
         elif c == "1": scan_anomalies()
         elif c == "2": finalize_and_generate_manifest()
         elif c == "3": manage_ocr_workflow()
         elif c == "4": revalidate_manual_fixes()
+        elif c == "5": purge_related_records_interactive()
         else: print("❌ Lựa chọn không hợp lệ!")
         

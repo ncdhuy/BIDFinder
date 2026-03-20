@@ -47,7 +47,8 @@ SCHEMAS = {
             "Thành tiền": "Thành tiền (VND)",
             "Tên cơ sở sản xuất": "Cơ sở sản xuất",
             "Nước sản xuất": "Xuất xứ",
-            "Mã phần lô": "Mã phần/lô"
+            "Mã phần lô": "Mã phần/lô",
+            "Mã phần (lô)": "Mã phần/lô"
         },
 
         "primary_merge_key": ["Mã phần/lô"],
@@ -76,10 +77,10 @@ SCHEMAS = {
     "GOODS_STANDARD": {
         "description": "Gói thầu Hàng hóa",
         "table_name": "processed_goods",
-        "signature_columns": ["Tên hàng hóa"],
+        "signature_columns": ["Danh mục hàng hóa"],
 
         "mandatory_columns": [
-            "Tên hàng hóa",
+            "Danh mục hàng hóa",
             "Đơn vị tính",
             "Khối lượng",
             "Đơn giá trúng thầu (VND)"
@@ -89,46 +90,62 @@ SCHEMAS = {
             "Mã TBMT": "ma_tbmt",
             "so_qd_sanitized": "so_qd",           
             "version_code": "version",           
-            "Nhà thầu trúng thầu": "nha_thau_trung_thau",
             "Mã phần/lô": "ma_phan_lo",
-            "Tên hàng hóa": "ten_hang_hoa",
+            "Tên phần/lô": "ten_phan_lo",
+            "Nhà thầu trúng thầu": "nha_thau_trung_thau",
+            "Danh mục hàng hóa": "danh_muc_hang_hoa",
             "Ký mã hiệu": "ky_ma_hieu",
             "Nhãn hiệu": "nhan_hieu",
-            "Năm sản xuất": "nam_san_xuat",
-            "Xuất xứ": "xuat_xu",
-            "Hãng sản xuất": "hang_san_xuat",
-            "Tính năng kỹ thuật": "tinh_nang_ky_thuat",
+            "Mặt hàng dự thầu": "mat_hang_du_thau",
             "Đơn vị tính": "don_vi_tinh",
             "Khối lượng": "khoi_luong",
+            "Xuất xứ": "xuat_xu",
+            "Năm sản xuất": "nam_san_xuat",
+            "Hãng sản xuất": "hang_san_xuat",
+            "Tính năng kỹ thuật": "tinh_nang_ky_thuat",
             "Mã HS": "ma_hs",
             "Đơn giá trúng thầu (VND)": "don_gia_trung_thau",
             "Thành tiền (VND)": "thanh_tien"
         },
 
         "column_mapping": {
+            "Mã phần (lô)": "Mã phần/lô",
+            "Mã phần lô": "Mã phần/lô",
+            "Mã phần/ lô": "Mã phần/lô",
+            "Mã phần": "Mã phần/lô",
+            "Tên phần (lô)": "Tên phần/lô",
+            "Tên phần lô": "Tên phần/lô",
+            "Tên phần/ lô": "Tên phần/lô",
+            "Tên phần": "Tên phần/lô",
+            "Tên hàng hóa": "Danh mục hàng hóa",
+            "Ký mã hiệu/nhãn mác của sản phẩm": "Ký mã hiệu",
+            "Ký mã hiệu, xuất xứ của sản phẩm": "Ký mã hiệu",
+            "Mô tả hàng hóa": "Mặt hàng dự thầu",
+            "Khối lượng mời thầu": "Khối lượng",
+            "Xuất xứ (quốc gia, vùng lãnh thổ sản xuất)": "Xuất xứ",          
             "Cấu hình, tính năng kỹ thuật cơ bản": "Tính năng kỹ thuật",
             "Thông số kỹ thuật": "Tính năng kỹ thuật",
-            "Danh mục hàng hóa": "Tên hàng hóa",
             "Đơn giá trúng thầu": "Đơn giá trúng thầu (VND)",
             "Đơn giá dự thầu (đã bao gồm thuế, phí, lệ phí (nếu có))": "Đơn giá trúng thầu (VND)",
             "Thành tiền đã bao gồm thuế, phí, lệ phí (nếu có))": "Thành tiền (VND)",
-            "Ký mã hiệu, xuất xứ của sản phẩm": "Ký mã hiệu",
-            "Mã phần (lô)": "Mã phần/lô"
         },
 
         "primary_merge_key": ["Mã phần/lô"],
-        "fallback_merge_key": ["Tên hàng hóa", "Khối lượng", "Đơn giá trúng thầu (VND)"],
+        "fallback_merge_key": ["Danh mục hàng hóa", "Khối lượng", "Đơn giá trúng thầu (VND)"],
 
         "output_columns": [
-            "Nhà thầu trúng thầu", "Mã phần/lô", "Tên hàng hóa", "Ký mã hiệu", "Nhãn hiệu",
-            "Năm sản xuất", "Xuất xứ", "Hãng sản xuất", "Tính năng kỹ thuật",
-            "Đơn vị tính", "Khối lượng", "Đơn giá trúng thầu (VND)", "Thành tiền (VND)"
+            "Mã phần/lô", "Tên phần/lô", "Nhà thầu trúng thầu", "Danh mục hàng hóa",
+            "Ký mã hiệu", "Nhãn hiệu", "Hãng sản xuất", "Mặt hàng dự thầu",
+            "Đơn vị tính", "Khối lượng", "Xuất xứ", "Năm sản xuất",
+            "Tính năng kỹ thuật", "Đơn giá trúng thầu (VND)", "Thành tiền (VND)"
         ],
 
         "db_indexes": [
             "ma_tbmt", 
             "so_qd",            
-            "ten_hang_hoa", 
+            "danh_muc_hang_hoa",
+            "ten_phan_lo",
+            "mat_hang_du_thau",
             "don_vi_tinh", 
             "khoi_luong", 
             "don_gia_trung_thau", 
