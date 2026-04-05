@@ -229,24 +229,52 @@ class DatabaseMigrator:
                 )
             """)
             
-            # 9. Bảng OCR Queue
+            # 9. Bảng audit issue từ manifest
             self.cursor.execute("""
-                CREATE TABLE IF NOT EXISTS ocr_queue (
+                CREATE TABLE IF NOT EXISTS manifest_issues (
                     id SERIAL PRIMARY KEY,
-                    ma_tbmt TEXT,
-                    so_qd TEXT,
-                    version TEXT, 
+                    issue_date TEXT NOT NULL,
+                    ma_tbmt TEXT NOT NULL,
+                    so_qd TEXT NOT NULL,
+                    version TEXT NOT NULL,
                     filename TEXT,
-                    file_path TEXT,
-                    status TEXT DEFAULT 'PENDING',
+                    issue_type TEXT NOT NULL,
+                    issue_reason TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    
-                    CONSTRAINT uq_ocr UNIQUE(ma_tbmt, so_qd, version, filename)
+
+                    CONSTRAINT uq_manifest_issues UNIQUE(issue_date, ma_tbmt, so_qd, version, issue_type)
                 )
             """)
 
-            # 10. Bảng quan hệ QĐ
+            # 10. Bảng tác vụ xử lý có người tham gia (OCR / MANUAL)
+            self.cursor.execute("""
+                CREATE TABLE IF NOT EXISTS human_task_queue (
+                    id SERIAL PRIMARY KEY,
+                    work_date TEXT NOT NULL,
+                    task_type TEXT NOT NULL,
+                    ma_tbmt TEXT NOT NULL,
+                    so_qd TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    source_filename TEXT,
+                    source_path TEXT,
+                    source_files_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    workspace_source_dir TEXT,
+                    workspace_result_dir TEXT,
+                    expected_output_filename TEXT,
+                    issue_reason TEXT,
+                    status TEXT DEFAULT 'PENDING_EXPORT',
+                    validation_message TEXT,
+                    result_filename TEXT,
+                    import_attempts INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                    CONSTRAINT uq_human_task UNIQUE(work_date, task_type, ma_tbmt, so_qd, version)
+                )
+            """)
+
+            # 11. Bảng quan hệ QĐ
             self.cursor.execute("""
                 CREATE TABLE IF NOT EXISTS qd_relations (
                     ma_tbmt      TEXT NOT NULL,
@@ -260,16 +288,17 @@ class DatabaseMigrator:
                 )
             """)
 
-            # 11. Kích hoạt extension hỗ trợ tìm kiếm chuỗi con siêu tốc
+            # 12. Kích hoạt extension hỗ trợ tìm kiếm chuỗi con siêu tốc
             self.cursor.execute("""
                 CREATE EXTENSION IF NOT EXISTS pg_trgm;
             """)
 
-            # 12. Tạo GIN Index cho các cột cần làm autocomplete
+            # 13. Tạo GIN Index cho các cột cần làm autocomplete
             self.cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_medicines_ten_thuoc_trgm ON processed_medicines USING gin (ten_thuoc gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_goods_danh_muc_hang_hoa_trgm ON processed_goods USING gin (danh_muc_hang_hoa gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_metadata_chu_dau_tu_trgm ON package_metadata USING gin (chu_dau_tu gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_human_task_queue_lookup ON human_task_queue (work_date, task_type, status);
             """)
 
             self.conn.commit()

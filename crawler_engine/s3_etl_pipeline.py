@@ -13,6 +13,7 @@ from dateutil.relativedelta import relativedelta
 import shutil
 from storage_adapter import ensure_local_file, is_r2_key, move_object, build_r2_key
 import logging
+import warnings
 
 logging.basicConfig(
     level=logging.INFO,
@@ -20,6 +21,31 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger(__name__)
+
+warnings.filterwarnings(
+    "ignore",
+    message="Workbook contains no default style, apply openpyxl's default",
+    category=UserWarning,
+    module="openpyxl.styles.stylesheet",
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r"Print area cannot be set to Defined name: .*",
+    category=UserWarning,
+    module="openpyxl.reader.workbook",
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r"File contains an invalid specification for .*",
+    category=UserWarning,
+    module="openpyxl.reader.workbook",
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r"Defined names for sheet index \d+ cannot be located",
+    category=UserWarning,
+    module="openpyxl.reader.workbook",
+)
 
 # =====================================================================
 # CẤU HÌNH HỆ THỐNG & KẾT NỐI DATABASE
@@ -109,23 +135,50 @@ KEYWORD_RULES = {
 }
 
 def clean_col_str(s: str) -> str:
-    if not isinstance(s, str): return str(s)
-    return s.lower()
+    if not isinstance(s, str):
+        s = str(s)
+    return re.sub(r"\s+", " ", s).strip().lower()
+
+
+def is_vendor_group_column_name(col_name) -> bool:
+    col_clean = clean_col_str(col_name)
+    if "nhà thầu" not in col_clean:
+        return False
+    if col_clean.startswith("stt") or col_clean.startswith("số thứ tự"):
+        return False
+    if col_clean.startswith("mã"):
+        return False
+    return True
 
 def get_smart_column_mapping(df_columns: list, mapping_config: dict) -> dict:
     final_map = {}
     clean_mapping_config = {clean_col_str(k): v for k, v in mapping_config.items()}
-    
+    best_target_choice = {}
+
+    def register_candidate(source_col, target_col, priority):
+        if not target_col:
+            return
+        candidate = (priority, len(str(source_col or "")))
+        current = best_target_choice.get(target_col)
+        if current is None or candidate > current[0]:
+            best_target_choice[target_col] = (candidate, source_col)
+
     for col in df_columns:
         col_clean = clean_col_str(col)
         if col in mapping_config:
-            final_map[col] = mapping_config[col]; continue
+            register_candidate(col, mapping_config[col], 3)
+            continue
         if col_clean in clean_mapping_config:
-            final_map[col] = clean_mapping_config[col_clean]; continue
+            register_candidate(col, clean_mapping_config[col_clean], 3)
+            continue
             
         for target_col, keywords in KEYWORD_RULES.items():
             if any(kw in col_clean for kw in keywords):
-                final_map[col] = target_col; break
+                register_candidate(col, target_col, 1)
+                break
+
+    for target_col, (_, source_col) in best_target_choice.items():
+        final_map[source_col] = target_col
     return final_map
 
 def clean_numeric_series(series: pd.Series) -> pd.Series:
@@ -166,11 +219,29 @@ def collapse_sparse_goods_rows(df: pd.DataFrame) -> pd.DataFrame:
     def clean_text(value) -> str:
         return str(value).strip() if not pd.isna(value) else ""
 
+    def stt_root(value) -> str:
+        text = clean_text(value)
+        if not text:
+            return ""
+        match = re.match(r"^(\d+)", text)
+        return match.group(1) if match else text
+
     def is_goods_total_row(row: pd.Series) -> bool:
+        non_blank_count = sum(not is_blank(v) for v in row.tolist())
+        sparse_threshold = max(4, int(len(row) * 0.35))
+        is_sparse_row = non_blank_count <= sparse_threshold
+
         patterns = [
             r"tổng cộng giá .* hàng hóa",
             r"tổng giá .* hàng hóa",
             r"tổng cộng .* phí.*lệ phí",
+        ]
+        sparse_summary_patterns = [
+            r"^tổng cộng\b",
+            r"^thành tiền\b",
+            r"^số tiền bằng chữ\b",
+            r"^giá trị bằng chữ\b",
+            r"^cộng\b",
         ]
         for value in row.tolist():
             text = clean_text(value).lower()
@@ -178,10 +249,12 @@ def collapse_sparse_goods_rows(df: pd.DataFrame) -> pd.DataFrame:
                 continue
             if any(re.search(pattern, text) for pattern in patterns):
                 return True
+            if is_sparse_row and any(re.search(pattern, text) for pattern in sparse_summary_patterns):
+                return True
         return False
 
     stt_col = next((c for c in df.columns if clean_col_str(c) == "stt"), None)
-    vendor_col = next((c for c in df.columns if "nhà thầu" in clean_col_str(c)), None)
+    vendor_col = next((c for c in df.columns if is_vendor_group_column_name(c)), None)
     name_col = next((
         c for c in df.columns
         if "tên hàng hóa" in clean_col_str(c) or "danh mục hàng hóa" in clean_col_str(c)
@@ -248,6 +321,17 @@ def collapse_sparse_goods_rows(df: pd.DataFrame) -> pd.DataFrame:
             next_has_detail = sum(not is_blank(v) for v in next_row.tolist()) >= 4
             should_merge = current_has_stt and not next_has_stt and same_amount and next_has_detail
 
+            if not should_merge and name_col:
+                current_has_name = not is_blank(current.get(name_col))
+                same_stt_group = (
+                    current_has_stt and next_has_stt and
+                    stt_root(current.get(stt_col)) != "" and
+                    stt_root(current.get(stt_col)) == stt_root(next_row.get(stt_col))
+                )
+                sparse_current = sum(not is_blank(v) for v in current.tolist()) <= 5
+                richer_next = sum(not is_blank(v) for v in next_row.tolist()) > sum(not is_blank(v) for v in current.tolist())
+                should_merge = same_stt_group and current_has_name and sparse_current and richer_next
+
         if should_merge and next_row is not None:
             for col in df.columns:
                 if is_blank(current.get(col)) and not is_blank(next_row.get(col)):
@@ -264,6 +348,551 @@ def collapse_sparse_goods_rows(df: pd.DataFrame) -> pd.DataFrame:
 # =====================================================================
 # HÀM BỔ TRỢ: MERGE DỮ LIỆU
 # =====================================================================
+
+def collapse_sparse_medicine_rows(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    if df.empty:
+        return df
+
+    def is_blank(value) -> bool:
+        return pd.isna(value) or str(value).strip() == ""
+
+    def clean_text(value) -> str:
+        return str(value).strip() if not pd.isna(value) else ""
+
+    def stt_root(value) -> str:
+        text = clean_text(value)
+        if not text:
+            return ""
+        match = re.match(r"^(\d+)", text)
+        return match.group(1) if match else text
+
+    def normalize_stt(value) -> str:
+        text = clean_text(value)
+        return re.sub(r"\.0+$", "", text)
+
+    stt_col = next((c for c in df.columns if clean_col_str(c) == "stt"), None)
+    vendor_col = next((c for c in df.columns if is_vendor_group_column_name(c)), None)
+    name_col = next((c for c in df.columns if "tên thuốc" in clean_col_str(c)), None)
+    if not stt_col or not vendor_col or not name_col:
+        return df
+
+    expanded_rows = []
+    group_header = None
+    group_root = None
+
+    for _, row in df.iterrows():
+        current = row.copy()
+        current_stt = normalize_stt(current.get(stt_col))
+        current_root = stt_root(current_stt)
+        has_stt = bool(current_stt)
+        has_vendor = not is_blank(current.get(vendor_col))
+        has_name = not is_blank(current.get(name_col))
+
+        is_group_header = has_stt and has_vendor and not has_name and current_stt == current_root
+        is_group_detail = (
+            group_header is not None
+            and (
+                (has_stt and bool(group_root) and current_root == group_root and current_stt != group_root)
+                or (not has_stt and has_name)
+            )
+        )
+
+        if is_group_header:
+            group_header = current
+            group_root = current_root
+            continue
+
+        if is_group_detail:
+            for col in df.columns:
+                if is_blank(current.get(col)) and not is_blank(group_header.get(col)):
+                    current[col] = group_header.get(col)
+            expanded_rows.append(current)
+            continue
+
+        expanded_rows.append(current)
+        if has_stt and current_root != group_root:
+            group_header = None
+            group_root = None
+
+    return pd.DataFrame(expanded_rows, columns=df.columns)
+
+def detect_single_value_goods_group_header(
+    current: pd.Series,
+    next_row: pd.Series | None,
+    stt_col,
+    name_col,
+    amount_col,
+) -> tuple[str, list] | None:
+    if current is None or next_row is None:
+        return None
+
+    def is_blank(value) -> bool:
+        return pd.isna(value) or str(value).strip() == ""
+
+    def clean_text(value) -> str:
+        return str(value).strip() if not pd.isna(value) else ""
+
+    def is_numeric_like(text: str) -> bool:
+        return bool(re.match(r"^[\d\s.,()+\-/%xX*=]+$", text))
+
+    def stt_root(value) -> str:
+        text = clean_text(value)
+        if not text:
+            return ""
+        match = re.match(r"^(\d+)", text)
+        return match.group(1) if match else text
+
+    def has_detail_signal(row: pd.Series) -> bool:
+        if row is None:
+            return False
+        non_blank_count = sum(not is_blank(v) for v in row.tolist())
+        has_name = bool(name_col and not is_blank(row.get(name_col)))
+        has_price = any(
+            "đơn giá" in clean_col_str(col) and not is_blank(row.get(col))
+            for col in row.index
+        )
+        has_amount = any(
+            "thành tiền" in clean_col_str(col) and not is_blank(row.get(col))
+            for col in row.index
+        )
+        has_quantity = any(
+            any(token in clean_col_str(col) for token in ("khối lượng", "số lượng"))
+            and not is_blank(row.get(col))
+            for col in row.index
+        )
+        return has_name or has_price or has_amount or has_quantity or non_blank_count >= 4
+
+    texts = []
+    source_cols = []
+    for col in current.index:
+        if col == stt_col or col == amount_col:
+            continue
+        text = clean_text(current.get(col))
+        if not text or is_numeric_like(text):
+            continue
+        text_lower = text.lower()
+        if text_lower.startswith(("tổng cộng", "thành tiền", "số tiền bằng chữ", "giá trị bằng chữ", "cộng")):
+            continue
+        texts.append(text)
+        source_cols.append(col)
+
+    if not texts:
+        return None
+
+    normalized_unique = {re.sub(r"\s+", " ", text).strip().lower() for text in texts}
+    if len(normalized_unique) != 1:
+        return None
+
+    current_non_blank = sum(not is_blank(v) for v in current.tolist())
+    next_non_blank = sum(not is_blank(v) for v in next_row.tolist())
+    if next_non_blank <= current_non_blank or not has_detail_signal(next_row):
+        return None
+
+    current_stt = clean_text(current.get(stt_col)) if stt_col else ""
+    next_stt = clean_text(next_row.get(stt_col)) if stt_col else ""
+
+    same_group = False
+    if current_stt:
+        current_root = stt_root(current_stt)
+        next_root = stt_root(next_stt)
+        same_group = (
+            (not next_stt)
+            or (bool(current_root) and current_root == next_root and next_stt != current_stt)
+        )
+    else:
+        same_group = (not next_stt) or has_detail_signal(next_row)
+
+    if not same_group:
+        return None
+
+    return texts[0], source_cols
+
+
+SUMMARY_ROW_PREFIXES = (
+    "tổng cộng",
+    "thành tiền",
+    "số tiền bằng chữ",
+    "giá trị bằng chữ",
+    "cộng",
+)
+
+
+def _is_blank_cell(value) -> bool:
+    return pd.isna(value) or str(value).strip() == ""
+
+
+def _clean_cell_text(value) -> str:
+    return str(value).strip() if not pd.isna(value) else ""
+
+
+def _normalize_stt_value(value) -> str:
+    text = _clean_cell_text(value)
+    return re.sub(r"\.0+$", "", text)
+
+
+def _stt_root_value(value) -> str:
+    text = _normalize_stt_value(value)
+    if not text:
+        return ""
+    match = re.match(r"^(\d+)", text)
+    return match.group(1) if match else text
+
+
+def _is_top_level_stt(value) -> bool:
+    text = _normalize_stt_value(value)
+    return bool(text) and text == _stt_root_value(text)
+
+
+def _is_numeric_like_text(text) -> bool:
+    return bool(re.match(r"^[\d\s.,()+\-/%xX*=]+$", text))
+
+
+def _matches_group_target(col_name, target_name) -> bool:
+    col_clean = clean_col_str(col_name)
+    target_clean = clean_col_str(target_name)
+    if col_clean == target_clean:
+        return True
+    if target_clean == "nhà thầu trúng thầu":
+        return is_vendor_group_column_name(col_name)
+    return target_clean in col_clean
+
+
+def get_group_row_engine_settings(df: pd.DataFrame, schema_type: str):
+    stt_col = next((c for c in df.columns if clean_col_str(c) == "stt"), None)
+    amount_col = next((c for c in df.columns if "thành tiền" in clean_col_str(c)), None)
+
+    if schema_type == "GOODS_STANDARD":
+        detail_cols = [
+            c for c in df.columns
+            if any(token in clean_col_str(c) for token in ("tên hàng hóa", "danh mục hàng hóa", "tên thương mại"))
+        ]
+        group_targets = ["Nhà thầu trúng thầu"]
+        auto_create_target = "Nhà thầu trúng thầu"
+    else:
+        detail_cols = [c for c in df.columns if "tên thuốc" in clean_col_str(c)]
+        group_targets = ["Nhà thầu trúng thầu", "Nhóm thuốc"]
+        auto_create_target = "Nhà thầu trúng thầu"
+
+    existing_group_cols = [
+        c for c in df.columns
+        if any(_matches_group_target(c, target) for target in group_targets)
+    ]
+
+    return {
+        "stt_col": stt_col,
+        "amount_col": amount_col,
+        "detail_cols": detail_cols,
+        "group_targets": group_targets,
+        "existing_group_cols": existing_group_cols,
+        "auto_create_target": auto_create_target,
+    }
+
+
+def is_generic_summary_row(row: pd.Series, amount_col=None) -> bool:
+    non_blank_count = sum(not _is_blank_cell(v) for v in row.tolist())
+    sparse_threshold = max(4, int(len(row) * 0.35))
+    is_sparse_row = non_blank_count <= sparse_threshold
+
+    strong_patterns = [
+        r"tổng cộng giá .* hàng hóa",
+        r"tổng giá .* hàng hóa",
+        r"tổng cộng .* phí.*lệ phí",
+    ]
+
+    for value in row.tolist():
+        text = _clean_cell_text(value).lower()
+        if not text:
+            continue
+        if any(re.search(pattern, text) for pattern in strong_patterns):
+            return True
+        if is_sparse_row and any(text.startswith(prefix) for prefix in SUMMARY_ROW_PREFIXES):
+            return True
+    return False
+
+
+def has_detail_signal_generic(row: pd.Series, detail_cols: list, amount_col=None) -> bool:
+    if row is None:
+        return False
+    non_blank_count = sum(not _is_blank_cell(v) for v in row.tolist())
+    has_detail = any(not _is_blank_cell(row.get(col)) for col in detail_cols)
+    has_price = any(
+        "đơn giá" in clean_col_str(col) and not _is_blank_cell(row.get(col))
+        for col in row.index
+    )
+    has_amount = any(
+        "thành tiền" in clean_col_str(col) and not _is_blank_cell(row.get(col))
+        for col in row.index
+    )
+    has_quantity = any(
+        any(token in clean_col_str(col) for token in ("khối lượng", "số lượng"))
+        and not _is_blank_cell(row.get(col))
+        for col in row.index
+    )
+    return has_detail or has_price or has_amount or has_quantity or non_blank_count >= 4
+
+
+def _belongs_same_group(current_stt, next_stt) -> bool:
+    current_stt = _normalize_stt_value(current_stt)
+    next_stt = _normalize_stt_value(next_stt)
+    current_root = _stt_root_value(current_stt)
+    if not current_stt:
+        return not next_stt
+    return (not next_stt) or (bool(current_root) and current_root == _stt_root_value(next_stt) and next_stt != current_stt)
+
+
+def detect_true_group_header_generic(
+    current: pd.Series,
+    next_row: pd.Series | None,
+    stt_col,
+    detail_cols,
+    group_cols,
+    amount_col=None,
+):
+    if current is None or next_row is None or not stt_col or not group_cols:
+        return None
+
+    current_stt = _normalize_stt_value(current.get(stt_col))
+    if not _is_top_level_stt(current_stt):
+        return None
+
+    if any(not _is_blank_cell(current.get(col)) for col in detail_cols):
+        return None
+
+    source_group_cols = [col for col in group_cols if not _is_blank_cell(current.get(col))]
+    if not source_group_cols:
+        return None
+
+    if not _belongs_same_group(current_stt, next_row.get(stt_col)) or not has_detail_signal_generic(next_row, detail_cols, amount_col):
+        return None
+
+    carry_values = {}
+    for col in current.index:
+        if col == amount_col:
+            continue
+        value = current.get(col)
+        if not _is_blank_cell(value):
+            carry_values[col] = value
+
+    return {
+        "root": _stt_root_value(current_stt),
+        "carry_values": carry_values,
+        "source_cols": source_group_cols,
+    }
+
+
+def detect_wrong_column_group_header_generic(
+    current: pd.Series,
+    next_row: pd.Series | None,
+    stt_col,
+    detail_cols,
+    group_cols,
+    amount_col=None,
+):
+    if current is None or next_row is None or not stt_col:
+        return None
+
+    current_stt = _normalize_stt_value(current.get(stt_col))
+    current_has_stt = bool(current_stt)
+    if current_has_stt and not _is_top_level_stt(current_stt):
+        return None
+
+    if not _belongs_same_group(current_stt, next_row.get(stt_col)) or not has_detail_signal_generic(next_row, detail_cols, amount_col):
+        next_stt = _normalize_stt_value(next_row.get(stt_col))
+        if current_has_stt or not next_stt or not has_detail_signal_generic(next_row, detail_cols, amount_col):
+            return None
+
+    texts = []
+    source_cols = []
+    for col in current.index:
+        if col == stt_col or col == amount_col:
+            continue
+        text = _clean_cell_text(current.get(col))
+        if not text or _is_numeric_like_text(text):
+            continue
+        text_lower = text.lower()
+        if any(text_lower.startswith(prefix) for prefix in SUMMARY_ROW_PREFIXES):
+            continue
+        texts.append(text)
+        source_cols.append(col)
+
+    if not texts:
+        return None
+
+    normalized_unique = {re.sub(r"\s+", " ", text).strip().lower() for text in texts}
+    if len(normalized_unique) != 1:
+        return None
+
+    current_non_blank = sum(not _is_blank_cell(v) for v in current.tolist())
+    sparse_threshold = max(3, min(5, int(len(current) * 0.25) or 3))
+    if current_non_blank > sparse_threshold:
+        return None
+
+    if any(col in group_cols for col in source_cols):
+        return None
+
+    next_non_blank = sum(not _is_blank_cell(v) for v in next_row.tolist())
+    if next_non_blank <= current_non_blank:
+        return None
+
+    return {
+        "root": _stt_root_value(current_stt) if current_has_stt else None,
+        "text": texts[0],
+        "source_cols": source_cols,
+    }
+
+
+def merge_pseudo_group_rows_generic(df: pd.DataFrame, stt_col, detail_cols, amount_col=None) -> pd.DataFrame:
+    if df.empty or not stt_col:
+        return df
+
+    merged_rows = []
+    i = 0
+    primary_detail_col = detail_cols[0] if detail_cols else None
+
+    while i < len(df):
+        current = df.iloc[i].copy()
+        next_row = df.iloc[i + 1].copy() if i + 1 < len(df) else None
+
+        should_merge = False
+        if next_row is not None:
+            current_has_stt = not _is_blank_cell(current.get(stt_col))
+            next_has_stt = not _is_blank_cell(next_row.get(stt_col))
+            next_next_row = df.iloc[i + 2].copy() if i + 2 < len(df) else None
+            same_amount = True
+            if amount_col:
+                cur_amount = _clean_cell_text(current.get(amount_col))
+                nxt_amount = _clean_cell_text(next_row.get(amount_col))
+                same_amount = (not cur_amount or not nxt_amount or cur_amount == nxt_amount)
+
+            next_has_detail = has_detail_signal_generic(next_row, detail_cols, amount_col)
+            next_is_group_header = detect_wrong_column_group_header_generic(
+                current=next_row,
+                next_row=next_next_row,
+                stt_col=stt_col,
+                detail_cols=detail_cols,
+                group_cols=[],
+                amount_col=amount_col,
+            ) is not None
+            should_merge = current_has_stt and not next_has_stt and same_amount and next_has_detail and not next_is_group_header
+
+            if not should_merge and primary_detail_col:
+                current_has_name = not _is_blank_cell(current.get(primary_detail_col))
+                current_stt = _normalize_stt_value(current.get(stt_col))
+                next_stt = _normalize_stt_value(next_row.get(stt_col))
+                same_stt_group = (
+                    current_has_stt and next_has_stt and
+                    _stt_root_value(current_stt) != "" and
+                    _stt_root_value(current_stt) == _stt_root_value(next_stt)
+                )
+                sparse_current = sum(not _is_blank_cell(v) for v in current.tolist()) <= 5
+                richer_next = sum(not _is_blank_cell(v) for v in next_row.tolist()) > sum(not _is_blank_cell(v) for v in current.tolist())
+                should_merge = same_stt_group and current_has_name and sparse_current and richer_next
+
+        if should_merge and next_row is not None:
+            for col in df.columns:
+                next_value = next_row.get(col)
+                current_value = current.get(col)
+                if not _is_blank_cell(next_value):
+                    current[col] = next_value
+                elif _is_blank_cell(current_value):
+                    current[col] = next_value
+            merged_rows.append(current)
+            i += 2
+            continue
+
+        merged_rows.append(current)
+        i += 1
+
+    return pd.DataFrame(merged_rows, columns=df.columns)
+
+
+def normalize_grouped_rows_generic(df: pd.DataFrame, schema_type: str):
+    if df is None or df.empty:
+        return df
+
+    working_df = df.copy()
+    settings = get_group_row_engine_settings(working_df, schema_type)
+    stt_col = settings["stt_col"]
+    detail_cols = settings["detail_cols"]
+    amount_col = settings["amount_col"]
+    group_cols = list(settings["existing_group_cols"])
+    auto_create_target = settings["auto_create_target"]
+
+    if not stt_col or not detail_cols:
+        return working_df
+
+    total_mask = working_df.apply(lambda row: is_generic_summary_row(row, amount_col), axis=1)
+    working_df = working_df.loc[~total_mask].reset_index(drop=True)
+    if working_df.empty:
+        return working_df
+
+    current_context = None
+    normalized_rows = []
+
+    for idx, (_, row) in enumerate(working_df.iterrows()):
+        current = row.copy()
+        next_row = working_df.iloc[idx + 1] if idx + 1 < len(working_df) else None
+
+        true_group = detect_true_group_header_generic(
+            current=current,
+            next_row=next_row,
+            stt_col=stt_col,
+            detail_cols=detail_cols,
+            group_cols=group_cols,
+            amount_col=amount_col,
+        )
+        if true_group:
+            current_context = true_group
+            continue
+
+        wrong_group = detect_wrong_column_group_header_generic(
+            current=current,
+            next_row=next_row,
+            stt_col=stt_col,
+            detail_cols=detail_cols,
+            group_cols=group_cols,
+            amount_col=amount_col,
+        )
+        if wrong_group:
+            if auto_create_target and auto_create_target not in working_df.columns:
+                working_df[auto_create_target] = np.nan
+                current[auto_create_target] = np.nan
+                if auto_create_target not in group_cols:
+                    group_cols.append(auto_create_target)
+            if auto_create_target:
+                current_context = {
+                    "root": wrong_group["root"],
+                    "carry_values": {auto_create_target: wrong_group["text"]},
+                    "source_cols": wrong_group["source_cols"],
+                }
+                continue
+
+        current_stt = _normalize_stt_value(current.get(stt_col))
+        current_root = _stt_root_value(current_stt)
+        if current_context:
+            context_root = current_context["root"]
+            if context_root:
+                belongs_to_context = (
+                    (bool(current_stt) and current_root == context_root and current_stt != context_root)
+                    or (not current_stt and has_detail_signal_generic(current, detail_cols, amount_col))
+                )
+            else:
+                belongs_to_context = has_detail_signal_generic(current, detail_cols, amount_col)
+            if belongs_to_context:
+                for col, value in current_context["carry_values"].items():
+                    if col == amount_col:
+                        continue
+                    if _is_blank_cell(current.get(col)) and not _is_blank_cell(value):
+                        current[col] = value
+            elif context_root and current_stt and current_root and current_root != context_root:
+                current_context = None
+
+        if not all(_is_blank_cell(v) for v in current.tolist()):
+            normalized_rows.append(current)
+
+    normalized_df = pd.DataFrame(normalized_rows, columns=working_df.columns)
+    return merge_pseudo_group_rows_generic(normalized_df, stt_col, detail_cols, amount_col)
 
 def _norm_series(s: pd.Series) -> pd.Series:
     return s.astype(str).str.lower().str.strip().replace({"nan": "", "none": ""})
@@ -329,6 +958,17 @@ def get_size_for_etl(path_value: str) -> int:
     local_path = resolve_local_for_etl(path_value)
     return os.path.getsize(local_path)
 
+def get_excel_row_count_for_etl(path_value: str) -> int | None:
+    try:
+        local_path = resolve_local_for_etl(path_value)
+        df_temp = pd.read_excel(local_path, header=None, nrows=15)
+        header_idx = df_temp.notna().sum(axis=1).idxmax()
+        df = pd.read_excel(local_path, header=header_idx)
+        df = df.dropna(how="all")
+        return len(df)
+    except Exception:
+        return None
+
 def read_and_normalize_excel(file_path: str, schema_name: str) -> pd.DataFrame:
     resolved_path = ensure_local_file(file_path, temp_subdir="etl_input")
     if not os.path.exists(resolved_path):
@@ -361,7 +1001,7 @@ def process_qd_cluster(tbmt: str, qd_original: str, units_in_cluster: list, sche
             try:
                 df = read_and_normalize_excel(u['file_path'], schema_name)
                 df['Mã TBMT'] = tbmt
-                df['so_qd_sanitized'] = qd_original 
+                df['so_qd_sanitized'] = u['so_qd']
                 df['qd_display'] = u['so_qd']
                 df['version_code'] = u['version']
                 max_ver = max(max_ver, u['version'], key=version_key)
@@ -371,18 +1011,11 @@ def process_qd_cluster(tbmt: str, qd_original: str, units_in_cluster: list, sche
         
         return pd.concat(all_dfs, ignore_index=True) if all_dfs else None, qd_original, max_ver, files_to_archive
 
-    # 2. ĐỌC QĐ BASE
     base = max(base_units, key=lambda x: version_key(x['version']))
-    try:
-        df_base = read_and_normalize_excel(base['file_path'], schema_name)
-        base_rows = len(df_base)
-        base_size = get_size_for_etl(base["file_path"])
+    base_size = get_size_for_etl(base["file_path"])
+    base_row_count_est = get_excel_row_count_for_etl(base["file_path"])
 
-    except Exception as e:
-        logger.error(f"Lỗi đọc QĐ gốc {base['file_path']}: {e}")
-        return None, None, None, []
-
-    # 3. NHÁNH ƯU TIÊN 1: CÓ QUYẾT ĐỊNH THAY THẾ (REPLACEMENT) -> CÓ ARCHIVE
+    # 2. NHÁNH ƯU TIÊN 1: CÓ QUYẾT ĐỊNH THAY THẾ (REPLACEMENT) -> CÓ ARCHIVE
     if rep_units:
         best_rep = max(rep_units, key=lambda x: version_key(x['version']))
         try:
@@ -410,13 +1043,13 @@ def process_qd_cluster(tbmt: str, qd_original: str, units_in_cluster: list, sche
                 files_to_archive.append(bu['file_path'])
 
         df_final['Mã TBMT'] = tbmt
-        df_final['so_qd_sanitized'] = qd_original
+        df_final['so_qd_sanitized'] = best_rep['so_qd']
         df_final['qd_display'] = final_qd_display
         df_final['version_code'] = best_rep['version']
         
         return df_final, final_qd_display, best_rep['version'], files_to_archive
 
-    # 4. NHÁNH 2: CHỈ CÓ QUYẾT ĐỊNH ĐIỀU CHỈNH (ADJUSTMENT) -> KHÔNG ARCHIVE
+    # 3. NHÁNH 2: CHỈ CÓ QUYẾT ĐỊNH ĐIỀU CHỈNH (ADJUSTMENT) -> KHÔNG ARCHIVE
     enriched_adjs = []
     adj_units_sorted = sorted(adj_units, key=lambda x: version_key(x['version']))
     
@@ -429,49 +1062,76 @@ def process_qd_cluster(tbmt: str, qd_original: str, units_in_cluster: list, sche
         except Exception:
             continue
 
+    if enriched_adjs:
+        adj_raw_names = [a['unit']['so_qd'] for a in enriched_adjs]
+        final_qd_display = f"QĐ gốc: {base['so_qd']}, QĐ điều chỉnh: {', '.join(adj_raw_names)}"
+        last_adj = enriched_adjs[-1]
+
+        if (
+            (base_size > 0 and last_adj['size'] >= base_size * 0.9)
+            or (
+                base_row_count_est is not None
+                and base_row_count_est > 0
+                and last_adj['rows'] >= base_row_count_est * 0.9
+            )
+        ):
+            logger.info(
+                f"🔄 [REPLACE-ADJUSTMENT-SIZE] {tbmt}: QĐ điều chỉnh cuối "
+                f"{last_adj['unit']['so_qd']} đủ lớn để ghi đè QĐ gốc mà không cần đọc BASE trước."
+            )
+            df_final = last_adj['df']
+            df_final['Mã TBMT'] = tbmt
+            df_final['so_qd_sanitized'] = last_adj['unit']['so_qd']
+            df_final['qd_display'] = final_qd_display
+            df_final['version_code'] = last_adj['unit']['version']
+            return df_final, final_qd_display, last_adj['unit']['version'], []
+
+    try:
+        df_base = read_and_normalize_excel(base['file_path'], schema_name)
+        base_rows = len(df_base)
+    except Exception as e:
+        logger.error(f"Lỗi đọc QĐ gốc {base['file_path']}: {e}")
+        return None, None, None, []
+
     if not enriched_adjs:
         df_base['Mã TBMT'] = tbmt
-        df_base['so_qd_sanitized'] = qd_original
+        df_base['so_qd_sanitized'] = base['so_qd']
         df_base['qd_display'] = f"QĐ gốc: {base['so_qd']}"
         df_base['version_code'] = base['version']
         return df_base, f"QĐ gốc: {base['so_qd']}", base['version'], []
 
-    adj_raw_names = [a['unit']['so_qd'] for a in enriched_adjs]
-    final_qd_display = f"QĐ gốc: {base['so_qd']}, QĐ điều chỉnh: {', '.join(adj_raw_names)}"
-    
     last_adj = enriched_adjs[-1]
-    is_replace = (last_adj['rows'] >= base_rows * 0.9) or (last_adj['size'] >= base_size * 0.9)
+    is_replace = (last_adj['rows'] >= base_rows * 0.9) or (base_size > 0 and last_adj['size'] >= base_size * 0.9)
 
     if is_replace:
         logger.info(f"🔄 [REPLACE-ADJUSTMENT] {tbmt}: QĐ điều chỉnh ghi đè hoàn toàn QĐ gốc.")
         df_final = last_adj['df']
         df_final['Mã TBMT'] = tbmt
-        df_final['so_qd_sanitized'] = qd_original 
+        df_final['so_qd_sanitized'] = last_adj['unit']['so_qd']
         df_final['qd_display'] = final_qd_display
         df_final['version_code'] = last_adj['unit']['version']
         
         return df_final, final_qd_display, last_adj['unit']['version'], []
 
-    else:
-        logger.info(f"🧩 [PATCH-ADJUSTMENT] {tbmt}: Đang vá {len(enriched_adjs)} QĐ điều chỉnh vào QĐ gốc...")
-        df_base['_merge_key'] = generate_row_hash(df_base, schema_name)
+    logger.info(f"🧩 [PATCH-ADJUSTMENT] {tbmt}: Đang vá {len(enriched_adjs)} QĐ điều chỉnh vào QĐ gốc...")
+    df_base['_merge_key'] = generate_row_hash(df_base, schema_name)
+    
+    for adj in enriched_adjs:
+        df_adj = adj['df']
+        df_adj['_merge_key'] = generate_row_hash(df_adj, schema_name)
         
-        for adj in enriched_adjs:
-            df_adj = adj['df']
-            df_adj['_merge_key'] = generate_row_hash(df_adj, schema_name)
-            
-            adj_keys = set(df_adj['_merge_key'].dropna())
-            adj_keys = {k for k in adj_keys if str(k).strip() not in ("FB_", "PRI_")}
-            df_base = df_base[~df_base['_merge_key'].isin(adj_keys)]
-            df_base = pd.concat([df_base, df_adj], ignore_index=True)
-            
-        df_final = df_base.drop(columns=['_merge_key'])
-        df_final['Mã TBMT'] = tbmt
-        df_final['so_qd_sanitized'] = qd_original
-        df_final['qd_display'] = final_qd_display
-        df_final['version_code'] = last_adj['unit']['version']
+        adj_keys = set(df_adj['_merge_key'].dropna())
+        adj_keys = {k for k in adj_keys if str(k).strip() not in ("FB_", "PRI_")}
+        df_base = df_base[~df_base['_merge_key'].isin(adj_keys)]
+        df_base = pd.concat([df_base, df_adj], ignore_index=True)
         
-        return df_final, final_qd_display, last_adj['unit']['version'], []
+    df_final = df_base.drop(columns=['_merge_key'])
+    df_final['Mã TBMT'] = tbmt
+    df_final['so_qd_sanitized'] = last_adj['unit']['so_qd']
+    df_final['qd_display'] = final_qd_display
+    df_final['version_code'] = last_adj['unit']['version']
+    
+    return df_final, final_qd_display, last_adj['unit']['version'], []
     
 # =====================================================================
 # MODULE: DATABASE OPERATIONS
@@ -738,36 +1398,132 @@ def sync_and_clean_all_metadata():
 # =====================================================================
 
 def fix_vendor_group_header(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    vendor_cols = [c for c in df.columns if isinstance(c, str) and "nhà thầu" in c.lower()]
-    if not vendor_cols:
+    if df is None or df.empty:
         return df
-        
-    vendor_col = vendor_cols[0]
+
+    df = df.copy()
+
+    def is_blank(value) -> bool:
+        return pd.isna(value) or str(value).strip() == ""
+
+    def clean_text(value) -> str:
+        return str(value).strip() if not pd.isna(value) else ""
+
+    stt_col = next((c for c in df.columns if isinstance(c, str) and c.lower().strip() == "stt"), None)
+    vendor_col = next((c for c in df.columns if is_vendor_group_column_name(c)), None)
+    name_col = next((
+        c for c in df.columns
+        if isinstance(c, str) and any(token in c.lower() for token in ("tên hàng hóa", "danh mục hàng hóa", "tên thương mại"))
+    ), None)
+    amount_col = next((c for c in df.columns if isinstance(c, str) and "thành tiền" in c.lower()), None)
+    goods_like = bool(name_col or amount_col or any(isinstance(c, str) and "đơn giá" in c.lower() for c in df.columns))
+
+    if vendor_col:
+        return df
+    if not goods_like:
+        return df
+
+    vendor_col = "Nhà thầu trúng thầu"
+    if vendor_col not in df.columns:
+        df[vendor_col] = np.nan
+
     current_vendor = None
+    current_group_root = None
     rows = []
 
-    for _, row in df.iterrows():
-        vendor = row[vendor_col]
-        other_cols = [c for c in row.index if c != vendor_col and "stt" not in str(c).lower()]
-        other_values = row[other_cols]
-        
-        is_group_header = pd.notna(vendor) and str(vendor).strip() != "" and other_values.isna().all()
-        
-        if is_group_header:
-            current_vendor = vendor
-            continue 
-            
-        if pd.isna(vendor) and current_vendor is not None:
-            row[vendor_col] = current_vendor
-            
-        if not row.isna().all():
-            rows.append(row)
+    def stt_root(value) -> str:
+        text = clean_text(value)
+        if not text:
+            return ""
+        match = re.match(r"^(\d+)", text)
+        return match.group(1) if match else text
+
+    for idx, (_, row) in enumerate(df.iterrows()):
+        current = row.copy()
+        next_row = df.iloc[idx + 1] if idx + 1 < len(df) else None
+        detected_vendor_info = detect_single_value_goods_group_header(
+            current=current,
+            next_row=next_row,
+            stt_col=stt_col,
+            name_col=name_col,
+            amount_col=amount_col,
+        )
+        if detected_vendor_info:
+            detected_vendor, _ = detected_vendor_info
+            current_vendor = detected_vendor
+            current_group_root = stt_root(current.get(stt_col))
+            continue
+
+        current_root = stt_root(current.get(stt_col))
+        if current_group_root and current_root and current_root != current_group_root:
+            current_vendor = None
+            current_group_root = None
+
+        if current_vendor and is_blank(current.get(vendor_col)):
+            current[vendor_col] = current_vendor
+
+        if not current.isna().all():
+            rows.append(current)
 
     if not rows:
         return df
-        
+
     return pd.DataFrame(rows, columns=df.columns)
+
+
+def apply_goods_trade_name_fallback(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+
+    normalized_goods_name_cols = {"danh mục hàng hóa", "tên hàng hóa"}
+    has_goods_name = any(clean_col_str(col) in normalized_goods_name_cols for col in df.columns)
+    if has_goods_name:
+        return df
+
+    trade_col = next((col for col in df.columns if clean_col_str(col) == "tên thương mại"), None)
+    if not trade_col:
+        return df
+
+    df = df.copy()
+    df = df.rename(columns={trade_col: "Danh mục hàng hóa"})
+    return df
+
+
+def drop_invalid_goods_value_rows(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+
+    price_col = "Đơn giá trúng thầu (VND)"
+    amount_col = "Thành tiền (VND)"
+    quantity_col = "Khối lượng"
+
+    if price_col not in df.columns and amount_col not in df.columns:
+        return df
+
+    df = df.copy()
+
+    if quantity_col in df.columns:
+        df[quantity_col] = clean_numeric_series(df[quantity_col])
+    if price_col in df.columns:
+        df[price_col] = clean_numeric_series(df[price_col])
+    if amount_col in df.columns:
+        df[amount_col] = clean_numeric_series(df[amount_col])
+
+    if all(col in df.columns for col in [quantity_col, price_col, amount_col]):
+        mask_missing = df[amount_col].isna()
+        mask_has_inputs = df[quantity_col].notna() & df[price_col].notna()
+        df.loc[mask_missing & mask_has_inputs, amount_col] = (
+            df.loc[mask_missing & mask_has_inputs, quantity_col]
+            * df.loc[mask_missing & mask_has_inputs, price_col]
+        )
+
+    price_series = df[price_col] if price_col in df.columns else pd.Series([np.nan] * len(df), index=df.index)
+    amount_series = df[amount_col] if amount_col in df.columns else pd.Series([np.nan] * len(df), index=df.index)
+
+    invalid_mask = (price_series.isna() & amount_series.isna())
+    invalid_mask |= amount_series.notna() & (amount_series <= 0)
+
+    return df.loc[~invalid_mask].copy()
 
 def normalize_data(df: pd.DataFrame, schema_name: str) -> pd.DataFrame:
     config = SCHEMAS[schema_name]
@@ -775,13 +1531,16 @@ def normalize_data(df: pd.DataFrame, schema_name: str) -> pd.DataFrame:
     mapping_config = config.get("column_mapping", {})
     mandatory_cols = config.get("mandatory_columns", [])
     
+    if schema_name in ("MEDICINE_STANDARD", "GOODS_STANDARD"):
+        df = normalize_grouped_rows_generic(df, schema_name)
     if schema_name == "GOODS_STANDARD":
-        df = collapse_sparse_goods_rows(df)
-        df = fix_vendor_group_header(df)
+        df = apply_goods_trade_name_fallback(df)
         
     actual_mapping = get_smart_column_mapping(df.columns, mapping_config)
     df = df.rename(columns=actual_mapping)
     df = collapse_duplicate_columns(df)
+    if schema_name == "GOODS_STANDARD":
+        df = drop_invalid_goods_value_rows(df)
     
     missing = [col for col in mandatory_cols if col not in df.columns]
     if missing:
@@ -811,14 +1570,40 @@ def process_pipeline():
         ignored_qd_map = load_ignored_qd_map(c)
         # Lấy file READY để ETL, dùng COALESCE(so_qd_original, so_qd) vì bảng relations đã đổi tên cột
         c.execute("""
-            SELECT DISTINCT COALESCE(r.so_qd_original, m.so_qd) as qd_original, m.ma_tbmt, m.schema_type, m.id as manifest_id
+            SELECT COALESCE(r.so_qd_original, m.so_qd) as qd_original,
+                   m.ma_tbmt,
+                   m.schema_type,
+                   m.id as manifest_id,
+                   m.so_qd,
+                   m.version,
+                   m.full_path,
+                   COALESCE(r.relation_type, 'INDEPENDENT') as relation_type
             FROM daily_manifest m
             LEFT JOIN qd_relations r 
               ON m.ma_tbmt = r.ma_tbmt AND m.so_qd = r.so_qd AND m.version = r.version
             WHERE m.manifest_date = %s AND m.status = 'READY'
-        """, (TARGET_DATE,))
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM scan_anomalies a
+                  WHERE a.scan_date = %s
+                    AND a.status = 'PENDING'
+                    AND a.ma_tbmt = m.ma_tbmt
+                    AND (a.so_qd = 'ALL' OR a.so_qd = m.so_qd)
+                    AND (a.version = 'ALL' OR a.version = m.version)
+              )
+        """, (TARGET_DATE, TARGET_DATE))
         active_jobs = [
-            row for row in c.fetchall()
+            {
+                "qd_original": row[0],
+                "tbmt": row[1],
+                "schema_type": row[2],
+                "manifest_id": row[3],
+                "so_qd": row[4],
+                "version": row[5],
+                "full_path": row[6],
+                "relation_type": row[7],
+            }
+            for row in c.fetchall()
             if row[0] not in ignored_qd_map.get(row[1], set())
         ]
 
@@ -828,36 +1613,35 @@ def process_pipeline():
 
     clusters = {}
     manifest_id_map = {}
-    for qd_original, tbmt, schema_type, m_id in active_jobs:
+    cluster_units_map = {}
+    for job in active_jobs:
+        qd_original = job["qd_original"]
+        tbmt = job["tbmt"]
+        schema_type = job["schema_type"]
+        m_id = job["manifest_id"]
         if schema_type not in SCHEMAS: continue
         key = (tbmt, qd_original, schema_type)
         clusters[key] = True
         manifest_id_map.setdefault(key, []).append(m_id)
+        cluster_units_map.setdefault(key, []).append({
+            "so_qd": job["so_qd"],
+            "version": job["version"],
+            "file_path": job["full_path"],
+            "relation_type": job["relation_type"],
+        })
 
     total_inserted_clusters = 0
 
     with get_db_connection() as conn, conn.cursor() as c:
-        ignored_qd_map = load_ignored_qd_map(c)
         for (tbmt, qd_original, schema_name) in clusters.keys():
-            c.execute("""
-                SELECT p.so_qd, p.version, p.file_path, 
-                       COALESCE(r.relation_type, 'INDEPENDENT') as relation_type
-                FROM packages p
-                LEFT JOIN qd_relations r 
-                  ON p.ma_tbmt = r.ma_tbmt AND p.so_qd = r.so_qd AND p.version = r.version
-                WHERE p.ma_tbmt = %s AND p.is_latest = 1 
-                  AND COALESCE(r.so_qd_original, p.so_qd) = %s AND p.file_type = 'excel'
-            """, (tbmt, qd_original))
-            
             units_in_cluster = [
-                {'so_qd': r[0], 'version': r[1], 'file_path': r[2], 'relation_type': r[3]}
-                for r in c.fetchall()
-                if r[0] not in ignored_qd_map.get(tbmt, set())
-                and not os.path.basename(str(r[2] or "")).startswith("~$")
+                unit
+                for unit in cluster_units_map.get((tbmt, qd_original, schema_name), [])
+                if not os.path.basename(str(unit["file_path"] or "")).startswith("~$")
             ]
             
             if not units_in_cluster:
-                logger.warning(f"⚠️ ETL bỏ qua {tbmt} / {qd_original}: không tìm thấy file Excel latest trong packages.")
+                logger.warning(f"⚠️ ETL bỏ qua {tbmt} / {qd_original}: không tìm thấy unit READY hợp lệ trong manifest.")
                 continue
 
             df_final, qd_display, cluster_ver, files_to_archive = process_qd_cluster(tbmt, qd_original, units_in_cluster, schema_name)
@@ -879,9 +1663,6 @@ def process_pipeline():
             df_final = df_final.drop(columns=["_dedup_hash"])
             if '_merge_key' in df_final.columns:
                 df_final = df_final.drop(columns=['_merge_key'])
-
-            if 'qd_display' in df_final.columns:
-                df_final['so_qd_sanitized'] = df_final['qd_display']
 
             success = save_to_db(df_final, schema_name)
             

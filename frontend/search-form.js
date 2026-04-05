@@ -638,11 +638,37 @@ class CustomSearchForm extends HTMLElement {
                 /* =========================
                 Actions
                 ========================= */
+                .filter-pane .preview-result {
+                    margin-top: 10px;
+                    margin-right: 0;
+                }
+
                 .actions {
                     display: flex;
+                    align-items: center;
+                    flex-wrap: wrap;
                     justify-content: flex-end;
                     gap: 12px;
                     margin-top: 24px;
+                }
+
+                .preview-result {
+                    min-height: 18px;
+                    color: var(--c-sub);
+                    font-size: 12.5px;
+                    font-weight: 600;
+                }
+
+                .preview-result.is-loading {
+                    color: var(--c-primary);
+                }
+
+                .preview-result.is-warning {
+                    color: #b45309;
+                }
+
+                .preview-result.is-error {
+                    color: #b91c1c;
                 }
 
                 .btn {
@@ -764,18 +790,18 @@ class CustomSearchForm extends HTMLElement {
                 <div class="filter-layout">
                     <!-- Sidebar Trái -->
                     <div class="filter-sidebar">
-                        <div class="sidebar-group">📅 Thời gian</div>
-                        <div class="sidebar-item active" data-target="pane-date">Ngày phê duyệt</div>
+                        
                         
                         <div class="sidebar-group">📋 Thông tin thầu</div>
                         <div class="sidebar-item" data-target="pane-investor">Chủ đầu tư</div>
                         <div class="sidebar-item" data-target="pane-qd">Quyết định phê duyệt</div>
+                        <div class="sidebar-item" data-target="pane-date">Ngày phê duyệt</div>
                         <div class="sidebar-item" data-target="pane-method">Hình thức LCNT</div>
                         <div class="sidebar-item" data-target="pane-place">Tỉnh / Thành phố</div>
                         <div class="sidebar-item" data-target="pane-validity">Tình trạng hiệu lực</div>
 
                         <div class="sidebar-group">💊 Hàng hóa</div>
-                        <div class="sidebar-item" data-target="pane-drug">Tên thương mại</div>
+                        <div class="sidebar-item active" data-target="pane-drug">Tên thương mại</div>
                         <div class="sidebar-item" data-target="pane-active-ing">Tên hoạt chất</div>
                         <div class="sidebar-item" data-target="pane-conc">Nồng độ, hàm lượng</div>
                         <div class="sidebar-item" data-target="pane-route">Đường dùng</div>
@@ -793,7 +819,7 @@ class CustomSearchForm extends HTMLElement {
                     <!-- Nội dung Phải -->
                     <div class="filter-content">
                         <!-- Date Pane -->
-                        <div class="filter-pane active" id="pane-date">
+                        <div class="filter-pane" id="pane-date">
                             <h3>Ngày phê duyệt</h3>
                             <p class="pane-desc"></p> <!-- Chọn khoảng thời gian phê duyệt kết quả LCNT. -->
                             <div class="fields-row">
@@ -813,7 +839,7 @@ class CustomSearchForm extends HTMLElement {
                         </div>
 
                         <!-- Drug Name Pane -->
-                        <div class="filter-pane" id="pane-drug">
+                        <div class="filter-pane active" id="pane-drug">
                             <h3>Tên thương mại</h3>
                             <p class="pane-desc"></p>
                             <div class="field">
@@ -1068,14 +1094,22 @@ class CustomSearchForm extends HTMLElement {
             </div>
 
         `;
+        const previewEl = document.createElement('div');
+        previewEl.className = 'preview-result';
+        previewEl.id = 'preview-result';
+        previewEl.textContent = '';
+        this.shadowRoot.appendChild(previewEl);
         // ✅ Disable nút áp dụng lúc ban đầu + theo dõi input thay đổi
         this.attachInputListeners();
         this.updateApplyButtonState();
+        this.previewDebounceTimer = null;
         this.setupSelectPlaceholderColors();
         this.setupDateEmptyState();
         this.initAdvancedFilters();
         this.setupTabs();
+        this.mountPreviewResult();
         this.renderActiveChips();
+        requestAnimationFrame(() => this.focusActiveField());
 
         this.createMultiSelectFromNative('filter-selection-method', {
             placeholder: '-- Chọn hình thức --',
@@ -1091,18 +1125,18 @@ class CustomSearchForm extends HTMLElement {
         const $from = root.getElementById('filter-date-from');
         const $to   = root.getElementById('filter-date-to');
 
-        let fpFrom = null;
-        let fpTo = null;
+        this.fpFrom = null;
+        this.fpTo = null;
 
         if (window.flatpickr) {
-            fpFrom = window.flatpickr($from, {
+            this.fpFrom = window.flatpickr($from, {
                 dateFormat: 'Y-m-d',
                 altInput: true,
                 altFormat: 'd/m/Y',
                 allowInput: true
             });
 
-            fpTo = window.flatpickr($to, {
+            this.fpTo = window.flatpickr($to, {
                 dateFormat: 'Y-m-d',
                 altInput: true,
                 altFormat: 'd/m/Y',
@@ -1357,6 +1391,7 @@ class CustomSearchForm extends HTMLElement {
             refreshFromSelect();
             this.updateApplyButtonState();
             this.renderActiveChips();
+            this.queueFocusActiveField();
         });
 
 
@@ -1425,6 +1460,112 @@ class CustomSearchForm extends HTMLElement {
 
         applyBtn.title = hasAnyValue ? '' : 'Vui lòng nhập hoặc chọn ít nhất một tiêu chí tìm kiếm';
         resetBtn.title = hasAnyValue ? '' : 'Không có điều kiện để đặt lại';
+        this.queuePreviewUpdate(hasAnyValue);
+    }
+
+    queuePreviewUpdate(hasAnyValue = true) {
+        clearTimeout(this.previewDebounceTimer);
+
+        if (!hasAnyValue) {
+            this.setPreviewResult({ idle: true });
+            return;
+        }
+
+        this.setPreviewResult({ loading: true });
+        this.previewDebounceTimer = setTimeout(() => {
+            const payload = this.collectFilterPayload();
+            this.dispatchEvent(new CustomEvent('preview-filters', {
+                detail: payload,
+                bubbles: true,
+                composed: true
+            }));
+        }, 280);
+    }
+
+    mountPreviewResult() {
+        const root = this.shadowRoot;
+        const previewEl = root?.getElementById('preview-result');
+        const activePane = root?.querySelector('.filter-pane.active');
+        if (!previewEl || !activePane) return;
+
+        const anchor = activePane.querySelector('.fields-row, .field, .multi-select, .token-input-container');
+        if (anchor?.parentNode) {
+            anchor.insertAdjacentElement('afterend', previewEl);
+        } else {
+            activePane.appendChild(previewEl);
+        }
+    }
+
+    focusActiveField() {
+        const root = this.shadowRoot;
+        const activePane = root?.querySelector('.filter-pane.active');
+        if (!activePane) return;
+
+        const preferredInput = activePane.querySelector(
+            '.token-input-container input, .field input, .field select, .multi-select-btn'
+        );
+
+        if (preferredInput) {
+            preferredInput.focus();
+            preferredInput.select?.();
+        }
+    }
+
+    queueFocusActiveField() {
+        requestAnimationFrame(() => this.focusActiveField());
+        setTimeout(() => this.focusActiveField(), 60);
+    }
+
+    activatePane(paneKey, { focus = true } = {}) {
+        const root = this.shadowRoot;
+        if (!root || !paneKey) return;
+
+        const targetId = `pane-${paneKey}`;
+        const targetItem = root.querySelector(`.sidebar-item[data-target="${targetId}"]`);
+        const targetPane = root.getElementById(targetId);
+        if (!targetItem || !targetPane) return;
+
+        root.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
+        root.querySelectorAll('.filter-pane').forEach(p => p.classList.remove('active'));
+
+        targetItem.classList.add('active');
+        targetPane.classList.add('active');
+        this.mountPreviewResult();
+
+        if (focus) {
+            this.queueFocusActiveField();
+        }
+    }
+
+    setPreviewResult({ idle = false, loading = false, total = null, error = false } = {}) {
+        const root = this.shadowRoot;
+        const previewEl = root?.getElementById('preview-result');
+        if (!previewEl) return;
+        this.mountPreviewResult();
+
+        previewEl.className = 'preview-result';
+
+        if (idle) {
+            previewEl.textContent = '';
+            return;
+        }
+
+        if (loading) {
+            previewEl.textContent = 'Đang ước tính...';
+            previewEl.classList.add('is-loading');
+            return;
+        }
+
+        if (error) {
+            previewEl.textContent = 'Không ước tính được số kết quả';
+            previewEl.classList.add('is-error');
+            return;
+        }
+
+        if (typeof total === 'number') {
+            previewEl.textContent = `Có ${total.toLocaleString('vi-VN')} kết quả`;
+            if (total === 0) previewEl.classList.add('is-warning');
+        }
     }
 
 
@@ -1438,7 +1579,6 @@ class CustomSearchForm extends HTMLElement {
         if (applyBtn && !applyBtn.dataset.bound) {
             applyBtn.dataset.bound = '1';
             applyBtn.addEventListener('click', () => {
-                this.updateApplyButtonState();
                 if (applyBtn.disabled) return;
 
                 const payload = this.collectFilterPayload();
@@ -1461,6 +1601,9 @@ class CustomSearchForm extends HTMLElement {
     resetAllFilters() {
         const root = this.shadowRoot;
         if (!root) return;
+
+        this.fpFrom?.clear();
+        this.fpTo?.clear();
 
         if (this.advancedFilterManagers) {
             this.advancedFilterManagers.forEach(manager => {
@@ -1513,11 +1656,86 @@ class CustomSearchForm extends HTMLElement {
         this.filterOrder = [];
         this.updateApplyButtonState();
         this.renderActiveChips();
+        this.setPreviewResult({ idle: true });
 
         this.dispatchEvent(new CustomEvent('reset-filters', {
             bubbles: true,
             composed: true
         }));
+
+        this.queueFocusActiveField();
+    }
+
+    setFilterPayload(payload = {}) {
+        const root = this.shadowRoot;
+        if (!root) return;
+
+        const filters = payload?.filters || {};
+
+        if (this.advancedFilterManagers) {
+            this.advancedFilterManagers.forEach(manager => {
+                const normalized = filters[manager.fieldName];
+                manager.tokens = [];
+
+                if (normalized?.tokens?.length) {
+                    normalized.tokens.forEach((token, index) => {
+                        if (index > 0) {
+                            manager.tokens.push({
+                                type: 'operator',
+                                text: token.op || 'OR'
+                            });
+                        }
+                        manager.tokens.push({
+                            type: 'value',
+                            text: token.value || ''
+                        });
+                    });
+                }
+
+                if (manager.input) manager.input.value = '';
+                manager.renderTokens();
+                manager.syncToHiddenInput();
+            });
+        }
+
+        const setMultiValues = (id, values = []) => {
+            const select = root.getElementById(id);
+            if (!select) return;
+
+            const selected = new Set(values.map(v => String(v).trim()));
+            Array.from(select.options).forEach(option => {
+                option.selected = selected.has(String(option.value || '').trim());
+            });
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+
+        setMultiValues('filter-selection-method', filters.selectionMethod || []);
+        setMultiValues('filter-place', filters.place || []);
+
+        const validity = root.getElementById('filter-validity');
+        if (validity) validity.value = filters.validity || '';
+
+        if (this.fpFrom) {
+            this.fpFrom.clear();
+            if (filters.dateFrom) this.fpFrom.setDate(filters.dateFrom, false, 'Y-m-d');
+        } else {
+            const fromInput = root.getElementById('filter-date-from');
+            if (fromInput) fromInput.value = filters.dateFrom || '';
+        }
+
+        if (this.fpTo) {
+            this.fpTo.clear();
+            if (filters.dateTo) this.fpTo.setDate(filters.dateTo, false, 'Y-m-d');
+        } else {
+            const toInput = root.getElementById('filter-date-to');
+            if (toInput) toInput.value = filters.dateTo || '';
+        }
+
+        this.filterOrder = [];
+        this.updateApplyButtonState();
+        this.renderActiveChips();
+        this.mountPreviewResult();
+        this.queueFocusActiveField();
     }
 
     attachInputListeners() {
@@ -1659,12 +1877,9 @@ class CustomSearchForm extends HTMLElement {
         
         items.forEach(item => {
             item.addEventListener('click', () => {
-                items.forEach(i => i.classList.remove('active'));
-                panes.forEach(p => p.classList.remove('active'));
-                
-                item.classList.add('active');
-                const targetId = item.getAttribute('data-target');
-                root.getElementById(targetId).classList.add('active');
+                const targetId = item.getAttribute('data-target') || '';
+                const paneKey = targetId.replace(/^pane-/, '');
+                this.activatePane(paneKey);
             });
         });
     }
@@ -1774,6 +1989,7 @@ class CustomSearchForm extends HTMLElement {
         list.querySelectorAll('.chip-remove').forEach(btn => {
             btn.addEventListener('click', (e) => {
             const id = e.target.getAttribute('data-clear');
+            const chipMeta = filterMap.get(id);
 
             if (id === 'date') {
                 const from = root.getElementById('filter-date-from');
@@ -1809,6 +2025,10 @@ class CustomSearchForm extends HTMLElement {
             this.filterOrder = this.filterOrder.filter(x => x !== id);
             this.updateApplyButtonState();
             this.renderActiveChips();
+            if (chipMeta?.pane) {
+                this.activatePane(chipMeta.pane, { focus: false });
+            }
+            this.queueFocusActiveField();
             });
         });
     }
@@ -1948,6 +2168,7 @@ class AdvancedFilterManager {
                     this.tokens.splice(-2);
                     this.renderTokens();
                     this.syncToHiddenInput();
+                    requestAnimationFrame(() => this.input?.focus());
                 }
                 return;
             }
@@ -1999,6 +2220,7 @@ class AdvancedFilterManager {
                     }
                     this.renderTokens();
                     this.syncToHiddenInput();
+                    requestAnimationFrame(() => this.input?.focus());
                 });
             }
             
@@ -2019,6 +2241,9 @@ class AdvancedFilterManager {
 
     async onInput() {
         const query = this.input.value.trim();
+        this.currentIndex = -1;
+        this.resetDropdownScroll();
+
         if (query.length < 2) {
             this.closeDropdown();
             return;
@@ -2151,6 +2376,7 @@ class AdvancedFilterManager {
 
         this.dropdown.classList.remove('hidden');
         this.currentIndex = -1;
+        this.resetDropdownScroll();
     }
 
     onKeyDown(e) {
@@ -2190,6 +2416,12 @@ class AdvancedFilterManager {
 
     closeDropdown() { 
         this.dropdown.classList.add('hidden'); 
+    }
+
+    resetDropdownScroll() {
+        if (this.dropdown) {
+            this.dropdown.scrollTop = 0;
+        }
     }
 
 

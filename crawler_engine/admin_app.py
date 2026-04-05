@@ -84,33 +84,55 @@ with tab1:
 with tab2:
     st.header("Gán quan hệ Quyết Định (Gốc - Điều Chỉnh - Thay Thế - Typo)")
     
-    df_multi = pd.read_sql("""
+    df_candidates = pd.read_sql("""
         SELECT DISTINCT ma_tbmt
         FROM scan_anomalies
-        WHERE issue_type = 'Multi-QD' AND status = 'PENDING'
+        WHERE issue_type IN ('Multi-QD', 'Version Asset Mismatch', 'Version Asset Ambiguous')
+          AND status = 'PENDING'
+        ORDER BY ma_tbmt
     """, con=engine)
-    multi_tbmts = df_multi['ma_tbmt'].tolist() if not df_multi.empty else []
+    candidate_tbmts = df_candidates['ma_tbmt'].tolist() if not df_candidates.empty else []
     
     col_a, col_b = st.columns([1, 2])
     with col_a:
-        tbmt_input = st.selectbox("1. Chọn TBMT bị Multi-QD (Hoặc gõ TBMT tùy ý):", [""] + multi_tbmts)
+        tbmt_input = st.selectbox(
+            "1. Chọn TBMT có anomaly về QĐ/version (Hoặc gõ TBMT tùy ý):",
+            [""] + candidate_tbmts
+        )
         custom_tbmt = st.text_input("Hoặc nhập mã TBMT thủ công:")
         target_tbmt = custom_tbmt if custom_tbmt else tbmt_input
 
     if target_tbmt:
         st.write(f"**2. Cấu hình QĐ cho TBMT: {target_tbmt}**")
+
+        df_context = pd.read_sql(text("""
+            SELECT issue_type, so_qd, version, priority, details
+            FROM scan_anomalies
+            WHERE ma_tbmt = :tbmt AND status = 'PENDING'
+            ORDER BY priority, issue_type, so_qd, version
+        """), con=engine, params={"tbmt": target_tbmt})
+
+        if not df_context.empty:
+            st.caption("Các anomaly đang pending của TBMT này:")
+            st.dataframe(df_context, hide_index=True, use_container_width=True)
         
-        # Join data lấy số QĐ đang lưu ở DB
+        # Chỉ lấy các unit latest đang còn hiệu lực xử lý.
+        # Với cùng một QĐ có nhiều version, version cũ sẽ bị bỏ qua.
+        # Nhưng các QĐ khác nhau của cùng TBMT vẫn hiện ra để cấu hình relation.
         query = text("""
             SELECT 
-                p.so_qd, p.version, 
+                p.so_qd, p.version,
                 COALESCE(r.so_qd_original, p.so_qd) as so_qd_original,
                 COALESCE(r.relation_type, 'INDEPENDENT') as relation_type,
                 COALESCE(r.note, '') as note
-            FROM packages p
+            FROM (
+                SELECT DISTINCT ma_tbmt, so_qd, version
+                FROM packages
+                WHERE ma_tbmt = :tbmt
+                  AND is_latest = 1
+            ) p
             LEFT JOIN qd_relations r 
               ON p.ma_tbmt = r.ma_tbmt AND p.so_qd = r.so_qd AND p.version = r.version
-            WHERE p.ma_tbmt = :tbmt AND p.is_latest = 1
             ORDER BY p.so_qd, p.version
         """)
         

@@ -43,12 +43,16 @@ SCHEMAS = {
             "GĐKLH": "GĐKLH hoặc GPNK",
             "SĐK hoặc số GPNK": "GĐKLH hoặc GPNK",
             "SĐK/GPNK": "GĐKLH hoặc GPNK",
+            "ĐVT": "Đơn vị tính",
             "Đon giá trúng thầu": "Đơn giá trúng thầu (VND)",
             "Thành tiền": "Thành tiền (VND)",
             "Tên cơ sở sản xuất": "Cơ sở sản xuất",
             "Nước sản xuất": "Xuất xứ",
             "Mã phần lô": "Mã phần/lô",
-            "Mã phần (lô)": "Mã phần/lô"
+            "Mã phần (lô)": "Mã phần/lô",
+            "Nhà thầu": "Nhà thầu trúng thầu",
+            "Tên nhà thầu": "Nhà thầu trúng thầu",
+            "Tên nhà thầu trúng thầu": "Nhà thầu trúng thầu",
         },
 
         "primary_merge_key": ["Mã phần/lô"],
@@ -83,7 +87,8 @@ SCHEMAS = {
             "Danh mục hàng hóa",
             "Đơn vị tính",
             "Khối lượng",
-            "Đơn giá trúng thầu (VND)"
+            "Đơn giá trúng thầu (VND)",
+            "Nhà thầu trúng thầu"
         ],
 
         "db_mapping": {
@@ -121,13 +126,21 @@ SCHEMAS = {
             "Ký mã hiệu/nhãn mác của sản phẩm": "Ký mã hiệu",
             "Ký mã hiệu, xuất xứ của sản phẩm": "Ký mã hiệu",
             "Mô tả hàng hóa": "Mặt hàng dự thầu",
+            "Số lượng": "Khối lượng",
             "Khối lượng mời thầu": "Khối lượng",
             "Xuất xứ (quốc gia, vùng lãnh thổ sản xuất)": "Xuất xứ",          
             "Cấu hình, tính năng kỹ thuật cơ bản": "Tính năng kỹ thuật",
             "Thông số kỹ thuật": "Tính năng kỹ thuật",
+            "ĐVT": "Đơn vị tính",
             "Đơn giá trúng thầu": "Đơn giá trúng thầu (VND)",
             "Đơn giá dự thầu (đã bao gồm thuế, phí, lệ phí (nếu có))": "Đơn giá trúng thầu (VND)",
+            "Đơn giá bao gồm thuế, phí, lệ phí liên quan đến nhập khẩu": "Đơn giá trúng thầu (VND)",
+            "Thành tiền": "Thành tiền (VND)",
             "Thành tiền đã bao gồm thuế, phí, lệ phí (nếu có))": "Thành tiền (VND)",
+            "Thành tiền bao gồm thuế, phí, lệ phí liên quan đến nhập khẩu, thuế tiêu thụ đặc biệt (nếu có), thuế VAT": "Thành tiền (VND)",
+            "Nhà thầu": "Nhà thầu trúng thầu",
+            "Tên nhà thầu": "Nhà thầu trúng thầu",
+            "Tên nhà thầu trúng thầu": "Nhà thầu trúng thầu",
         },
 
         "primary_merge_key": ["Mã phần/lô"],

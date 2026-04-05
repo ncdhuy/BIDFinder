@@ -107,7 +107,6 @@ YEAR_FROM = _get_env_int("YEAR_FROM")
 YEAR_TO = _get_env_int("YEAR_TO")
 MAX_PAGES = _get_env_int("MAX_PAGES")
 MAX_TRY = _get_env_int("MAX_TRY", 7)
-MAX_PROCESSING_ERROR_RETRY_PER_DAY = _get_env_int("MAX_PROCESSING_ERROR_RETRY_PER_DAY", 2)
 
 MATCH_MODE_LABELS = {
     "all-1": "Khớp tất cả từ (Phân biệt dấu)",
@@ -298,9 +297,141 @@ class CrawlerDB:
         except Exception as e:
             logger.warning(f"⚠️ Lỗi archive file cũ v{old_ver}: {e}")
 
+    def _local_file_md5(self, path_value):
+        try:
+            if not path_value or not os.path.exists(path_value) or not os.path.isfile(path_value):
+                return None
+            digest = hashlib.md5()
+            with open(path_value, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            return digest.hexdigest()
+        except Exception:
+            return None
+
+    def _pdf_records_are_equivalent(self, path_a, filename_a, path_b, filename_b):
+        base_a = os.path.basename(str(path_a or filename_a or "")).strip().lower()
+        base_b = os.path.basename(str(path_b or filename_b or "")).strip().lower()
+        if base_a and base_b and base_a == base_b:
+            return True
+
+        try:
+            if (
+                path_a and path_b
+                and os.path.exists(path_a) and os.path.isfile(path_a)
+                and os.path.exists(path_b) and os.path.isfile(path_b)
+            ):
+                size_a = os.path.getsize(path_a)
+                size_b = os.path.getsize(path_b)
+                if size_a == size_b and size_a > 0:
+                    hash_a = self._local_file_md5(path_a)
+                    hash_b = self._local_file_md5(path_b)
+                    if hash_a and hash_a == hash_b:
+                        return True
+        except Exception:
+            pass
+
+        return False
+
+    def _cleanup_existing_pdf_duplicates(self, tbmt, qd_raw, version):
+        self._safe_execute("""
+            SELECT file_type, file_path
+            FROM packages
+            WHERE ma_tbmt=%s AND so_qd=%s AND version=%s
+              AND file_type IN ('pdf', 'attachment')
+        """, (tbmt, qd_raw, version))
+        rows = self.cursor.fetchall() or []
+
+        pdf_rows = [row for row in rows if row["file_type"] == "pdf"]
+        attachment_pdf_rows = [
+            row for row in rows
+            if row["file_type"] == "attachment"
+            and os.path.splitext(str(row["file_path"] or ""))[1].lower() == ".pdf"
+        ]
+
+        if not pdf_rows or not attachment_pdf_rows:
+            return
+
+        for pdf_row in pdf_rows:
+            for attachment_row in attachment_pdf_rows:
+                if not self._pdf_records_are_equivalent(
+                    pdf_row["file_path"], pdf_row["file_path"],
+                    attachment_row["file_path"], attachment_row["file_path"]
+                ):
+                    continue
+
+                self._safe_execute("""
+                    DELETE FROM packages
+                    WHERE ma_tbmt=%s AND so_qd=%s AND version=%s AND file_type='attachment'
+                """, (tbmt, qd_raw, version))
+                self.conn.commit()
+                logger.info(f"🧹 Đã chuẩn hóa packages: bỏ record attachment trùng với PDF QĐ cho {tbmt} / {qd_raw} / v{version}.")
+                return
+
+    def _normalize_cross_type_pdf_duplicate(self, tbmt, qd_raw, version, file_type, temp_path, incoming_filename):
+        if file_type not in ("pdf", "attachment"):
+            return None
+
+        if os.path.splitext(str(incoming_filename or ""))[1].lower() != ".pdf":
+            return None
+
+        other_type = "attachment" if file_type == "pdf" else "pdf"
+
+        self._safe_execute("""
+            SELECT file_type, file_path
+            FROM packages
+            WHERE ma_tbmt=%s AND so_qd=%s AND version=%s
+              AND file_type IN ('pdf', 'attachment')
+        """, (tbmt, qd_raw, version))
+        rows = self.cursor.fetchall() or []
+
+        for row in rows:
+            existing_type = row["file_type"]
+            existing_path = row["file_path"]
+
+            if existing_type != other_type:
+                continue
+
+            if existing_type == "attachment" and os.path.splitext(str(existing_path or ""))[1].lower() != ".pdf":
+                continue
+
+            if not self._pdf_records_are_equivalent(
+                temp_path, incoming_filename,
+                existing_path, existing_path
+            ):
+                continue
+
+            try:
+                if temp_path and os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except Exception:
+                pass
+
+            if file_type == "attachment":
+                logger.info(f"↪️ Bỏ qua PDF attachment trùng với PDF QĐ: {tbmt} / {qd_raw} / v{version}.")
+                return "SKIPPED_DUPLICATE", existing_path
+
+            self._safe_execute("""
+                UPDATE packages
+                SET file_type='pdf', crawled_at=%s, status='DONE'
+                WHERE ma_tbmt=%s AND so_qd=%s AND version=%s AND file_type='attachment'
+            """, (self._now_str(), tbmt, qd_raw, version))
+            self.conn.commit()
+            logger.info(f"🔁 Đã chuẩn hóa record attachment thành pdf cho {tbmt} / {qd_raw} / v{version}.")
+            return "NORMALIZED_DUPLICATE", existing_path
+
+        return None
+
     def check_and_save(self, tbmt, qd_raw, version, file_type, temp_path, target_root_dir, num_cols=0):
         ver_chk = version if version else "00"
         ver_chk_key = _version_key(ver_chk)
+
+        orig_name = os.path.basename(temp_path)
+        safe_tbmt = "".join(c for c in tbmt if c.isalnum() or c in ".-_")
+        safe_qd_raw = sanitize_filename_part(qd_raw) if qd_raw else "UNKNOWN_QD"
+        new_filename = f"{safe_tbmt}_v{ver_chk}_{safe_qd_raw}_{orig_name}"
+
+        self._cleanup_existing_pdf_duplicates(tbmt, qd_raw, ver_chk)
 
         self._safe_execute("""
             SELECT 1 FROM packages
@@ -309,16 +440,17 @@ class CrawlerDB:
         if self.cursor.fetchone():
             return "SKIPPED", None
 
+        duplicate_result = self._normalize_cross_type_pdf_duplicate(
+            tbmt, qd_raw, ver_chk, file_type, temp_path, new_filename
+        )
+        if duplicate_result:
+            return duplicate_result
+
         today_str = datetime.now().strftime("%Y%m%d")
         latest_dir = os.path.join(target_root_dir, "raw_data", today_str, "latest")
         archive_dir = os.path.join(target_root_dir, "raw_data", today_str, "archive")
         os.makedirs(latest_dir, exist_ok=True)
         os.makedirs(archive_dir, exist_ok=True)
-
-        orig_name = os.path.basename(temp_path)
-        safe_tbmt = "".join(c for c in tbmt if c.isalnum() or c in ".-_")
-        safe_qd_raw = sanitize_filename_part(qd_raw) if qd_raw else "UNKNOWN_QD"
-        new_filename = f"{safe_tbmt}_v{ver_chk}_{safe_qd_raw}_{orig_name}"
 
         self._safe_execute("""
             SELECT version, file_path FROM packages
@@ -445,30 +577,15 @@ class CrawlerDB:
 
     # --- LOGS & HELPERS ---
     def log_event(self, tbmt, qd_raw, version, action_type, reason):
-        allowed_action_types = {"FILTERED_SKIP", "NO_ATTACHMENTS", "PROCESSING_ERROR"}
+        allowed_action_types = {"FILTERED_SKIP", "NO_ATTACHMENTS", "DUPLICATE_UNIT", "TEMP_ABORT"}
         if action_type not in allowed_action_types:
             return
 
         self._safe_execute("""
             INSERT INTO scan_logs (run_id, ma_tbmt, so_qd, version, action_type, reason, created_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (0, tbmt, qd_raw, version, action_type, reason, self._now_str()))
+        """, (CURRENT_RUN_ID or 0, tbmt, qd_raw, version, action_type, reason, self._now_str()))
         self.conn.commit()
-
-    def should_skip_processing_error_today(self, tbmt, max_retry=MAX_PROCESSING_ERROR_RETRY_PER_DAY):
-        if not tbmt or max_retry is None or max_retry <= 0:
-            return False
-
-        self._safe_execute("""
-            SELECT COUNT(*) AS retry_count
-            FROM scan_logs
-            WHERE ma_tbmt=%s
-              AND action_type='PROCESSING_ERROR'
-              AND created_at::date = CURRENT_DATE
-        """, (tbmt,))
-        row = self.cursor.fetchone() or {}
-        retry_count = row.get("retry_count", 0) or 0
-        return retry_count >= max_retry
 
     def should_skip_level_1(self, tbmt, skip_days=SKIP_DAYS):
         # 1. Bị chặn từ đầu do blacklist
@@ -478,8 +595,18 @@ class CrawlerDB:
         """, (tbmt,))
         if self.cursor.fetchone():
             return True
-            
-        # 2. Xem lần chạy cuối là khi nào
+
+        # 2. Nếu lần gần nhất của TBMT là TEMP_ABORT và chưa có lần tải thành công mới hơn,
+        # thì cho phép crawl lại ngay, không áp dụng skip_days.
+        self._safe_execute("""
+            SELECT MAX(created_at) AS last_abort_at
+            FROM scan_logs
+            WHERE ma_tbmt=%s AND action_type='TEMP_ABORT'
+        """, (tbmt,))
+        last_abort_row = self.cursor.fetchone() or {}
+        last_abort_at = last_abort_row.get("last_abort_at")
+
+        # 3. Xem lần chạy cuối là khi nào
         self._safe_execute("""
             SELECT MAX(crawled_at) as last_date FROM packages 
             WHERE ma_tbmt=%s AND status='DONE'
@@ -494,6 +621,13 @@ class CrawlerDB:
                 last_date = last_date_str
             else:
                 last_date = datetime.strptime(str(last_date_str)[:19], "%Y-%m-%d %H:%M:%S")
+            if last_abort_at:
+                if isinstance(last_abort_at, datetime):
+                    abort_date = last_abort_at
+                else:
+                    abort_date = datetime.strptime(str(last_abort_at)[:19], "%Y-%m-%d %H:%M:%S")
+                if abort_date > last_date:
+                    return False
             return (datetime.now() - last_date).days < skip_days
         except Exception:
             return False
@@ -517,6 +651,63 @@ class CrawlerDB:
 
 
 tracker = None
+CURRENT_RUN_ID = 0
+ABORTED_TBMTS_THIS_RUN = set()
+TEMP_ABORT_SUMMARY = {}
+
+
+class TempCrawlAbort(Exception):
+    def __init__(self, tbmt, reason):
+        tbmt_clean = str(tbmt or "UNKNOWN").strip() or "UNKNOWN"
+        reason_clean = " ".join(str(reason or "").split()).strip()
+        if not reason_clean:
+            reason_clean = "Lỗi tạm thời trong quá trình crawl"
+        self.tbmt = tbmt_clean
+        self.reason = reason_clean[:500]
+        super().__init__(f"{self.tbmt}: {self.reason}")
+
+
+def register_temp_abort(tbmt, reason):
+    tbmt_clean = str(tbmt or "UNKNOWN").strip() or "UNKNOWN"
+    reason_clean = " ".join(str(reason or "").split()).strip()
+    if not reason_clean:
+        reason_clean = "Lỗi tạm thời trong quá trình crawl"
+
+    is_new_tbmt = tbmt_clean not in ABORTED_TBMTS_THIS_RUN
+    ABORTED_TBMTS_THIS_RUN.add(tbmt_clean)
+
+    summary = TEMP_ABORT_SUMMARY.setdefault(tbmt_clean, {
+        "count": 0,
+        "first_reason": reason_clean[:500],
+        "last_reason": reason_clean[:500],
+    })
+    summary["count"] += 1
+    summary["last_reason"] = reason_clean[:500]
+
+    if is_new_tbmt and tracker is not None:
+        tracker.log_event(
+            tbmt=tbmt_clean,
+            qd_raw="N/A",
+            version="N/A",
+            action_type="TEMP_ABORT",
+            reason=reason_clean[:500]
+        )
+
+    logger.warning(f"⚠️ [TEMP_ABORT] {tbmt_clean}: {reason_clean}")
+
+
+def print_temp_abort_summary():
+    if not TEMP_ABORT_SUMMARY:
+        logger.info("✅ Không có TBMT nào TEMP_ABORT trong run này.")
+        return
+
+    logger.warning("=" * 60)
+    logger.warning(f"⚠️ TỔNG KẾT TEMP_ABORT: {len(TEMP_ABORT_SUMMARY)} TBMT cần theo dõi ở run tiếp theo.")
+    for idx, tbmt in enumerate(sorted(TEMP_ABORT_SUMMARY.keys()), start=1):
+        info = TEMP_ABORT_SUMMARY[tbmt]
+        reason = info.get("last_reason") or info.get("first_reason") or "Không có chi tiết"
+        logger.warning(f"   {idx}. {tbmt} | {reason}")
+    logger.warning("=" * 60)
 
 
 def init_runtime():
@@ -560,19 +751,47 @@ def shutdown_runtime():
 
 
 # ================== LƯU THÔNG TIN LẦN CHẠY ==================
+def start_run_history(start_time):
+    try:
+        tracker._safe_execute("""
+            INSERT INTO run_sessions (start_time, end_time, duration_seconds, boxes_selected)
+            VALUES (%s, NULL, NULL, 0)
+            RETURNING id
+        """, (start_time.strftime("%Y-%m-%d %H:%M:%S"),))
+        row = tracker.cursor.fetchone() or {}
+        tracker.conn.commit()
+        run_id = row.get("id", 0) or 0
+        logger.info(f"📝 Đã khởi tạo run_session #{run_id}")
+        return run_id
+    except Exception as e:
+        logger.error(f"❌ Lỗi khởi tạo run session: {e}")
+        return 0
+
+
 def append_run_history(start_time, end_time, boxes_selected_count):
     duration = int((end_time - start_time).total_seconds())
     try:
-        # Dùng _safe_execute để được bảo vệ bởi reconnect
-        tracker._safe_execute("""
-            INSERT INTO run_sessions (start_time, end_time, duration_seconds, boxes_selected)
-            VALUES (%s, %s, %s, %s)
-        """, (
-            start_time.strftime("%Y-%m-%d %H:%M:%S"),
-            end_time.strftime("%Y-%m-%d %H:%M:%S"),
-            duration,
-            int(boxes_selected_count)
-        ))
+        if CURRENT_RUN_ID:
+            tracker._safe_execute("""
+                UPDATE run_sessions
+                SET end_time=%s, duration_seconds=%s, boxes_selected=%s
+                WHERE id=%s
+            """, (
+                end_time.strftime("%Y-%m-%d %H:%M:%S"),
+                duration,
+                int(boxes_selected_count),
+                CURRENT_RUN_ID
+            ))
+        else:
+            tracker._safe_execute("""
+                INSERT INTO run_sessions (start_time, end_time, duration_seconds, boxes_selected)
+                VALUES (%s, %s, %s, %s)
+            """, (
+                start_time.strftime("%Y-%m-%d %H:%M:%S"),
+                end_time.strftime("%Y-%m-%d %H:%M:%S"),
+                duration,
+                int(boxes_selected_count)
+            ))
         tracker.conn.commit()
         logger.info(f"✅ Đã lưu session log vào DB (Duration: {duration}s)")
     except Exception as e:
@@ -581,41 +800,47 @@ def append_run_history(start_time, end_time, boxes_selected_count):
 
 # ================== TỪ KHÓA LỌC ==================
 loai_tu_gian_giao_thau = [
-    "kích thích", "môi trường", "nông nghiệp", "khuyến nông", "nông dân", "vườn", "thức ăn",
-    "lúa", "cao su", "cây giống", "hạt giống", "phân bón", "diệt cỏ", "thuốc cỏ", "trừ cỏ", "thuốc sâu",
+    "kích thích", "môi trường", "nông nghiệp", "khuyến nông", "nông dân", "vườn", "thức ăn", "bvtv", "bảo vệ thực vật",
+    "lúa", "cao su", "giống", "phân bón", "diệt cỏ", "thuốc cỏ", "trừ cỏ", "thuốc sâu", "tưới nước", "cắt cỏ",
     "trừ sâu", "trừ bệnh", "rầy côn trùng", "phấn trắng", "đạo ôn", "chăn nuôi", "thủy sản", "thú y",
-    "vật nuôi", "gia súc", "gia cầm", "chó", "mèo", "ruồi", "gà", "trâu", "bò", "vịt", "chuột", "cá",
+    "vật nuôi", "gia súc", "gia cầm", "chó", "mèo", "ruồi", "gà", "trâu", "bò", "vịt", "chuột", "cá", "tôm", "tả heo",
     "muỗi", "mối", "lở mồm", "cúm gia cầm",
-    "không phải là thuốc", "vị thuốc", "sữa",
-    "thuốc y học cổ truyền", "thuốc cổ truyền", "đông y", "sinh học",
-    "dây truyền", "tủ", "thuốc thử", "phân liều", "vòng", "que", "sắc", "stent", "test", "kít", "kit",
-    "sản xuất", "cứu hỏa", "lao động", "công nghiệp", "bão", "lụt", "hàng hóa dịch vụ", "phần mềm",
-    "quặng", "nhuộm", "văn phòng", "bảo quản", "bao đựng", "rác", "phủ thuốc",
-    "nghiên cứu", "kiểm nghiệm", "mỹ thuật", "nhu yếu phẩm", "tài sản", "lương thực", "in ấn", "sửa chữa", "hệ thống",
-    "thí nghiệm", "nhu yếu phẩm"
+    "vị thuốc", "thuốc y học cổ truyền", "chế phẩm y học cổ truyền", "thuốc cổ truyền", "đông y", "sinh học", "shpt", 
+    "thuốc dược liệu", "thuốc thành phẩm y học cổ truyền", "tủ", "kho thuốc", "thuốc nổ",
+    "sản xuất", "cứu hỏa", "lao động", "công nghiệp", "bão", "lụt", "hàng hóa dịch vụ", "phần mềm", "thuốc lá",
+    "quặng", "nhuộm", "văn phòng", "bảo quản", "bao đựng", "rác", "túi đựng", "mực in", "giấy in", "linh kiện",
+    "nghiên cứu", "kiểm nghiệm", "mỹ thuật", "nhu yếu phẩm", "tài sản", "lương thực", "in ấn", "sửa chữa",
+    "thí nghiệm", "nhu yếu phẩm", "vận chuyển","công nghệ thông tin", "hệ thống mạng", "tin học", "máy tính",
+    "mạng lan", "chống sét", "xử lý nước thải", "sắc ký", "quang phổ", "sửa chữa", "máy phun thuốc", "thuốc hàn",
+    "truyền thông", "xe", "máy soi thuốc", "cây thuốc", "đông dược", "dịch chiết", "tinh dầu",
+    "máy chiết xơ", "nội độc tố", "dung môi", "chất chuẩn", "chuẩn hóa", "kiểm tra", "độ hòa tan", "bình phun thuốc"
 ]
-
+ 
 loai_chu_dau_tu = [
-    ("nông", ["bệnh viện"]),
+    ("nông", ["bệnh viện", "trung tâm y tế", "phòng khám", "trạm y tế", "sở y tế"]),
     ("nuôi", ["nuôi dưỡng"]),
     ("trồng", []),
     ("lâm nghiệp", []),
     ("kiểm lâm", []),
     ("cao su", []),
-    ("xây dựng", [])
+    ("xây dựng", []),
+    ("phòng kinh tế", []),
+    ("thuốc lá", []),
+    ("viện nghiên cứu", []),
+    ("chế biến", []),
+    ("nông lâm", []),
+    ("nước sạch", []),
+    ("vệ sinh", []),
+    ("công ty", []),
+    ("chăn nuôi", []),
+    ("thú y", []),
 ]
 
 tu_khoa_luu_lai = [
-    'generic', 'biệt dược gốc', 'bdg', 'thuốc bổ sung', 'bổ sung thuốc',
-    'thực phẩm chức năng', 'thực phẩm bảo vệ sức khỏe', 'thực phẩm dinh dưỡng',
-    'mỹ phẩm', 'vật tư y tế', 'thiết bị y tế'
+    "generic", "biệt dược gốc", "bdg", 
+    "thực phẩm chức năng", "thực phẩm bảo vệ sức khỏe", "thực phẩm dinh dưỡng",
+    "mỹ phẩm", "vật tư y tế", "thiết bị y tế", "khám chữa bệnh"
 ]
-
-loai_tu_gian_giao_thau.extend([
-    'kiểm nghiệm', 'mỹ thuật', 'nhu yếu phẩm',
-    'tài sản', 'lương thực', 'in ấn'
-])
-
 
 def _normalize_keyword_value(value):
     return str(value or "").strip().lower()
@@ -746,10 +971,6 @@ def is_loai_ten_goi_thau(ten_goi_thau):
     ten_thap = ten_goi_thau.lower()
     if any(re.search(rf'\b{re.escape(word)}\b', ten_thap) for word in loai_tu_gian_giao_thau):
         return True
-    if re.search(r'\bnhà thuốc\b', ten_thap):
-        matches = [m.start() for m in re.finditer(r'\bthuốc\b', ten_thap)]
-        if len(matches) == 1 and re.search(r'\bnhà thuốc\b', ten_thap):
-            return True
     return False
 
 def is_box_selected_or_filtered(box, index):
@@ -785,7 +1006,11 @@ def is_box_selected_or_filtered(box, index):
 
     # --- 3. LOGIC LỌC KEYWORD ---
     
-    # Ưu tiên 1: Blacklist gắt (Loại bỏ trước, kể cả khi có từ whitelist)
+    # Ưu tiên 1: Whitelist mạnh. Nếu đã thỏa thì giữ lại luôn, không check tiếp.
+    if is_luu_lai_theo_ten_goi_thau(t_low):
+        return True
+
+    # Ưu tiên 2: Blacklist gắt
     if is_loai_chu_dau_tu(c_low) or is_loai_ten_goi_thau(t_low):
         # Ghi log FILTERED_SKIP vào DB => Để lần sau should_skip_level_1 chặn ngay từ đầu
         tracker.log_event(
@@ -799,13 +1024,8 @@ def is_box_selected_or_filtered(box, index):
         logger.info("=" * 30)
         return False
 
-    # Ưu tiên 2: Whitelist
-    if is_luu_lai_theo_ten_goi_thau(t_low):
-        return True
-
-    else:
-        # Hợp lệ
-        return True
+    # Mặc định giữ lại
+    return True
     
 
 # ================== LẤY THÔNG TIN BỔ SUNG ==================
@@ -874,10 +1094,16 @@ def get_num_cols_hang_hoa():
     Nếu không tìm được thead/th thì trả về 0.
     """
     try:
+        if has_legacy_lot_selection_card():
+            ensure_select_lot_with_winner()
         table = wait_presence(
             driver,
             By.XPATH,
-            "//div[contains(@class,'card-header') and contains(normalize-space(),'Danh sách hàng hóa')]"
+            "//div[contains(@class,'card-header') and ("
+            "contains(normalize-space(),'Danh sách hàng hóa') or "
+            "contains(normalize-space(),'Danh mục hàng hóa') or "
+            "contains(normalize-space(),'Danh sách thuốc') or "
+            "contains(normalize-space(),'Danh mục thuốc'))]"
             "/following-sibling::div//table",
             timeout=10
         )
@@ -890,6 +1116,89 @@ def get_num_cols_hang_hoa():
         return 0
     except Exception:
         return 0
+
+
+def has_legacy_lot_selection_card():
+    try:
+        rows = driver.find_elements(
+            By.XPATH,
+            "//div[contains(@class,'card')][.//div[contains(@class,'card-header') and contains(normalize-space(),'Thông tin phần/lô')]]"
+            "//tbody/tr"
+        )
+        return len(rows) > 0
+    except Exception:
+        return False
+
+
+def ensure_select_lot_with_winner():
+    """
+    Với giao diện cũ có card 'Thông tin phần/lô', mặc định web có thể đang chọn
+    một phần/lô 'Không có nhà thầu trúng thầu', làm card dữ liệu bên dưới rỗng.
+    Hàm này tự chọn một phần/lô đầu tiên có 'Có nhà thầu trúng thầu' để hiện data.
+    Nếu giao diện mới hoặc không có card này thì no-op.
+    """
+    if not has_legacy_lot_selection_card():
+        return False
+
+    data_ready = wait_export_excel_button_quick(driver, timeout=0.25)
+    if data_ready:
+        return True
+
+    try:
+        lot_rows = driver.find_elements(
+            By.XPATH,
+            "//div[contains(@class,'card')][.//div[contains(@class,'card-header') and contains(normalize-space(),'Thông tin phần/lô')]]"
+            "//tbody/tr"
+        )
+    except Exception:
+        return False
+
+    if not lot_rows:
+        return False
+
+    for row in lot_rows:
+        try:
+            cells = row.find_elements(By.TAG_NAME, "td")
+            if len(cells) < 6:
+                continue
+
+            winner_text = " ".join((cells[4].text or "").split()).lower()
+            if "có nhà thầu trúng thầu" not in winner_text:
+                continue
+
+            radio = cells[5].find_element(By.XPATH, ".//input[@type='radio' and not(@disabled)]")
+            if radio.is_selected():
+                return True
+
+            logger.info("🔄 Chọn phần/lô có nhà thầu trúng thầu để hiển thị dữ liệu.")
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", radio)
+            wait_until_not_loading(driver, 10)
+            if not safe_click(radio, wait):
+                continue
+
+            wait_dom_settled(timeout=10)
+            if wait_export_excel_button_quick(driver, timeout=4):
+                return True
+
+            try:
+                WebDriverWait(driver, 4).until(
+                    EC.presence_of_element_located((
+                        By.XPATH,
+                        "//div[contains(@class,'card-header') and ("
+                        "contains(normalize-space(),'Danh sách hàng hóa') or "
+                        "contains(normalize-space(),'Danh mục hàng hóa') or "
+                        "contains(normalize-space(),'Danh sách thuốc') or "
+                        "contains(normalize-space(),'Danh mục thuốc'))]"
+                        "/following-sibling::div//table//tbody/tr"
+                    ))
+                )
+                return True
+            except Exception:
+                continue
+        except Exception:
+            continue
+
+    return False
 
 # ========== RAW DOWNLOAD ==========
 def get_latest_file_raw():
@@ -1362,6 +1671,16 @@ def wait_export_excel_button_quick(driver, timeout=1.2):
             "//div[contains(@class,'card-header') and contains(normalize-space(),'Danh mục hàng hóa')]"
             "/following-sibling::div//button[contains(normalize-space(),'Xuất Excel')]"
         ),
+        (
+            By.XPATH,
+            "//div[contains(@class,'card-header') and contains(normalize-space(),'Danh sách thuốc')]"
+            "/following-sibling::div//button[contains(normalize-space(),'Xuất Excel')]"
+        ),
+        (
+            By.XPATH,
+            "//div[contains(@class,'card-header') and contains(normalize-space(),'Danh mục thuốc')]"
+            "/following-sibling::div//button[contains(normalize-space(),'Xuất Excel')]"
+        ),
     ]
 
     short_wait = WebDriverWait(driver, timeout)
@@ -1390,6 +1709,9 @@ def download_excel_or_attach_for_current_decision(
     collection_method = None
     any_file_downloaded = False
 
+    if has_legacy_lot_selection_card():
+        ensure_select_lot_with_winner()
+
     # --- 1. TÌM NÚT TẢI ---
     xuat_btn = wait_export_excel_button_quick(driver, timeout=1.2)
     
@@ -1400,8 +1722,7 @@ def download_excel_or_attach_for_current_decision(
         wait_until_not_loading(driver, 10)
         
         if not safe_click(xuat_btn, wait):
-            logger.error(f"❌ Không thể click nút Xuất Excel box {box_index}.")
-            return False
+            raise TempCrawlAbort(ma_tbmt, f"Không thể click nút Xuất Excel ở box {box_index}")
             
         new_file = wait_for_new_file(None, timeout=60, exts=[".xlsx", ".xls"])
     
@@ -1417,8 +1738,7 @@ def download_excel_or_attach_for_current_decision(
             clear_raw_downloads()
             
             if not safe_click(file_tag, wait):
-                logger.error(f"❌ Không thể click file đính kèm ở box {box_index}.")
-                return False
+                raise TempCrawlAbort(ma_tbmt, f"Không thể click file đính kèm ở box {box_index}")
                 
             logger.info(f"✅ Đã click tải file đính kèm cho box {box_index}")
             new_file = wait_for_new_file(None, timeout=60, exts=None)
@@ -1430,13 +1750,13 @@ def download_excel_or_attach_for_current_decision(
     if new_file:
         actual_file = get_actual_file_from_path(new_file)
         if not actual_file:
-            return False
+            raise TempCrawlAbort(ma_tbmt, f"Không lấy được file thực tế sau khi tải ở box {box_index}")
 
         # Logic cũ: Xóa file danh sách nhà thầu
         if "danh_sach_nha_thau" in os.path.basename(actual_file).lower():
             try: os.remove(actual_file)
             except: pass
-            return False
+            raise TempCrawlAbort(ma_tbmt, f"Tải nhầm file danh sách nhà thầu ở box {box_index}")
 
         # Tự động detect loại file
         ext = os.path.splitext(actual_file)[1].lower()
@@ -1458,6 +1778,13 @@ def download_excel_or_attach_for_current_decision(
             except: pass
             logger.info(f"⏩ Skipped old version: {ma_tbmt} v{version_code}")
             return True # Vẫn return True để báo là process thành công (chỉ là không lưu thôi)
+        elif action == "SKIPPED_DUPLICATE":
+            logger.info(f"↪️ Bỏ qua file PDF trùng nghĩa cho {ma_tbmt} / {suffix_qd} / v{version_code}")
+            return True
+        elif action == "NORMALIZED_DUPLICATE":
+            logger.info(f"🔁 Đã chuẩn hóa file PDF trùng nghĩa về 1 record packages cho {ma_tbmt} / {suffix_qd} / v{version_code}")
+            any_file_downloaded = True
+            return any_file_downloaded
             
         elif action in ["INSERT", "UPDATE"]:
             # logger.info(f"✅ [{action}] Saved: {os.path.basename(saved_path)}")
@@ -1482,19 +1809,12 @@ def download_excel_or_attach_for_current_decision(
                 "File Path": saved_path
             })
             tracker.save_metadata(ma_tbmt, suffix_qd, version_code, info_dict)
-
-            # Log SUCCESS ngay khi có Excel
-            tracker.log_event(
-                tbmt=ma_tbmt, qd_raw=suffix_qd, version = version_code,
-                action_type="SUCCESS", reason="Tải thành công"
-            )
             
         else: # ERROR
-            return False
+            raise TempCrawlAbort(ma_tbmt, f"Hệ thống không lưu được file tải về ở box {box_index}")
             
     else:
-        logger.error(f"❌ Không tải được file ({collection_method})")
-        return False
+        raise TempCrawlAbort(ma_tbmt, f"Timeout tải file ({collection_method}) ở box {box_index}")
 
     return any_file_downloaded
 
@@ -1534,14 +1854,15 @@ def download_single_qd_pdf(
         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", qd_element)
         time.sleep(0.5)
         if not safe_click(qd_element, wait):
-            return False, None
+            raise TempCrawlAbort(ma_tbmt, f"Không thể click PDF QĐ: {qd_text_raw}")
             
         logger.info(f"⬇️  Đang tải PDF QĐ: {qd_text_raw}")
         new_pdf = wait_for_new_file(None, timeout=45, exts=[".pdf"])
         
         if new_pdf:
             actual_qd = get_actual_file_from_path(new_pdf)
-            if not actual_qd: return False, None
+            if not actual_qd:
+                raise TempCrawlAbort(ma_tbmt, f"Không lấy được file PDF QĐ thực tế: {qd_text_raw}")
             
             # GỌI DB TRACKER CHO PDF
             action, saved_path = tracker.check_and_save(
@@ -1558,24 +1879,25 @@ def download_single_qd_pdf(
                 try: os.remove(actual_qd)
                 except: pass
                 return True, None # True nghĩa là tải thành công, nhưng skip lưu
+            elif action == "SKIPPED_DUPLICATE":
+                return True, saved_path
+            elif action == "NORMALIZED_DUPLICATE":
+                logger.info(f"🔁 Đã chuẩn hóa PDF QĐ trùng nghĩa về 1 record packages")
+                return True, saved_path
             elif action in ["INSERT", "UPDATE"]:
                 logger.info(f"✅ [{action}] Đã lưu QĐ phê duyệt")
-                # Log SUCCESS ngay khi có Excel
-                tracker.log_event(
-                    tbmt=ma_tbmt, qd_raw=qd_text_raw, version=version_code,
-                    action_type="SUCCESS", reason="Tải thành công"
-                )
                 return True, saved_path
 
             else:
-                return False, None
+                raise TempCrawlAbort(ma_tbmt, f"Hệ thống không lưu được PDF QĐ: {qd_text_raw}")
         else:
-            logger.error(f"❌ Timeout tải PDF QĐ: {qd_text_raw}")
-            return False, None
+            raise TempCrawlAbort(ma_tbmt, f"Timeout tải PDF QĐ: {qd_text_raw}")
             
     except Exception as e:
+        if isinstance(e, TempCrawlAbort):
+            raise
         logger.error(f"❌ Lỗi tải PDF: {e}")
-        return False, None
+        raise TempCrawlAbort(ma_tbmt, f"Lỗi tải PDF QĐ {qd_text_raw}: {str(e)[:300]}")
 
 
 # ========== HÀM HANDLE QĐ (ĐƠN / ĐA) ==========
@@ -1661,6 +1983,30 @@ def handle_quyet_dinh_phe_duyet_all(num_cols, ma_tbmt, box_index, box_name_text,
             return WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, xpath)))
         except: return None
 
+    seen_qd_versions = {}
+
+    def log_duplicate_qd_version(so_qd, ver_code):
+        qd_norm = (so_qd or "UNKNOWN_QD").strip() or "UNKNOWN_QD"
+        ver_norm = (ver_code or "00").strip() or "00"
+        key = (qd_norm, ver_norm)
+        seen_qd_versions[key] = seen_qd_versions.get(key, 0) + 1
+
+        if seen_qd_versions[key] != 2:
+            return
+
+        reason = (
+            f"Cùng ma_tbmt/so_qd/version xuất hiện nhiều hơn 1 lần trong box {box_index}: "
+            f"{qd_norm} / v{ver_norm}"
+        )
+        tracker.log_event(
+            tbmt=ma_tbmt,
+            qd_raw=qd_norm,
+            version=ver_norm,
+            action_type="DUPLICATE_UNIT",
+            reason=reason
+        )
+        logger.warning(f"⚠️ Phát hiện unit trùng trong box {box_index}: {ma_tbmt} / {qd_norm} / v{ver_norm}")
+
     # =========================================================
     # CASE 3: ĐA QĐ
     # =========================================================
@@ -1732,6 +2078,7 @@ def handle_quyet_dinh_phe_duyet_all(num_cols, ma_tbmt, box_index, box_name_text,
                         if not so_qd: 
                             # Fallback: Lấy từ bảng nếu card không có
                             so_qd = current_row.find_element(By.XPATH, "./td[2]").text.strip()
+                        log_duplicate_qd_version(so_qd, ver_code)
 
                         # 2. Ngày Đăng Tải: Lấy từ bảng (cột 5)
                         # Lưu ý: Cần check xem cột này có thay đổi theo version không
@@ -1845,6 +2192,7 @@ def handle_quyet_dinh_phe_duyet_all(num_cols, ma_tbmt, box_index, box_name_text,
 
             so_qd = get_card_value("Số quyết định phê duyệt")
             if not so_qd: so_qd = "UNKNOWN_QD"
+            log_duplicate_qd_version(so_qd, ver_code)
 
             ok, ok_excel, path = _process_one_qd_flow(
                 ma_tbmt, box_index, dia_diem,
@@ -1869,16 +2217,7 @@ def handle_quyet_dinh_phe_duyet_all(num_cols, ma_tbmt, box_index, box_name_text,
             if path: last_qd_path = path
 
     else:
-        logger.error(f"❌ Box {box_index}: Không tìm thấy QĐ (Fallback)")
-        if download_excel_or_attach_for_current_decision(
-            num_cols, ma_tbmt, box_index, dia_diem, suffix_qd="UNKNOWN", version_code=None,
-            ngay_dang_tai_specific=None, trang_thai_specific=None
-        ):
-            any_downloaded = True
-            any_excel_for_box = True
-        else:
-            tracker.log_event(tbmt=ma_tbmt, qd_raw="UNKNOWN", version="00", action_type="NO_ATTACHMENTS", reason=f"Không có Excel/Attach box {box_index}")
-            logger.warning(f"⚠️ Đã log NO_ATTACHMENTS cho {ma_tbmt} / UNKNOWN / v00")
+        raise TempCrawlAbort(ma_tbmt, f"Không tìm thấy QĐ (Fallback) ở box {box_index}")
 
     return any_downloaded
 
@@ -1905,9 +2244,11 @@ def process_box(box, index):
         return False
     if YEAR_FROM and ngay_phe_duyet.year < YEAR_FROM:
         logger.error(f"❌ Bỏ qua box {index} vì năm {ngay_phe_duyet.year} < {YEAR_FROM}")
+        logger.info("=" * 30)
         return False
     if YEAR_TO and ngay_phe_duyet.year > YEAR_TO:
         logger.error(f"❌ Bỏ qua box {index} vì năm {ngay_phe_duyet.year} > {YEAR_TO}")
+        logger.info("=" * 30)
         return False
 
     # tên box
@@ -1931,8 +2272,7 @@ def process_box(box, index):
             ".//a[h5[contains(@class,'content__body__left__item__infor__contract__name')]]"
         )
     except Exception as e:
-        logger.error(f"❌ Lỗi lấy thông tin box {index}: {e}")
-        return False
+        raise TempCrawlAbort(ma_tbmt, f"Lỗi lấy link chi tiết ở box {index}: {str(e)[:300]}")
 
     main_window = driver.window_handles[0]
 
@@ -1988,31 +2328,15 @@ def process_box(box, index):
                     num_cols, ma_tbmt, index, box_name_text, ngay_phe_duyet, dia_diem
                 )
             except UnexpectedAlertPresentException:
-                logger.warning(f"⚠️ Box {index}: alert lặp lại khi retry QĐ, bỏ qua box này.")
+                logger.warning(f"⚠️ Box {index}: alert lặp lại khi retry QĐ, dừng TBMT này.")
                 handle_connection_alert_once(timeout=20)
-                has_any_download = False
+                raise TempCrawlAbort(ma_tbmt, f"Alert lặp lại khi xử lý QĐ ở box {index}")
 
+    except TempCrawlAbort:
+        raise
     except Exception as e:
         logger.error(f"❌ Lỗi xử lý box {index}: {e}")
-        error_qd = "UNKNOWN_QD"
-        error_version = "00"
-
-        try:
-            error_snapshot = dict(basic_snapshot)
-            error_snapshot["Cách thức tải về"] = "PROCESSING_ERROR"
-            tracker.save_metadata(ma_tbmt, error_qd, error_version, error_snapshot)
-        except Exception as meta_err:
-            logger.warning(f"⚠️ Không lưu được metadata lỗi cho {ma_tbmt}: {meta_err}")
-
-        tracker.log_event(
-            tbmt=ma_tbmt,
-            qd_raw=error_qd,
-            version=error_version,
-            action_type="PROCESSING_ERROR",
-            reason=str(e)[:500]
-        )
-        logger.warning(f"⚠️ Đã log PROCESSING_ERROR cho {ma_tbmt}")
-        has_any_download = False
+        raise TempCrawlAbort(ma_tbmt, f"PROCESSING_ERROR ở box {index}: {str(e)[:300]}")
 
     finally:
         try:
@@ -2024,13 +2348,22 @@ def process_box(box, index):
             driver.switch_to.window(main_window)
         except Exception:
             pass
-        wait_dom_settled(timeout=15)
+        if driver is not None:
+            wait_dom_settled(timeout=15)
+
+    if has_any_download and tracker is not None:
+        tracker._safe_execute("""
+            UPDATE packages
+            SET crawled_at=%s, status='DONE'
+            WHERE ma_tbmt=%s AND is_latest=1
+        """, (tracker._now_str(), ma_tbmt))
+        tracker.conn.commit()
 
     return has_any_download
 
 
 # ================== TRY PROCESS BOX ==================
-def try_process_box(i, page, boxes, max_retry=3):
+def try_process_box(i, page, boxes, ma_tbmt, max_retry=3):
     retries = 0
     while retries < max_retry:
         try:
@@ -2044,8 +2377,7 @@ def try_process_box(i, page, boxes, max_retry=3):
             logger.error(f"❌ Stale element error for box {i+1} page {page}, retry {retries+1}/{max_retry}: {e}")
             retries += 1
             wait_dom_settled(timeout=15)
-    logger.error(f"❌ Failed to process box {i+1} page {page} after {max_retry} retries")
-    return False
+    raise TempCrawlAbort(ma_tbmt, f"Stale element lặp lại sau {max_retry} lần retry ở box {i+1} trang {page}")
 
 # ================== LẤY DANH SÁCH BOX ==================
 def get_box_elements():
@@ -2138,8 +2470,41 @@ def prepare_search_form(search_keyword: str):
     time.sleep(2)
 
 
-def crawl_current_results(search_keyword: str):
-    page = 1
+def go_to_next_results_page():
+    next_button = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button.btn-next:not([disabled])")))
+    next_button.click()
+    time.sleep(3)
+    wait_dom_settled(timeout=15)
+    return True
+
+
+def prompt_after_max_pages(search_keyword: str, page: int, batch_limit: int):
+    logger.info(
+        f"⏸️ Đã crawl xong 1 lô {batch_limit} trang cho keyword '{search_keyword}' tới trang {page}. "
+        "Bạn có thể giữ nguyên Chrome, chạy s2/s3 ở terminal khác, rồi quay lại tiếp tục."
+    )
+    logger.info(
+        "Lệnh tiếp theo: nhập số trang muốn crawl thêm | [N] chuyển keyword tiếp theo | [Enter/Q] kết thúc"
+    )
+    while True:
+        cmd = input("Crawl thêm bao nhiêu trang? [số/n/q]: ").strip().lower()
+        if cmd in ("", "q", "quit", "exit"):
+            return "quit", None
+        if cmd in ("n", "next", "skip"):
+            return "next", None
+        try:
+            extra_pages = int(cmd)
+            if extra_pages > 0:
+                return "continue", extra_pages
+        except ValueError:
+            pass
+        print("⚠️ Giá trị không hợp lệ. Hãy nhập một số trang > 0, 'n' hoặc Enter để thoát.")
+
+
+def crawl_current_results(search_keyword: str, start_page: int = 1, page_limit: int | None = None):
+    page = start_page
+    effective_page_limit = page_limit if page_limit is not None else MAX_PAGES
+    pages_processed_in_batch = 0
     consecutive_skipped = 0
     count_processed = 0
 
@@ -2151,64 +2516,75 @@ def crawl_current_results(search_keyword: str):
 
         for i in range(total_boxes):
             ma_tbmt = get_ma_tbmt(boxes[i])
+            if ma_tbmt in ABORTED_TBMTS_THIS_RUN:
+                logger.info(f"⏩ [RUN SKIP] {ma_tbmt} đã TEMP_ABORT trong run hiện tại, bỏ qua.")
+                logger.info("=" * 30)
+                continue
             if not FORCE_FULL_SCAN and tracker.should_skip_level_1(ma_tbmt, skip_days=SKIP_DAYS):
                 logger.info(f"⏩ [MAIN SKIP] Mã TBMT {ma_tbmt} mới check gần đây (< {SKIP_DAYS} ngày), bỏ qua.")
                 logger.info("=" * 30)
                 continue
-            if not FORCE_FULL_SCAN and tracker.should_skip_processing_error_today(ma_tbmt):
-                logger.info(
-                    f"⏩ [RETRY LIMIT] {ma_tbmt} đã lỗi xử lý >= {MAX_PROCESSING_ERROR_RETRY_PER_DAY} lần trong hôm nay, bỏ qua."
-                )
-                logger.info("=" * 30)
-                continue
 
             try:
-                has_download = try_process_box(i, page, boxes)
+                has_download = try_process_box(i, page, boxes, ma_tbmt=ma_tbmt)
                 if not has_download:
                     consecutive_skipped += 1
                     if consecutive_skipped >= MAX_TRY:
                         logger.warning(f"⚠️ Bỏ qua {MAX_TRY} box liên tiếp, dừng keyword '{search_keyword}'.")
                         logger.info(f"Tổng số box đã xử lý cho keyword '{search_keyword}': {count_processed}")
-                        return count_processed
+                        return count_processed, False, page
                 else:
                     consecutive_skipped = 0
                     count_processed += 1
 
+            except TempCrawlAbort as e:
+                register_temp_abort(e.tbmt or ma_tbmt, e.reason)
+                consecutive_skipped = 0
+                wait_dom_settled(timeout=15)
+                continue
             except Exception as e:
                 logger.error(f"❌ Lỗi khi xử lý box {i+1} trang {page} cho keyword '{search_keyword}': {e}")
                 consecutive_skipped += 1
                 if consecutive_skipped >= MAX_TRY:
                     logger.warning(f"⚠️  Bỏ qua {MAX_TRY} box liên tiếp do lỗi, dừng keyword '{search_keyword}'.")
                     logger.info(f"Tổng số box đã xử lý cho keyword '{search_keyword}': {count_processed}")
-                    return count_processed
+                    return count_processed, False, page
                 wait_dom_settled(timeout=15)
                 continue
 
-        if MAX_PAGES and page >= MAX_PAGES:
-            logger.info(f"Đã đạt số trang tối đa: {MAX_PAGES}, dừng keyword '{search_keyword}'.")
+        pages_processed_in_batch += 1
+
+        if effective_page_limit and pages_processed_in_batch >= effective_page_limit:
+            logger.info(
+                f"Đã đạt số trang tối đa cho lô crawl hiện tại: {effective_page_limit}, "
+                f"tạm dừng keyword '{search_keyword}' tại trang {page}."
+            )
             logger.info(f"Tổng số box đã xử lý cho keyword '{search_keyword}': {count_processed}")
-            break
+            return count_processed, True, page
 
         try:
-            next_button = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button.btn-next:not([disabled])")))
-            next_button.click()
-            time.sleep(3)
+            go_to_next_results_page()
             page += 1
 
         except TimeoutException:
             logger.info(f"Hết trang hoặc không tìm thấy nút trang tiếp theo cho keyword '{search_keyword}', dừng.")
             break
 
-    return count_processed
+    return count_processed, False, page
 
 
 # ================== MAIN ==================
 def main():
+    global CURRENT_RUN_ID
     start_time = datetime.now()
     total_processed = 0
 
     if not SEARCH_KEYWORDS:
         raise ValueError("❌ Thiếu KEY hoặc KEY_BATCHES trong file .env")
+
+    ABORTED_TBMTS_THIS_RUN.clear()
+    TEMP_ABORT_SUMMARY.clear()
+    CURRENT_RUN_ID = start_run_history(start_time)
 
     try:
         for idx, search_keyword in enumerate(SEARCH_KEYWORDS, start=1):
@@ -2216,30 +2592,47 @@ def main():
             logger.info(f"Batch {idx}/{len(SEARCH_KEYWORDS)} - Keyword: {search_keyword}")
             logger.info("=" * 60)
             prepare_search_form(search_keyword)
-            total_processed += crawl_current_results(search_keyword)
+            current_page = 1
+            current_batch_limit = MAX_PAGES
+
+            while True:
+                processed_count, hit_max_pages, current_page = crawl_current_results(
+                    search_keyword,
+                    start_page=current_page,
+                    page_limit=current_batch_limit,
+                )
+                total_processed += processed_count
+
+                if not hit_max_pages:
+                    break
+
+                action, next_batch_limit = prompt_after_max_pages(
+                    search_keyword,
+                    current_page,
+                    current_batch_limit,
+                )
+                if action == "quit":
+                    return
+                if action == "next":
+                    break
+
+                try:
+                    go_to_next_results_page()
+                    current_page += 1
+                    current_batch_limit = next_batch_limit
+                except TimeoutException:
+                    logger.info(f"Không còn trang tiếp theo cho keyword '{search_keyword}', chuyển keyword khác.")
+                    break
 
 
     finally:
         end_time = datetime.now()
-                    
-        # Đếm số TBMT duy nhất đã crawl được trong ngày hôm nay
-        try:
-            today_str = datetime.now().strftime("%Y-%m-%d")
-            # Thêm alias 'cnt' để đọc kết quả qua RealDictCursor theo tên
-            tracker._safe_execute("""
-                SELECT COUNT(DISTINCT ma_tbmt) AS cnt
-                FROM packages 
-                WHERE crawled_at::date >= %s::date
-            """, (today_str,))
-            unique_tbmt_count = tracker.cursor.fetchone()['cnt']
-        except Exception as e:
-            logger.warning(f"⚠️ Lỗi đếm số lượng TBMT: {e}")
-            unique_tbmt_count = 0
-            
-        append_run_history(start_time, end_time, unique_tbmt_count)
+        append_run_history(start_time, end_time, total_processed)
+        print_temp_abort_summary()
         
         gc.collect()
-        wait_dom_settled(timeout=15)
+        if driver is not None:
+            wait_dom_settled(timeout=15)
         logger.info("-" * 50)
         logger.info("Giữ Chrome mở. Nhấn Enter để kết thúc script...")
         input()

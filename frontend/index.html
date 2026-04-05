@@ -2,29 +2,108 @@
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <title>BIDFinder - Hệ thống tra cứu thuốc trúng thầu</title>
+    <title>BIDFinder - Hệ thống tra cứu kết quả đấu thầu y tế</title>
     <link rel="stylesheet" href="style.css">
     <script src="https://unpkg.com/feather-icons"></script>
 </head>
 <body>
+    <script>
+        if ((sessionStorage.getItem('bidfinder:view') || 'landing') === 'landing') {
+            document.body.classList.add('landing-active');
+        }
+    </script>
+    <section class="bf-landing" id="landing-shell" aria-label="Giới thiệu BIDFinder">
+        <div class="bf-bg-grid"></div>
+        <div class="bf-bg-glow bf-bg-glow-1"></div>
+        <div class="bf-bg-glow bf-bg-glow-2"></div>
+
+        <header class="bf-header">
+            <div class="bf-header-inner">
+                <a class="bf-brand" href="#" aria-label="BIDFinder">
+                    <img class="bf-brand-logo" src="./assets/logo_v10.png" alt="BIDFinder" />
+                </a>
+
+                <nav class="bf-nav">
+                    <a href="#bf-features">Đăng ký</a>
+                    <a href="#bf-features">Đăng nhập</a>
+                    <a href="#bf-workflow">Liên hệ</a>
+                </nav>
+
+            </div>
+        </header>
+
+        <div class="bf-main">
+            <section class="bf-hero">
+                <div class="bf-hero-copy">
+                    <h1 class="bf-title">
+                        BIDFinder
+                        <span>Hệ thống quản lý dữ liệu đấu thầu y tế</span>
+                    </h1>
+
+                    <p class="bf-desc">
+                        Dữ liệu được thu thập và cập nhật từ Hệ thống mạng đấu thầu quốc gia (<a href="https://muasamcong.mpi.gov.vn" target="_blank" rel="noreferrer">muasamcong.mpi.gov.vn</a>) 
+                        - nền tảng chính thức do Bộ Tài chính quản lý.
+                    </p>
+
+                    <div class="bf-hero-actions">
+                        <button id="enter-app-btn-hero" class="bf-btn bf-btn-primary bf-btn-lg" type="button">
+                            Bắt đầu tra cứu
+                        </button>
+                        <a class="bf-btn bf-btn-secondary bf-btn-lg" href="https://bidfinder.vn" target="_blank" rel="noreferrer">
+                            Tìm hiểu thêm
+                        </a>
+                    </div>
+
+                </div>
+
+                <div class="bf-hero-visual">
+                    <div class="bf-dashboard-shell">
+                        <div class="bf-dashboard-topbar">
+                            <div class="bf-window-dots">
+                                <span></span><span></span><span></span>
+                            </div>
+                            <div class="bf-dashboard-chip">Live Search</div>
+                        </div>
+
+                        <div class="bf-dashboard-meta">
+                            <div>
+                                <p class="bf-kicker">BIDFinder Workspace</p>
+                                <!-- <h3>Tra cứu kết quả đấu thầu y tế</h3> -->
+                            </div>
+                            <div class="bf-meta-badge">Tối ưu cho desktop</div>
+                        </div>
+
+                        <div class="bf-dashboard-image">
+                            <img src="./assets/lp.png" alt="Giao diện BIDFinder" />
+                        </div>
+                    </div>
+
+                    <div class="bf-float bf-float-a">
+                        <span>Tra cứu tập trung</span>
+                        <strong>Thuốc, thiết bị y tế, thực phẩm chức năng, thực phẩm bảo vệ sức khỏe, mỹ phẩm...</strong>
+                    </div>
+
+                    <div class="bf-float bf-float-b">
+                        <span>Cập nhật liên tục</span>
+                        <strong>Dữ liệu được cập nhật hàng ngày</strong>
+                    </div>
+
+                    <div class="bf-float bf-float-c">
+                        <span>Tăng tốc độ tra cứu</span>
+                        <strong>Truy xuất, tổng hợp dữ liệu nhanh chóng theo nhiều tiêu chí</strong>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </section>
     <div class="page-container">
         <header class="app-header">
             <div class="app-brand">
-                <h1 class="app-title">
-                    <img class="app-logo" src="./assets/logo_v7.png" alt="Logo" />
-                    <span class="app-title-text">Hệ thống tra cứu thuốc trúng thầu</span>
-                </h1>
-            </div>
-            <div class="app-header-links">
-                <div id="readme-icon" class="readme-icon" style="display: none;">
-                    <button id="open-readme">
-                        <span>Giới thiệu</span>
+                <div class="app-title">
+                    <button class="app-home-trigger" id="app-home-trigger" type="button" aria-label="Quay về landing page">
+                        <img class="app-logo" src="./assets/logo_v9.png" alt="BIDFinder" />
                     </button>
-                </div>
-                <div id="contact-icon" class="contact-icon" style="display: none;">
-                    <button id="open-contact">
-                        <span>Liên hệ</span>
-                    </button>
+                    <span class="app-title-text">Hệ thống tra cứu kết quả đấu thầu y tế</span>
                 </div>
             </div>
         </header>
@@ -59,16 +138,10 @@
                                     <div class="data-scope-switcher" id="data-view-switcher">
                                         <div class="data-scope-options">
                                             <button class="scope-btn active" type="button" data-view="df1-panel" aria-selected="true">
-                                                <span class="scope-icon">
-                                                    <i data-feather="shield"></i>
-                                                </span>
                                                 <span class="scope-text">Thuốc</span>
                                                 <span class="scope-count" id="df1-count-switcher">0</span>
                                             </button>
                                             <button class="scope-btn" type="button" data-view="df2-panel" aria-selected="false">
-                                                <span class="scope-icon">
-                                                    <i data-feather="layers"></i>
-                                                </span>
                                                 <span class="scope-text">Hàng hóa</span>
                                                 <span class="scope-count" id="df2-count-switcher">0</span>
                                             </button>
@@ -90,6 +163,12 @@
                                 </button>
                                 <button class="action-btn" id="open-sort-panel" title="Sắp xếp" data-title="Sắp xếp">
                                     <i data-feather="sliders"></i>
+                                </button>
+                                <button class="action-btn" id="toggle-wrap-text" title="Wrap text" data-title="Wrap text">
+                                    <i data-feather="type"></i>
+                                </button>
+                                <button class="action-btn" id="toggle-freeze-column" title="Freeze" data-title="Freeze cột">
+                                    <i data-feather="sidebar"></i>
                                 </button>
                                 <button class="btn-export" id="export-excel-btn" title="Xuất Excel" data-title="Xuất Excel">
                                     <i data-feather="download"></i>
@@ -132,7 +211,7 @@
                                         </thead>
                                         <tbody id="standard-data">
                                             <tr>
-                                                <td colspan="19" class="table-empty-state">
+                                                <td colspan="24" class="table-empty-state">
                                                     Chưa có dữ liệu. Thực hiện tra cứu để hiển thị kết quả theo biểu mẫu thuốc.
                                                 </td>
                                             </tr>
@@ -169,7 +248,7 @@
                                         </thead>
                                         <tbody id="extended-data">
                                             <tr>
-                                                <td colspan="19" class="table-empty-state">
+                                                <td colspan="22" class="table-empty-state">
                                                     Chưa có dữ liệu. Thực hiện tra cứu để hiển thị kết quả theo biểu mẫu hàng hóa.
                                                 </td>
                                             </tr>
@@ -295,7 +374,7 @@
         
         <!-- FOOTER -->
         <footer class="app-footer">
-            © 2025 Hệ thống tra cứu Thuốc trúng thầu
+            © 2026 Hệ thống tra cứu kết quả đấu thầu y tế
         </footer>
     </div>
 
@@ -309,13 +388,13 @@
 
             
             <div class="readme-header">
-                <h1>Chào mừng đến với Hệ thống tra cứu Thuốc trúng thầu</h1>
+                <h1>Chào mừng đến với Hệ thống tra cứu Kết quả đấu thầu y tế</h1>
             </div>
 
             <div class="readme-body">
                 <section class="readme-section">
                     <h2>Về ứng dụng</h2>
-                    <p>Hệ thống tra cứu Thuốc trúng thầu tại Việt Nam. Dữ liệu được thu thập và cập nhật từ <strong>Hệ thống mạng đấu thầu quốc gia</strong> (<a href="https://muasamcong.mpi.gov.vn" target="_blank">muasamcong.mpi.gov.vn</a>) - nền tảng chính thức do Bộ Tài chính quản lý.</p>
+                    <p>Hệ thống tra cứu Kết quả đấu thầu y tế tại Việt Nam. Dữ liệu được thu thập và cập nhật từ <strong>Hệ thống mạng đấu thầu quốc gia</strong> (<a href="https://muasamcong.mpi.gov.vn" target="_blank">muasamcong.mpi.gov.vn</a>) - nền tảng chính thức do Bộ Tài chính quản lý.</p>
                 </section>
 
                 <section class="readme-section">
@@ -466,93 +545,7 @@
     </script>
     
     <script>
-    // README Modal Logic
-    (function() {
-        const modal = document.getElementById('readme-modal');
-        const icon = document.getElementById('readme-icon');
-        const closeBtn = document.getElementById('close-readme');
-        const gotItBtn = document.getElementById('got-it-btn');
-        const openBtn = document.getElementById('open-readme');
-        const dontShowCheckbox = document.getElementById('dont-show-checkbox');
-        const overlay = document.querySelector('.readme-overlay');
-
-        // Check if user has dismissed before (session-based)
-        const hasSeenReadme = sessionStorage.getItem('hasSeenReadme');
-
-        function showModal() {
-            modal.classList.add('show');
-            icon.style.display = 'none';
-            document.body.style.overflow = 'hidden';
-        }
-
-        function hideModal() {
-            modal.classList.remove('show');
-            icon.style.display = 'block';
-            document.body.style.overflow = '';
-            
-            // If "don't show again" is checked, save to localStorage
-            if (dontShowCheckbox.checked) {
-                localStorage.setItem('hideReadme', 'true');
-            }
-            
-            // Mark as seen in this session
-            sessionStorage.setItem('hasSeenReadme', 'true');
-        }
-
-        // Show modal on first load (if not permanently hidden)
-        if (!hasSeenReadme && localStorage.getItem('hideReadme') !== 'true') {
-            setTimeout(showModal, 500);
-        } else {
-            icon.style.display = 'block';
-        }
-
-        // Event listeners
-        closeBtn.addEventListener('click', hideModal);
-        gotItBtn.addEventListener('click', hideModal);
-        overlay.addEventListener('click', hideModal);
-        openBtn.addEventListener('click', showModal);
-
-        // ESC key to close
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && modal.classList.contains('show')) {
-                hideModal();
-            }
-        });
-    })();
-
-    // Contact Modal Logic
-    (function() {
-        const contactModal = document.getElementById('contact-modal');
-        const contactIcon = document.getElementById('contact-icon');
-        const closeContactBtn = document.getElementById('close-contact');
-        const closeContactBtn2 = document.getElementById('close-contact-btn');
-        const openContactBtn = document.getElementById('open-contact');
-        const contactOverlay = contactModal.querySelector('.readme-overlay');
-
-        // Show contact icon when page loads
-        contactIcon.style.display = 'block';
-
-        function showContactModal() {
-            contactModal.classList.add('show');
-            document.body.style.overflow = 'hidden';
-        }
-
-        function hideContactModal() {
-            contactModal.classList.remove('show');
-            document.body.style.overflow = '';
-        }
-
-        openContactBtn.addEventListener('click', showContactModal);
-        closeContactBtn.addEventListener('click', hideContactModal);
-        contactOverlay.addEventListener('click', hideContactModal);
-
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && contactModal.classList.contains('show')) {
-                hideContactModal();
-            }
-        });
-    })();
-
+    // README/Contact modal flow retired in favor of the landing page.
     </script>
 
 </body>
