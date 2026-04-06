@@ -5,6 +5,18 @@ const API_BASE_URL =
     ? 'http://127.0.0.1:8000'
     : 'https://bidfinder.onrender.com';
 
+window.API_BASE_URL = API_BASE_URL;
+
+function getAuthorizedFetch() {
+    return window.bidfinderAuthorizedFetch || fetch;
+}
+
+function requireAuthenticatedSession(mode = 'login') {
+    if (!window.BIDFinderAuth) return true;
+    if (!window.BIDFinderAuth.requiresDataAuth?.()) return true;
+    return window.BIDFinderAuth.ensureAuthenticated(mode);
+}
+
 // ============================== 
 // UTILS
 // ============================== 
@@ -743,6 +755,10 @@ function clearFilterUrlState() {
 }
 
 async function fetchQueryResults(queryRequest, customSortRules = sortRules, limit = MAX_RESULTS_PER_TABLE) {
+    if (!requireAuthenticatedSession('login')) {
+        throw new Error('Bạn cần đăng nhập để tra cứu dữ liệu.');
+    }
+
     const requestBody = {
         scope: queryRequest?.scope || 'all',
         filters: queryRequest?.filters || {},
@@ -750,14 +766,21 @@ async function fetchQueryResults(queryRequest, customSortRules = sortRules, limi
         limit
     };
 
-    const response = await fetch(`${API_BASE_URL}/api/query`, {
+    const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody)
     });
 
     if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        let message = `HTTP ${response.status}`;
+        try {
+            const errorPayload = await response.json();
+            message = errorPayload?.message || errorPayload?.error || message;
+        } catch (e) {
+            // Ignore non-JSON error payloads.
+        }
+        throw new Error(message);
     }
 
     return response.json();
@@ -808,6 +831,9 @@ async function applyFilters(payload) {
         currentFilteredDf2 = [];
         updateResults([], []);
         hideLimitWarning();
+        if (err?.message) {
+            alert(err.message);
+        }
     }
 }
 
@@ -1034,10 +1060,25 @@ function initLandingShell() {
     };
 
     const currentView = sessionStorage.getItem('bidfinder:view') || 'landing';
-    applyLandingView(currentView);
+    const canOpenSavedApp =
+        currentView === 'app' &&
+        (
+            window.BIDFinderAuth?.isAuthenticated() ||
+            !window.BIDFinderAuth?.requiresDataAuth?.()
+        );
+    applyLandingView(canOpenSavedApp ? 'app' : 'landing');
 
     const enterApp = () => {
+        const mustLogin = window.BIDFinderAuth?.requiresDataAuth?.();
+
+        if (mustLogin && !window.BIDFinderAuth?.isAuthenticated()) {
+            window.BIDFinderAuth?.requestIntent('enter-app');
+            window.BIDFinderAuth?.openAuthModal('register');
+            return;
+        }
+
         syncLandingView('app');
+        initializeAppData();
     };
 
     const goLanding = () => {
@@ -1049,9 +1090,81 @@ function initLandingShell() {
     homeTrigger?.addEventListener('click', goLanding);
 
     document.addEventListener('keydown', (e) => {
-        if (document.body.classList.contains('landing-active') && e.key === 'Enter') {
+        const tagName = e.target?.tagName || '';
+        const isTypingContext = ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(tagName);
+        const authModalOpen = document.getElementById('auth-modal')?.classList.contains('show');
+
+        if (document.body.classList.contains('landing-active') && e.key === 'Enter' && !isTypingContext && !authModalOpen) {
             enterApp();
         }
+    });
+
+    window.addEventListener('bidfinder:auth-ready', (event) => {
+        const authed = Boolean(event.detail?.authenticated);
+        const savedView = sessionStorage.getItem('bidfinder:view') || 'landing';
+        const mustLogin = Boolean(event.detail?.config?.require_auth_for_data_access);
+
+        if (mustLogin && !authed) {
+            applyLandingView('landing');
+            return;
+        }
+
+        applyLandingView(savedView === 'app' ? 'app' : 'landing');
+        if (savedView === 'app') {
+            initializeAppData();
+        }
+    });
+
+    window.addEventListener('bidfinder:auth-changed', (event) => {
+        const authed = Boolean(event.detail?.authenticated);
+        const intent = event.detail?.intent;
+        const reason = event.detail?.reason;
+        const mustLogin = window.BIDFinderAuth?.requiresDataAuth?.();
+
+        if (authed) {
+            if (intent === 'enter-app') {
+                syncLandingView('app');
+            }
+
+            if ((sessionStorage.getItem('bidfinder:view') || 'landing') === 'app' || intent === 'enter-app') {
+                initializeAppData();
+            }
+            return;
+        }
+
+        if (reason === 'logout') {
+            metadata = null;
+            appDataInitialized = false;
+            currentFilteredDf1 = [];
+            currentFilteredDf2 = [];
+            currentQueryRequest = { scope: 'all', filters: {} };
+            clearFilterUrlState();
+            hideLimitWarning();
+            updateResults([], []);
+            initEmptyCharts();
+            syncLandingView('landing');
+            return;
+        }
+
+        if (!mustLogin) {
+            metadata = null;
+            appDataInitialized = false;
+            if ((sessionStorage.getItem('bidfinder:view') || 'landing') === 'app') {
+                initializeAppData();
+            }
+            return;
+        }
+
+        metadata = null;
+        appDataInitialized = false;
+        currentFilteredDf1 = [];
+        currentFilteredDf2 = [];
+        currentQueryRequest = { scope: 'all', filters: {} };
+        clearFilterUrlState();
+        hideLimitWarning();
+        updateResults([], []);
+        initEmptyCharts();
+        syncLandingView('landing');
     });
 }
 
@@ -1067,25 +1180,82 @@ function initFilterHelpExternalTooltip() {
     if (!helpBtn || !contentEl) return;
 
     let externalTooltip = null;
+    let pinnedOpen = false;
 
     injectTooltipStyles();
 
-    const showTooltip = () => {
-        if (externalTooltip) return;
+    const positionTooltip = () => {
+        if (!externalTooltip) return;
 
-        externalTooltip = createTooltip(helpBtn, contentEl.innerHTML);
-        document.body.appendChild(externalTooltip);
+        const rect = helpBtn.getBoundingClientRect();
+        const tooltipWidth = externalTooltip.offsetWidth || 420;
+        const margin = 12;
+        const desiredLeft = rect.left + (rect.width / 2) - (tooltipWidth / 2);
+        const maxLeft = Math.max(margin, window.innerWidth - tooltipWidth - margin);
+        const left = Math.max(margin, Math.min(desiredLeft, maxLeft));
+
+        externalTooltip.style.top = `${rect.bottom + 8}px`;
+        externalTooltip.style.left = `${left}px`;
     };
 
-    const hideTooltip = () => {
+    const showTooltip = ({ pinned = false } = {}) => {
+        if (!externalTooltip) {
+            externalTooltip = createTooltip(helpBtn, contentEl.innerHTML);
+            document.body.appendChild(externalTooltip);
+        }
+
+        pinnedOpen = pinned || pinnedOpen;
+        helpBtn.setAttribute("aria-expanded", pinnedOpen ? "true" : "false");
+        positionTooltip();
+    };
+
+    const hideTooltip = (force = false) => {
+        if (!force && pinnedOpen) return;
         if (externalTooltip) {
             externalTooltip.remove();
             externalTooltip = null;
         }
+        pinnedOpen = false;
+        helpBtn.setAttribute("aria-expanded", "false");
     };
 
-    helpBtn.addEventListener("mouseenter", showTooltip);
-    helpBtn.addEventListener("mouseleave", hideTooltip);
+    const openPinnedTooltip = () => {
+        showTooltip({ pinned: true });
+        helpBtn.focus({ preventScroll: true });
+    };
+
+    window.BIDFinderOpenFilterHelp = openPinnedTooltip;
+
+    helpBtn.addEventListener("mouseenter", () => showTooltip());
+    helpBtn.addEventListener("mouseleave", () => hideTooltip());
+    helpBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (externalTooltip && pinnedOpen) {
+            hideTooltip(true);
+            return;
+        }
+
+        openPinnedTooltip();
+    });
+
+    document.addEventListener("click", (e) => {
+        if (!externalTooltip || !pinnedOpen) return;
+        if (helpBtn.contains(e.target) || externalTooltip.contains(e.target)) return;
+        hideTooltip(true);
+    });
+
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") hideTooltip(true);
+    });
+
+    document.addEventListener("bidfinder:open-filter-help", () => {
+        openPinnedTooltip();
+    });
+
+    window.addEventListener("resize", positionTooltip);
+    window.addEventListener("scroll", positionTooltip, true);
 }
 
 function injectTooltipStyles() {
@@ -1096,7 +1266,7 @@ function injectTooltipStyles() {
     style.id = styleId;
     style.textContent = `
         .external-tooltip {
-            position: absolute;
+            position: fixed;
             background: #ffffff;
             border: 1px solid #cfe0ea;
             border-radius: 10px;
@@ -1952,6 +2122,7 @@ function drawChart(key, config, data) {
 
 // ======== 2. METADATA
 let metadata = null;
+let appDataInitialized = false;
 
 function formatDuration(seconds) {
     const m = Math.floor(seconds / 60);
@@ -1971,10 +2142,32 @@ function formatRelative(lastStr) {
     return `Cách đây ${Math.round(diffH / 24)} ngày`;
 }
 
+function getHistorySortTimestamp(run) {
+    const raw = run?.end_time || run?.start_time;
+    const parsed = raw ? Date.parse(raw) : NaN;
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatHistoryDateTime(value) {
+    if (!value) return 'Chưa kết thúc';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return 'Chưa kết thúc';
+    return parsed.toLocaleString('vi-VN');
+}
+
+function formatHistoryBoxes(value) {
+    return Number(value || 0).toLocaleString('vi-VN');
+}
+
 async function loadMetadata() {
+    if (window.BIDFinderAuth?.requiresDataAuth?.() && !window.BIDFinderAuth?.isAuthenticated()) {
+        metadata = null;
+        return;
+    }
+
     try {
         console.log('🔄 Đang tải metadata...');
-        const res = await fetch(`${API_BASE_URL}/api/metadata`);
+        const res = await getAuthorizedFetch()(`${API_BASE_URL}/api/metadata`);
         const meta = await res.json();
         
         console.log('📦 Response từ API:', meta);
@@ -1991,6 +2184,8 @@ async function loadMetadata() {
 }
 
 function showHistoryModal() {
+    if (!requireAuthenticatedSession('login')) return;
+
     const modal = document.getElementById('history-modal');
     const hasData = metadata?.success && metadata?.history?.length > 0;
     
@@ -2006,26 +2201,27 @@ function showHistoryModal() {
 
 function renderHistoryData(history) {
     const sortedHistory = [...history]
-        .sort((a, b) => new Date(b.end_time) - new Date(a.end_time));
+        .sort((a, b) => getHistorySortTimestamp(b) - getHistorySortTimestamp(a));
     const latestRun = sortedHistory[0];
     const historyHTML = sortedHistory
         .map(run => `
             <div class="history-item">
                 <div>
                     <div class="history-datetime">
-                        ${new Date(run.end_time).toLocaleString('vi-VN')}
+                        ${formatHistoryDateTime(run.end_time || run.start_time)}
                     </div>
                 </div>
                 <div class="history-boxes">
-                    ${run.boxes_selected.toLocaleString()}
+                    ${formatHistoryBoxes(run.boxes_selected)}
                 </div>
             </div>
         `)
         .join('');
 
-    document.getElementById('modal-last-update').textContent = new Date(latestRun.end_time).toLocaleString('vi-VN');
-    document.getElementById('modal-freshness').textContent = formatRelative(latestRun.end_time);
-    document.getElementById('modal-boxes-total').textContent = latestRun.boxes_selected.toLocaleString();
+    const latestRunTime = latestRun?.end_time || latestRun?.start_time;
+    document.getElementById('modal-last-update').textContent = formatHistoryDateTime(latestRunTime);
+    document.getElementById('modal-freshness').textContent = latestRunTime ? formatRelative(latestRunTime) : '--';
+    document.getElementById('modal-boxes-total').textContent = formatHistoryBoxes(latestRun?.boxes_selected);
     
     document.getElementById('history-list').innerHTML = historyHTML;
 }
@@ -2746,7 +2942,7 @@ function buildExportWorksheet(data, headerOrder, currentOrder) {
     });
 
     XLSX.utils.sheet_add_aoa(ws, [
-        ['Nguồn: BIDFinder – Hệ thống tra cứu kết quả đấu thầu y tế']
+        ['Nguồn: BIDFinder – Hệ thống quản lý dữ liệu đấu thầu y tế']
     ], { origin: 'A1' });
 
     return ws;
@@ -2837,7 +3033,19 @@ function disableDefaultTooltips() {
 }
 
 async function initializeAppData() {
+    if (window.BIDFinderAuth?.requiresDataAuth?.() && !window.BIDFinderAuth?.isAuthenticated()) {
+        appDataInitialized = false;
+        metadata = null;
+        initEmptyCharts();
+        return;
+    }
+
+    if (appDataInitialized) {
+        return;
+    }
+
     try {
+        appDataInitialized = true;
         // ✅ Không load df1/df2 nữa vì filter từ database
         await loadMetadata();
         initEmptyCharts();
@@ -2846,6 +3054,7 @@ async function initializeAppData() {
         console.log('✅ App initialized - Ready for filtering from database');
         
     } catch (err) {
+        appDataInitialized = false;
         console.error('❌ Error initializing app:', err);
         console.error('⚠️ Server có thể đang khởi động, vui lòng đợi 30s và refresh lại');
         await loadMetadata();
@@ -2919,6 +3128,7 @@ function initFreezeColumnAction() {
 document.addEventListener('DOMContentLoaded', function() {
     initStorageAndElements();
     initLandingShell();
+    window.BIDFinderAuth?.init();
     initModalEvents();
     initTabSwitching();
     initResultViewSwitching();

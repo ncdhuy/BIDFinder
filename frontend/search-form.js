@@ -259,6 +259,36 @@ class CustomSearchForm extends HTMLElement {
                     line-height: 1.55;
                 }
 
+                .pane-help-link {
+                    display: inline;
+                    margin-top: 8px;
+                    padding: 0;
+                    border: 0;
+                    background: transparent;
+                    color: var(--c-primary-hover);
+                    font-size: 14px;
+                    font-weight: 700;
+                    line-height: 1.4;
+                    cursor: pointer;
+                    transition: color 0.18s ease;
+                }
+
+                .pane-help-link:hover {
+                    color: var(--c-primary);
+                    text-decoration: underline;
+                    text-underline-offset: 3px;
+                }
+
+                .pane-help-link:focus-visible {
+                    outline: 2px solid rgba(18, 116, 149, 0.28);
+                    outline-offset: 3px;
+                    border-radius: 6px;
+                }
+
+                .pane-help-prefix {
+                    color: var(--c-sub);
+                }
+
                 .fields-row {
                     display: flex;
                     gap: 20px;
@@ -841,10 +871,16 @@ class CustomSearchForm extends HTMLElement {
                         <!-- Drug Name Pane -->
                         <div class="filter-pane active" id="pane-drug">
                             <h3>Tên thương mại</h3>
-                            <p class="pane-desc"></p>
                             <div class="field">
                                 <div class="token-input-container" id="drug-name-container"><input type="text" placeholder="Nhập tên thuốc..." /></div>
                                 <input type="hidden" id="filter-drug-name" />
+                            </div>
+                            <div class="pane-desc">
+                                <p>1. Gõ từ khóa</p>
+                                <p>2. Nhấn Enter để tạo một thẻ từ khóa</p>
+                                <p>3. Nếu có nhiều điều kiện, lặp lại bước 1 và 2</p>
+                                <p>4. Điều chỉnh bằng cách click OR AND NOT để tạo điều kiện</p>
+                                <p><span class="pane-help-prefix">Xem </span><button class="pane-help-link" type="button" data-open-filter-help>Mẹo tìm kiếm</button></p>
                             </div>
                         </div>
 
@@ -1229,6 +1265,30 @@ class CustomSearchForm extends HTMLElement {
                 });
             }
 
+
+        const filterHelpLinks = root.querySelectorAll('[data-open-filter-help]');
+        filterHelpLinks.forEach((link) => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const panelHelpButton = document.getElementById('filter-help-btn');
+                if (panelHelpButton) {
+                    panelHelpButton.click();
+                    return;
+                }
+
+                if (typeof window.BIDFinderOpenFilterHelp === 'function') {
+                    window.BIDFinderOpenFilterHelp();
+                    return;
+                }
+
+                this.dispatchEvent(new CustomEvent('bidfinder:open-filter-help', {
+                    bubbles: true,
+                    composed: true
+                }));
+            });
+        });
 
         const inputs = root.querySelectorAll('input, select');
         inputs.forEach(input => {
@@ -2258,6 +2318,12 @@ class AdvancedFilterManager {
         if (this.abortController) this.abortController.abort();
         this.abortController = new AbortController();
 
+        if (window.BIDFinderAuth?.requiresDataAuth?.() && !window.BIDFinderAuth.isAuthenticated()) {
+            window.BIDFinderAuth.openAuthModal('login');
+            this.closeDropdown();
+            return;
+        }
+
         const payload = {
             filters: (this.getContextFilters?.() || {}).filters || {},
             scope: 'all',
@@ -2275,7 +2341,8 @@ class AdvancedFilterManager {
 
         try {
             const apiBase = this.getApiBaseUrl();
-            const res = await fetch(`${apiBase}/api/autocomplete`, {
+            const apiFetch = window.bidfinderAuthorizedFetch || fetch;
+            const res = await apiFetch(`${apiBase}/api/autocomplete`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),

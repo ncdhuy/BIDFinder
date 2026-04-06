@@ -2,13 +2,17 @@
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <title>BIDFinder - Hệ thống tra cứu kết quả đấu thầu y tế</title>
+    <title>BIDFinder - Hệ thống quản lý dữ liệu đấu thầu y tế</title>
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="auth.css">
     <script src="https://unpkg.com/feather-icons"></script>
 </head>
 <body>
     <script>
-        if ((sessionStorage.getItem('bidfinder:view') || 'landing') === 'landing') {
+        const savedBidfinderView = sessionStorage.getItem('bidfinder:view') || 'landing';
+        const hasSavedAuthToken = !!localStorage.getItem('bidfinder:auth_token');
+        const requireAuthForDataAccess = localStorage.getItem('bidfinder:require_auth_for_data_access') === '1';
+        if (savedBidfinderView === 'landing' || (requireAuthForDataAccess && !hasSavedAuthToken)) {
             document.body.classList.add('landing-active');
         }
     </script>
@@ -24,8 +28,8 @@
                 </a>
 
                 <nav class="bf-nav">
-                    <a href="#bf-features">Đăng ký</a>
-                    <a href="#bf-features">Đăng nhập</a>
+                    <button class="bf-nav-link" id="open-register-nav" type="button">Đăng ký</button>
+                    <button class="bf-nav-link" id="open-login-nav" type="button">Đăng nhập</button>
                     <a href="#bf-workflow">Liên hệ</a>
                 </nav>
 
@@ -49,9 +53,6 @@
                         <button id="enter-app-btn-hero" class="bf-btn bf-btn-primary bf-btn-lg" type="button">
                             Bắt đầu tra cứu
                         </button>
-                        <a class="bf-btn bf-btn-secondary bf-btn-lg" href="https://bidfinder.vn" target="_blank" rel="noreferrer">
-                            Tìm hiểu thêm
-                        </a>
                     </div>
 
                 </div>
@@ -103,7 +104,14 @@
                     <button class="app-home-trigger" id="app-home-trigger" type="button" aria-label="Quay về landing page">
                         <img class="app-logo" src="./assets/logo_v9.png" alt="BIDFinder" />
                     </button>
-                    <span class="app-title-text">Hệ thống tra cứu kết quả đấu thầu y tế</span>
+                    <span class="app-title-text">Hệ thống quản lý dữ liệu đấu thầu y tế</span>
+                </div>
+            </div>
+
+            <div class="app-header-links">
+                <div class="app-auth-shell is-hidden" id="app-auth-shell">
+                    <button class="app-auth-btn" id="auth-edit-profile-btn" type="button">Hồ sơ</button>
+                    <button class="app-auth-btn app-auth-btn-danger" id="auth-logout-btn" type="button">Đăng xuất</button>
                 </div>
             </div>
         </header>
@@ -374,8 +382,173 @@
         
         <!-- FOOTER -->
         <footer class="app-footer">
-            © 2026 Hệ thống tra cứu kết quả đấu thầu y tế
+            © 2026 Hệ thống quản lý dữ liệu đấu thầu y tế
         </footer>
+    </div>
+
+    <div id="auth-modal" class="auth-modal" aria-hidden="true">
+        <div class="auth-overlay"></div>
+        <div class="auth-dialog" role="dialog" aria-modal="true" aria-labelledby="auth-dialog-title">
+            <button class="btn-close auth-close" id="auth-close-btn" aria-label="Đóng">
+                <i data-feather="x"></i>
+            </button>
+
+            <div class="auth-grid">
+                <aside class="auth-brand-panel">
+                    <div id="auth-brand-guest-view">
+                        <img class="auth-brand-logo" src="./assets/logo_v10.png" alt="BIDFinder" />
+                        <p class="auth-brand-kicker">Tạo tài khoản miễn phí</p>
+                        <h2 id="auth-dialog-title">Hệ thống quản lý dữ liệu đấu thầu y tế</h2>
+                        <p class="auth-brand-desc">
+                            Khám phá các tính năng của BIDFinder dành cho cá nhân và tổ chức.
+                        </p>
+
+                        <div class="auth-brand-card">
+                            <ul class="auth-feature-list" aria-label="Lợi ích khi dùng BIDFinder">
+                                <li class="auth-feature-item">
+                                    <span class="auth-feature-icon" aria-hidden="true"></span>
+                                    <span>Tăng tốc độ tìm kiếm</span>
+                                </li>
+                                <li class="auth-feature-item">
+                                    <span class="auth-feature-icon" aria-hidden="true"></span>
+                                    <span>Thao tác không giới hạn</span>
+                                </li>
+                                <li class="auth-feature-item">
+                                    <span class="auth-feature-icon" aria-hidden="true"></span>
+                                    <span>Bao gồm dữ liệu từ văn bản scan</span>
+                                </li>
+                                <li class="auth-feature-item">
+                                    <span class="auth-feature-icon" aria-hidden="true"></span>
+                                    <span>Cập nhật liên tục</span>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div id="auth-brand-profile-view" hidden>
+                        <p class="auth-brand-kicker">Tài khoản</p>
+                        <h2 class="auth-account-name" id="account-sidebar-name">Người dùng BIDFinder</h2>
+
+                        <div class="auth-account-card">
+                            <div class="auth-account-row">
+                                <span>Email</span>
+                                <strong id="account-sidebar-email">user@bidfinder.vn</strong>
+                            </div>
+                            <div class="auth-account-row">
+                                <span>Đơn vị công tác</span>
+                                <strong id="account-sidebar-work-unit">Chưa cập nhật</strong>
+                            </div>
+                            <div class="auth-account-row">
+                                <span>Bộ phận</span>
+                                <strong id="account-sidebar-position">Chưa cập nhật</strong>
+                            </div>
+                        </div>
+
+                        
+                    </div>
+                </aside>
+
+                <section class="auth-content-panel">
+                    <div id="auth-alert" class="auth-alert" hidden></div>
+
+                    <div id="auth-guest-view">
+                        <div class="auth-mode-switch" role="tablist" aria-label="Chọn chế độ xác thực">
+                            <button class="auth-mode-btn active" type="button" data-auth-mode="register">Đăng ký</button>
+                            <button class="auth-mode-btn" type="button" data-auth-mode="login">Đăng nhập</button>
+                        </div>
+
+                        <div class="auth-mode-panel active" id="auth-register-panel" data-auth-panel="register">
+                            <div class="auth-panel-head">
+                                <h3>Tạo tài khoản BIDFinder</h3>
+                            </div>
+
+                            <div class="auth-google-block" id="google-register-block">
+                                <div id="google-auth-slot-register" class="google-auth-slot"></div>
+                            </div>
+
+                            <div class="auth-divider"><span>hoặc</span></div>
+
+                            <form id="auth-register-form" class="auth-form" novalidate>
+                                <label class="auth-field">
+                                    <span>Họ và tên <span class="auth-required">*</span></span>
+                                    <input id="register-full-name" name="full_name" type="text" autocomplete="name" placeholder="Họ và tên" required />
+                                </label>
+
+                                <label class="auth-field">
+                                    <span>Email <span class="auth-required">*</span></span>
+                                    <input id="register-email" name="email" type="email" autocomplete="email" placeholder="Email" required />
+                                </label>
+
+                                <label class="auth-field">
+                                    <span>Mật khẩu <span class="auth-required">*</span></span>
+                                    <input id="register-password" name="password" type="password" autocomplete="new-password" placeholder="Mật khẩu" required />
+                                    <p class="auth-field-note" id="register-password-note">Mật khẩu phải có ít nhất 9 ký tự, bao gồm ít nhất 1 chữ số và 1 chữ cái in hoa.</p>
+                                </label>
+
+                                <button class="auth-submit-btn" type="submit">Tạo tài khoản</button>
+                            </form>
+                        </div>
+
+                        <div class="auth-mode-panel" id="auth-login-panel" data-auth-panel="login" hidden>
+                            <div class="auth-panel-head">
+                                <h3>Đăng nhập</h3>
+                            </div>
+
+                            <div class="auth-google-block" id="google-login-block">
+                                <div id="google-auth-slot-login" class="google-auth-slot"></div>
+                            </div>
+
+                            <div class="auth-divider"><span>hoặc</span></div>
+
+                            <form id="auth-login-form" class="auth-form" novalidate>
+                                <label class="auth-field">
+                                    <span>Email</span>
+                                    <input id="login-email" name="email" type="email" autocomplete="email" placeholder="Email" required />
+                                </label>
+
+                                <label class="auth-field">
+                                    <span>Mật khẩu</span>
+                                    <input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="Mật khẩu" required />
+                                </label>
+
+                                <button class="auth-submit-btn" type="submit">Đăng nhập</button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <div id="auth-profile-view" hidden>
+                        <div class="auth-profile-head">
+                            <p class="auth-profile-kicker">Hồ sơ tài khoản</p>
+                            <h3>Cập nhật thông tin</h3>
+                        </div>
+
+                        <form id="auth-profile-form" class="auth-form" novalidate>
+                            <label class="auth-field">
+                                <span>Họ và tên</span>
+                                <input id="profile-full-name" name="full_name" type="text" autocomplete="name" placeholder="Họ và tên" required />
+                            </label>
+
+                            <label class="auth-field">
+                                <span>Đơn vị công tác</span>
+                                <input id="profile-work-unit" name="work_unit" type="text" placeholder="Đơn vị công tác" />
+                            </label>
+
+                            <label class="auth-field">
+                                <span>Bộ phận</span>
+                                <select id="profile-position" name="position">
+                                    <option value="">Chưa chọn</option>
+                                </select>
+                            </label>
+
+                            <div class="auth-profile-actions">
+                                <button class="auth-secondary-btn" id="auth-profile-cancel-btn" type="button">Đóng</button>
+                                <button class="auth-submit-btn" type="submit">Lưu hồ sơ</button>
+                            </div>
+                        </form>
+                    </div>
+                </section>
+            </div>
+        </div>
     </div>
 
     <!-- README MODAL -->
@@ -388,13 +561,13 @@
 
             
             <div class="readme-header">
-                <h1>Chào mừng đến với Hệ thống tra cứu Kết quả đấu thầu y tế</h1>
+                <h1>Chào mừng đến với Hệ thống quản lý dữ liệu đấu thầu y tế</h1>
             </div>
 
             <div class="readme-body">
                 <section class="readme-section">
                     <h2>Về ứng dụng</h2>
-                    <p>Hệ thống tra cứu Kết quả đấu thầu y tế tại Việt Nam. Dữ liệu được thu thập và cập nhật từ <strong>Hệ thống mạng đấu thầu quốc gia</strong> (<a href="https://muasamcong.mpi.gov.vn" target="_blank">muasamcong.mpi.gov.vn</a>) - nền tảng chính thức do Bộ Tài chính quản lý.</p>
+                    <p>Hệ thống quản lý dữ liệu đấu thầu y tế tại Việt Nam. Dữ liệu được thu thập và cập nhật từ <strong>Hệ thống mạng đấu thầu quốc gia</strong> (<a href="https://muasamcong.mpi.gov.vn" target="_blank">muasamcong.mpi.gov.vn</a>) - nền tảng chính thức do Bộ Tài chính quản lý.</p>
                 </section>
 
                 <section class="readme-section">
@@ -515,7 +688,7 @@
                         <div id="modal-freshness" class="summary-value">Đang tải...</div>
                     </div>
                     <div class="summary-item">
-                        <label>Số quyết định đã xử lý</label>
+                        <label>Số gói thầu đã xử lý</label>
                         <div id="modal-boxes-total" class="summary-value">Đang tải...</div>
                     </div>
                 </div>
@@ -531,12 +704,14 @@
 
 
     <!-- Chart.js -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
     <script src="https://unpkg.com/@sgratzl/chartjs-chart-boxplot@4.4.5/build/index.umd.min.js"></script>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="auth.js"></script>
     <script src="search-form.js"></script>
     
     <script src="script.js"></script>

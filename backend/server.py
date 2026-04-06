@@ -1,5 +1,7 @@
+from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from typing import Optional, List, Dict, Any, Literal
+import time
 
 import asyncio
 import asyncpg
@@ -8,20 +10,61 @@ import os
 import ssl
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+
+from auth_utils import (
+    ensure_auth_schema as init_auth_schema,
+    get_auth_config_payload,
+    login_with_email,
+    login_with_google,
+    logout_current_session,
+    register_with_email,
+    require_authenticated_user,
+    update_user_profile,
+)
 
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 db_pool: Optional[asyncpg.Pool] = None
 db_pool_lock = asyncio.Lock()
+auth_schema_lock = asyncio.Lock()
+rate_limit_lock = asyncio.Lock()
+rate_limit_buckets: Dict[str, deque] = defaultdict(deque)
+auth_schema_ready = False
 
 ssl_context = ssl.create_default_context()
 ssl_context.check_hostname = False
 ssl_context.verify_mode = ssl.CERT_NONE
+
+DEFAULT_ALLOWED_ORIGINS = [
+    "https://bidfinder.vn",
+    "https://www.bidfinder.vn",
+    "https://bidfinder.netlify.app",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5500",
+    "http://127.0.0.1:5500",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", ",".join(DEFAULT_ALLOWED_ORIGINS)).split(",")
+    if origin.strip()
+]
+RATE_LIMIT_WINDOW_SECONDS = max(10, int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60")))
+QUERY_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("QUERY_RATE_LIMIT_PER_MINUTE", "30")))
+AUTOCOMPLETE_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("AUTOCOMPLETE_RATE_LIMIT_PER_MINUTE", "120")))
+METADATA_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("METADATA_RATE_LIMIT_PER_MINUTE", "20")))
+FILTER_CONFIG_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("FILTER_CONFIG_RATE_LIMIT_PER_MINUTE", "30")))
+AUTH_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("AUTH_RATE_LIMIT_PER_MINUTE", "20")))
+AUTH_CONFIG_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("AUTH_CONFIG_RATE_LIMIT_PER_MINUTE", "60")))
+MAX_QUERY_LIMIT = max(50, int(os.getenv("MAX_QUERY_LIMIT", "200")))
+AUTH_REQUIRED_FOR_DATA_ACCESS = os.getenv("AUTH_REQUIRED_FOR_DATA_ACCESS", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
 # =========================
@@ -176,6 +219,29 @@ class AutocompleteRequest(BaseModel):
     filters: Optional[Dict[str, Any]] = None
     excludeSelf: Optional[bool] = True
     limit: Optional[int] = 10
+
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    full_name: str
+    work_unit: Optional[str] = None
+    position: Optional[str] = None
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class GoogleLoginRequest(BaseModel):
+    credential: str
+
+
+class ProfileUpdateRequest(BaseModel):
+    full_name: Optional[str] = None
+    work_unit: Optional[str] = None
+    position: Optional[str] = None
 
 
 # =========================
@@ -341,13 +407,31 @@ async def ensure_db_pool() -> asyncpg.Pool:
     global db_pool
 
     if db_pool is not None:
+        await ensure_auth_schema_ready(db_pool)
         return db_pool
 
     async with db_pool_lock:
         if db_pool is None:
             db_pool = await get_db_pool()
 
+    await ensure_auth_schema_ready(db_pool)
     return db_pool
+
+
+async def ensure_auth_schema_ready(pool: asyncpg.Pool) -> None:
+    global auth_schema_ready
+
+    if auth_schema_ready:
+        return
+
+    async with auth_schema_lock:
+        if auth_schema_ready:
+            return
+
+        async with pool.acquire() as conn:
+            await init_auth_schema(conn)
+
+        auth_schema_ready = True
 
 
 def clean_value(val):
@@ -362,6 +446,47 @@ def clean_value(val):
 
 def clean_records(records):
     return [{k: clean_value(v) for k, v in dict(r).items()} for r in records]
+
+
+def get_client_ip(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for", "").strip()
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+
+    real_ip = request.headers.get("x-real-ip", "").strip()
+    if real_ip:
+        return real_ip
+
+    return getattr(request.client, "host", "") or "unknown"
+
+
+async def enforce_rate_limit(request: Request, bucket_name: str, limit: int) -> Optional[JSONResponse]:
+    client_ip = get_client_ip(request)
+    cache_key = f"{bucket_name}:{client_ip}"
+    now = time.time()
+    cutoff = now - RATE_LIMIT_WINDOW_SECONDS
+
+    async with rate_limit_lock:
+        bucket = rate_limit_buckets[cache_key]
+        while bucket and bucket[0] <= cutoff:
+            bucket.popleft()
+
+        if len(bucket) >= limit:
+            retry_after = max(1, int(RATE_LIMIT_WINDOW_SECONDS - (now - bucket[0])))
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "success": False,
+                    "error": "Too many requests",
+                    "message": f"Bạn đang gửi quá nhiều request tới {bucket_name}. Vui lòng thử lại sau.",
+                    "retry_after_seconds": retry_after,
+                },
+                headers={"Retry-After": str(retry_after)},
+            )
+
+        bucket.append(now)
+
+    return None
 
 
 def normalize_ws(value: Any) -> str:
@@ -669,6 +794,7 @@ async def lifespan(app: FastAPI):
     global db_pool
     try:
         db_pool = await get_db_pool()
+        await ensure_auth_schema_ready(db_pool)
     except Exception as e:
         print(f"Database connection failed: {e}")
     yield
@@ -680,10 +806,11 @@ app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "HEAD"],
+    allow_headers=["Content-Type", "Authorization"],
+    max_age=600,
 )
 
 
@@ -694,26 +821,257 @@ async def health():
     return Response(status_code=200)
 
 
-@app.get("/api/filter-config")
-async def get_filter_config():
+def auth_error_response(exc: HTTPException) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "success": False,
+            "error": exc.detail,
+            "message": exc.detail,
+        },
+    )
+
+
+def validation_error_response(message: str, status_code: int = 400) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "success": False,
+            "error": message,
+            "message": message,
+        },
+    )
+
+
+def build_auth_config() -> Dict[str, Any]:
     return {
-        "success": True,
-        "fields": FIELD_REGISTRY
+        **get_auth_config_payload(),
+        "require_auth_for_data_access": AUTH_REQUIRED_FOR_DATA_ACCESS,
     }
 
 
-@app.post("/api/query")
-async def query_data(request: QueryRequest):
+async def maybe_require_data_access_auth(conn: asyncpg.Connection, request: Request) -> Optional[Dict[str, Any]]:
+    if not AUTH_REQUIRED_FOR_DATA_ACCESS:
+        return None
+    return await require_authenticated_user(conn, request)
+
+
+@app.get("/api/auth/config")
+async def get_auth_config(request: Request):
+    limited = await enforce_rate_limit(request, "auth-config", AUTH_CONFIG_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    return {
+        "success": True,
+        **build_auth_config(),
+    }
+
+
+@app.post("/api/auth/register")
+async def register_user(request: Request, payload: RegisterRequest):
+    limited = await enforce_rate_limit(request, "auth-register", AUTH_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
     try:
         pool = await ensure_db_pool()
-        filters = request.filters or FilterRequest()
-        sort_rules = request.sort or []
-        limit = max(1, min(request.limit or 200, 1000))
+        async with pool.acquire() as conn:
+            result = await register_with_email(
+                conn,
+                request,
+                email=payload.email,
+                password=payload.password,
+                full_name=payload.full_name,
+                work_unit=payload.work_unit,
+                position=payload.position,
+            )
+
+        return JSONResponse(content={
+            "success": True,
+            "message": "Tạo tài khoản thành công.",
+            "token": result["token"],
+            "user": result["user"],
+            "auth": build_auth_config(),
+        })
+    except ValueError as exc:
+        return validation_error_response(str(exc))
+    except Exception as exc:
+        return validation_error_response(str(exc), status_code=500)
+
+
+@app.post("/api/auth/login")
+async def login_user(request: Request, payload: LoginRequest):
+    limited = await enforce_rate_limit(request, "auth-login", AUTH_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            result = await login_with_email(
+                conn,
+                request,
+                email=payload.email,
+                password=payload.password,
+            )
+
+        return JSONResponse(content={
+            "success": True,
+            "message": "Đăng nhập thành công.",
+            "token": result["token"],
+            "user": result["user"],
+            "auth": build_auth_config(),
+        })
+    except ValueError as exc:
+        return validation_error_response(str(exc), status_code=401)
+    except Exception as exc:
+        return validation_error_response(str(exc), status_code=500)
+
+
+@app.post("/api/auth/google")
+async def login_user_with_google(request: Request, payload: GoogleLoginRequest):
+    limited = await enforce_rate_limit(request, "auth-google", AUTH_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            result = await login_with_google(
+                conn,
+                request,
+                credential=payload.credential,
+            )
+
+        return JSONResponse(content={
+            "success": True,
+            "message": "Đăng nhập Google thành công.",
+            "token": result["token"],
+            "user": result["user"],
+            "auth": build_auth_config(),
+        })
+    except ValueError as exc:
+        return validation_error_response(str(exc), status_code=401)
+    except Exception as exc:
+        return validation_error_response(str(exc), status_code=500)
+
+
+@app.get("/api/auth/me")
+async def get_current_user(request: Request):
+    limited = await enforce_rate_limit(request, "auth-me", AUTH_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            user = await require_authenticated_user(conn, request)
+
+        return JSONResponse(content={
+            "success": True,
+            "user": user,
+            "auth": build_auth_config(),
+        })
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        return validation_error_response(str(exc), status_code=500)
+
+
+@app.post("/api/auth/logout")
+async def logout_user(request: Request):
+    limited = await enforce_rate_limit(request, "auth-logout", AUTH_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            await require_authenticated_user(conn, request)
+            await logout_current_session(conn, request)
+
+        return JSONResponse(content={
+            "success": True,
+            "message": "Đã đăng xuất.",
+        })
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        return validation_error_response(str(exc), status_code=500)
+
+
+@app.patch("/api/auth/profile")
+async def patch_profile(request: Request, payload: ProfileUpdateRequest):
+    limited = await enforce_rate_limit(request, "auth-profile", AUTH_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            user = await require_authenticated_user(conn, request)
+            updated_user = await update_user_profile(
+                conn,
+                user_id=int(user["id"]),
+                full_name=payload.full_name,
+                work_unit=payload.work_unit,
+                position=payload.position,
+            )
+
+        return JSONResponse(content={
+            "success": True,
+            "message": "Cập nhật hồ sơ thành công.",
+            "user": updated_user,
+            "auth": build_auth_config(),
+        })
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except ValueError as exc:
+        return validation_error_response(str(exc))
+    except Exception as exc:
+        return validation_error_response(str(exc), status_code=500)
+
+
+@app.get("/api/filter-config")
+async def get_filter_config(request: Request):
+    limited = await enforce_rate_limit(request, "filter-config", FILTER_CONFIG_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            await maybe_require_data_access_auth(conn, request)
+
+        return {
+            "success": True,
+            "fields": FIELD_REGISTRY
+        }
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        return validation_error_response(str(exc), status_code=500)
+
+
+@app.post("/api/query")
+async def query_data(request: Request, payload: QueryRequest):
+    limited = await enforce_rate_limit(request, "query", QUERY_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        filters = payload.filters or FilterRequest()
+        sort_rules = payload.sort or []
+        limit = max(1, min(payload.limit or 200, MAX_QUERY_LIMIT))
 
         result = {"success": True}
 
         async with pool.acquire() as conn:
-            if request.scope in ("all", "medicine"):
+            await maybe_require_data_access_auth(conn, request)
+
+            if payload.scope in ("all", "medicine"):
                 q, p, cq, cp = build_result_query("medicine", filters, sort_rules, limit)
                 rows = await conn.fetch(q, *p)
                 total = await conn.fetchval(cq, *cp)
@@ -723,7 +1081,7 @@ async def query_data(request: QueryRequest):
                     "displayed": len(rows)
                 }
 
-            if request.scope in ("all", "goods"):
+            if payload.scope in ("all", "goods"):
                 q, p, cq, cp = build_result_query("goods", filters, sort_rules, limit)
                 rows = await conn.fetch(q, *p)
                 total = await conn.fetchval(cq, *cp)
@@ -735,31 +1093,37 @@ async def query_data(request: QueryRequest):
 
         return JSONResponse(content=result)
 
+    except HTTPException as exc:
+        return auth_error_response(exc)
     except Exception as e:
         return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
 
 
 @app.post("/api/autocomplete")
-async def autocomplete(request: AutocompleteRequest):
+async def autocomplete(request: Request, payload: AutocompleteRequest):
+    limited = await enforce_rate_limit(request, "autocomplete", AUTOCOMPLETE_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
     try:
         pool = await ensure_db_pool()
-        keyword = (request.keyword or "").strip()
+        keyword = (payload.keyword or "").strip()
         if len(keyword) < 1:
             return JSONResponse(content={
                 "success": True,
-                "field": request.field,
+                "field": payload.field,
                 "data": []
             })
 
-        raw_filters = request.filters or {}
+        raw_filters = payload.filters or {}
         filters_obj = FilterRequest(**raw_filters) if isinstance(raw_filters, dict) else FilterRequest()
         req = AutocompleteRequest(
-            scope=request.scope or "all",
-            field=request.field,
+            scope=payload.scope or "all",
+            field=payload.field,
             keyword=keyword,
             filters=raw_filters,
-            excludeSelf=request.excludeSelf if request.excludeSelf is not None else True,
-            limit=max(1, min(int(request.limit or 10), 20))
+            excludeSelf=payload.excludeSelf if payload.excludeSelf is not None else True,
+            limit=max(1, min(int(payload.limit or 10), 20))
         )
         req.filters = filters_obj
 
@@ -779,6 +1143,8 @@ async def autocomplete(request: AutocompleteRequest):
         push(keyword)
 
         async with pool.acquire() as conn:
+            await maybe_require_data_access_auth(conn, request)
+
             if req.scope in ("all", "medicine"):
                 for item in await fetch_autocomplete_suggestions(conn, req, "medicine"):
                     push(item)
@@ -789,10 +1155,12 @@ async def autocomplete(request: AutocompleteRequest):
 
         return JSONResponse(content={
             "success": True,
-            "field": request.field,
+            "field": payload.field,
             "data": merged[: int(req.limit or 10)]
         })
 
+    except HTTPException as exc:
+        return auth_error_response(exc)
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -803,17 +1171,28 @@ async def autocomplete(request: AutocompleteRequest):
 
 
 @app.get("/api/metadata")
-async def get_metadata():
+async def get_metadata(request: Request):
+    limited = await enforce_rate_limit(request, "metadata", METADATA_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
     try:
         pool = await ensure_db_pool()
-        query = """
-        SELECT start_time, end_time, duration_seconds, boxes_selected
-        FROM run_sessions
-        ORDER BY start_time DESC
-        LIMIT 10
-        """
         async with pool.acquire() as conn:
-            rows = await conn.fetch(query)
+            await maybe_require_data_access_auth(conn, request)
+
+            rows = await conn.fetch("""
+                SELECT start_time, end_time, duration_seconds, boxes_selected
+                FROM run_sessions
+                WHERE end_time IS NOT NULL
+                ORDER BY end_time DESC, start_time DESC
+                LIMIT 50
+            """)
+            total_runs = await conn.fetchval("""
+                SELECT COUNT(*)
+                FROM run_sessions
+                WHERE end_time IS NOT NULL
+            """)
 
         history = clean_records(rows)
         if not history:
@@ -823,8 +1202,10 @@ async def get_metadata():
             "success": True,
             "history": history,
             "last_run": history[0],
-            "total_runs": len(history)
+            "total_runs": int(total_runs or 0)
         })
 
+    except HTTPException as exc:
+        return auth_error_response(exc)
     except Exception as e:
         return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
