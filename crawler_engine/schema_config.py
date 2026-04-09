@@ -43,16 +43,26 @@ SCHEMAS = {
             "GĐKLH": "GĐKLH hoặc GPNK",
             "SĐK hoặc số GPNK": "GĐKLH hoặc GPNK",
             "SĐK/GPNK": "GĐKLH hoặc GPNK",
+            "Hạn dùng": "Hạn dùng (tuổi thọ)",
+            "Quy cách đóng gói": "Quy cách",
             "ĐVT": "Đơn vị tính",
-            "Đon giá trúng thầu": "Đơn giá trúng thầu (VND)",
+            "Đơn giá trúng thầu": "Đơn giá trúng thầu (VND)",
             "Thành tiền": "Thành tiền (VND)",
             "Tên cơ sở sản xuất": "Cơ sở sản xuất",
+            "Cơ sở SX": "Cơ sở sản xuất",
+            "Tên nhà sản xuất": "Cơ sở sản xuất",
+            "Hãng sản xuất": "Cơ sở sản xuất",
             "Nước sản xuất": "Xuất xứ",
+            "Nước SX": "Xuất xứ",
+            "NSX": "Xuất xứ",
             "Mã phần lô": "Mã phần/lô",
             "Mã phần (lô)": "Mã phần/lô",
             "Nhà thầu": "Nhà thầu trúng thầu",
             "Tên nhà thầu": "Nhà thầu trúng thầu",
             "Tên nhà thầu trúng thầu": "Nhà thầu trúng thầu",
+            "Hạn dùng (Tuổi thọ)": "Hạn dùng (tuổi thọ)",
+            "Hạn dùng (Tuổi thọ) tháng": "Hạn dùng (tuổi thọ)",
+            "Hạn dùng (tháng)": "Hạn dùng (tuổi thọ)",
         },
 
         "primary_merge_key": ["Mã phần/lô"],
@@ -63,6 +73,12 @@ SCHEMAS = {
             "Đường dùng", "Dạng bào chế", "Quy cách", "Nhóm thuốc", "Hạn dùng (tuổi thọ)",
             "GĐKLH hoặc GPNK", "Cơ sở sản xuất", "Xuất xứ", "Đơn vị tính", "Số lượng",
             "Đơn giá trúng thầu (VND)", "Thành tiền (VND)", "Nhà thầu trúng thầu"
+        ],
+
+        "review_columns": [
+            
+           "Thành tiền (VND)"
+            
         ],
 
         "db_indexes": [
@@ -151,6 +167,10 @@ SCHEMAS = {
             "Ký mã hiệu", "Nhãn hiệu", "Hãng sản xuất", "Mặt hàng dự thầu",
             "Đơn vị tính", "Khối lượng", "Xuất xứ", "Năm sản xuất",
             "Tính năng kỹ thuật", "Đơn giá trúng thầu (VND)", "Thành tiền (VND)"
+        ],
+
+        "review_columns": [
+            "Nhà thầu trúng thầu",
         ],
 
         "db_indexes": [

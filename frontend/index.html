@@ -169,18 +169,6 @@
                                 <button class="action-btn" id="open-filter-panel" title="Tra cứu" data-title="Tra cứu">
                                     <i data-feather="filter"></i>
                                 </button>
-                                <button class="action-btn" id="open-sort-panel" title="Sắp xếp" data-title="Sắp xếp">
-                                    <i data-feather="sliders"></i>
-                                </button>
-                                <button class="action-btn" id="toggle-wrap-text" title="Wrap text" data-title="Wrap text">
-                                    <i data-feather="type"></i>
-                                </button>
-                                <button class="action-btn" id="toggle-freeze-column" title="Freeze" data-title="Freeze cột">
-                                    <i data-feather="sidebar"></i>
-                                </button>
-                                <button class="btn-export" id="export-excel-btn" title="Xuất Excel" data-title="Xuất Excel">
-                                    <i data-feather="download"></i>
-                                </button>
                             </div>
                         </div>
                     </div>
@@ -206,7 +194,21 @@
                                     </h2>
                                 </div>
                             </div>
-                            <div class="table-wrapper">
+                            <div class="table-wrapper" data-table-id="standard-table">
+                                <div class="table-hover-controls" data-table-id="standard-table">
+                                    <div class="table-tool-group">
+                                        <button class="table-tool-btn" type="button" data-action="toggle-columns" data-table-id="standard-table" aria-haspopup="true" aria-expanded="false" title="Show/hide columns">
+                                            <i data-feather="eye"></i>
+                                        </button>
+                                        <div class="table-columns-popover" hidden></div>
+                                    </div>
+                                    <button class="table-tool-btn" type="button" data-action="download" data-table-id="standard-table" title="Download Excel">
+                                        <i data-feather="download"></i>
+                                    </button>
+                                    <button class="table-tool-btn" type="button" data-action="fullscreen" data-table-id="standard-table" title="Fullscreen">
+                                        <i data-feather="maximize"></i>
+                                    </button>
+                                </div>
                                 <div class="cell-display-bar" id="std-cell-bar">
                                     <span class="cell-display-label"></span>
                                     <span class="cell-display-value" id="std-cell-value"></span>
@@ -243,7 +245,21 @@
                                     </h2>
                                 </div>
                             </div>
-                            <div class="table-wrapper">
+                            <div class="table-wrapper" data-table-id="extended-table">
+                                <div class="table-hover-controls" data-table-id="extended-table">
+                                    <div class="table-tool-group">
+                                        <button class="table-tool-btn" type="button" data-action="toggle-columns" data-table-id="extended-table" aria-haspopup="true" aria-expanded="false" title="Ẩn/hiện cột">
+                                            <i data-feather="eye"></i>
+                                        </button>
+                                        <div class="table-columns-popover" hidden></div>
+                                    </div>
+                                    <button class="table-tool-btn" type="button" data-action="download" data-table-id="extended-table" title="Tải Excel">
+                                        <i data-feather="download"></i>
+                                    </button>
+                                    <button class="table-tool-btn" type="button" data-action="fullscreen" data-table-id="extended-table" title="Toàn màn hình">
+                                        <i data-feather="maximize"></i>
+                                    </button>
+                                </div>
                                 <div class="cell-display-bar" id="ext-cell-bar">
                                     <span class="cell-display-label"></span>
                                     <span class="cell-display-value" id="ext-cell-value"></span>
@@ -350,32 +366,6 @@
                 <li><strong><code>NOT</code>:</strong> Loại bỏ kết quả chứa từ khóa đứng <em>sau</em> nút <code>NOT</code>.</li>
             </ul>
         </div>
-
-
-
-        <!-- ========== SORT PANEL (POPUP) ========== -->
-        <div id="sort-panel" class="side-panel sort-panel-fixed">
-            <div class="panel-header">
-                <h3><i data-feather="sliders"></i> Sắp xếp</h3>
-                <button id="close-sort-panel" class="btn-close" aria-label="Đóng">
-                    <i data-feather="x"></i>
-                </button>
-            </div>
-
-            <div class="panel-body">
-                <div class="sort-toolbar">
-                    <button id="add-sort-rule" class="btn-add-sort" type="button">+ Thêm cột</button>
-                </div>
-
-                <div id="sort-rules-list" class="sort-rules-list"></div>
-            </div>
-
-            <div class="panel-footer sort-footer">
-                <button id="reset-sort" class="btn-secondary" type="button">Đặt lại</button>
-                <button id="apply-sort" class="btn-primary" type="button">Áp dụng</button>
-            </div>
-        </div>
-
 
         <!-- Overlay -->
         <div id="panel-overlay" class="panel-overlay"></div>

@@ -840,8 +840,6 @@ class CustomSearchForm extends HTMLElement {
                         <div class="sidebar-item" data-target="pane-group">Nhóm thuốc</div>
                         <div class="sidebar-item" data-target="pane-reg">Số đăng ký</div>
                         <div class="sidebar-item" data-target="pane-unit">Đơn vị tính</div>
-
-                        <div class="sidebar-group">🏭 Nhà sản xuất</div>
                         <div class="sidebar-item" data-target="pane-manu">Cơ sở sản xuất</div>
                         <div class="sidebar-item" data-target="pane-country">Nước sản xuất</div>
                     </div>

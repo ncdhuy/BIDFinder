@@ -358,12 +358,13 @@ BASE_SORT_MAP = {
     "investor": '"Chủ đầu tư"',
     "approvalDecision": '"Quyết định phê duyệt"',
     "approvalDate": 'TO_DATE("Ngày phê duyệt", \'DD/MM/YYYY\')',
-    "expiryDate": '"Ngày hết hiệu lực"',
+    "expiryDate": 'TO_DATE("Ngày hết hiệu lực", \'DD/MM/YYYY\')',
     "unit": '"Đơn vị tính"',
     "unitPrice": '"Đơn giá trúng thầu (VND)"',
     "amount": '"Thành tiền (VND)"',
     "origin": '"Xuất xứ"',
     "winner": '"Nhà thầu trúng thầu"',
+    "method": '"Hình thức LCNT"',
     "place": '"Địa điểm"',
     "validity": '"Tình trạng hiệu lực"',
 }
@@ -372,12 +373,26 @@ ALLOWED_SORT_DF1 = {
     **BASE_SORT_MAP,
     "quantity": '"Số lượng"',
     "drugName": '"Tên thuốc"',
+    "activeIngredient": '"Tên hoạt chất"',
+    "strength": '"Nồng độ, hàm lượng"',
+    "route": '"Đường dùng"',
+    "dosageForm": '"Dạng bào chế"',
+    "packaging": '"Quy cách"',
+    "drugGroup": '"Nhóm thuốc"',
+    "license": '"GĐKLH hoặc GPNK"',
+    "manufacturer": '"Cơ sở sản xuất"',
 }
 
 ALLOWED_SORT_DF2 = {
     **BASE_SORT_MAP,
     "quantity": '"Khối lượng"',
+    "lotName": '"Tên phần/lô"',
     "drugName": '"Danh mục hàng hóa"',
+    "bidItem": '"Mặt hàng dự thầu"',
+    "brand": '"Nhãn hiệu"',
+    "model": '"Ký mã hiệu"',
+    "technicalSpec": '"Tính năng kỹ thuật"',
+    "manufacturer": '"Hãng sản xuất"',
 }
 
 

@@ -70,30 +70,112 @@ function reorderDataByColumns(data, columnOrder) {
     );
 }
 
-function getCurrentHeaderOrder(tableId) {
-    const headers = document.getElementById(tableId)?.querySelectorAll('thead th');
-    return headers ? Array.from(headers).map(h => h.textContent.trim()) : null;
-}
-
 // ========= 3. STORAGE
 const DF1_COLUMNS_ORDER = [
-    'Mã TBMT','Chủ đầu tư','Quyết định phê duyệt','Ngày phê duyệt','Ngày hết hiệu lực',
-    'Đơn vị tính','Số lượng','Đơn giá trúng thầu (VND)','Thành tiền (VND)','Tên thuốc',
-    'Tên hoạt chất','Nồng độ, hàm lượng','Đường dùng','Dạng bào chế','Quy cách',
-    'Nhóm thuốc','GĐKLH hoặc GPNK','Cơ sở sản xuất','Xuất xứ','Nhà thầu trúng thầu',
-    'Hình thức LCNT','Địa điểm','Tình trạng hiệu lực'
+    'Mã TBMT','Chủ đầu tư','Quyết định phê duyệt','Ngày phê duyệt',
+    'Tên thuốc','Tên hoạt chất','Nồng độ, hàm lượng',
+    'Đơn vị tính','Số lượng','Đơn giá trúng thầu (VND)','Thành tiền (VND)',
+    'Đường dùng','Dạng bào chế','Quy cách','Nhóm thuốc','GĐKLH hoặc GPNK',
+    'Cơ sở sản xuất','Xuất xứ','Nhà thầu trúng thầu',
+    'Hình thức LCNT','Địa điểm','Ngày hết hiệu lực','Tình trạng hiệu lực'
 ];
 
 const DF2_COLUMNS_ORDER = [
-    'Mã TBMT','Chủ đầu tư','Quyết định phê duyệt','Ngày phê duyệt','Ngày hết hiệu lực',
+    'Mã TBMT','Chủ đầu tư','Quyết định phê duyệt','Ngày phê duyệt',
+    'Tên phần/lô','Danh mục hàng hóa','Tính năng kỹ thuật',
     'Đơn vị tính','Khối lượng','Đơn giá trúng thầu (VND)','Thành tiền (VND)',
-    'Tên phần/lô','Danh mục hàng hóa','Mặt hàng dự thầu',
-    'Nhãn hiệu','Ký mã hiệu','Tính năng kỹ thuật','Xuất xứ','Hãng sản xuất',
-    'Nhà thầu trúng thầu','Hình thức LCNT','Địa điểm','Tình trạng hiệu lực'
+    'Mặt hàng dự thầu','Nhãn hiệu','Ký mã hiệu',
+    'Xuất xứ','Hãng sản xuất','Nhà thầu trúng thầu',
+    'Hình thức LCNT','Địa điểm','Ngày hết hiệu lực','Tình trạng hiệu lực'
 ];
 
 let currentColumnOrderDf1 = [...DF1_COLUMNS_ORDER];
 let currentColumnOrderDf2 = [...DF2_COLUMNS_ORDER];
+const TABLE_DEFAULT_COLUMNS = {
+    'standard-table': DF1_COLUMNS_ORDER,
+    'extended-table': DF2_COLUMNS_ORDER
+};
+const TABLE_COLUMN_WIDTH_KEYS = {
+    'standard-table': 'colWidthDf1',
+    'extended-table': 'colWidthDf2'
+};
+const STORAGE_KEYS = {
+    hiddenColumns: 'hiddenColumnsByTable',
+    wrappedColumns: 'wrappedColumnsByTable',
+    frozenColumns: 'frozenColumnsByTable',
+    sortRule: 'activeTableSortRule'
+};
+const RESETTABLE_UI_STORAGE_KEYS = [
+    'columnOrderDf1',
+    'columnOrderDf2',
+    'colWidthDf1',
+    'colWidthDf2',
+    STORAGE_KEYS.hiddenColumns,
+    STORAGE_KEYS.wrappedColumns,
+    STORAGE_KEYS.frozenColumns,
+    STORAGE_KEYS.sortRule
+];
+const RESETTABLE_UI_SESSION_KEYS = [
+    'bidfinder:view'
+];
+
+function clearResettableUiStateOnRefresh() {
+    RESETTABLE_UI_STORAGE_KEYS.forEach(key => localStorage.removeItem(key));
+    RESETTABLE_UI_SESSION_KEYS.forEach(key => sessionStorage.removeItem(key));
+}
+
+clearResettableUiStateOnRefresh();
+
+function readJsonStorage(key, fallback) {
+    try {
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : fallback;
+    } catch (error) {
+        console.warn(`Khong doc duoc localStorage key ${key}:`, error);
+        localStorage.removeItem(key);
+        return fallback;
+    }
+}
+
+function writeJsonStorage(key, value) {
+    localStorage.setItem(key, JSON.stringify(value));
+}
+
+function normalizeStoredColumnSet(values, tableId) {
+    const allowed = new Set(TABLE_DEFAULT_COLUMNS[tableId] || []);
+    if (!Array.isArray(values)) return new Set();
+    return new Set(values.filter(value => allowed.has(value)));
+}
+
+function loadPersistentColumnSets(storageKey) {
+    const stored = readJsonStorage(storageKey, {});
+    return {
+        'standard-table': normalizeStoredColumnSet(stored?.['standard-table'], 'standard-table'),
+        'extended-table': normalizeStoredColumnSet(stored?.['extended-table'], 'extended-table')
+    };
+}
+
+function persistColumnSet(storageKey, tableId, valueSet) {
+    const stored = readJsonStorage(storageKey, {});
+    stored[tableId] = Array.from(valueSet);
+    writeJsonStorage(storageKey, stored);
+}
+
+function loadStoredSortRule() {
+    const stored = readJsonStorage(STORAGE_KEYS.sortRule, null);
+    if (!stored || typeof stored !== 'object') return null;
+    if (typeof stored.column !== 'string') return null;
+    if (!['asc', 'desc'].includes(stored.order)) return null;
+    return { column: stored.column, order: stored.order };
+}
+
+function persistSortRule(rule) {
+    if (!rule) {
+        localStorage.removeItem(STORAGE_KEYS.sortRule);
+        return;
+    }
+    writeJsonStorage(STORAGE_KEYS.sortRule, rule);
+}
 
 function validateColumnOrder(parsed, defaultOrder, storageKey) {
     if (!Array.isArray(parsed) || 
@@ -143,18 +225,20 @@ function restoreColumnOrderFromStorage() {
 // ========= 1. RENDER
 let standardTbody;
 let extendedTbody;
-const wrappedColumnsState = {
-    'standard-table': new Set(),
-    'extended-table': new Set()
+const wrappedColumnsState = loadPersistentColumnSets(STORAGE_KEYS.wrappedColumns);
+const frozenColumnsState = loadPersistentColumnSets(STORAGE_KEYS.frozenColumns);
+const hiddenColumnsState = loadPersistentColumnSets(STORAGE_KEYS.hiddenColumns);
+const miniFilterState = {
+    'standard-table': {},
+    'extended-table': {}
 };
-const frozenColumnsState = {
-    'standard-table': new Set(),
-    'extended-table': new Set()
-};
+let activeSortRule = loadStoredSortRule();
 const selectionState = {
     'standard-table': { rows: new Set(), columns: new Set(), lastRow: null, lastColumn: null },
     'extended-table': { rows: new Set(), columns: new Set(), lastRow: null, lastColumn: null }
 };
+let currentDisplayedDf1 = [];
+let currentDisplayedDf2 = [];
 
 // Configuration object cho từng loại table
 const TABLE_CONFIGS = {
@@ -187,8 +271,8 @@ const TABLE_CONFIGS = {
 function renderTableData(data, configKey) {
     const config = TABLE_CONFIGS[configKey];
     const tbody = config.tbody();
-    const columnOrder = config.columnOrder();
     const tableId = configKey === 'df1' ? 'standard-table' : 'extended-table';
+    const columnOrder = getVisibleColumnOrder(tableId);
     
     tbody.innerHTML = '';
     resetCellSelection();
@@ -237,6 +321,7 @@ function renderTableData(data, configKey) {
     });
     
     tbody.appendChild(fragment);
+    syncHeaderDecorations(tableId);
     syncWrappedColumns(tableId);
     syncSelectedColumns(tableId);
     syncSelectedRows(tableId);
@@ -273,10 +358,9 @@ function getCellDisplayLines(cell) {
     return [raw];
 }
 
-function measureCellContentWidth(cell, extraWidth = 0) {
-    if (!cell || !autofitMeasureContext) return 60;
+function measureTextWidth(text, style) {
+    if (!autofitMeasureContext || !style) return 0;
 
-    const style = window.getComputedStyle(cell);
     autofitMeasureContext.font = [
         style.fontStyle,
         style.fontVariant,
@@ -285,8 +369,23 @@ function measureCellContentWidth(cell, extraWidth = 0) {
         style.fontFamily
     ].filter(Boolean).join(' ');
 
+    const safeText = String(text || '');
+    const baseWidth = autofitMeasureContext.measureText(safeText).width;
+    const letterSpacing = parseFloat(style.letterSpacing);
+    const spacingWidth = Number.isFinite(letterSpacing) && safeText.length > 1
+        ? letterSpacing * (safeText.length - 1)
+        : 0;
+
+    return baseWidth + Math.max(0, spacingWidth);
+}
+
+function measureCellContentWidth(cell, extraWidth = 0) {
+    if (!cell || !autofitMeasureContext) return 60;
+
+    const style = window.getComputedStyle(cell);
+
     const textWidth = getCellDisplayLines(cell).reduce((maxWidth, line) => {
-        return Math.max(maxWidth, autofitMeasureContext.measureText(line).width);
+        return Math.max(maxWidth, measureTextWidth(line, style));
     }, 0);
 
     const paddingWidth =
@@ -298,6 +397,29 @@ function measureCellContentWidth(cell, extraWidth = 0) {
     return Math.ceil(textWidth + paddingWidth + extraWidth);
 }
 
+function getHeaderMinimumWidth(headerCell) {
+    if (!headerCell) return 110;
+
+    const label = headerCell.querySelector('.column-header-label');
+    const target = label || headerCell;
+    const style = window.getComputedStyle(target);
+    const labelText = String(label?.textContent || headerCell.dataset.colName || headerCell.textContent || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const labelWidth = measureTextWidth(labelText, style);
+    const headerStyle = window.getComputedStyle(headerCell);
+    const shellStyle = window.getComputedStyle(headerCell.querySelector('.column-header-shell') || headerCell);
+    const horizontalPadding =
+        (parseFloat(headerStyle.paddingLeft) || 0) +
+        (parseFloat(headerStyle.paddingRight) || 0) +
+        (parseFloat(shellStyle.paddingLeft) || 0) +
+        (parseFloat(shellStyle.paddingRight) || 0);
+
+    const reservedControlsWidth = 56;
+    return Math.ceil(Math.max(110, labelWidth + horizontalPadding + reservedControlsWidth));
+}
+
 function getAutoFitColumnWidth(table, columnIndex) {
     if (!table || columnIndex < 0) return 60;
 
@@ -306,27 +428,65 @@ function getAutoFitColumnWidth(table, columnIndex) {
         return 60;
     }
 
-    let maxWidth = measureCellContentWidth(headerCell, 36);
+    let maxWidth = getHeaderMinimumWidth(headerCell);
 
     table.querySelectorAll('tbody tr').forEach(row => {
         const cell = row.cells[columnIndex];
         if (!cell) return;
-        maxWidth = Math.max(maxWidth, measureCellContentWidth(cell, 10));
+        maxWidth = Math.max(maxWidth, measureCellContentWidth(cell, 18));
     });
 
     return Math.max(60, maxWidth);
 }
 
-function persistColumnWidth(table, colgroup, storageKey, columnIndex, width) {
-    if (!table || !colgroup?.children?.[columnIndex]) return;
+function getStoredColumnWidths(storageKey) {
+    const stored = readJsonStorage(storageKey, {});
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return {};
+
+    return Object.fromEntries(
+        Object.entries(stored).filter(([, value]) => {
+            const width = Number(value);
+            return Number.isFinite(width) && width > 0;
+        })
+    );
+}
+
+function persistColumnWidth(table, colgroup, storageKey, columnName, columnIndex, width) {
+    if (!table || !columnName || !colgroup?.children?.[columnIndex]) return;
 
     colgroup.children[columnIndex].style.width = `${width}px`;
     table.classList.add("user-resized");
 
-    const current = JSON.parse(localStorage.getItem(storageKey) || "{}");
-    current[columnIndex] = width;
-    localStorage.setItem(storageKey, JSON.stringify(current));
+    const current = getStoredColumnWidths(storageKey);
+    current[columnName] = width;
+    writeJsonStorage(storageKey, current);
     syncFrozenColumns(table.id);
+}
+
+function syncStoredColumnWidths(tableId) {
+    const table = document.getElementById(tableId);
+    const storageKey = TABLE_COLUMN_WIDTH_KEYS[tableId];
+    if (!table || !storageKey) return;
+
+    const colgroup = ensureColGroup(table);
+    const storedWidths = getStoredColumnWidths(storageKey);
+    const headers = Array.from(table.querySelectorAll("thead th"));
+
+    headers.forEach((th, index) => {
+        const col = colgroup.children[index];
+        if (!col) return;
+
+        if (th.classList.contains('row-selector-header')) {
+            col.style.width = '40px';
+            return;
+        }
+
+        const columnName = th.dataset.colName;
+        const storedWidth = Number(storedWidths[columnName]);
+        col.style.width = Number.isFinite(storedWidth) && storedWidth > 0
+            ? `${storedWidth}px`
+            : `${getHeaderMinimumWidth(th)}px`;
+    });
 }
 
 function initColumnResize(tableId, storageKey) {
@@ -334,9 +494,9 @@ function initColumnResize(tableId, storageKey) {
     if (!table) return;
 
     const colgroup = ensureColGroup(table);
-    const ths = Array.from(table.querySelectorAll("thead th"));
+    syncStoredColumnWidths(tableId);
 
-    ths.forEach((th, idx) => {
+    Array.from(table.querySelectorAll("thead th")).forEach(th => {
         if (th.classList.contains('row-selector-header')) return;
         if (th.querySelector(".col-resizer")) return;
 
@@ -352,11 +512,8 @@ function initColumnResize(tableId, storageKey) {
             const clientX = e.touches ? e.touches[0].clientX : e.clientX;
             const dx = clientX - startX;
             const newW = Math.max(MIN_COL_WIDTH, startW + dx);
-            
-            // ✅ FIX BUG 2: Lấy index thực tế từ DOM, không dùng idx từ forEach
             const currentIndex = Array.from(th.parentElement.children).indexOf(th);
-
-            persistColumnWidth(table, colgroup, storageKey, currentIndex, newW);
+            persistColumnWidth(table, colgroup, storageKey, th.dataset.colName, currentIndex, newW);
         };
 
         const onUp = () => {
@@ -375,11 +532,9 @@ function initColumnResize(tableId, storageKey) {
             startX = e.touches ? e.touches[0].clientX : e.clientX;
             startW = th.getBoundingClientRect().width;
 
-            // ✅ FIX BUG 2: Lấy index thực tế
             const currentIndex = Array.from(th.parentElement.children).indexOf(th);
-            
             if (!colgroup.children[currentIndex].style.width) {
-                colgroup.children[currentIndex].style.width = startW + "px";
+                colgroup.children[currentIndex].style.width = `${startW}px`;
             }
 
             document.addEventListener("mousemove", onMove);
@@ -395,68 +550,13 @@ function initColumnResize(tableId, storageKey) {
 
             const currentIndex = Array.from(th.parentElement.children).indexOf(th);
             const autoWidth = getAutoFitColumnWidth(table, currentIndex);
-            persistColumnWidth(table, colgroup, storageKey, currentIndex, autoWidth);
+            persistColumnWidth(table, colgroup, storageKey, th.dataset.colName, currentIndex, autoWidth);
         };
 
         handle.addEventListener("mousedown", onDown);
         handle.addEventListener("touchstart", onDown, { passive: false });
         handle.addEventListener("dblclick", onAutoFit);
     });
-}
-
-function createResizeHandle(th, idx, colgroup, table, storageKey) {
-    const handle = document.createElement("div");
-    handle.className = "col-resizer";
-    
-    const MIN_COL_WIDTH = 60;
-    let startX = 0;
-    let startW = 0;
-
-    const saveWidth = (newWidth) => {
-        const current = JSON.parse(localStorage.getItem(storageKey) || "{}");
-        current[idx] = newWidth;
-        localStorage.setItem(storageKey, JSON.stringify(current));
-    };
-
-    const onMove = (e) => {
-        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-        const newW = Math.max(MIN_COL_WIDTH, startW + (clientX - startX));
-        
-        colgroup.children[idx].style.width = `${newW}px`;
-        table.classList.add("user-resized");
-        saveWidth(newW);
-    };
-
-    const onUp = () => {
-        document.removeEventListener("mousemove", onMove);
-        document.removeEventListener("mouseup", onUp);
-        document.removeEventListener("touchmove", onMove);
-        document.removeEventListener("touchend", onUp);
-        table.classList.remove("resizing");
-    };
-
-    const onDown = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-
-        startX = e.touches ? e.touches[0].clientX : e.clientX;
-        startW = th.getBoundingClientRect().width;
-
-        if (!colgroup.children[idx].style.width) {
-            colgroup.children[idx].style.width = `${startW}px`;
-        }
-
-        document.addEventListener("mousemove", onMove);
-        document.addEventListener("mouseup", onUp);
-        document.addEventListener("touchmove", onMove, { passive: false });
-        document.addEventListener("touchend", onUp);
-        table.classList.add("resizing");
-    };
-
-    handle.addEventListener("mousedown", onDown);
-    handle.addEventListener("touchstart", onDown, { passive: false });
-    
-    return handle;
 }
 
 function ensureColGroup(table) {
@@ -486,7 +586,8 @@ function ensureColGroup(table) {
 // ========= 3. DRAG-DROP
 let dragState = {
     columnIndex: null,
-    table: null
+    table: null,
+    dropPosition: 'before'
 };
 
 const DRAG_EVENTS = [
@@ -500,7 +601,7 @@ const TABLE_MAP = {
         storageKey: 'columnOrderDf1',
         defaultOrder: DF1_COLUMNS_ORDER,
         renderFn: renderStandardData,
-        currentData: () => currentFilteredDf1
+        currentData: () => currentDisplayedDf1
     },
     'extended-table': {
         columnOrder: () => currentColumnOrderDf2,
@@ -508,7 +609,7 @@ const TABLE_MAP = {
         storageKey: 'columnOrderDf2',
         defaultOrder: DF2_COLUMNS_ORDER,
         renderFn: renderExtendedData,
-        currentData: () => currentFilteredDf2
+        currentData: () => currentDisplayedDf2
     }
 };
 
@@ -525,7 +626,7 @@ function initTableHeaderDrag(tableId) {
         return;
     }
     
-    const headers = table.querySelectorAll('thead th');
+    const headers = table.querySelectorAll('thead th[data-col-name]');
     console.log(`📋 Found ${headers.length} headers in ${tableId}`);
     
     headers.forEach((header, index) => {
@@ -553,10 +654,39 @@ function setupHeaderDragDrop(header, index) {
     });
 }
 
+function getDragDropPosition(header, event) {
+    const rect = header?.getBoundingClientRect?.();
+    if (!rect) return 'before';
+
+    const clientX = event?.clientX ?? 0;
+    return clientX >= rect.left + (rect.width / 2) ? 'after' : 'before';
+}
+
+function clearDragOverState(table) {
+    table?.querySelectorAll('thead th').forEach(header => {
+        header.classList.remove('drag-over', 'drag-over-before', 'drag-over-after');
+    });
+}
+
+function applyDragOverState(header, position) {
+    const table = header?.closest('table');
+    if (!table || !header) return;
+
+    clearDragOverState(table);
+    header.classList.add('drag-over');
+    header.classList.add(position === 'after' ? 'drag-over-after' : 'drag-over-before');
+}
+
 const DRAG_HANDLERS = {
     dragstart: function(e) {
+        if (e.target?.closest('.column-menu-trigger, .col-resizer')) {
+            e.preventDefault();
+            return false;
+        }
+
         dragState.columnIndex = parseInt(this.dataset.columnIndex);
         dragState.table = this.closest('table');
+        dragState.dropPosition = 'before';
         
         console.log(`🎬 Drag start: column ${dragState.columnIndex}`);
         
@@ -570,29 +700,38 @@ const DRAG_HANDLERS = {
     dragover: function(e) {
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
+        if (this.closest('table') === dragState.table) {
+            const dropPosition = getDragDropPosition(this, e);
+            dragState.dropPosition = dropPosition;
+            applyDragOverState(this, dropPosition);
+        }
         return false;
     },
     
-    dragenter: function() {
+    dragenter: function(e) {
         if (this.closest('table') === dragState.table && 
             parseInt(this.dataset.columnIndex) !== dragState.columnIndex) {
-            this.classList.add('drag-over');
+            const dropPosition = getDragDropPosition(this, e);
+            dragState.dropPosition = dropPosition;
+            applyDragOverState(this, dropPosition);
         }
     },
     
     dragleave: function() {
-        this.classList.remove('drag-over');
+        this.classList.remove('drag-over', 'drag-over-before', 'drag-over-after');
     },
     
     drop: function(e) {
         e.stopPropagation();
         
         const dropIndex = parseInt(this.dataset.columnIndex);
-        console.log(`📍 Drop: from ${dragState.columnIndex} to ${dropIndex}`);
+        const dropPosition = getDragDropPosition(this, e);
+        dragState.dropPosition = dropPosition;
+        console.log(`📍 Drop: from ${dragState.columnIndex} to ${dropIndex} (${dropPosition})`);
         
         if (this.closest('table') === dragState.table && 
             dragState.columnIndex !== dropIndex) {
-            reorderTableColumns(dragState.table, dragState.columnIndex, dropIndex);
+            reorderTableColumns(dragState.table, dragState.columnIndex, dropIndex, dropPosition);
         }
         
         return false;
@@ -603,13 +742,11 @@ const DRAG_HANDLERS = {
         console.log('🏁 Drag end');
         
         if (dragState.table) {
-            dragState.table.querySelectorAll('thead th').forEach(h => {
-                h.classList.remove('drag-over');
-            });
+            clearDragOverState(dragState.table);
             dragState.table.classList.remove('column-dragging');
         }
         
-        dragState = { columnIndex: null, table: null };
+        dragState = { columnIndex: null, table: null, dropPosition: 'before' };
     }
 };
 
@@ -617,56 +754,94 @@ const DRAG_HANDLERS = {
 let currentFilteredDf1 = [];
 let currentFilteredDf2 = [];
 
+function getVisibleColumnOrder(tableId) {
+    const config = TABLE_MAP[tableId];
+    if (!config) return [];
+
+    const hiddenColumns = hiddenColumnsState[tableId] || new Set();
+    return config.columnOrder().filter(columnName => !hiddenColumns.has(columnName));
+}
+
+function mergeVisibleOrderIntoFullOrder(fullOrder, visibleOrder, hiddenColumns) {
+    const nextVisible = [...visibleOrder];
+    return fullOrder.map(columnName => (
+        hiddenColumns.has(columnName) ? columnName : nextVisible.shift()
+    ));
+}
+
+function getTableScopeKey(tableId) {
+    return tableId === 'extended-table' ? 'df2' : 'df1';
+}
+
+function getDisplayedData(tableId) {
+    return tableId === 'extended-table' ? currentDisplayedDf2 : currentDisplayedDf1;
+}
+
+function getRawFilteredData(tableId) {
+    return tableId === 'extended-table' ? currentFilteredDf2 : currentFilteredDf1;
+}
+
 function updateColumnOrder(table) {
     const config = TABLE_MAP[table.id];
     if (!config) return;
     
-    const headers = Array.from(table.querySelectorAll('thead th'))
-        .filter(h => !h.classList.contains('row-selector-header'));
-    const newOrder = Array.from(headers).map(h => h.textContent.trim());
-    
-    if (newOrder.length === config.defaultOrder.length) {
-        config.setColumnOrder(newOrder);
-        localStorage.setItem(config.storageKey, JSON.stringify(newOrder));
-        console.log(`✅ Cập nhật thứ tự cột ${table.id}:`, newOrder);
-    } else {
-        console.error(`❌ ${table.id}: Số lượng cột không khớp, không lưu localStorage`);
+    const visibleHeaders = Array.from(table.querySelectorAll('thead th[data-col-name]'));
+    const reorderedVisible = visibleHeaders
+        .map(header => header.dataset.colName)
+        .filter(Boolean);
+
+    const hiddenColumns = hiddenColumnsState[table.id] || new Set();
+    const fullOrder = config.columnOrder();
+    const expectedVisibleCount = fullOrder.filter(columnName => !hiddenColumns.has(columnName)).length;
+
+    if (reorderedVisible.length !== expectedVisibleCount) {
+        console.error(`❌ ${table.id}: So luong cot hien thi khong khop, khong luu localStorage`);
+        return;
     }
+
+    const mergedOrder = mergeVisibleOrderIntoFullOrder(fullOrder, reorderedVisible, hiddenColumns);
+    config.setColumnOrder(mergedOrder);
+    localStorage.setItem(config.storageKey, JSON.stringify(mergedOrder));
+    console.log(`✅ Cập nhật thứ tự cột ${table.id}:`, mergedOrder);
 }
 
-function reorderTableColumns(table, fromIndex, toIndex) {
-    console.log(`🔄 Reordering columns: ${fromIndex} → ${toIndex}`);
+function reorderTableColumns(table, fromIndex, toIndex, dropPosition = 'before') {
+    console.log(`🔄 Reordering columns: ${fromIndex} → ${toIndex} (${dropPosition})`);
     
     const theadRow = table.querySelector('thead tr');
     if (!theadRow) return;
     
-    const headers = Array.from(theadRow.children);
-    if (fromIndex >= headers.length || toIndex >= headers.length) return;
-    
-    const draggedHeader = headers[fromIndex];
+    const visibleHeaders = Array.from(theadRow.querySelectorAll('th[data-col-name]'));
+    if (
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= visibleHeaders.length ||
+        toIndex >= visibleHeaders.length
+    ) {
+        return;
+    }
+
+    const draggedHeader = visibleHeaders[fromIndex];
+    const targetHeader = visibleHeaders[toIndex];
+    if (!draggedHeader || !targetHeader || draggedHeader === targetHeader) return;
+
     draggedHeader.remove();
-    
-    if (toIndex >= theadRow.children.length) {
-        theadRow.appendChild(draggedHeader);
+
+    if (dropPosition === 'after') {
+        theadRow.insertBefore(draggedHeader, targetHeader.nextElementSibling);
     } else {
-        theadRow.insertBefore(draggedHeader, theadRow.children[toIndex]);
+        theadRow.insertBefore(draggedHeader, targetHeader);
     }
     
     // Update column indices
-    theadRow.querySelectorAll('th').forEach((h, idx) => {
+    theadRow.querySelectorAll('th[data-col-name]').forEach((h, idx) => {
         h.dataset.columnIndex = idx;
     });
     
     updateColumnOrder(table);
     
-    // Re-render with new order
-    const config = TABLE_MAP[table.id];
-    if (config) {
-        console.log(`🔄 Re-rendering ${table.id} with new order`);
-        config.renderFn(config.currentData());
-    }
-
-    syncFrozenColumns(table.id);
+    console.log(`🔄 Re-rendering ${table.id} with new order`);
+    refreshHeaderStructure({ resetScroll: false, redrawCharts: false });
 }
 
 function syncHeadersWithLocalStorage() {
@@ -680,34 +855,63 @@ function syncHeadersWithLocalStorage() {
         if (!thead) return;
         
         thead.innerHTML = '';
-        const columnOrder = config.columnOrder();
-
         const selectorTh = document.createElement('th');
         selectorTh.className = 'row-selector-header';
         selectorTh.textContent = '#';
         thead.appendChild(selectorTh);
         
-        columnOrder.forEach((colName, index) => {
-            const th = createHeaderCell(colName, index);
+        getVisibleColumnOrder(tableId).forEach((colName, index) => {
+            const th = createHeaderCell(tableId, colName, index);
             thead.appendChild(th);
         });
+
+        ensureColGroup(table);
+        syncStoredColumnWidths(tableId);
+        initColumnResize(tableId, TABLE_COLUMN_WIDTH_KEYS[tableId]);
+        initTableHeaderDrag(tableId);
+        syncHeaderDecorations(tableId);
         
-        console.log(`✅ ${tableId} header synced:`, columnOrder);
+        console.log(`✅ ${tableId} header synced:`, getVisibleColumnOrder(tableId));
     });
 }
 
-function createHeaderCell(colName, index) {
+function createHeaderCell(tableId, colName, index) {
     const th = document.createElement('th');
     th.className = 'px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider bg-gray-100';
-    th.textContent = colName;
     th.setAttribute('draggable', 'true');
     th.dataset.columnIndex = index;
     th.dataset.colName = colName;
     th.style.cursor = 'move';
-    
+
     const dragIndicator = document.createElement('span');
     dragIndicator.className = 'drag-indicator';
-    th.insertBefore(dragIndicator, th.firstChild);
+    th.appendChild(dragIndicator);
+
+    const headerInner = document.createElement('div');
+    headerInner.className = 'column-header-shell';
+
+    const label = document.createElement('span');
+    label.className = 'column-header-label';
+    label.textContent = colName;
+    headerInner.appendChild(label);
+
+    const sortIndicator = document.createElement('span');
+    sortIndicator.className = 'column-sort-indicator';
+    sortIndicator.setAttribute('aria-hidden', 'true');
+    headerInner.appendChild(sortIndicator);
+
+    const menuTrigger = document.createElement('button');
+    menuTrigger.type = 'button';
+    menuTrigger.className = 'column-menu-trigger';
+    menuTrigger.dataset.tableId = tableId;
+    menuTrigger.dataset.colName = colName;
+    menuTrigger.setAttribute('aria-label', `Tuy chon cot ${colName}`);
+    menuTrigger.setAttribute('aria-haspopup', 'true');
+    menuTrigger.setAttribute('aria-expanded', 'false');
+    menuTrigger.innerHTML = '<span aria-hidden="true">▾</span>';
+    headerInner.appendChild(menuTrigger);
+
+    th.appendChild(headerInner);
     
     return th;
 }
@@ -754,7 +958,7 @@ function clearFilterUrlState() {
     window.history.replaceState({}, '', url);
 }
 
-async function fetchQueryResults(queryRequest, customSortRules = sortRules, limit = MAX_RESULTS_PER_TABLE) {
+async function fetchQueryResults(queryRequest, sortRule = activeSortRule, limit = MAX_RESULTS_PER_TABLE) {
     if (!requireAuthenticatedSession('login')) {
         throw new Error('Bạn cần đăng nhập để tra cứu dữ liệu.');
     }
@@ -762,7 +966,7 @@ async function fetchQueryResults(queryRequest, customSortRules = sortRules, limi
     const requestBody = {
         scope: queryRequest?.scope || 'all',
         filters: queryRequest?.filters || {},
-        sort: Array.isArray(customSortRules) && customSortRules.length > 0 ? customSortRules : null,
+        sort: buildSortPayload(sortRule),
         limit
     };
 
@@ -793,14 +997,13 @@ function normalizeQueryResult(result) {
     };
 }
 
-function handleQuerySuccess(result) {
+function handleQuerySuccess(result, options = {}) {
     const normalized = normalizeQueryResult(result);
-
-    currentFilteredDf1 = normalized.df1.data || [];
-    currentFilteredDf2 = normalized.df2.data || [];
+    const nextDf1 = normalized.df1.data || [];
+    const nextDf2 = normalized.df2.data || [];
 
     const totalCount = Number(normalized.df1.count || 0) + Number(normalized.df2.count || 0);
-    const displayedCount = currentFilteredDf1.length + currentFilteredDf2.length;
+    const displayedCount = nextDf1.length + nextDf2.length;
 
     if (totalCount > displayedCount) {
         showLimitWarning(totalCount, displayedCount);
@@ -808,28 +1011,27 @@ function handleQuerySuccess(result) {
         hideLimitWarning();
     }
 
-    updateResults(currentFilteredDf1, currentFilteredDf2);
+    updateResults(nextDf1, nextDf2, { resetMiniFilters: options.resetMiniFilters !== false });
 }
 
 
 async function applyFilters(payload) {
     currentQueryRequest = buildQueryRequest(payload);
+    closeFloatingTableUi();
 
     console.log('Applying filters with query request:', currentQueryRequest);
 
     try {
-        const result = await fetchQueryResults(currentQueryRequest, sortRules, MAX_RESULTS_PER_TABLE);
+        const result = await fetchQueryResults(currentQueryRequest, activeSortRule, MAX_RESULTS_PER_TABLE);
 
         if (result.success) {
-        handleQuerySuccess(result);
+            handleQuerySuccess(result);
         } else {
-        throw new Error(result.error || 'Query failed');
+            throw new Error(result.error || 'Query failed');
         }
     } catch (err) {
         console.error('Filter failed:', err);
-        currentFilteredDf1 = [];
-        currentFilteredDf2 = [];
-        updateResults([], []);
+        updateResults([], [], { resetMiniFilters: true });
         hideLimitWarning();
         if (err?.message) {
             alert(err.message);
@@ -860,18 +1062,72 @@ function hideLimitWarning() {
 }
 
 // Helper: Update results and render
-function updateResults(df1, df2) {
-    currentFilteredDf1 = df1;
-    currentFilteredDf2 = df2;
+function applyMiniFiltersToRows(tableId, rows) {
+    const filters = miniFilterState[tableId] || {};
+    const activeFilters = Object.entries(filters)
+        .map(([columnName, rawValue]) => [columnName, String(rawValue || '').trim().toLowerCase()])
+        .filter(([, value]) => value);
 
-    document.getElementById('df1-count-switcher').textContent = df1.length;
-    document.getElementById('df2-count-switcher').textContent = df2.length;
+    if (!activeFilters.length) return rows;
+
+    const configKey = getTableScopeKey(tableId);
+    const config = TABLE_CONFIGS[configKey];
+    if (!config) return rows;
+
+    return rows.filter(row => (
+        activeFilters.every(([columnName, keyword]) => {
+            const displayValue = String(mapField(row, columnName, config.fieldMappers) ?? '').toLowerCase();
+            return displayValue.includes(keyword);
+        })
+    ));
+}
+
+function resetMiniFilters(tableId = null) {
+    if (tableId) {
+        miniFilterState[tableId] = {};
+        syncHeaderDecorations(tableId);
+        return;
+    }
+
+    Object.keys(miniFilterState).forEach(key => {
+        miniFilterState[key] = {};
+        syncHeaderDecorations(key);
+    });
+}
+
+function refreshRenderedTables({ resetScroll = true, redrawCharts = true } = {}) {
+    currentDisplayedDf1 = applyMiniFiltersToRows('standard-table', currentFilteredDf1);
+    currentDisplayedDf2 = applyMiniFiltersToRows('extended-table', currentFilteredDf2);
+
+    document.getElementById('df1-count-switcher').textContent = currentDisplayedDf1.length;
+    document.getElementById('df2-count-switcher').textContent = currentDisplayedDf2.length;
     requestAnimationFrame(syncScopeSwitcherSlider);
 
-    renderStandardData(df1);
-    renderExtendedData(df2);
-    resetTableScrollPositions();
-    drawCharts(df1, df2);
+    renderStandardData(currentDisplayedDf1);
+    renderExtendedData(currentDisplayedDf2);
+
+    if (resetScroll) {
+        resetTableScrollPositions();
+    }
+
+    if (redrawCharts) {
+        drawCharts(currentFilteredDf1, currentFilteredDf2);
+    }
+}
+
+function updateResults(df1, df2, options = {}) {
+    currentFilteredDf1 = Array.isArray(df1) ? df1 : [];
+    currentFilteredDf2 = Array.isArray(df2) ? df2 : [];
+
+    if (options.resetMiniFilters) {
+        closeColumnMenu();
+        resetMiniFilters();
+    }
+
+    refreshRenderedTables({
+        resetScroll: options.resetScroll !== false,
+        redrawCharts: options.redrawCharts !== false
+    });
 }
 
 function resetTableScrollPositions() {
@@ -888,16 +1144,6 @@ const PANEL_CONFIG = {
         openBtn: 'open-filter-panel',
         closeBtn: 'close-filter-panel',
         onOpen: null
-    },
-    sort: {
-        panel: 'sort-panel',
-        openBtn: 'open-sort-panel',
-        closeBtn: 'close-sort-panel',
-        onOpen: () => {
-            initSortRuleMoveButtons();
-            renderSortRules();
-            updateSortButtonsState();
-        }
     }
 };
 
@@ -953,15 +1199,9 @@ function showPanel(panelId) {
     if (!panel || !overlay) return;
 
     hideAllPanels();
+    closeFloatingTableUi();
     panel.classList.add('show');
     overlay.classList.add('show');
-
-    if (panelId === 'sort-panel') {
-        initSortRuleMoveButtons();
-        renderSortRules();
-        updateSortButtonsState();
-        return;
-    }
 
     if (panelId === 'filter-panel') {
         const searchForm = document.querySelector('custom-search-form');
@@ -977,13 +1217,14 @@ function showPanel(panelId) {
 }
 
 function hideAllPanels() {
-    ['filter-panel', 'sort-panel', 'panel-overlay'].forEach(id => {
+    ['filter-panel', 'panel-overlay'].forEach(id => {
         document.getElementById(id)?.classList.remove('show');
     });
 }
 
 function closeTransientUi() {
     hideAllPanels();
+    closeFloatingTableUi();
     ['history-modal', 'readme-modal', 'contact-modal'].forEach(id => {
         document.getElementById(id)?.classList.remove('show');
     });
@@ -1135,12 +1376,10 @@ function initLandingShell() {
         if (reason === 'logout') {
             metadata = null;
             appDataInitialized = false;
-            currentFilteredDf1 = [];
-            currentFilteredDf2 = [];
             currentQueryRequest = { scope: 'all', filters: {} };
             clearFilterUrlState();
             hideLimitWarning();
-            updateResults([], []);
+            updateResults([], [], { resetMiniFilters: true });
             initEmptyCharts();
             syncLandingView('landing');
             return;
@@ -1157,21 +1396,13 @@ function initLandingShell() {
 
         metadata = null;
         appDataInitialized = false;
-        currentFilteredDf1 = [];
-        currentFilteredDf2 = [];
         currentQueryRequest = { scope: 'all', filters: {} };
         clearFilterUrlState();
         hideLimitWarning();
-        updateResults([], []);
+        updateResults([], [], { resetMiniFilters: true });
         initEmptyCharts();
         syncLandingView('landing');
     });
-}
-
-function getActiveVisibleTableId() {
-    const activePanel = document.querySelector('.result-panel.active');
-    if (activePanel?.id === 'df2-panel') return 'extended-table';
-    return 'standard-table';
 }
 
 function initFilterHelpExternalTooltip() {
@@ -1337,9 +1568,6 @@ function createTooltip(targetElement, content) {
 // ============================== 
 // SORT
 // ============================== 
-let sortRules = [];
-
-// ======== 1. RULES
 const SORTABLE_COLUMNS = {
     logical: [
         { key: 'ma_tbmt', label: 'Mã TBMT' },
@@ -1352,249 +1580,679 @@ const SORTABLE_COLUMNS = {
         { key: 'unitPrice', label: 'Đơn giá trúng thầu (VND)' },
         { key: 'amount', label: 'Thành tiền (VND)' },
         { key: 'drugName', label: 'Tên thuốc' },
+        { key: 'lotName', label: 'Tên phần/lô' },
+        { key: 'activeIngredient', label: 'Tên hoạt chất' },
+        { key: 'strength', label: 'Nồng độ, hàm lượng' },
+        { key: 'route', label: 'Đường dùng' },
+        { key: 'dosageForm', label: 'Dạng bào chế' },
+        { key: 'packaging', label: 'Quy cách' },
+        { key: 'drugGroup', label: 'Nhóm thuốc' },
+        { key: 'license', label: 'GĐKLH hoặc GPNK' },
+        { key: 'bidItem', label: 'Mặt hàng dự thầu' },
+        { key: 'brand', label: 'Nhãn hiệu' },
+        { key: 'model', label: 'Ký mã hiệu' },
+        { key: 'technicalSpec', label: 'Tính năng kỹ thuật' },
+        { key: 'manufacturer', label: 'Cơ sở sản xuất' },
         { key: 'origin', label: 'Xuất xứ' },
         { key: 'winner', label: 'Nhà thầu trúng thầu' },
+        { key: 'method', label: 'Hình thức LCNT' },
         { key: 'place', label: 'Địa điểm' },
         { key: 'validity', label: 'Tình trạng hiệu lực' }
     ],
-    // chỉ map những key thực sự khác nhau giữa df1 và df2
     physical: {
         df1: {
-        quantity: 'Số lượng',
-        drugName: 'Tên thuốc'
+            quantity: 'Số lượng',
+            drugName: 'Tên thuốc',
+            activeIngredient: 'Tên hoạt chất',
+            strength: 'Nồng độ, hàm lượng',
+            route: 'Đường dùng',
+            dosageForm: 'Dạng bào chế',
+            packaging: 'Quy cách',
+            drugGroup: 'Nhóm thuốc',
+            license: 'GĐKLH hoặc GPNK',
+            manufacturer: 'Cơ sở sản xuất'
         },
         df2: {
-        quantity: 'Khối lượng',
-        drugName: 'Danh mục hàng hóa'
+            quantity: 'Khối lượng',
+            drugName: 'Danh mục hàng hóa',
+            lotName: 'Tên phần/lô',
+            bidItem: 'Mặt hàng dự thầu',
+            brand: 'Nhãn hiệu',
+            model: 'Ký mã hiệu',
+            technicalSpec: 'Tính năng kỹ thuật',
+            manufacturer: 'Hãng sản xuất'
         }
     }
 };
 
-const SORT_TEMPLATES = {
-    empty: `
-        <div class="sort-rules-empty">
-            <div style="font-size: 48px; margin-bottom: 12px;">📋</div>
-            <p>Chưa có quy tắc sắp xếp nào</p>
-            <p style="font-size: 13px; margin-top: 8px; opacity: 0.7;">
-                Nhấn "+ Thêm cột" để bắt đầu
-            </p>
-        </div>
-    `,
+let activeColumnMenuState = null;
+let activeColumnsPopoverState = null;
 
-    // logicalColumns: SORTABLE_COLUMNS.logical
-    rule: (rule, index, logicalColumns) => `
-        <div class="sort-rule-item" data-index="${index}">
-            <span class="sort-rule-number">${index + 1}</span>
-            
-            <div class="sort-move">
-                <button class="btn-move-up" data-index="${index}" type="button" title="Lên">▲</button>
-                <button class="btn-move-down" data-index="${index}" type="button" title="Xuống">▼</button>
-            </div>
-            
-            <div class="sort-rule-column">
-                <select data-index="${index}" data-field="column">
-                    ${logicalColumns.map(col => 
-                        `<option value="${col.key}" ${rule.column === col.key ? 'selected' : ''}>${col.label}</option>`
-                    ).join('')}
-                </select>
-            </div>
-            
-            <div class="sort-rule-order">
-                <select data-index="${index}" data-field="order">
-                <option value="asc" ${rule.order === 'asc' ? 'selected' : ''}>Tăng dần</option>
-                <option value="desc" ${rule.order === 'desc' ? 'selected' : ''}>Giảm dần</option>
-                </select>
-            </div>
-            
-            <button class="btn-remove-rule" data-index="${index}" type="button" title="Xóa">✕</button>
-        </div>
-    `
-};
-
-function addSortRule() {
-    const firstKey = SORTABLE_COLUMNS.logical[0]?.key || 'ma_tbmt';
-    sortRules.push({
-        column: firstKey,
-        order: 'asc'
-    });
-
-    renderSortRules();
-    updateSortButtonsState();
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
-function moveSortRule(fromIndex, toIndex) {
-    if (toIndex < 0 || toIndex >= sortRules.length) return;
-    const [item] = sortRules.splice(fromIndex, 1);
-    sortRules.splice(toIndex, 0, item);
-    renderSortRules();
+function renderFeatherIcon(name, className = 'menu-inline-icon') {
+    return window.feather?.icons?.[name]?.toSvg({
+        class: className,
+        width: 14,
+        height: 14,
+        'stroke-width': 2
+    }) || '';
 }
 
-function updateSortButtonsState() {
-    const applyBtn = document.getElementById('apply-sort');
-    const resetBtn = document.getElementById('reset-sort');
-    if (!applyBtn || !resetBtn) return;
-
-    const hasRules = sortRules.length > 0;
-    applyBtn.disabled = !hasRules;
-    resetBtn.disabled = !hasRules;
+function encodeColumnName(columnName) {
+    return encodeURIComponent(columnName || '');
 }
 
-function renderSortRules() {
-    const container = document.getElementById('sort-rules-list');
-    if (!container) return;
-
-    if (sortRules.length === 0) {
-        container.innerHTML = SORT_TEMPLATES.empty;
-        updateSortButtonsState();
-        return;
+function decodeColumnName(encoded) {
+    try {
+        return decodeURIComponent(encoded || '');
+    } catch (error) {
+        return encoded || '';
     }
-
-    const logicalColumns = SORTABLE_COLUMNS.logical;
-
-    container.innerHTML = sortRules
-        .map((rule, index) => SORT_TEMPLATES.rule(rule, index, logicalColumns))
-        .join('');
-
-    attachSortRuleEventHandlers(container);
-    updateMoveButtonsState(container);
-    updateSortButtonsState();
 }
 
-function attachSortRuleEventHandlers(container) {
-    // Handle select changes
-    container.querySelectorAll('select').forEach(select => {
-        select.addEventListener('change', (e) => {
-            const idx = parseInt(e.target.dataset.index, 10);
-            const field = e.target.dataset.field;
-            if (sortRules[idx]) {
-                sortRules[idx][field] = e.target.value;
-            }
-        });
-    });
+function getSortLabelForScope(sortKey, scopeKey) {
+    const override = SORTABLE_COLUMNS.physical[scopeKey]?.[sortKey];
+    if (override) return override;
+    return SORTABLE_COLUMNS.logical.find(item => item.key === sortKey)?.label || '';
+}
 
-    // Handle remove buttons
-    container.querySelectorAll('.btn-remove-rule').forEach(btn => {
-        btn.addEventListener('click', async (e) => {
-            const idx = parseInt(e.currentTarget.dataset.index, 10);
-            if (!Number.isNaN(idx)) {
-                sortRules.splice(idx, 1);
-                if (sortRules.length === 0) {
-                    await resetSortToDefault();
-                } else {
-                    renderSortRules();
-                }
-            }
-        });
+function getLogicalSortKeyForColumn(tableId, columnName) {
+    const scopeKey = getTableScopeKey(tableId);
+    const match = SORTABLE_COLUMNS.logical.find(item => getSortLabelForScope(item.key, scopeKey) === columnName);
+    return match?.key || null;
+}
+
+function getSortStateForColumn(tableId, columnName) {
+    const logicalKey = getLogicalSortKeyForColumn(tableId, columnName);
+    if (!logicalKey || activeSortRule?.column !== logicalKey) return null;
+    return activeSortRule.order;
+}
+
+function buildSortPayload(sortRule = activeSortRule) {
+    if (!sortRule?.column || !sortRule?.order) return null;
+    return [sortRule];
+}
+
+function getTableWrapper(tableId) {
+    return document.querySelector(`.table-wrapper[data-table-id="${tableId}"]`);
+}
+
+function getColumnMenuTrigger(tableId, columnName) {
+    return document.querySelector(
+        `.column-menu-trigger[data-table-id="${tableId}"][data-col-name="${CSS.escape(columnName)}"]`
+    );
+}
+
+function positionFloatingLayer(wrapper, anchor, floating) {
+    if (!wrapper || !anchor || !floating) return;
+
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const anchorRect = anchor.getBoundingClientRect();
+    const floatingWidth = floating.offsetWidth || 260;
+    const maxLeft = Math.max(12, wrapper.clientWidth - floatingWidth - 12);
+    const preferredLeft = anchorRect.right - wrapperRect.left - floatingWidth;
+    const left = Math.max(12, Math.min(preferredLeft, maxLeft));
+    const top = Math.max(54, anchorRect.bottom - wrapperRect.top + 8);
+
+    floating.style.left = `${left}px`;
+    floating.style.top = `${top}px`;
+}
+
+function syncFloatingWrapperState() {
+    document.querySelectorAll('.table-wrapper').forEach(wrapper => {
+        const isActive =
+            activeColumnMenuState?.wrapper === wrapper ||
+            activeColumnsPopoverState?.wrapper === wrapper;
+        wrapper.classList.toggle('table-tools-open', Boolean(isActive));
     });
 }
 
-function updateMoveButtonsState(container) {
-    container.querySelectorAll('.sort-rule-item').forEach(item => {
-        const idx = parseInt(item.dataset.index, 10);
-        const upBtn = item.querySelector('.btn-move-up');
-        const downBtn = item.querySelector('.btn-move-down');
-        
-        if (upBtn) upBtn.disabled = (idx === 0);
-        if (downBtn) downBtn.disabled = (idx === sortRules.length - 1);
-    });
-}
+function syncHeaderDecorations(tableId) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
 
-function initSortRuleMoveButtons() {
-    const container = document.getElementById('sort-rules-list');
-    if (!container || container.dataset.moveBound === '1') return;
+    const miniFilters = miniFilterState[tableId] || {};
+    const wrappedColumns = wrappedColumnsState[tableId] || new Set();
+    const pinnedColumns = frozenColumnsState[tableId] || new Set();
 
-    container.dataset.moveBound = '1';
+    table.querySelectorAll('thead th[data-col-name]').forEach(th => {
+        const columnName = th.dataset.colName;
+        const sortState = getSortStateForColumn(tableId, columnName);
+        const hasMiniFilter = Boolean(String(miniFilters[columnName] || '').trim());
+        const isWrapped = wrappedColumns.has(columnName);
+        const isPinned = pinnedColumns.has(columnName);
 
-    container.addEventListener('click', (e) => {
-        const btn = e.target.closest('.btn-move-up, .btn-move-down');
-        if (!btn) return;
+        th.dataset.sortState = sortState || '';
+        th.classList.toggle('has-mini-filter', hasMiniFilter);
+        th.classList.toggle('is-wrapped-col', isWrapped);
+        th.classList.toggle('is-pinned-col', isPinned);
 
-        const idx = parseInt(btn.dataset.index, 10);
-        if (Number.isNaN(idx)) return;
+        const indicator = th.querySelector('.column-sort-indicator');
+        if (indicator) {
+            indicator.textContent = sortState === 'asc' ? '↑' : sortState === 'desc' ? '↓' : '';
+        }
 
-        const isUp = btn.classList.contains('btn-move-up');
-        const targetIdx = isUp ? idx - 1 : idx + 1;
-
-        if ((isUp && idx > 0) || (!isUp && idx < sortRules.length - 1)) {
-            moveSortRule(idx, targetIdx);
+        const trigger = th.querySelector('.column-menu-trigger');
+        if (trigger) {
+            trigger.classList.toggle('is-active', Boolean(sortState || hasMiniFilter || isWrapped || isPinned));
         }
     });
 }
 
-async function applySortRules() {
-    if (sortRules.length === 0) {
-        console.log('No sort rules to apply');
-        return;
-    }
+function syncAllHeaderDecorations() {
+    Object.keys(TABLE_MAP).forEach(syncHeaderDecorations);
+}
 
+function refreshHeaderStructure(options = {}) {
+    closeColumnMenu();
+    syncHeadersWithLocalStorage();
+    refreshRenderedTables(options);
+}
+
+async function applyActiveSortRule({ preserveMiniFilters = true } = {}) {
     const hasFilter = hasActiveQueryFilters(currentQueryRequest);
     const hasData = (currentFilteredDf1?.length || 0) > 0 || (currentFilteredDf2?.length || 0) > 0;
 
     if (!hasFilter && !hasData) {
-        console.log('No data to sort or no filters applied - keep empty state');
-        ['sort-panel', 'panel-overlay'].forEach(id => document.getElementById(id)?.classList.remove('show'));
-        return;
-    }
-
-    console.log('Applying sort rules with query request:', currentQueryRequest, sortRules);
-
-    try {
-        const result = await fetchQueryResults(currentQueryRequest, sortRules, MAX_RESULTS_PER_TABLE);
-
-        if (result.success) {
-        handleQuerySuccess(result);
-        ['sort-panel', 'panel-overlay'].forEach(id => document.getElementById(id)?.classList.remove('show'));
-        console.log('Server sort applied:', sortRules);
-        } else {
-        throw new Error(result.error || 'Sort failed');
-        }
-    } catch (err) {
-        console.error('Server sort failed:', err);
-    }
-}
-
-
-function initSortPanel() {
-  const sortEvents = {
-    'add-sort-rule': addSortRule,
-    'apply-sort': applySortRules,
-    'reset-sort': resetSortToDefault    // dùng hàm chung
-  };
-
-  Object.entries(sortEvents).forEach(([id, handler]) => {
-    document.getElementById(id)?.addEventListener('click', handler);
-  });
-}
-
-async function resetSortToDefault() {
-    sortRules = [];
-    renderSortRules();
-    updateSortButtonsState();
-
-    console.log('Reset sort to server default');
-
-    ['sort-panel', 'panel-overlay'].forEach(id => document.getElementById(id)?.classList.remove('show'));
-
-    const hasFilter = hasActiveQueryFilters(currentQueryRequest);
-    const hasData = (currentFilteredDf1?.length || 0) > 0 || (currentFilteredDf2?.length || 0) > 0;
-
-    if (!hasFilter && !hasData) {
-        console.log('No filters or data - skip re-fetch on sort reset');
+        syncAllHeaderDecorations();
         return;
     }
 
     try {
-        const result = await fetchQueryResults(currentQueryRequest, [], MAX_RESULTS_PER_TABLE);
-
+        const result = await fetchQueryResults(currentQueryRequest, activeSortRule, MAX_RESULTS_PER_TABLE);
         if (result.success) {
-        handleQuerySuccess(result);
-        console.log('Sort reset to server default ORDER BY');
+            handleQuerySuccess(result, { resetMiniFilters: !preserveMiniFilters });
         } else {
-        throw new Error(result.error || 'Reset sort failed');
+            throw new Error(result.error || 'Sort failed');
         }
-    } catch (err) {
-        console.error('Reset sort failed:', err);
+    } catch (error) {
+        console.error('Server sort failed:', error);
+        if (error?.message) {
+            alert(error.message);
+        }
     }
+}
+
+async function applySortForColumn(tableId, columnName, order) {
+    const logicalKey = getLogicalSortKeyForColumn(tableId, columnName);
+    if (!logicalKey) return;
+
+    activeSortRule = { column: logicalKey, order };
+    persistSortRule(activeSortRule);
+    syncAllHeaderDecorations();
+    await applyActiveSortRule({ preserveMiniFilters: true });
+}
+
+async function clearActiveSortRule() {
+    activeSortRule = null;
+    persistSortRule(null);
+    syncAllHeaderDecorations();
+    await applyActiveSortRule({ preserveMiniFilters: true });
+}
+
+function setTableMiniFilter(tableId, columnName, rawValue) {
+    const nextValue = String(rawValue || '');
+    if (!miniFilterState[tableId]) {
+        miniFilterState[tableId] = {};
+    }
+
+    if (nextValue.trim()) {
+        miniFilterState[tableId][columnName] = nextValue;
+    } else {
+        delete miniFilterState[tableId][columnName];
+    }
+
+    syncHeaderDecorations(tableId);
+    refreshRenderedTables({ resetScroll: false, redrawCharts: false });
+}
+
+function toggleWrappedColumn(tableId, columnName) {
+    const wrappedColumns = wrappedColumnsState[tableId];
+    if (!wrappedColumns) return;
+
+    if (wrappedColumns.has(columnName)) wrappedColumns.delete(columnName);
+    else wrappedColumns.add(columnName);
+
+    persistColumnSet(STORAGE_KEYS.wrappedColumns, tableId, wrappedColumns);
+    syncWrappedColumns(tableId);
+    syncHeaderDecorations(tableId);
+}
+
+function togglePinnedColumn(tableId, columnName) {
+    const pinnedColumns = frozenColumnsState[tableId];
+    if (!pinnedColumns) return;
+
+    if (pinnedColumns.has(columnName)) pinnedColumns.delete(columnName);
+    else pinnedColumns.add(columnName);
+
+    persistColumnSet(STORAGE_KEYS.frozenColumns, tableId, pinnedColumns);
+    syncFrozenColumns(tableId);
+    syncHeaderDecorations(tableId);
+}
+
+function autosizeTableColumn(tableId, columnName) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+
+    const header = table.querySelector(`thead th[data-col-name="${CSS.escape(columnName)}"]`);
+    if (!header) return;
+
+    const columnIndex = Array.from(header.parentElement.children).indexOf(header);
+    const storageKey = TABLE_COLUMN_WIDTH_KEYS[tableId];
+    const colgroup = ensureColGroup(table);
+    const autoWidth = getAutoFitColumnWidth(table, columnIndex);
+    persistColumnWidth(table, colgroup, storageKey, columnName, columnIndex, autoWidth);
+}
+
+function setTableColumnVisibility(tableId, columnName, shouldShow) {
+    const hiddenColumns = hiddenColumnsState[tableId];
+    if (!hiddenColumns) return false;
+
+    const visibleColumns = getVisibleColumnOrder(tableId);
+    if (!shouldShow && visibleColumns.length <= 1 && visibleColumns.includes(columnName)) {
+        alert('Cần giữ lại ít nhất một cột đang hiển thị.');
+        return false;
+    }
+
+    if (shouldShow) hiddenColumns.delete(columnName);
+    else hiddenColumns.add(columnName);
+
+    selectionState[tableId]?.columns.delete(columnName);
+    persistColumnSet(STORAGE_KEYS.hiddenColumns, tableId, hiddenColumns);
+    refreshHeaderStructure({ resetScroll: false, redrawCharts: false });
+    return true;
+}
+
+function closeColumnMenu() {
+    if (!activeColumnMenuState) return;
+
+    activeColumnMenuState.menu?.remove();
+    activeColumnMenuState.trigger?.classList.remove('is-open');
+    activeColumnMenuState.trigger?.setAttribute('aria-expanded', 'false');
+    activeColumnMenuState = null;
+    syncFloatingWrapperState();
+}
+
+function renderColumnMenu(tableId, columnName) {
+    const miniFilterValue = miniFilterState[tableId]?.[columnName] || '';
+    const sortState = getSortStateForColumn(tableId, columnName);
+    const isWrapped = wrappedColumnsState[tableId]?.has(columnName);
+    const isPinned = frozenColumnsState[tableId]?.has(columnName);
+    const encodedColumn = encodeColumnName(columnName);
+
+    return `
+        <div class="column-menu-title">${escapeHtml(columnName)}</div>
+        <div class="column-menu-section">
+            <div class="column-menu-field">
+                <div class="column-menu-input-wrap">
+                    ${renderFeatherIcon('search', 'column-menu-icon')}
+                    <input
+                        class="column-mini-filter-input"
+                        type="text"
+                        value="${escapeHtml(miniFilterValue)}"
+                        data-table-id="${tableId}"
+                        data-column-name="${encodedColumn}"
+                        placeholder=""
+                    >
+                </div>
+            </div>
+            <button class="column-menu-action ${sortState === 'asc' ? 'is-active' : ''}" type="button" data-action="sort-asc" data-table-id="${tableId}" data-column-name="${encodedColumn}">
+                ${renderFeatherIcon('arrow-up', 'column-menu-icon')}
+                <span>Sort ascending</span>
+            </button>
+            <button class="column-menu-action ${sortState === 'desc' ? 'is-active' : ''}" type="button" data-action="sort-desc" data-table-id="${tableId}" data-column-name="${encodedColumn}">
+                ${renderFeatherIcon('arrow-down', 'column-menu-icon')}
+                <span>Sort descending</span>
+            </button>
+            ${sortState ? `
+                <button class="column-menu-action is-secondary" type="button" data-action="clear-sort" data-table-id="${tableId}" data-column-name="${encodedColumn}">
+                    ${renderFeatherIcon('rotate-ccw', 'column-menu-icon')}
+                    <span>Bỏ sắp xếp</span>
+                </button>
+            ` : ''}
+        </div>
+        <hr class="column-menu-divider">
+        <div class="column-menu-section">
+            <button class="column-menu-action" type="button" data-action="autosize" data-table-id="${tableId}" data-column-name="${encodedColumn}">
+                ${renderFeatherIcon('code', 'column-menu-icon')}
+                <span>Autosize</span>
+            </button>
+            <button class="column-menu-action ${isWrapped ? 'is-active' : ''}" type="button" data-action="toggle-wrap" data-table-id="${tableId}" data-column-name="${encodedColumn}">
+                ${renderFeatherIcon('corner-down-right', 'column-menu-icon')}
+                <span>Wrap text</span>
+            </button>
+            <button class="column-menu-action ${isPinned ? 'is-active' : ''}" type="button" data-action="toggle-pin" data-table-id="${tableId}" data-column-name="${encodedColumn}">
+                ${renderFeatherIcon('tag', 'column-menu-icon')}
+                <span>Pin column</span>
+            </button>
+            <button class="column-menu-action is-danger" type="button" data-action="hide-column" data-table-id="${tableId}" data-column-name="${encodedColumn}">
+                ${renderFeatherIcon('eye-off', 'column-menu-icon')}
+                <span>Hide column</span>
+            </button>
+        </div>
+    `;
+}
+
+function rerenderActiveColumnMenu() {
+    if (!activeColumnMenuState) return;
+
+    const { tableId, columnName, menu, wrapper } = activeColumnMenuState;
+    const trigger = getColumnMenuTrigger(tableId, columnName);
+    if (!trigger || !wrapper?.isConnected || !menu?.isConnected) {
+        closeColumnMenu();
+        return;
+    }
+
+    activeColumnMenuState.trigger = trigger;
+    menu.innerHTML = renderColumnMenu(tableId, columnName);
+    trigger.classList.add('is-open');
+    trigger.setAttribute('aria-expanded', 'true');
+    positionFloatingLayer(wrapper, trigger, menu);
+}
+
+function openColumnMenu(tableId, columnName, trigger) {
+    if (!tableId || !columnName || !trigger) return;
+
+    if (
+        activeColumnMenuState?.tableId === tableId &&
+        activeColumnMenuState?.columnName === columnName
+    ) {
+        closeColumnMenu();
+        return;
+    }
+
+    closeColumnMenu();
+    closeColumnsPopover();
+
+    const wrapper = getTableWrapper(tableId);
+    if (!wrapper) return;
+
+    const menu = document.createElement('div');
+    menu.className = 'column-menu-popover';
+    menu.innerHTML = renderColumnMenu(tableId, columnName);
+    wrapper.appendChild(menu);
+
+    activeColumnMenuState = { tableId, columnName, wrapper, trigger, menu };
+    trigger.classList.add('is-open');
+    trigger.setAttribute('aria-expanded', 'true');
+    syncFloatingWrapperState();
+
+    requestAnimationFrame(() => {
+        positionFloatingLayer(wrapper, trigger, menu);
+        const input = menu.querySelector('.column-mini-filter-input');
+        input?.focus({ preventScroll: true });
+        input?.select?.();
+    });
+}
+
+function closeColumnsPopover() {
+    if (!activeColumnsPopoverState) return;
+
+    activeColumnsPopoverState.button?.setAttribute('aria-expanded', 'false');
+    if (activeColumnsPopoverState.popover) {
+        activeColumnsPopoverState.popover.hidden = true;
+        activeColumnsPopoverState.popover.innerHTML = '';
+    }
+
+    activeColumnsPopoverState = null;
+    syncFloatingWrapperState();
+}
+
+function renderColumnsPopover(tableId) {
+    const config = TABLE_MAP[tableId];
+    if (!config) return '';
+
+    const hiddenColumns = hiddenColumnsState[tableId] || new Set();
+    const visibleCount = getVisibleColumnOrder(tableId).length;
+
+    return `
+        <div class="table-columns-header">
+            <strong>Show/hide columns</strong>
+            <button class="table-columns-reset" type="button" data-table-id="${tableId}">
+                ${renderFeatherIcon('eye', 'table-columns-icon')}
+                <span>Hiện tất cả</span>
+            </button>
+        </div>
+        <div class="table-columns-list">
+            ${config.columnOrder().map(columnName => {
+                const isVisible = !hiddenColumns.has(columnName);
+                const isLocked = isVisible && visibleCount === 1;
+                return `
+                    <label class="table-columns-option ${isVisible ? '' : 'is-hidden'}">
+                        <input
+                            class="table-columns-checkbox"
+                            type="checkbox"
+                            data-table-id="${tableId}"
+                            data-column-name="${encodeColumnName(columnName)}"
+                            ${isVisible ? 'checked' : ''}
+                            ${isLocked ? 'disabled' : ''}
+                        >
+                        ${renderFeatherIcon(isVisible ? 'eye' : 'eye-off', 'table-columns-icon')}
+                        <span>${escapeHtml(columnName)}</span>
+                    </label>
+                `;
+            }).join('')}
+        </div>
+    `;
+}
+
+function openColumnsPopover(button) {
+    const tableId = button?.dataset.tableId;
+    const wrapper = getTableWrapper(tableId);
+    const popover = wrapper?.querySelector('.table-columns-popover');
+    if (!tableId || !wrapper || !popover) return;
+
+    if (activeColumnsPopoverState?.tableId === tableId && !popover.hidden) {
+        closeColumnsPopover();
+        return;
+    }
+
+    closeColumnMenu();
+    closeColumnsPopover();
+
+    if (popover.parentElement !== wrapper) {
+        wrapper.appendChild(popover);
+    }
+
+    popover.innerHTML = renderColumnsPopover(tableId);
+    popover.hidden = false;
+    button.setAttribute('aria-expanded', 'true');
+    activeColumnsPopoverState = { tableId, wrapper, button, popover };
+    syncFloatingWrapperState();
+
+    requestAnimationFrame(() => {
+        positionFloatingLayer(wrapper, button, popover);
+    });
+}
+
+function rerenderColumnsPopover() {
+    if (!activeColumnsPopoverState) return;
+    const { tableId, button, popover, wrapper } = activeColumnsPopoverState;
+    if (!button?.isConnected || !popover?.isConnected || !wrapper?.isConnected) {
+        closeColumnsPopover();
+        return;
+    }
+
+    popover.innerHTML = renderColumnsPopover(tableId);
+    popover.hidden = false;
+    positionFloatingLayer(wrapper, button, popover);
+}
+
+function closeFloatingTableUi() {
+    closeColumnMenu();
+    closeColumnsPopover();
+}
+
+async function handleColumnMenuAction(action, tableId, columnName) {
+    switch (action) {
+        case 'sort-asc':
+            await applySortForColumn(tableId, columnName, 'asc');
+            rerenderActiveColumnMenu();
+            return;
+        case 'sort-desc':
+            await applySortForColumn(tableId, columnName, 'desc');
+            rerenderActiveColumnMenu();
+            return;
+        case 'clear-sort':
+            await clearActiveSortRule();
+            rerenderActiveColumnMenu();
+            return;
+        case 'autosize':
+            autosizeTableColumn(tableId, columnName);
+            rerenderActiveColumnMenu();
+            return;
+        case 'toggle-wrap':
+            toggleWrappedColumn(tableId, columnName);
+            rerenderActiveColumnMenu();
+            return;
+        case 'toggle-pin':
+            togglePinnedColumn(tableId, columnName);
+            rerenderActiveColumnMenu();
+            return;
+        case 'hide-column':
+            if (setTableColumnVisibility(tableId, columnName, false)) {
+                closeColumnMenu();
+                rerenderColumnsPopover();
+            }
+            return;
+        default:
+            break;
+    }
+}
+
+function syncFullscreenButtons() {
+    const activeElement = document.fullscreenElement;
+    document.querySelectorAll('.table-tool-btn[data-action="fullscreen"]').forEach(button => {
+        const tableId = button.dataset.tableId;
+        const card = getTableWrapper(tableId)?.closest('.data-card');
+        button.classList.toggle('is-active', Boolean(card && activeElement === card));
+    });
+}
+
+async function toggleTableFullscreen(tableId) {
+    const card = getTableWrapper(tableId)?.closest('.data-card');
+    if (!card || typeof card.requestFullscreen !== 'function') return;
+
+    try {
+        if (document.fullscreenElement === card && typeof document.exitFullscreen === 'function') {
+            await document.exitFullscreen();
+        } else {
+            await card.requestFullscreen();
+        }
+    } catch (error) {
+        console.error('Fullscreen failed:', error);
+    }
+}
+
+function initTableWorkspaceControls() {
+    if (document.body.dataset.tableWorkspaceBound === '1') return;
+    document.body.dataset.tableWorkspaceBound = '1';
+
+    document.addEventListener('click', async (e) => {
+        const trigger = e.target.closest('.column-menu-trigger');
+        if (trigger) {
+            e.preventDefault();
+            e.stopPropagation();
+            openColumnMenu(trigger.dataset.tableId, trigger.dataset.colName, trigger);
+            return;
+        }
+
+        const menuAction = e.target.closest('.column-menu-action');
+        if (menuAction) {
+            e.preventDefault();
+            e.stopPropagation();
+            await handleColumnMenuAction(
+                menuAction.dataset.action,
+                menuAction.dataset.tableId,
+                decodeColumnName(menuAction.dataset.columnName)
+            );
+            return;
+        }
+
+        const toolButton = e.target.closest('.table-tool-btn');
+        if (toolButton) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const { action, tableId } = toolButton.dataset;
+            if (action === 'toggle-columns') {
+                openColumnsPopover(toolButton);
+            } else if (action === 'download') {
+                exportTableToExcel(tableId);
+            } else if (action === 'fullscreen') {
+                await toggleTableFullscreen(tableId);
+            }
+            return;
+        }
+
+        const resetButton = e.target.closest('.table-columns-reset');
+        if (resetButton) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const tableId = resetButton.dataset.tableId;
+            hiddenColumnsState[tableId] = new Set();
+            persistColumnSet(STORAGE_KEYS.hiddenColumns, tableId, hiddenColumnsState[tableId]);
+            refreshHeaderStructure({ resetScroll: false, redrawCharts: false });
+            rerenderColumnsPopover();
+            return;
+        }
+
+        if (activeColumnMenuState && !activeColumnMenuState.menu.contains(e.target)) {
+            closeColumnMenu();
+        }
+
+        if (
+            activeColumnsPopoverState &&
+            !activeColumnsPopoverState.popover.contains(e.target) &&
+            !activeColumnsPopoverState.button.contains(e.target)
+        ) {
+            closeColumnsPopover();
+        }
+    });
+
+    document.addEventListener('input', (e) => {
+        const input = e.target.closest('.column-mini-filter-input');
+        if (!input) return;
+
+        setTableMiniFilter(
+            input.dataset.tableId,
+            decodeColumnName(input.dataset.columnName),
+            input.value
+        );
+    });
+
+    document.addEventListener('change', (e) => {
+        const checkbox = e.target.closest('.table-columns-checkbox');
+        if (!checkbox) return;
+
+        const tableId = checkbox.dataset.tableId;
+        const columnName = decodeColumnName(checkbox.dataset.columnName);
+        const didUpdate = setTableColumnVisibility(tableId, columnName, checkbox.checked);
+
+        if (!didUpdate) {
+            checkbox.checked = !checkbox.checked;
+        }
+
+        rerenderColumnsPopover();
+    });
+
+    document.querySelectorAll('.table-wrapper .table-scroll').forEach(container => {
+        container.addEventListener('scroll', () => {
+            closeColumnMenu();
+        });
+    });
+
+    document.addEventListener('fullscreenchange', syncFullscreenButtons);
+    syncFullscreenButtons();
 }
 
 
@@ -2416,7 +3074,7 @@ function buildSelectionClipboardText(tableId) {
     }
 
     if (state.columns.size > 0) {
-        const columnOrder = TABLE_MAP[tableId]?.columnOrder?.() || [];
+        const columnOrder = getVisibleColumnOrder(tableId);
         const selectedColumns = columnOrder.filter(col => state.columns.has(col));
         if (!selectedColumns.length) return '';
 
@@ -2591,7 +3249,7 @@ function selectTableColumn(tableId, columnName, modifiers = {}) {
     const table = document.getElementById(tableId);
     if (!table || !columnName) return;
     const state = selectionState[tableId];
-    const columnOrder = TABLE_MAP[tableId]?.columnOrder?.() || [];
+    const columnOrder = getVisibleColumnOrder(tableId);
     const columnIndex = columnOrder.indexOf(columnName);
     if (columnIndex < 0) return;
 
@@ -2655,6 +3313,8 @@ function initColumnSelection(tableId) {
 
     thead.dataset.columnSelectionBound = '1';
     thead.addEventListener('click', (e) => {
+        if (e.target.closest('.column-menu-trigger, .col-resizer')) return;
+
         const th = e.target.closest('th');
         if (!th || th.classList.contains('row-selector-header')) return;
 
@@ -2670,7 +3330,7 @@ function syncFrozenColumns(tableId) {
     if (!table) return;
 
     const headerCells = Array.from(table.querySelectorAll('thead th'));
-    const visibleColumnOrder = TABLE_MAP[tableId]?.columnOrder?.() || [];
+    const visibleColumnOrder = getVisibleColumnOrder(tableId);
     const frozenColumns = frozenColumnsState[tableId] || new Set();
     const rows = Array.from(table.tBodies?.[0]?.rows || []);
 
@@ -2725,10 +3385,6 @@ let df2 = [];
 let resultPanelSwitchTimer = null;
 
 const CONFIG = {
-    tables: {
-        standard: { id: 'standard-table', storageKey: 'colWidthDf1' },
-        extended: { id: 'extended-table', storageKey: 'colWidthDf2' }
-    },
     tabs: {
         charts: 'charts-tab',
         data: 'data-tab'
@@ -2750,11 +3406,8 @@ function initStorageAndElements() {
     Object.keys(TABLE_MAP).forEach(initColumnSelection);
     syncAllFrozenColumns();
 
-    Object.values(CONFIG.tables).forEach(table => {
-        initColumnResize(table.id, table.storageKey);
-    });
-
     initPanels();
+    initTableWorkspaceControls();
     initFilterHelpExternalTooltip();
 }
 
@@ -2777,7 +3430,6 @@ function initModalEvents() {
 function initTabSwitching() {
     const tabBtns = document.querySelectorAll('.primary-tab');
     const tabContents = document.querySelectorAll('.tab-content');
-    const exportBtn = document.getElementById('export-excel-btn');
     const dataViewSwitcher = document.getElementById('data-view-switcher');
 
     tabBtns.forEach(btn => {
@@ -2798,11 +3450,7 @@ function initTabSwitching() {
 
             syncPrimaryTabIndicator();
             requestAnimationFrame(syncScopeSwitcherSlider);
-            
-            // Show export button
-            if (exportBtn) exportBtn.style.display = 'flex';
-            
-            // Re-render charts on switch
+
             if (tabId === CONFIG.tabs.charts) {
                 drawCharts(currentFilteredDf1, currentFilteredDf2);
             }
@@ -2910,7 +3558,7 @@ function syncPrimaryTabIndicator() {
     indicator.style.transform = `translateX(${btnRect.left - switcherRect.left - 4}px)`;
 }
 
-function generateExportFilename() {
+function generateExportFilename(suffix = '') {
     const now = new Date();
     const timestamp = [
         now.getFullYear(),
@@ -2921,7 +3569,7 @@ function generateExportFilename() {
         String(now.getMinutes()).padStart(2, '0')
     ].join('');
     
-    return `DuLieuTrungThau_${timestamp}.xlsx`;
+    return `DuLieuTrungThau${suffix ? `_${suffix}` : ''}_${timestamp}.xlsx`;
 }
 
 function prepareExportData(data, headerOrder, currentOrder) {
@@ -2948,36 +3596,26 @@ function buildExportWorksheet(data, headerOrder, currentOrder) {
     return ws;
 }
 
-function initExcelExport() {
-    document.getElementById('export-excel-btn')?.addEventListener('click', () => {
-        if (currentFilteredDf1.length === 0 && currentFilteredDf2.length === 0) {
-            alert('Không có dữ liệu để xuất!');
-            return;
-        }
-        
-        const wb = XLSX.utils.book_new();
-        
-        // Export DF1
-        if (currentFilteredDf1.length > 0) {
-            const headerOrder = getCurrentHeaderOrder('standard-table');
-            const ws = buildExportWorksheet(currentFilteredDf1, headerOrder, currentColumnOrderDf1);
-            XLSX.utils.book_append_sheet(wb, ws, 'Kết quả mua sắm thuốc');
-            console.log('✅ DF1 export với thứ tự:', headerOrder || currentColumnOrderDf1);
-        }
-        
-        // Export DF2
-        if (currentFilteredDf2.length > 0) {
-            const headerOrder = getCurrentHeaderOrder('extended-table');
-            const ws = buildExportWorksheet(currentFilteredDf2, headerOrder, currentColumnOrderDf2);
-            XLSX.utils.book_append_sheet(wb, ws, 'Kết quả mua sắm hàng hóa');
-            console.log('✅ DF2 export với thứ tự:', headerOrder || currentColumnOrderDf2);
-        }
-        
-        const filename = generateExportFilename();
-        XLSX.writeFile(wb, filename);
-        
-        console.log(`✅ Exported ${currentFilteredDf1.length + currentFilteredDf2.length} records to ${filename}`);
-    });
+function exportTableToExcel(tableId) {
+    const tableData = getDisplayedData(tableId);
+    if (!tableData.length) {
+        alert('Không có dữ liệu để xuất!');
+        return;
+    }
+
+    const sheetName = tableId === 'extended-table'
+        ? 'Kết quả mua sắm hàng hóa'
+        : 'Kết quả mua sắm thuốc';
+    const filenameSuffix = tableId === 'extended-table' ? 'HangHoa' : 'Thuoc';
+    const headerOrder = getVisibleColumnOrder(tableId);
+    const wb = XLSX.utils.book_new();
+    const ws = buildExportWorksheet(tableData, headerOrder, TABLE_MAP[tableId]?.columnOrder?.() || headerOrder);
+
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+
+    const filename = generateExportFilename(filenameSuffix);
+    XLSX.writeFile(wb, filename);
+    console.log(`✅ Exported ${tableData.length} records from ${tableId} to ${filename}`);
 }
 
 function initSearchFormEvents() {
@@ -2995,19 +3633,16 @@ function initSearchFormEvents() {
     });
     
     searchForm.addEventListener('reset-filters', () => {
-        currentFilterState = {};
-        currentFilteredDf1 = [];
-        currentFilteredDf2 = [];
         currentQueryRequest = { scope: 'all', filters: {} };
         clearFilterUrlState();
-        updateResults([], []);
+        updateResults([], [], { resetMiniFilters: true });
         hideLimitWarning();
     });
 
     searchForm.addEventListener('preview-filters', async (e) => {
         const requestId = ++previewRequestId;
         try {
-            const result = await fetchQueryResults(buildQueryRequest(e.detail), [], 1);
+            const result = await fetchQueryResults(buildQueryRequest(e.detail), null, 1);
             if (requestId !== previewRequestId) return;
 
             const total = Number(result?.df1?.count || 0) + Number(result?.df2?.count || 0);
@@ -3022,7 +3657,7 @@ function initSearchFormEvents() {
 
 
 function disableDefaultTooltips() {
-    document.querySelectorAll('.action-btn, .btn-export, .btn-meta-simple')
+    document.querySelectorAll('.action-btn, .btn-meta-simple')
         .forEach(button => {
             const title = button.getAttribute('title');
             if (title) {
@@ -3072,58 +3707,6 @@ function initTableRangeSelection() {
     initRangeCopy();
 }
 
-function initWrapTextAction() {
-    const btn = document.getElementById('toggle-wrap-text');
-    if (!btn) return;
-
-    btn.addEventListener('click', () => {
-        const tableId = getActiveVisibleTableId();
-        const selectedColumns = selectionState[tableId].columns;
-        if (!selectedColumns.size) return;
-
-        const wrappedColumns = wrappedColumnsState[tableId];
-        const shouldWrap = Array.from(selectedColumns).some(columnName => !wrappedColumns.has(columnName));
-
-        selectedColumns.forEach(columnName => {
-            if (shouldWrap) wrappedColumns.add(columnName);
-            else wrappedColumns.delete(columnName);
-        });
-
-        if (!shouldWrap) {
-            selectedColumns.forEach(columnName => {
-                if (wrappedColumns.has(columnName)) {
-                    wrappedColumns.delete(columnName);
-                }
-            });
-        } else {
-            selectedColumns.forEach(columnName => wrappedColumns.add(columnName));
-        }
-
-        syncWrappedColumns(tableId);
-    });
-}
-
-function initFreezeColumnAction() {
-    const btn = document.getElementById('toggle-freeze-column');
-    if (!btn) return;
-
-    btn.addEventListener('click', () => {
-        const tableId = getActiveVisibleTableId();
-        const selectedColumns = selectionState[tableId].columns;
-        if (!selectedColumns.size) return;
-
-        const frozenColumns = frozenColumnsState[tableId];
-        const shouldFreeze = Array.from(selectedColumns).some(columnName => !frozenColumns.has(columnName));
-
-        selectedColumns.forEach(columnName => {
-            if (shouldFreeze) frozenColumns.add(columnName);
-            else frozenColumns.delete(columnName);
-        });
-
-        syncFrozenColumns(tableId);
-    });
-}
-
 // Main initialization
 document.addEventListener('DOMContentLoaded', function() {
     initStorageAndElements();
@@ -3132,11 +3715,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initModalEvents();
     initTabSwitching();
     initResultViewSwitching();
-    initExcelExport();
     initSearchFormEvents();
-    initSortPanel();
-    initWrapTextAction();
-    initFreezeColumnAction();
     disableDefaultTooltips();
     initGlobalKeyboardShortcuts();
     initializeAppData();
@@ -3159,4 +3738,6 @@ window.addEventListener('resize', () => {
     syncAllFrozenColumns();
     syncPrimaryTabIndicator();
     syncScopeSwitcherSlider();
+    rerenderActiveColumnMenu();
+    rerenderColumnsPopover();
 });

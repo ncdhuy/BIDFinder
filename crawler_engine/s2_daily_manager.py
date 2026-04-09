@@ -1547,6 +1547,28 @@ def is_generic_summary_row(row: pd.Series, amount_col=None) -> bool:
     return False
 
 
+def is_summary_continuation_row(row: pd.Series, prev_row: pd.Series | None, amount_col=None) -> bool:
+    if prev_row is None or not is_generic_summary_row(prev_row, amount_col):
+        return False
+
+    populated_cells = [
+        (col, _clean_cell_text(value))
+        for col, value in row.items()
+        if not _is_blank_cell(value)
+    ]
+    if not populated_cells or len(populated_cells) > 3:
+        return False
+
+    for col, text in populated_cells:
+        if not _is_numeric_like_text(text):
+            return False
+        if amount_col and clean_col_str(col) == clean_col_str(amount_col):
+            continue
+        if "thành tiền" in clean_col_str(col) or "đơn giá" in clean_col_str(col):
+            continue
+    return True
+
+
 def has_detail_signal_generic(row: pd.Series, detail_cols: list, amount_col=None) -> bool:
     if row is None:
         return False
@@ -1758,7 +1780,13 @@ def normalize_grouped_rows_generic(df: pd.DataFrame, schema_type: str, detect_co
     if not stt_col or not detail_cols:
         return working_df, None
 
-    total_mask = working_df.apply(lambda row: is_generic_summary_row(row, amount_col), axis=1)
+    total_mask = []
+    prev_row = None
+    for _, row in working_df.iterrows():
+        is_total_row = is_generic_summary_row(row, amount_col) or is_summary_continuation_row(row, prev_row, amount_col)
+        total_mask.append(is_total_row)
+        prev_row = row
+    total_mask = pd.Series(total_mask, index=working_df.index)
     working_df = working_df.loc[~total_mask].reset_index(drop=True)
     if working_df.empty:
         return working_df, None
@@ -2618,6 +2646,7 @@ def fetch_tbmt_metadata_snapshot(cursor, tbmt_tuple):
 def collect_related_cleanup_context(cursor, tbmt_tuple, keep_filtered_skip_logs=False):
     summary = {}
     tracked_paths = set()
+    refresh_targets = set()
 
     path_sources = [
         ("packages", "file_path"),
@@ -2633,6 +2662,8 @@ def collect_related_cleanup_context(cursor, tbmt_tuple, keep_filtered_skip_logs=
         WHERE ma_tbmt IN %s
     """, (tbmt_tuple,))
     for work_date, task_type, row_tbmt, row_so_qd, row_version, source_files_json, expected_output_filename, result_filename in cursor.fetchall():
+        if work_date and task_type:
+            refresh_targets.add((str(task_type).upper(), str(work_date)))
         source_files = parse_source_files_json(source_files_json)
         for fname in source_files:
             tracked_paths.add(os.path.join(get_human_source_dir(task_type, work_date), os.path.basename(fname)))
@@ -2685,7 +2716,17 @@ def collect_related_cleanup_context(cursor, tbmt_tuple, keep_filtered_skip_logs=
     """, (tbmt_tuple,))
     summary["scan_logs_filtered_skip_kept"] = cursor.fetchone()[0]
 
-    return tracked_paths, summary, delete_targets
+    return tracked_paths, summary, delete_targets, refresh_targets
+
+
+def refresh_human_task_targets(refresh_targets):
+    normalized_targets = {
+        (str(task_type).upper(), str(work_date))
+        for task_type, work_date in (refresh_targets or set())
+        if task_type and work_date
+    }
+    for task_type, work_date in sorted(normalized_targets):
+        refresh_human_tasks_sheet(task_type, work_date)
 
 
 def execute_related_cleanup(cursor, tbmt_tuple, delete_targets):
@@ -2734,7 +2775,7 @@ def purge_related_records(ma_tbmt=None, package_phrase=None, investor_phrase=Non
                 tbmt_tuple = tuple(sorted(target_tbmts))
                 print(f"🧹 {'Xem trước' if dry_run else 'Sẽ xóa'} dữ liệu liên quan của {len(tbmt_tuple)} TBMT.")
                 print("   - Danh sách TBMT:", ", ".join(tbmt_tuple))
-                tracked_paths, summary, delete_targets = collect_related_cleanup_context(cursor, tbmt_tuple)
+                tracked_paths, summary, delete_targets, refresh_targets = collect_related_cleanup_context(cursor, tbmt_tuple)
 
                 print("📋 Số dòng liên quan theo bảng:")
                 for table_name, row_count in summary.items():
@@ -2753,8 +2794,7 @@ def purge_related_records(ma_tbmt=None, package_phrase=None, investor_phrase=Non
                 conn.commit()
 
         deleted_paths, failed_paths = delete_related_physical_files(target_tbmts, tracked_paths)
-        refresh_human_tasks_sheet("OCR", TARGET_DATE)
-        refresh_human_tasks_sheet("MANUAL", TARGET_DATE)
+        refresh_human_task_targets(refresh_targets)
 
         print("✅ Đã xóa xong dữ liệu liên quan.")
         print(f"   - File vật lý đã xóa: {len(deleted_paths)}")
@@ -2910,7 +2950,7 @@ def mark_filtered_skip_records(ma_tbmt=None, package_phrase=None, investor_phras
                 """, (tbmt_tuple,))
                 existing_skips = {row[0] for row in cursor.fetchall() if row[0]}
                 new_skips = [tbmt for tbmt in tbmt_tuple if tbmt not in existing_skips]
-                tracked_paths, summary, delete_targets = collect_related_cleanup_context(
+                tracked_paths, summary, delete_targets, refresh_targets = collect_related_cleanup_context(
                     cursor,
                     tbmt_tuple,
                     keep_filtered_skip_logs=True
@@ -2960,8 +3000,7 @@ def mark_filtered_skip_records(ma_tbmt=None, package_phrase=None, investor_phras
                 execute_related_cleanup(cursor, tbmt_tuple, delete_targets)
                 conn.commit()
                 deleted_paths, failed_paths = delete_related_physical_files(target_tbmts, tracked_paths)
-                refresh_human_tasks_sheet("OCR", TARGET_DATE)
-                refresh_human_tasks_sheet("MANUAL", TARGET_DATE)
+                refresh_human_task_targets(refresh_targets)
                 print("✅ Đã ghi FILTERED_SKIP vào scan_logs.")
                 print(f"   - TBMT mới được gán skip: {inserted_count}")
                 print(f"   - TBMT đã có skip từ trước: {len(existing_skips)}")
@@ -2988,6 +3027,7 @@ def ignore_qd_unit(ma_tbmt, so_qd, version, correct_qd, note=None, dry_run=False
 
     tracked_paths = set()
     summary = {}
+    refresh_targets = set()
 
     try:
         with get_db_connection() as conn:
@@ -3019,6 +3059,8 @@ def ignore_qd_unit(ma_tbmt, so_qd, version, correct_qd, note=None, dry_run=False
                     WHERE ma_tbmt = %s AND so_qd = %s
                 """, (ma_tbmt, so_qd))
                 for work_date, task_type, row_tbmt, row_so_qd, row_version, source_files_json, expected_output_filename, result_filename in cursor.fetchall():
+                    if work_date and task_type:
+                        refresh_targets.add((str(task_type).upper(), str(work_date)))
                     source_files = parse_source_files_json(source_files_json)
                     for fname in source_files:
                         tracked_paths.add(os.path.join(get_human_source_dir(task_type, work_date), os.path.basename(fname)))
@@ -3084,13 +3126,22 @@ def ignore_qd_unit(ma_tbmt, so_qd, version, correct_qd, note=None, dry_run=False
                 conn.commit()
 
         deleted_paths, failed_paths = delete_related_physical_files({ma_tbmt}, tracked_paths)
-        refresh_human_tasks_sheet("OCR", TARGET_DATE)
-        refresh_human_tasks_sheet("MANUAL", TARGET_DATE)
+        refresh_human_task_targets(refresh_targets)
         print(f"✅ Đã đánh dấu TYPO_ERROR và bỏ qua QĐ {so_qd} của {ma_tbmt}. File vật lý đã xóa: {len(deleted_paths)}")
         if failed_paths:
             print(f"⚠️ Có {len(failed_paths)} file/path không xóa được.")
     except psycopg2.Error as e:
         logger.error(f"❌ Lỗi ignore QĐ typo: {e}")
+
+def clear_manifest_issues_for_unit(cursor, issue_date, tbmt, so_qd, version):
+    cursor.execute("""
+        DELETE FROM manifest_issues
+        WHERE issue_date = %s
+          AND ma_tbmt = %s
+          AND so_qd = %s
+          AND version = %s
+    """, (issue_date, tbmt, so_qd, version))
+
 
 def save_manifest_to_db(manifest_list):
     if not manifest_list: return
@@ -3103,6 +3154,14 @@ def save_manifest_to_db(manifest_list):
             with conn.cursor() as c:
                 for item in clean_list:
                     status = derive_status(item["Schema_Type"])
+                    if status == "READY":
+                        clear_manifest_issues_for_unit(
+                            c,
+                            TARGET_DATE,
+                            item["TBMT"],
+                            item.get("So_qd"),
+                            item.get("Version")
+                        )
                     c.execute("""
                         DELETE FROM daily_manifest
                         WHERE manifest_date = %s AND ma_tbmt = %s AND so_qd = %s AND version = %s
@@ -3346,6 +3405,7 @@ def cleanup_human_workspace_artifacts(paths):
 
 def upsert_ready_manifest_record(cursor, tbmt, so_qd, version, filename, full_path, schema_type):
     file_size_kb = round(os.path.getsize(full_path) / 1024, 2)
+    clear_manifest_issues_for_unit(cursor, TARGET_DATE, tbmt, so_qd, version)
     cursor.execute("""
         DELETE FROM daily_manifest
         WHERE manifest_date = %s AND ma_tbmt = %s AND so_qd = %s AND version = %s

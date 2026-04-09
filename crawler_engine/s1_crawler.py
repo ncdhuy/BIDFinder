@@ -813,7 +813,7 @@ loai_tu_gian_giao_thau = [
     "thí nghiệm", "nhu yếu phẩm", "vận chuyển","công nghệ thông tin", "hệ thống mạng", "tin học", "máy tính",
     "mạng lan", "chống sét", "xử lý nước thải", "sắc ký", "quang phổ", "sửa chữa", "máy phun thuốc", "thuốc hàn",
     "truyền thông", "xe", "máy soi thuốc", "cây thuốc", "đông dược", "dịch chiết", "tinh dầu",
-    "máy chiết xơ", "nội độc tố", "dung môi", "chất chuẩn", "chuẩn hóa", "kiểm tra", "độ hòa tan", "bình phun thuốc"
+    "máy chiết xơ", "nội độc tố", "dung môi", "chất chuẩn", "chuẩn hóa", "kiểm tra", "độ hòa tan", "bình phun thuốc",
 ]
  
 loai_chu_dau_tu = [
@@ -834,12 +834,12 @@ loai_chu_dau_tu = [
     ("công ty", []),
     ("chăn nuôi", []),
     ("thú y", []),
+    ("kiểm nghiệm", []),
 ]
 
 tu_khoa_luu_lai = [
-    "generic", "biệt dược gốc", "bdg", 
-    "thực phẩm chức năng", "thực phẩm bảo vệ sức khỏe", "thực phẩm dinh dưỡng",
-    "mỹ phẩm", "vật tư y tế", "thiết bị y tế", "khám chữa bệnh"
+    "generic", "biệt dược gốc", "bdg", "khám chữa bệnh", 
+    "thiết bị y tế", "vật tư y tế", "thực phẩm chức năng", "thực phẩm bảo vệ sức khỏe", "thực phẩm dinh dưỡng"
 ]
 
 def _normalize_keyword_value(value):

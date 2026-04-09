@@ -208,6 +208,103 @@ def collapse_duplicate_columns(df: pd.DataFrame) -> pd.DataFrame:
     return collapsed
 
 
+def is_blank_cell(value) -> bool:
+    if pd.isna(value):
+        return True
+    if isinstance(value, str):
+        return clean_col_str(value) in {"", "nan", "none", "<na>", "nat"}
+    return False
+
+
+def analyze_review_column_gaps(df: pd.DataFrame, schema_name: str) -> list[dict]:
+    if df is None or df.empty:
+        return []
+
+    config = SCHEMAS[schema_name]
+    review_cols = config.get("review_columns") or config.get("output_columns", [])
+    gap_details = []
+    total_rows = len(df.index)
+
+    for col in review_cols:
+        blank_count = total_rows
+        if col not in df.columns:
+            gap_details.append({
+                "column": col,
+                "blank_count": total_rows,
+                "total_rows": total_rows,
+            })
+            continue
+
+        blank_mask = df[col].map(is_blank_cell)
+        blank_count = int(blank_mask.sum())
+        if blank_count > 0:
+            gap_details.append({
+                "column": col,
+                "blank_count": blank_count,
+                "total_rows": total_rows,
+            })
+
+    return gap_details
+
+
+def log_pending_review_summary(flagged_units: list[dict], context_label: str, limit: int = 50):
+    if not flagged_units:
+        logger.info(f"✅ {context_label}: không có unit nào bị chuyển sang PENDING_ETL_REVIEW.")
+        return
+
+    logger.warning(
+        f"📋 {context_label}: có {len(flagged_units)} unit bị chuyển sang PENDING_ETL_REVIEW."
+    )
+
+    for item in flagged_units[:limit]:
+        gaps = item.get("column_gaps", [])
+        cols_display = ", ".join(
+            f"{gap['column']}({gap['blank_count']}/{gap['total_rows']})"
+            for gap in gaps
+        ) or "N/A"
+        logger.warning(
+            f"   - TBMT={item.get('ma_tbmt')} | so_qd={item.get('so_qd')} | "
+            f"version={item.get('version')} | schema={item.get('schema_name')} | "
+            f"column_gaps=[{cols_display}]"
+        )
+
+    remaining = len(flagged_units) - limit
+    if remaining > 0:
+        logger.warning(f"   ... và còn {remaining} unit khác.")
+
+
+def is_bdg_package_title(package_title: str | None) -> bool:
+    if not package_title:
+        return False
+
+    title_clean = clean_col_str(str(package_title))
+    if "biệt dược gốc" in title_clean:
+        return True
+    return re.search(r"\bbdg\b", title_clean, flags=re.IGNORECASE) is not None
+
+
+def apply_bdg_group_fill_rule(df: pd.DataFrame, package_title: str | None, schema_name: str) -> pd.DataFrame:
+    if df is None or df.empty or schema_name != "MEDICINE_STANDARD":
+        return df
+    if not is_bdg_package_title(package_title):
+        return df
+    if "Nhóm thuốc" not in df.columns:
+        return df
+
+    df = df.copy()
+    blank_mask = df["Nhóm thuốc"].map(is_blank_cell)
+    filled_count = int(blank_mask.sum())
+    if filled_count <= 0:
+        return df
+
+    df.loc[blank_mask, "Nhóm thuốc"] = "BDG"
+    logger.info(
+        f"🩹 [BDG-RULE] MEDICINE_STANDARD: điền 'BDG' cho {filled_count} dòng thiếu 'Nhóm thuốc' "
+        f"vì tên gói thầu khớp biệt dược gốc."
+    )
+    return df
+
+
 def collapse_sparse_goods_rows(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     if df.empty:
@@ -611,6 +708,28 @@ def is_generic_summary_row(row: pd.Series, amount_col=None) -> bool:
     return False
 
 
+def is_summary_continuation_row(row: pd.Series, prev_row: pd.Series | None, amount_col=None) -> bool:
+    if prev_row is None or not is_generic_summary_row(prev_row, amount_col):
+        return False
+
+    populated_cells = [
+        (col, _clean_cell_text(value))
+        for col, value in row.items()
+        if not _is_blank_cell(value)
+    ]
+    if not populated_cells or len(populated_cells) > 3:
+        return False
+
+    for col, text in populated_cells:
+        if not _is_numeric_like_text(text):
+            return False
+        if amount_col and clean_col_str(col) == clean_col_str(amount_col):
+            continue
+        if "thành tiền" in clean_col_str(col) or "đơn giá" in clean_col_str(col):
+            continue
+    return True
+
+
 def has_detail_signal_generic(row: pd.Series, detail_cols: list, amount_col=None) -> bool:
     if row is None:
         return False
@@ -822,7 +941,13 @@ def normalize_grouped_rows_generic(df: pd.DataFrame, schema_type: str):
     if not stt_col or not detail_cols:
         return working_df
 
-    total_mask = working_df.apply(lambda row: is_generic_summary_row(row, amount_col), axis=1)
+    total_mask = []
+    prev_row = None
+    for _, row in working_df.iterrows():
+        is_total_row = is_generic_summary_row(row, amount_col) or is_summary_continuation_row(row, prev_row, amount_col)
+        total_mask.append(is_total_row)
+        prev_row = row
+    total_mask = pd.Series(total_mask, index=working_df.index)
     working_df = working_df.loc[~total_mask].reset_index(drop=True)
     if working_df.empty:
         return working_df
@@ -931,7 +1056,7 @@ def generate_row_hash(df: pd.DataFrame, schema_name: str) -> pd.Series:
     else:
         return fb_key
     
-def apply_numeric_cleaning(df: pd.DataFrame) -> pd.DataFrame:
+def apply_numeric_cleaning(df: pd.DataFrame, schema_name: str | None = None) -> pd.DataFrame:
     df = collapse_duplicate_columns(df)
     str_cols = df.select_dtypes(include=['object']).columns
     for c in str_cols:
@@ -942,11 +1067,22 @@ def apply_numeric_cleaning(df: pd.DataFrame) -> pd.DataFrame:
     for c in cols_num:
         if c in df.columns: 
             df[c] = clean_numeric_series(df[c])
-            
-    if all(c in df.columns for c in ["Thành tiền (VND)", "Khối lượng", "Đơn giá trúng thầu (VND)"]):
-        mask_missing = df["Thành tiền (VND)"].isna()
-        mask_has_inputs = df["Khối lượng"].notna() & df["Đơn giá trúng thầu (VND)"].notna()
-        df.loc[mask_missing & mask_has_inputs, "Thành tiền (VND)"] = df.loc[mask_missing & mask_has_inputs, "Khối lượng"] * df.loc[mask_missing & mask_has_inputs, "Đơn giá trúng thầu (VND)"]
+
+    amount_col = "Thành tiền (VND)"
+    price_col = "Đơn giá trúng thầu (VND)"
+    quantity_col = "Khối lượng"
+    if schema_name == "MEDICINE_STANDARD":
+        quantity_col = "Số lượng"
+
+    if quantity_col in df.columns and price_col in df.columns:
+        if amount_col not in df.columns:
+            df[amount_col] = np.nan
+        mask_missing = df[amount_col].isna()
+        mask_has_inputs = df[quantity_col].notna() & df[price_col].notna()
+        df.loc[mask_missing & mask_has_inputs, amount_col] = (
+            df.loc[mask_missing & mask_has_inputs, quantity_col]
+            * df.loc[mask_missing & mask_has_inputs, price_col]
+        )
 
     df = df.replace([np.inf, -np.inf], np.nan)
     return df
@@ -1186,9 +1322,240 @@ def mark_manifest_processed(ids_list: list):
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute("UPDATE daily_manifest SET status='PROCESSED' WHERE id IN %s", (tuple(ids_list),))
+                cursor.execute("""
+                    DELETE FROM manifest_issues
+                    WHERE issue_date = %s
+                      AND (ma_tbmt, so_qd, version) IN (
+                          SELECT ma_tbmt, so_qd, version
+                          FROM daily_manifest
+                          WHERE id IN %s
+                      )
+                """, (TARGET_DATE, tuple(ids_list)))
             conn.commit()
     except Exception as e:
         logger.error(f"⚠️ Lỗi update status manifest: {e}")
+
+
+def mark_manifest_pending_review(ids_list: list):
+    if not ids_list:
+        return
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE daily_manifest SET status='PENDING_ETL_REVIEW' WHERE id IN %s",
+                    (tuple(ids_list),)
+                )
+            conn.commit()
+    except Exception as e:
+        logger.error(f"⚠️ Lỗi update status manifest sang PENDING_ETL_REVIEW: {e}")
+
+
+def save_manifest_issue_records(issue_records: list[dict]):
+    if not issue_records:
+        return
+
+    unique_records = {
+        (item["ma_tbmt"], item["so_qd"], item["version"], item["issue_type"]): item
+        for item in issue_records
+    }
+
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                for item in unique_records.values():
+                    cursor.execute("""
+                        INSERT INTO manifest_issues
+                        (issue_date, ma_tbmt, so_qd, version, filename, issue_type, issue_reason, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                        ON CONFLICT ON CONSTRAINT uq_manifest_issues
+                        DO UPDATE SET
+                            filename = EXCLUDED.filename,
+                            issue_reason = EXCLUDED.issue_reason,
+                            updated_at = CURRENT_TIMESTAMP
+                    """, (
+                        item.get("issue_date") or TARGET_DATE,
+                        item["ma_tbmt"],
+                        item["so_qd"],
+                        item["version"],
+                        item.get("filename"),
+                        item["issue_type"],
+                        item["issue_reason"],
+                    ))
+            conn.commit()
+    except Exception as e:
+        logger.error(f"⚠️ Lỗi lưu manifest issue từ ETL: {e}")
+
+
+def delete_processed_units(schema_name: str, units: list[dict]):
+    if not units:
+        return
+
+    config = SCHEMAS[schema_name]
+    table_name = config["table_name"]
+    db_mapping = config["db_mapping"]
+    db_tbmt = db_mapping.get('Mã TBMT', 'ma_tbmt')
+    db_qd = db_mapping.get('so_qd_sanitized', 'so_qd')
+    db_ver = db_mapping.get('version_code', 'version')
+    unit_tuple = tuple(
+        (unit["tbmt"], unit["so_qd"], unit["version"])
+        for unit in units
+        if unit.get("tbmt") and unit.get("so_qd") and unit.get("version")
+    )
+
+    if not unit_tuple:
+        return
+
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(f"""
+                    DELETE FROM {table_name}
+                    WHERE ({db_tbmt}, {db_qd}, {db_ver}) IN %s
+                """, (unit_tuple,))
+            conn.commit()
+    except Exception as e:
+        logger.error(f"⚠️ Lỗi xóa dữ liệu processed cũ ở {table_name}: {e}")
+
+
+def build_blank_count_sql_expr(column_name: str) -> str:
+    return (
+        f"SUM(CASE WHEN COALESCE(NULLIF(LOWER(BTRIM(p.\"{column_name}\"::text)), 'nan'), '') = '' "
+        f"THEN 1 ELSE 0 END) AS \"blank__{column_name}\""
+    )
+
+
+def audit_processed_units_for_empty_review_columns(manifest_date: str | None = None):
+    started_at = time.time()
+    scope_label = manifest_date or "ALL_DATES"
+    logger.info(f"🔎 BẮT ĐẦU AUDIT HỒI TỐ CỘT REVIEW RỖNG [PHẠM VI: {scope_label}]")
+
+    total_units_scanned = 0
+    total_units_flagged = 0
+    flagged_summary = []
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            for schema_name, config in SCHEMAS.items():
+                review_cols = config.get("review_columns", [])
+                if not review_cols:
+                    continue
+
+                table_name = config["table_name"]
+                db_mapping = config["db_mapping"]
+                db_tbmt = db_mapping.get("Mã TBMT", "ma_tbmt")
+                db_qd = db_mapping.get("so_qd_sanitized", "so_qd")
+                db_ver = db_mapping.get("version_code", "version")
+
+                count_exprs = ",\n                       ".join(
+                    [ 'COUNT(p.*) AS total_rows' ] + [
+                        build_blank_count_sql_expr(db_mapping[col])
+                        for col in review_cols
+                        if col in db_mapping
+                    ]
+                )
+                if not count_exprs:
+                    continue
+
+                where_clause = "WHERE m.status = 'PROCESSED' AND m.schema_type = %s"
+                params = [schema_name]
+                if manifest_date:
+                    where_clause += " AND m.manifest_date = %s"
+                    params.append(manifest_date)
+
+                cursor.execute(f"""
+                    SELECT m.id,
+                           m.manifest_date,
+                           m.ma_tbmt,
+                           m.so_qd,
+                           m.version,
+                           m.filename,
+                           {count_exprs}
+                    FROM daily_manifest m
+                    LEFT JOIN {table_name} p
+                      ON p.{db_tbmt} = m.ma_tbmt
+                     AND p.{db_qd} = m.so_qd
+                     AND p.{db_ver} = m.version
+                    {where_clause}
+                    GROUP BY m.id, m.manifest_date, m.ma_tbmt, m.so_qd, m.version, m.filename
+                    ORDER BY m.manifest_date, m.ma_tbmt, m.so_qd, m.version
+                """, tuple(params))
+
+                rows = cursor.fetchall()
+                if not rows:
+                    logger.info(f"ℹ️ Audit {schema_name}: không có unit PROCESSED trong phạm vi {scope_label}.")
+                    continue
+
+                total_units_scanned += len(rows)
+                flagged_ids = []
+                delete_units = []
+                issue_records = []
+
+                for row in rows:
+                    manifest_id, issue_date, tbmt, so_qd, version, filename, *counts = row
+                    total_rows = int(counts[0] or 0)
+                    gap_counts = counts[1:]
+                    column_gaps = [
+                        {
+                            "column": review_col,
+                            "blank_count": int(blank_count or 0),
+                            "total_rows": total_rows,
+                        }
+                        for review_col, blank_count in zip(review_cols, gap_counts)
+                        if int(blank_count or 0) > 0
+                    ]
+                    if not column_gaps:
+                        continue
+
+                    flagged_ids.append(manifest_id)
+                    delete_units.append({
+                        "tbmt": tbmt,
+                        "so_qd": so_qd,
+                        "version": version,
+                    })
+                    issue_records.append({
+                        "issue_date": issue_date,
+                        "ma_tbmt": tbmt,
+                        "so_qd": so_qd,
+                        "version": version,
+                        "filename": filename,
+                        "issue_type": "ETL_REVIEW_COLUMN_GAPS",
+                        "issue_reason": "Các cột review có dòng trống sau ETL: " + ", ".join(
+                            f"{gap['column']} ({gap['blank_count']}/{gap['total_rows']})"
+                            for gap in column_gaps
+                        ),
+                    })
+                    flagged_summary.append({
+                        "ma_tbmt": tbmt,
+                        "so_qd": so_qd,
+                        "version": version,
+                        "schema_name": schema_name,
+                        "column_gaps": column_gaps,
+                    })
+
+                if not flagged_ids:
+                    logger.info(f"✅ Audit {schema_name}: không phát hiện unit nào thiếu cột review trong phạm vi {scope_label}.")
+                    continue
+
+                delete_processed_units(schema_name, delete_units)
+                cursor.execute(
+                    "UPDATE daily_manifest SET status='PENDING_ETL_REVIEW' WHERE id IN %s",
+                    (tuple(flagged_ids),)
+                )
+                conn.commit()
+                save_manifest_issue_records(issue_records)
+
+                total_units_flagged += len(flagged_ids)
+                logger.warning(
+                    f"⚠️ Audit {schema_name}: phát hiện {len(flagged_ids)} unit cần review lại trong phạm vi {scope_label}."
+                )
+
+    elapsed = round(time.time() - started_at, 2)
+    logger.info(
+        f"🏁 HOÀN TẤT AUDIT HỒI TỐ: đã quét {total_units_scanned} unit, "
+        f"đánh dấu {total_units_flagged} unit cần review. Thời gian: {elapsed}s."
+    )
+    log_pending_review_summary(flagged_summary, f"TỔNG KẾT AUDIT HỒI TỐ [{scope_label}]")
 
 def ensure_indexes(conn, table_name: str, index_columns: list):
     if not index_columns: return
@@ -1489,15 +1856,15 @@ def apply_goods_trade_name_fallback(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def drop_invalid_goods_value_rows(df: pd.DataFrame) -> pd.DataFrame:
+def drop_invalid_value_rows(df: pd.DataFrame, schema_name: str) -> pd.DataFrame:
     if df is None or df.empty:
         return df
 
     price_col = "Đơn giá trúng thầu (VND)"
     amount_col = "Thành tiền (VND)"
-    quantity_col = "Khối lượng"
+    quantity_col = "Số lượng" if schema_name == "MEDICINE_STANDARD" else "Khối lượng"
 
-    if price_col not in df.columns and amount_col not in df.columns:
+    if price_col not in df.columns:
         return df
 
     df = df.copy()
@@ -1508,20 +1875,25 @@ def drop_invalid_goods_value_rows(df: pd.DataFrame) -> pd.DataFrame:
         df[price_col] = clean_numeric_series(df[price_col])
     if amount_col in df.columns:
         df[amount_col] = clean_numeric_series(df[amount_col])
+    elif quantity_col in df.columns and price_col in df.columns:
+        df[amount_col] = np.nan
 
     if all(col in df.columns for col in [quantity_col, price_col, amount_col]):
         mask_missing = df[amount_col].isna()
-        mask_has_inputs = df[quantity_col].notna() & df[price_col].notna()
+        mask_has_inputs = (
+            df[quantity_col].notna()
+            & (df[quantity_col] != 0)
+            & df[price_col].notna()
+            & (df[price_col] != 0)
+        )
         df.loc[mask_missing & mask_has_inputs, amount_col] = (
             df.loc[mask_missing & mask_has_inputs, quantity_col]
             * df.loc[mask_missing & mask_has_inputs, price_col]
         )
 
     price_series = df[price_col] if price_col in df.columns else pd.Series([np.nan] * len(df), index=df.index)
-    amount_series = df[amount_col] if amount_col in df.columns else pd.Series([np.nan] * len(df), index=df.index)
 
-    invalid_mask = (price_series.isna() & amount_series.isna())
-    invalid_mask |= amount_series.notna() & (amount_series <= 0)
+    invalid_mask = price_series.isna() | (price_series <= 0)
 
     return df.loc[~invalid_mask].copy()
 
@@ -1539,8 +1911,8 @@ def normalize_data(df: pd.DataFrame, schema_name: str) -> pd.DataFrame:
     actual_mapping = get_smart_column_mapping(df.columns, mapping_config)
     df = df.rename(columns=actual_mapping)
     df = collapse_duplicate_columns(df)
-    if schema_name == "GOODS_STANDARD":
-        df = drop_invalid_goods_value_rows(df)
+    if schema_name in ("MEDICINE_STANDARD", "GOODS_STANDARD"):
+        df = drop_invalid_value_rows(df, schema_name)
     
     missing = [col for col in mandatory_cols if col not in df.columns]
     if missing:
@@ -1555,7 +1927,7 @@ def normalize_data(df: pd.DataFrame, schema_name: str) -> pd.DataFrame:
             
     meta_cols = ['Mã TBMT', 'version_code', 'so_qd_sanitized']
     ordered_cols = [c for c in meta_cols if c in df.columns] + target_cols
-    
+
     return df[ordered_cols]
 
 def process_pipeline():
@@ -1577,11 +1949,14 @@ def process_pipeline():
                    m.so_qd,
                    m.version,
                    m.full_path,
-                   COALESCE(r.relation_type, 'INDEPENDENT') as relation_type
+                   COALESCE(r.relation_type, 'INDEPENDENT') as relation_type,
+                   pm.ten_goi_thau
             FROM daily_manifest m
             LEFT JOIN qd_relations r 
               ON m.ma_tbmt = r.ma_tbmt AND m.so_qd = r.so_qd AND m.version = r.version
-            WHERE m.manifest_date = %s AND m.status = 'READY'
+            LEFT JOIN package_metadata pm
+              ON m.ma_tbmt = pm.ma_tbmt AND m.so_qd = pm.so_qd AND m.version = pm.version
+            WHERE m.manifest_date = %s AND m.status IN ('READY', 'PENDING_ETL_REVIEW')
               AND NOT EXISTS (
                   SELECT 1
                   FROM scan_anomalies a
@@ -1602,6 +1977,7 @@ def process_pipeline():
                 "version": row[5],
                 "full_path": row[6],
                 "relation_type": row[7],
+                "ten_goi_thau": row[8],
             }
             for row in c.fetchall()
             if row[0] not in ignored_qd_map.get(row[1], set())
@@ -1628,9 +2004,13 @@ def process_pipeline():
             "version": job["version"],
             "file_path": job["full_path"],
             "relation_type": job["relation_type"],
+            "manifest_id": job["manifest_id"],
+            "filename": os.path.basename(str(job["full_path"] or "")),
+            "ten_goi_thau": job.get("ten_goi_thau"),
         })
 
     total_inserted_clusters = 0
+    flagged_summary = []
 
     with get_db_connection() as conn, conn.cursor() as c:
         for (tbmt, qd_original, schema_name) in clusters.keys():
@@ -1648,8 +2028,55 @@ def process_pipeline():
             if df_final is None or df_final.empty:
                 logger.warning(f"⚠️ ETL bỏ qua {tbmt} / {qd_original}: không tạo được dataframe hợp lệ từ cụm QĐ.")
                 continue
-                
-            df_final = apply_numeric_cleaning(df_final)
+
+            package_title = next(
+                (unit.get("ten_goi_thau") for unit in units_in_cluster if unit.get("ten_goi_thau")),
+                None
+            )
+            df_final = apply_numeric_cleaning(df_final, schema_name)
+            df_final = apply_bdg_group_fill_rule(df_final, package_title, schema_name)
+            column_gaps = analyze_review_column_gaps(df_final, schema_name)
+            if column_gaps:
+                issue_reason = (
+                    "Các cột review có dòng trống sau ETL: "
+                    + ", ".join(
+                        f"{gap['column']} ({gap['blank_count']}/{gap['total_rows']})"
+                        for gap in column_gaps
+                    )
+                )
+                ids = manifest_id_map[(tbmt, qd_original, schema_name)]
+                delete_processed_units(schema_name, [
+                    {
+                        "tbmt": tbmt,
+                        "so_qd": unit["so_qd"],
+                        "version": unit["version"],
+                    }
+                    for unit in units_in_cluster
+                ])
+                mark_manifest_pending_review(ids)
+                save_manifest_issue_records([
+                    {
+                        "ma_tbmt": tbmt,
+                        "so_qd": unit["so_qd"],
+                        "version": unit["version"],
+                        "filename": unit.get("filename"),
+                        "issue_type": "ETL_REVIEW_COLUMN_GAPS",
+                        "issue_reason": issue_reason,
+                    }
+                    for unit in units_in_cluster
+                ])
+                for unit in units_in_cluster:
+                    flagged_summary.append({
+                        "ma_tbmt": tbmt,
+                        "so_qd": unit["so_qd"],
+                        "version": unit["version"],
+                        "schema_name": schema_name,
+                        "column_gaps": column_gaps,
+                    })
+                logger.warning(
+                    f"⚠️ [PENDING_ETL_REVIEW] {tbmt} / {qd_original} / {schema_name}: {issue_reason}"
+                )
+                continue
             
             df_final["_dedup_hash"] = generate_row_hash(df_final, schema_name)
             
@@ -1710,6 +2137,7 @@ def process_pipeline():
 
     elapsed_time = round(time.time() - start_time, 2)
     logger.info(f"🎉 HOÀN TẤT ETL: Xử lý thành công {total_inserted_clusters} Cụm QĐ. Tổng thời gian: {elapsed_time}s.")
+    log_pending_review_summary(flagged_summary, f"TỔNG KẾT ETL [{TARGET_DATE}]")
 
 # =====================================================================
 # ENTRY POINT
@@ -1720,19 +2148,58 @@ if __name__ == "__main__":
     print("="*60)
 
     parser = argparse.ArgumentParser(description="Chạy Pipeline ETL cho MuaSamCong.")
-    parser.add_argument('-d', '--date', type=str, help="Ngày cần chạy ETL (Định dạng YYYYMMDD).")
+    parser.add_argument(
+        '-m', '--mode',
+        choices=['etl', 'audit-retro'],
+        default='etl',
+        help="Chế độ chạy: 'etl' để xử lý dữ liệu mới, 'audit-retro' để rà dữ liệu đã PROCESSED."
+    )
+    parser.add_argument('-d', '--date', type=str, help="Ngày cần chạy ETL/audit (Định dạng YYYYMMDD).")
     args = parser.parse_args()
 
     default_date = datetime.now().strftime("%Y%m%d")
 
-    if args.date:
-        TARGET_DATE = args.date
-    else:
-        user_input = input(f"📅 Nhập ngày cần xử lý (YYYYMMDD) [Enter = Hôm nay {default_date}]: ").strip()
-        TARGET_DATE = user_input if user_input else default_date
-
     try:
         get_db_connection().close()
-        process_pipeline()
+        logger.info("✅ Đã kết nối thành công tới PostgreSQL!")
     except Exception as e:
         logger.error(f"❌ KHÔNG THỂ KHỞI CHẠY PIPELINE: {e}")
+        raise SystemExit(1)
+
+    cli_mode_provided = any(arg in ("-m", "--mode") for arg in os.sys.argv[1:])
+
+    if cli_mode_provided:
+        if args.mode == 'etl':
+            if args.date:
+                TARGET_DATE = args.date
+            else:
+                user_input = input(f"📅 Nhập ngày cần xử lý ETL (YYYYMMDD) [Enter = Hôm nay {default_date}]: ").strip()
+                TARGET_DATE = user_input if user_input else default_date
+            process_pipeline()
+        else:
+            TARGET_DATE = args.date or default_date
+            audit_processed_units_for_empty_review_columns(args.date)
+    else:
+        while True:
+            print("\n--- ETL PIPELINE TASKS ---")
+            print("1. Chạy ETL theo ngày")
+            print("2. Audit hồi tố các unit đã PROCESSED")
+            print("0. Thoát")
+
+            choice = input("👉 Chọn task (0-2): ").strip()
+            if choice == "0":
+                break
+            elif choice == "1":
+                user_input = input(
+                    f"📅 Nhập ngày cần ETL (YYYYMMDD) [Enter = Hôm nay {default_date}]: "
+                ).strip()
+                TARGET_DATE = user_input if user_input else default_date
+                process_pipeline()
+            elif choice == "2":
+                user_input = input(
+                    "📅 Nhập ngày manifest cần audit (YYYYMMDD) [Enter = audit toàn bộ]: "
+                ).strip()
+                TARGET_DATE = user_input if user_input else default_date
+                audit_processed_units_for_empty_review_columns(user_input or None)
+            else:
+                print("❌ Lựa chọn không hợp lệ!")

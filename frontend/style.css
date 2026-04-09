@@ -1341,7 +1341,7 @@ body.landing-active .page-container {
   padding: 6px 9px;
   text-align: left;
   white-space: nowrap;
-  max-width: 200px;
+  max-width: none;
   min-width: 110px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1355,6 +1355,10 @@ body.landing-active .page-container {
   user-select: none;
   position: relative;
   overflow: visible;
+  padding-left: 0;
+  padding-right: 0;
+  padding-top: 5px;
+  padding-bottom: 5px;
   color: var(--tbl-head-text, var(--color-text-secondary));
 }
 
@@ -1393,8 +1397,13 @@ body.landing-active .page-container {
 
 .data-table th:hover{ background-color: var(--tbl-head-hover-bg); }
 .data-table th.drag-over{
-  border-left: 3px solid var(--tbl-drag-border);
   background-color: var(--tbl-head-hover-bg);
+}
+.data-table th.drag-over-before{
+  box-shadow: inset 3px 0 0 var(--tbl-drag-border);
+}
+.data-table th.drag-over-after{
+  box-shadow: inset -3px 0 0 var(--tbl-drag-border);
 }
 
 /* resizer */
@@ -1416,13 +1425,7 @@ body.landing-active .page-container {
 
 /* drag indicator */
 .drag-indicator{
-  position: absolute;
-  left: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  opacity: 0.35;
-  pointer-events: auto;
-  cursor: move;
+  display: none;
 }
 
 /* =========================
@@ -2102,190 +2105,8 @@ body.landing-active .page-container {
   gap: 10px;
 }
 
-/* ========= SORT PANEL - THEME COMPACT ========= */
-#sort-panel .panel-body{
-  padding-top: 14px;
-}
-
-/* Thanh công cụ ngay dưới tiêu đề */
-#sort-panel .sort-toolbar{
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-/* Nút Thêm cột: nhỏ, hợp theme tím */
-#sort-panel #add-sort-rule.btn-add-sort{
-  width: auto;
-  padding: 8px 12px;
-  border-radius: 10px;
-  font-size: 13px;
-  font-weight: 600;
-  border: 1px solid rgba(15, 92, 122, 0.22);
-  background: rgba(15, 92, 122, 0.08);
-  color: var(--color-primary);
-}
-
-#sort-panel #add-sort-rule.btn-add-sort:hover{
-  background: rgba(15, 92, 122, 0.12);
-  border-color: rgba(15, 92, 122, 0.28);
-}
-
-/* Row rule gọn hơn một chút */
-#sort-panel .sort-rule-item{
-  padding: 12px;
-  border-radius: 10px;
-}
-
-/* Nút xóa rule (do script.js render ra) => nhỏ + hợp theme */
-#sort-panel .btn-remove-rule{
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
-  font-size: 16px;          /* nếu đang là ký tự */
-  background: #fff6f4;
-  color: #b4524a;
-}
-
-#sort-panel .btn-remove-rule:hover{
-  background: #ffefec;
-  transform: none;          /* bỏ zoom để nhìn “xịn” hơn */
-}
-
-/* Footer: nút nhỏ + căn phải */
-#sort-panel .panel-footer.sort-footer{
-  justify-content: flex-end;
-}
-
-/* Override rule cũ: .panel-footer button { flex: 1; ... } */
-#sort-panel .panel-footer.sort-footer button{
-  flex: 0 0 auto;
-  min-width: 120px;
-  padding: 10px 14px;
-  border-radius: 10px;
-  font-size: 13px;
-}
-
-/* Áp dụng: gradient tím theo theme */
-#sort-panel .panel-footer.sort-footer .btn-primary{
-  background: var(--color-primary);
-  box-shadow: 0 6px 16px rgba(15, 92, 122, 0.18);
-}
-
-#sort-panel .panel-footer.sort-footer .btn-primary:hover{
-  background: var(--color-primary-dark);
-}
-
-/* Đặt lại: nhẹ, tím nhạt */
-#sort-panel .panel-footer.sort-footer .btn-secondary{
-  background: rgba(15, 92, 122, 0.08);
-  color: var(--color-primary);
-}
-
-#sort-panel .panel-footer.sort-footer .btn-secondary:hover{
-  background: rgba(15, 92, 122, 0.14);
-}
-
-/* ========= SORT PANEL FIXED SIZE + SCROLL ========= */
-#sort-panel.sort-panel-fixed{
-  width: 760px;
-  height: 650px;          /* cố định */
-  max-width: 95vw;
-  max-height: 85vh;       /* an toàn màn hình nhỏ */
-}
-
-/* Body cuộn dọc khi nhiều cột */
-#sort-panel.sort-panel-fixed .panel-body{
-  flex: 1;
-  overflow-y: auto;       /* scroll dọc */
-  padding-top: 14px;
-}
-
-/* Toolbar: chuyển nút Thêm cột sang trái */
-#sort-panel.sort-panel-fixed .sort-toolbar{
-  display: flex;
-  justify-content: flex-start; /* trái */
-  align-items: center;
-  margin-bottom: 12px;
-  position: sticky;       /* giữ toolbar luôn thấy khi scroll */
-  top: 0;
-  background: #ffffff;
-  padding: 6px 0;
-  z-index: 2;
-}
-
-/* List rules vẫn là column, nhưng không cần margin-bottom quá lớn */
-#sort-panel.sort-panel-fixed .sort-rules-list{
-  margin-bottom: 8px;
-}
-
-/* ===== Sort rule compact row ===== */
-#sort-panel .sort-rule-item{
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 10px;
-}
-
-/* Bỏ style drag cũ nếu còn */
-#sort-panel .drag-handle{ display: none !important; }
-
-/* Số thứ tự: đổi từ xanh dương sang tím theme */
-#sort-panel .sort-rule-number{
-  width: 28px;
-  height: 28px;
-  border-radius: 10px;
-  font-size: 12px;
-  font-weight: 800;
-  background: var(--color-primary);
-  color: #fff;
-  box-shadow: 0 6px 14px rgba(15, 92, 122, 0.16);
-}
-
-/* Cụm nút lên/xuống */
-#sort-panel .sort-move{
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-#sort-panel .sort-move button{
-  width: 28px;
-  height: 18px;
-  border: 1px solid rgba(15, 92, 122, 0.22);
-  background: rgba(15, 92, 122, 0.08);
-  color: var(--color-primary);
-  border-radius: 10px;
-  cursor: pointer;
-  line-height: 1;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-#sort-panel .sort-move button:hover{
-  background: rgba(15, 92, 122, 0.14);
-}
-
-#sort-panel .sort-move button:disabled{
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
-/* Select gọn hơn */
-#sort-panel .sort-rule-column select,
-#sort-panel .sort-rule-order select{
-  padding: 8px 10px;
-  border-radius: 10px;
-  font-size: 13px;
-}
-
-#sort-panel .sort-rule-order{
-  min-width: 110px;
-}
-
-/* Disabled state consistent for Filter + Sort footer buttons */
-#filter-panel .panel-footer button:disabled,
-#sort-panel .panel-footer button:disabled{
+/* Disabled state consistent for filter footer buttons */
+#filter-panel .panel-footer button:disabled{
   opacity: 0.35;
   cursor: not-allowed;
   box-shadow: none;
@@ -3244,92 +3065,6 @@ body {
   color: #ffffff;
 }
 
-#sort-panel #add-sort-rule.btn-add-sort {
-  border-radius: 8px;
-  border: 1px solid #b3d5c8;
-  background: linear-gradient(180deg, #eff9f5 0%, #e2f3eb 100%);
-  color: var(--accent-ink);
-  box-shadow: none;
-}
-
-#sort-panel #add-sort-rule.btn-add-sort:hover {
-  background: linear-gradient(180deg, #e6f5ef 0%, #d8eee4 100%);
-  border-color: #8fc2ae;
-  color: #0f5b47;
-}
-
-#sort-panel .sort-rules-list {
-  gap: 10px;
-  margin-bottom: 0;
-}
-
-#sort-panel .sort-rule-item {
-  border: 1px solid var(--shell-border);
-  border-radius: 10px;
-  background: #fbfdfe;
-  box-shadow: none;
-}
-
-#sort-panel .sort-rule-item:hover {
-  background: #f3f9fc;
-  border-color: var(--shell-border-strong);
-}
-
-#sort-panel .sort-rule-number {
-  border-radius: 8px;
-  background: linear-gradient(180deg, var(--primary-strong) 0%, var(--primary-ink) 100%);
-  color: #ffffff;
-}
-
-#sort-panel .sort-move button {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  border: 1px solid var(--shell-border);
-  background: #ffffff;
-  color: #607989;
-}
-
-#sort-panel .sort-move button:hover {
-  background: #eef6fb;
-  border-color: var(--shell-border-strong);
-  color: var(--primary-ink);
-}
-
-#sort-panel .sort-move button:disabled {
-  background: #f7fafc;
-  border-color: #e1ebf1;
-  color: #a4b7c2;
-}
-
-#sort-panel .btn-remove-rule {
-  border: 1px solid #ebcbc7;
-  border-radius: 8px;
-  background: #fff6f4;
-  color: #b4524a;
-}
-
-#sort-panel .btn-remove-rule:hover {
-  background: #ffefec;
-  border-color: #ddb0aa;
-  color: #9b413b;
-}
-
-#sort-panel .sort-rule-column select,
-#sort-panel .sort-rule-order select {
-  min-height: 40px;
-  border: 1px solid var(--shell-border);
-  border-radius: 8px;
-  background: #ffffff;
-}
-
-#sort-panel .sort-rule-column select:focus,
-#sort-panel .sort-rule-order select:focus {
-  outline: none;
-  border-color: var(--primary-strong);
-  box-shadow: 0 0 0 3px rgba(18, 116, 149, 0.12);
-}
-
 .contact-item,
 .readme-info-card {
   border: 1px solid var(--shell-border);
@@ -3670,6 +3405,331 @@ body {
   box-shadow: inset 0 0 0 9999px color-mix(in srgb, var(--tbl-selection-border) 28%, transparent);
 }
 
+/* =========================
+   STREAMLIT-LIKE TABLE UX
+   ========================= */
+.table-wrapper {
+  position: relative;
+}
 
+.table-hover-controls {
+  position: absolute;
+  top: 2px;
+  right: 10px;
+  z-index: 42;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
 
+.table-wrapper:hover .table-hover-controls,
+.table-wrapper:focus-within .table-hover-controls,
+.table-wrapper.table-tools-open .table-hover-controls,
+.data-card:fullscreen .table-hover-controls {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
 
+.table-tool-btn {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: none;
+  transition: color 0.16s ease, background 0.16s ease;
+  cursor: pointer;
+}
+
+.table-tool-btn:hover,
+.table-tool-btn.is-active {
+  border-color: transparent;
+  color: var(--color-primary);
+  background: #edf4f7;
+}
+
+.table-tool-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.table-columns-popover,
+.column-menu-popover {
+  position: absolute;
+  min-width: 236px;
+  max-width: min(280px, calc(100% - 20px));
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 16px 28px rgba(15, 23, 42, 0.14);
+  backdrop-filter: blur(16px);
+}
+
+.table-columns-popover {
+  min-width: 228px;
+  z-index: 60;
+}
+
+.column-menu-popover {
+  z-index: 62;
+}
+
+.table-columns-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+  color: var(--color-text-primary);
+}
+
+.table-columns-reset {
+  border: 0;
+  padding: 0;
+  background: none;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-primary);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.table-columns-list {
+  max-height: 280px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.table-columns-option {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin: 0 -8px;
+  padding: 6px 8px;
+  border-radius: 0;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: background 0.16s ease;
+  font-size: 12px;
+}
+
+.table-columns-option:hover {
+  background: #f2f6f8;
+}
+
+.table-columns-option.is-hidden {
+  color: var(--color-text-muted);
+}
+
+.table-columns-option input {
+  accent-color: var(--color-primary);
+  margin: 0;
+}
+
+.column-header-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  padding-left: 2px;
+  padding-right: 0;
+}
+
+.column-header-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.35;
+  padding-top: 1px;
+  padding-right: 1px;
+}
+
+.column-sort-indicator {
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--color-primary);
+  text-align: center;
+}
+
+.column-sort-indicator:empty {
+  display: none;
+}
+
+.column-menu-trigger {
+  width: 16px;
+  height: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--color-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.16s ease, color 0.16s ease, background 0.16s ease;
+}
+
+.column-menu-trigger:hover {
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--color-text-secondary);
+}
+
+.column-menu-trigger.is-open,
+.column-menu-trigger.is-active {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: rgba(148, 163, 184, 0.3);
+  color: var(--color-primary);
+}
+
+.column-menu-trigger span {
+  font-size: 10px;
+  line-height: 1;
+}
+
+.data-table thead th.has-mini-filter .column-header-label,
+.data-table thead th.is-wrapped-col .column-header-label,
+.data-table thead th.is-pinned-col .column-header-label {
+  color: var(--color-text-primary) !important;
+}
+
+.column-menu-title {
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--color-text-primary);
+}
+
+.column-menu-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.column-menu-field {
+  margin-bottom: 4px;
+}
+
+.column-menu-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0 10px;
+  background: #ffffff;
+}
+
+.column-menu-field input {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: 12px;
+}
+
+.column-menu-field input:focus {
+  outline: none;
+}
+
+.column-menu-input-wrap:focus-within {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(18, 116, 149, 0.12);
+}
+
+.column-menu-action {
+  width: 100%;
+  margin: 0 -8px;
+  border: 0;
+  border-radius: 0;
+  padding: 7px 8px;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.column-menu-action:hover {
+  background: #f2f6f8;
+}
+
+.column-menu-action.is-active {
+  background: transparent;
+  color: var(--color-primary-dark);
+  font-weight: 700;
+  box-shadow: inset 2px 0 0 var(--color-primary);
+}
+
+.column-menu-action.is-danger {
+  color: var(--color-text-primary);
+}
+
+.column-menu-icon,
+.table-columns-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  color: currentColor;
+  stroke-width: 2;
+}
+
+.column-menu-divider {
+  border: 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.22);
+  margin: 6px 0;
+}
+
+.data-card:fullscreen {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  padding: 18px;
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  background: #f8fbfd;
+}
+
+.data-card:fullscreen .table-wrapper {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.data-card:fullscreen .table-scroll {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
