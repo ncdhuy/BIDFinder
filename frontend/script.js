@@ -73,7 +73,7 @@ function reorderDataByColumns(data, columnOrder) {
 // ========= 3. STORAGE
 const DF1_COLUMNS_ORDER = [
     'Mã TBMT','Chủ đầu tư','Quyết định phê duyệt','Ngày phê duyệt',
-    'Tên thuốc','Tên hoạt chất','Nồng độ, hàm lượng',
+    'Mã thuốc','Tên thuốc','Tên hoạt chất','Nồng độ, hàm lượng',
     'Đơn vị tính','Số lượng','Đơn giá trúng thầu (VND)','Thành tiền (VND)',
     'Đường dùng','Dạng bào chế','Quy cách','Nhóm thuốc','GĐKLH hoặc GPNK',
     'Cơ sở sản xuất','Xuất xứ','Nhà thầu trúng thầu',
@@ -239,6 +239,14 @@ const selectionState = {
 };
 let currentDisplayedDf1 = [];
 let currentDisplayedDf2 = [];
+let serverBaseDf1 = [];
+let serverBaseDf2 = [];
+let currentQueryMeta = {
+    df1HasMore: false,
+    df2HasMore: false,
+    totalCount: 0,
+    totalCountExact: true
+};
 
 // Configuration object cho từng loại table
 const TABLE_CONFIGS = {
@@ -268,6 +276,98 @@ const TABLE_CONFIGS = {
     }
 };
 
+const DEFAULT_COLUMN_WIDTHS = {
+    'standard-table': {
+        'Mã TBMT': 118,
+        'Chủ đầu tư': 220,
+        'Quyết định phê duyệt': 150,
+        'Ngày phê duyệt': 120,
+        'Mã thuốc': 120,
+        'Tên thuốc': 220,
+        'Tên hoạt chất': 200,
+        'Nồng độ, hàm lượng': 170,
+        'Đơn vị tính': 110,
+        'Số lượng': 110,
+        'Đơn giá trúng thầu (VND)': 150,
+        'Thành tiền (VND)': 150,
+        'Đường dùng': 140,
+        'Dạng bào chế': 150,
+        'Quy cách': 160,
+        'Nhóm thuốc': 150,
+        'GĐKLH hoặc GPNK': 145,
+        'Cơ sở sản xuất': 180,
+        'Xuất xứ': 130,
+        'Nhà thầu trúng thầu': 210,
+        'Hình thức LCNT': 145,
+        'Địa điểm': 160,
+        'Ngày hết hiệu lực': 128,
+        'Tình trạng hiệu lực': 140
+    },
+    'extended-table': {
+        'Mã TBMT': 118,
+        'Chủ đầu tư': 220,
+        'Quyết định phê duyệt': 150,
+        'Ngày phê duyệt': 120,
+        'Tên phần/lô': 190,
+        'Danh mục hàng hóa': 210,
+        'Tính năng kỹ thuật': 260,
+        'Đơn vị tính': 110,
+        'Khối lượng': 110,
+        'Đơn giá trúng thầu (VND)': 150,
+        'Thành tiền (VND)': 150,
+        'Mặt hàng dự thầu': 180,
+        'Nhãn hiệu': 145,
+        'Ký mã hiệu': 145,
+        'Xuất xứ': 130,
+        'Hãng sản xuất': 170,
+        'Nhà thầu trúng thầu': 210,
+        'Hình thức LCNT': 145,
+        'Địa điểm': 160,
+        'Ngày hết hiệu lực': 128,
+        'Tình trạng hiệu lực': 140
+    }
+};
+
+const DEFAULT_COMPACT_COLUMN_WIDTH = 120;
+const DEFAULT_STANDARD_TEXT_WIDTH = 160;
+const DEFAULT_LONG_TEXT_WIDTH = 220;
+const MAX_REASONABLE_COLUMN_WIDTH = 420;
+
+function inferDefaultColumnWidth(tableId, columnName) {
+    const explicitWidth = DEFAULT_COLUMN_WIDTHS[tableId]?.[columnName];
+    if (Number.isFinite(explicitWidth) && explicitWidth > 0) {
+        return explicitWidth;
+    }
+
+    const normalized = String(columnName || '').toLowerCase();
+    if (!normalized) return DEFAULT_STANDARD_TEXT_WIDTH;
+
+    if (
+        normalized.includes('ngày') ||
+        normalized.includes('mã ') ||
+        normalized.includes('số lượng') ||
+        normalized.includes('khối lượng') ||
+        normalized.includes('đơn vị') ||
+        normalized.includes('đơn giá') ||
+        normalized.includes('thành tiền')
+    ) {
+        return DEFAULT_COMPACT_COLUMN_WIDTH;
+    }
+
+    if (
+        normalized.includes('tên ') ||
+        normalized.includes('chủ đầu tư') ||
+        normalized.includes('nhà thầu') ||
+        normalized.includes('danh mục') ||
+        normalized.includes('tính năng') ||
+        normalized.includes('mặt hàng')
+    ) {
+        return DEFAULT_LONG_TEXT_WIDTH;
+    }
+
+    return DEFAULT_STANDARD_TEXT_WIDTH;
+}
+
 function renderTableData(data, configKey) {
     const config = TABLE_CONFIGS[configKey];
     const tbody = config.tbody();
@@ -295,6 +395,10 @@ function renderTableData(data, configKey) {
     data.forEach((item, index) => {
         const tr = document.createElement('tr');
         tr.className = index % 2 === 0 ? 'bg-white' : 'bg-gray-50';
+        if (item?.__has_duplicate_warning) {
+            tr.classList.add('row-duplicate-warning');
+            tr.title = 'Phat hien dong trung trong ho so nguon. BidFinder giu nguyen du lieu goc va chi hien thi canh bao.';
+        }
         tr.dataset.rowIndex = index;
 
         const selectorTd = document.createElement('td');
@@ -446,9 +550,27 @@ function getStoredColumnWidths(storageKey) {
     return Object.fromEntries(
         Object.entries(stored).filter(([, value]) => {
             const width = Number(value);
-            return Number.isFinite(width) && width > 0;
+            return Number.isFinite(width) && width > 0 && width <= MAX_REASONABLE_COLUMN_WIDTH;
         })
     );
+}
+
+function syncTableWidthToColumns(table, colgroup) {
+    if (!table || !colgroup) return;
+
+    const totalWidth = Array.from(colgroup.children).reduce((sum, col) => {
+        const width = parseFloat(col.style.width);
+        return sum + (Number.isFinite(width) ? width : 0);
+    }, 0);
+
+    const scrollContainer = table.closest('.table-scroll');
+    const containerWidth = scrollContainer?.clientWidth || 0;
+    const resolvedWidth = Math.max(totalWidth, containerWidth, 0);
+
+    if (resolvedWidth > 0) {
+        table.style.width = `${Math.ceil(resolvedWidth)}px`;
+        table.style.minWidth = `${Math.ceil(containerWidth || resolvedWidth)}px`;
+    }
 }
 
 function persistColumnWidth(table, colgroup, storageKey, columnName, columnIndex, width) {
@@ -460,6 +582,7 @@ function persistColumnWidth(table, colgroup, storageKey, columnName, columnIndex
     const current = getStoredColumnWidths(storageKey);
     current[columnName] = width;
     writeJsonStorage(storageKey, current);
+    syncTableWidthToColumns(table, colgroup);
     syncFrozenColumns(table.id);
 }
 
@@ -483,10 +606,13 @@ function syncStoredColumnWidths(tableId) {
 
         const columnName = th.dataset.colName;
         const storedWidth = Number(storedWidths[columnName]);
+        const defaultWidth = inferDefaultColumnWidth(tableId, columnName);
         col.style.width = Number.isFinite(storedWidth) && storedWidth > 0
             ? `${storedWidth}px`
-            : `${getHeaderMinimumWidth(th)}px`;
+            : `${defaultWidth}px`;
     });
+
+    syncTableWidthToColumns(table, colgroup);
 }
 
 function initColumnResize(tableId, storageKey) {
@@ -921,7 +1047,7 @@ function createHeaderCell(tableId, colName, index) {
 // FILTERS
 // ============================== 
 
-const MAX_RESULTS_PER_TABLE = 200;
+const MAX_RESULTS_PER_TABLE = 30;
 let currentQueryRequest = {
     scope: 'all',
     filters: {}
@@ -990,10 +1116,63 @@ async function fetchQueryResults(queryRequest, sortRule = activeSortRule, limit 
     return response.json();
 }
 
+async function fetchQueryPreview(queryRequest, signal = null) {
+    if (!requireAuthenticatedSession('login')) {
+        throw new Error('Bạn cần đăng nhập để tra cứu dữ liệu.');
+    }
+
+    const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/query-preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            scope: queryRequest?.scope || 'all',
+            filters: queryRequest?.filters || {}
+        }),
+        signal
+    });
+
+    if (!response.ok) {
+        let message = `HTTP ${response.status}`;
+        try {
+            const errorPayload = await response.json();
+            message = errorPayload?.message || errorPayload?.error || message;
+        } catch (e) {
+            // Ignore non-JSON error payloads.
+        }
+        throw new Error(message);
+    }
+
+    return response.json();
+}
+
 function normalizeQueryResult(result) {
     return {
-        df1: result?.df1 || { data: [], count: 0, displayed: 0 },
-        df2: result?.df2 || { data: [], count: 0, displayed: 0 }
+        df1: {
+            data: [],
+            count: 0,
+            count_exact: true,
+            count_label: '0',
+            count_summary: '0',
+            displayed: 0,
+            has_more: false,
+            approx_total: null,
+            ...(result?.df1 || {})
+        },
+        df2: {
+            data: [],
+            count: 0,
+            count_exact: true,
+            count_label: '0',
+            count_summary: '0',
+            displayed: 0,
+            has_more: false,
+            approx_total: null,
+            ...(result?.df2 || {})
+        },
+        totalCount: Number(result?.total_count || 0),
+        totalCountExact: result?.total_count_exact !== false,
+        totalCountLabel: result?.total_count_label || String(Number(result?.total_count || 0)),
+        totalCountSummary: result?.total_count_summary || String(Number(result?.total_count || 0))
     };
 }
 
@@ -1002,14 +1181,31 @@ function handleQuerySuccess(result, options = {}) {
     const nextDf1 = normalized.df1.data || [];
     const nextDf2 = normalized.df2.data || [];
 
-    const totalCount = Number(normalized.df1.count || 0) + Number(normalized.df2.count || 0);
+    const totalCount = Number(normalized.totalCount || 0);
     const displayedCount = nextDf1.length + nextDf2.length;
+    const totalCountExact = Boolean(normalized.totalCountExact);
+    const totalCountLabel = String(normalized.totalCountLabel || totalCount);
+    const hasMore = Boolean(normalized.df1.has_more || normalized.df2.has_more);
 
-    if (totalCount > displayedCount) {
-        showLimitWarning(totalCount, displayedCount);
+    if (hasMore) {
+        showLimitWarning({
+            totalCount,
+            totalCountExact,
+            totalCountLabel,
+            displayedCount
+        });
     } else {
         hideLimitWarning();
     }
+
+    serverBaseDf1 = [...nextDf1];
+    serverBaseDf2 = [...nextDf2];
+    currentQueryMeta = {
+        df1HasMore: Boolean(normalized.df1.has_more),
+        df2HasMore: Boolean(normalized.df2.has_more),
+        totalCount,
+        totalCountExact
+    };
 
     updateResults(nextDf1, nextDf2, { resetMiniFilters: options.resetMiniFilters !== false });
 }
@@ -1031,6 +1227,7 @@ async function applyFilters(payload) {
         }
     } catch (err) {
         console.error('Filter failed:', err);
+        resetQueryResultMeta();
         updateResults([], [], { resetMiniFilters: true });
         hideLimitWarning();
         if (err?.message) {
@@ -1041,24 +1238,47 @@ async function applyFilters(payload) {
 
 
 // Helper: Show limit warning
-function showLimitWarning(totalCount, displayedCount) {
+function showLimitWarning({ totalCount, totalCountExact, totalCountLabel, displayedCount }) {
+    const localizedTotal = Number(totalCount || 0).toLocaleString('vi-VN');
+    const summaryText = String(totalCountLabel || (totalCountExact ? localizedTotal : `${localizedTotal}+`));
+    const displayedText = Number(displayedCount || 0).toLocaleString('vi-VN');
+
     alert(
         `⚠️ GIỚI HẠN KẾT QUẢ TÌM KIẾM\n\n` +
-        `Hệ thống ghi nhận ${totalCount.toLocaleString('vi-VN')} bản ghi phù hợp.\n` +
-        `Hiện tại chỉ ${displayedCount.toLocaleString('vi-VN')} kết quả đầu tiên được hiển thị.\n\n` +
+        `Hệ thống ghi nhận ${summaryText} kết quả phù hợp.\n` +
+        `Hiện tại chỉ ${displayedText} kết quả đầu tiên được hiển thị.\n\n` +
         `Để truy xuất đầy đủ, đề nghị:\n` +
         `- Bổ sung từ khóa tìm kiếm\n` +
         `- Thu hẹp khoảng thời gian\n`
     );
 
     const warningDiv = document.getElementById('result-warning');
-    if (warningDiv) warningDiv.style.display = 'block';
+    if (warningDiv) {
+        warningDiv.innerHTML =
+            `<strong>Giới hạn kết quả tìm kiếm</strong><br>` +
+            `Hệ thống ghi nhận ${summaryText} kết quả phù hợp, hiện chỉ hiển thị ${displayedText} kết quả đầu tiên.`;
+        warningDiv.style.display = 'block';
+    }
 }
 
 // Helper: Hide limit warning
 function hideLimitWarning() {
     const warningDiv = document.getElementById('result-warning');
-    if (warningDiv) warningDiv.style.display = 'none';
+    if (warningDiv) {
+        warningDiv.innerHTML = '<strong>Giới hạn kết quả tìm kiếm</strong><br>Vui lòng thu hẹp điều kiện tìm kiếm.';
+        warningDiv.style.display = 'none';
+    }
+}
+
+function resetQueryResultMeta() {
+    serverBaseDf1 = [];
+    serverBaseDf2 = [];
+    currentQueryMeta = {
+        df1HasMore: false,
+        df2HasMore: false,
+        totalCount: 0,
+        totalCountExact: true
+    };
 }
 
 // Helper: Update results and render
@@ -1101,6 +1321,7 @@ function refreshRenderedTables({ resetScroll = true, redrawCharts = true } = {})
 
     document.getElementById('df1-count-switcher').textContent = currentDisplayedDf1.length;
     document.getElementById('df2-count-switcher').textContent = currentDisplayedDf2.length;
+    updateDuplicateWarning(currentDisplayedDf1, currentDisplayedDf2);
     requestAnimationFrame(syncScopeSwitcherSlider);
 
     renderStandardData(currentDisplayedDf1);
@@ -1128,6 +1349,26 @@ function updateResults(df1, df2, options = {}) {
         resetScroll: options.resetScroll !== false,
         redrawCharts: options.redrawCharts !== false
     });
+}
+
+function updateDuplicateWarning(df1Rows, df2Rows) {
+    const warningDiv = document.getElementById('duplicate-warning');
+    if (!warningDiv) return;
+
+    const duplicateCount = [...(df1Rows || []), ...(df2Rows || [])]
+        .filter(row => Boolean(row?.__has_duplicate_warning))
+        .length;
+
+    if (duplicateCount <= 0) {
+        warningDiv.style.display = 'none';
+        warningDiv.innerHTML = '<strong>Cảnh báo dữ liệu trùng</strong><br>Có dòng trùng trong kết quả hiện tại.';
+        return;
+    }
+
+    warningDiv.innerHTML =
+        `<strong>Cảnh báo dữ liệu trùng</strong><br>` +
+        `Có ${duplicateCount.toLocaleString('vi-VN')} dòng trùng trong kết quả hiện tại.`;
+    warningDiv.style.display = 'block';
 }
 
 function resetTableScrollPositions() {
@@ -1378,6 +1619,7 @@ function initLandingShell() {
             appDataInitialized = false;
             currentQueryRequest = { scope: 'all', filters: {} };
             clearFilterUrlState();
+            resetQueryResultMeta();
             hideLimitWarning();
             updateResults([], [], { resetMiniFilters: true });
             initEmptyCharts();
@@ -1398,6 +1640,7 @@ function initLandingShell() {
         appDataInitialized = false;
         currentQueryRequest = { scope: 'all', filters: {} };
         clearFilterUrlState();
+        resetQueryResultMeta();
         hideLimitWarning();
         updateResults([], [], { resetMiniFilters: true });
         initEmptyCharts();
@@ -1624,6 +1867,13 @@ const SORTABLE_COLUMNS = {
         }
     }
 };
+const LOCAL_NUMERIC_SORT_KEYS = new Set(['quantity', 'unitPrice', 'amount']);
+const LOCAL_DATE_SORT_KEYS = new Set(['approvalDate', 'expiryDate']);
+const LOCAL_VALIDITY_SORT_ORDER = {
+    'Hết hiệu lực': 0,
+    'Chưa xác định': 1,
+    'Còn hiệu lực': 2
+};
 
 let activeColumnMenuState = null;
 let activeColumnsPopoverState = null;
@@ -1679,6 +1929,128 @@ function getSortStateForColumn(tableId, columnName) {
 function buildSortPayload(sortRule = activeSortRule) {
     if (!sortRule?.column || !sortRule?.order) return null;
     return [sortRule];
+}
+
+function shouldUseClientSideSort() {
+    const scope = currentQueryRequest?.scope || 'all';
+    if (scope === 'all') {
+        return !currentQueryMeta.df1HasMore && !currentQueryMeta.df2HasMore;
+    }
+    if (scope === 'medicine') {
+        return !currentQueryMeta.df1HasMore;
+    }
+    if (scope === 'goods') {
+        return !currentQueryMeta.df2HasMore;
+    }
+    return false;
+}
+
+function parseLocalSortDate(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return Number.NaN;
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(raw)) {
+        const [day, month, year] = raw.split('/').map(Number);
+        return new Date(year, month - 1, day).getTime();
+    }
+
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? Number.NaN : parsed.getTime();
+}
+
+function parseLocalSortValue(value, logicalKey) {
+    if (value === null || value === undefined || value === '') {
+        return { empty: true, value: null };
+    }
+
+    if (LOCAL_NUMERIC_SORT_KEYS.has(logicalKey)) {
+        const numeric = Number(value);
+        return { empty: Number.isNaN(numeric), value: numeric };
+    }
+
+    if (LOCAL_DATE_SORT_KEYS.has(logicalKey)) {
+        const dateValue = parseLocalSortDate(value);
+        return { empty: Number.isNaN(dateValue), value: dateValue };
+    }
+
+    if (logicalKey === 'validity') {
+        const mapped = LOCAL_VALIDITY_SORT_ORDER[String(value).trim()];
+        return {
+            empty: mapped === undefined,
+            value: mapped ?? -1
+        };
+    }
+
+    return {
+        empty: false,
+        value: String(value).trim().toLowerCase()
+    };
+}
+
+function compareLocalSortEntries(leftRow, rightRow, logicalKey, scopeKey, order, leftIndex, rightIndex) {
+    const label = getSortLabelForScope(logicalKey, scopeKey);
+    if (!label) return leftIndex - rightIndex;
+
+    const leftParsed = parseLocalSortValue(leftRow?.[label], logicalKey);
+    const rightParsed = parseLocalSortValue(rightRow?.[label], logicalKey);
+
+    if (leftParsed.empty && rightParsed.empty) return leftIndex - rightIndex;
+    if (leftParsed.empty) return 1;
+    if (rightParsed.empty) return -1;
+
+    let comparison = 0;
+    if (typeof leftParsed.value === 'number' && typeof rightParsed.value === 'number') {
+        comparison = leftParsed.value - rightParsed.value;
+    } else {
+        comparison = String(leftParsed.value).localeCompare(
+            String(rightParsed.value),
+            'vi',
+            { numeric: true, sensitivity: 'base' }
+        );
+    }
+
+    if (comparison === 0) {
+        return leftIndex - rightIndex;
+    }
+
+    return order === 'asc' ? comparison : -comparison;
+}
+
+function sortRowsLocally(rows, scopeKey, sortRule = activeSortRule) {
+    if (!Array.isArray(rows)) return [];
+    if (!sortRule?.column || !sortRule?.order) return [...rows];
+
+    return rows
+        .map((row, index) => ({ row, index }))
+        .sort((left, right) => compareLocalSortEntries(
+            left.row,
+            right.row,
+            sortRule.column,
+            scopeKey,
+            sortRule.order,
+            left.index,
+            right.index
+        ))
+        .map(item => item.row);
+}
+
+function applyClientSideSort({ preserveMiniFilters = true } = {}) {
+    currentFilteredDf1 = activeSortRule
+        ? sortRowsLocally(serverBaseDf1, 'df1', activeSortRule)
+        : [...serverBaseDf1];
+    currentFilteredDf2 = activeSortRule
+        ? sortRowsLocally(serverBaseDf2, 'df2', activeSortRule)
+        : [...serverBaseDf2];
+
+    if (!preserveMiniFilters) {
+        closeColumnMenu();
+        resetMiniFilters();
+    }
+
+    refreshRenderedTables({
+        resetScroll: true,
+        redrawCharts: true
+    });
+    syncAllHeaderDecorations();
 }
 
 function getTableWrapper(tableId) {
@@ -1763,6 +2135,11 @@ async function applyActiveSortRule({ preserveMiniFilters = true } = {}) {
 
     if (!hasFilter && !hasData) {
         syncAllHeaderDecorations();
+        return;
+    }
+
+    if (shouldUseClientSideSort()) {
+        applyClientSideSort({ preserveMiniFilters });
         return;
     }
 
@@ -3622,6 +3999,7 @@ function initSearchFormEvents() {
     const searchForm = document.querySelector('custom-search-form');
     if (!searchForm) return;
     let previewRequestId = 0;
+    let previewAbortController = null;
     
     searchForm.addEventListener('apply-filters', async (e) => {
         await applyFilters(e.detail);
@@ -3635,19 +4013,29 @@ function initSearchFormEvents() {
     searchForm.addEventListener('reset-filters', () => {
         currentQueryRequest = { scope: 'all', filters: {} };
         clearFilterUrlState();
+        resetQueryResultMeta();
         updateResults([], [], { resetMiniFilters: true });
         hideLimitWarning();
     });
 
     searchForm.addEventListener('preview-filters', async (e) => {
         const requestId = ++previewRequestId;
+        previewAbortController?.abort();
+        previewAbortController = new AbortController();
         try {
-            const result = await fetchQueryResults(buildQueryRequest(e.detail), null, 1);
+            const result = await fetchQueryPreview(
+                buildQueryRequest(e.detail),
+                previewAbortController.signal
+            );
             if (requestId !== previewRequestId) return;
 
-            const total = Number(result?.df1?.count || 0) + Number(result?.df2?.count || 0);
-            searchForm.setPreviewResult?.({ total });
+            searchForm.setPreviewResult?.({
+                total: Number(result?.total || 0),
+                totalLabel: String(result?.display || Number(result?.total || 0).toLocaleString('vi-VN')),
+                exact: Boolean(result?.exact)
+            });
         } catch (err) {
+            if (err?.name === 'AbortError') return;
             if (requestId !== previewRequestId) return;
             searchForm.setPreviewResult?.({ error: true });
         }

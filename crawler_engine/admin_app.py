@@ -151,8 +151,8 @@ with tab2:
                     "so_qd_original": st.column_config.TextColumn("QĐ Gốc (Sửa tay)"),
                     "relation_type": st.column_config.SelectboxColumn(
                         "Loại quan hệ",
-                        help="BASE: QĐ gốc, ADJUSTMENT: Vá một phần, REPLACEMENT: Thay thế hoàn toàn, INDEPENDENT: Độc lập, TYPO_ERROR: QĐ bị gõ sai từ nguồn và cần bỏ qua",
-                        options=["BASE", "ADJUSTMENT", "REPLACEMENT", "INDEPENDENT", "TYPO_ERROR"],
+                        help="BASE: QĐ gốc, ADJUSTMENT: Vá một phần, REPLACEMENT: Thay thế hoàn toàn, CANCELLATION: QĐ chỉ thông báo hủy một số mặt hàng và sẽ bị bỏ qua khỏi ETL, INDEPENDENT: Độc lập, TYPO_ERROR: QĐ bị gõ sai từ nguồn và cần bỏ qua",
+                        options=["BASE", "ADJUSTMENT", "REPLACEMENT", "CANCELLATION", "INDEPENDENT", "TYPO_ERROR"],
                         required=True
                     ),
                     "note": st.column_config.TextColumn("Ghi chú")

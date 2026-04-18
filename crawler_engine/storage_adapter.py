@@ -101,7 +101,7 @@ def delete_object(r2_key: str) -> None:
     key = normalize_r2_key(r2_key)
     client.delete_object(Bucket=R2_BUCKET, Key=key)
 
-def ensure_local_file(path_value: str, temp_subdir: str = "resolved") -> str:
+def ensure_local_file(path_value: str, temp_subdir: str = "resolved", force_refresh: bool = False) -> str:
     if not path_value:
         raise FileNotFoundError("Empty file path")
     if not is_r2_key(path_value):
@@ -114,6 +114,9 @@ def ensure_local_file(path_value: str, temp_subdir: str = "resolved") -> str:
     local_dir = os.path.join(LOCAL_TEMP_ROOT, temp_subdir)
     key_hash = hashlib.sha1(key.encode("utf-8")).hexdigest()
     local_path = os.path.join(local_dir, f"{key_hash[:12]}_{filename}")
+
+    if force_refresh and os.path.exists(local_path):
+        os.remove(local_path)
 
     if not os.path.exists(local_path):
         download_file(key, local_path)

@@ -177,6 +177,10 @@
                         <strong>Giới hạn kết quả tìm kiếm</strong><br>
                         Vui lòng thu hẹp điều kiện tìm kiếm.
                     </div>
+                    <div id="duplicate-warning" class="result-warning result-warning-duplicate" style="display: none;">
+                        <strong>Cảnh báo dữ liệu trùng</strong><br>
+                        Có dòng trùng trong kết quả hiện tại.
+                    </div>
                 </div>
                 
                 <!-- TAB 1: DATA TABLES -->
@@ -429,7 +433,7 @@
                                 <strong id="account-sidebar-work-unit">Chưa cập nhật</strong>
                             </div>
                             <div class="auth-account-row">
-                                <span>Bộ phận</span>
+                                <span>Vị trí</span>
                                 <strong id="account-sidebar-position">Chưa cập nhật</strong>
                             </div>
                         </div>
@@ -462,6 +466,18 @@
                                 <label class="auth-field">
                                     <span>Họ và tên <span class="auth-required">*</span></span>
                                     <input id="register-full-name" name="full_name" type="text" autocomplete="name" placeholder="Họ và tên" required />
+                                </label>
+
+                                <label class="auth-field">
+                                    <span>Đơn vị công tác</span>
+                                    <input id="register-work-unit" name="work_unit" type="text" placeholder="Đơn vị công tác" />
+                                </label>
+
+                                <label class="auth-field">
+                                    <span>Vị trí</span>
+                                    <select id="register-position" name="position">
+                                        <option value="">Chưa chọn</option>
+                                    </select>
                                 </label>
 
                                 <label class="auth-field">
@@ -524,7 +540,7 @@
                             </label>
 
                             <label class="auth-field">
-                                <span>Bộ phận</span>
+                                <span>Vị trí</span>
                                 <select id="profile-position" name="position">
                                     <option value="">Chưa chọn</option>
                                 </select>

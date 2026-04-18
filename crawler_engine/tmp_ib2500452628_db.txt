@@ -1,0 +1,8 @@
+daily_manifest
+('20260403', 'IB2500452628', '09/QĐ-BVPN', '01', 'IB2500452628_v01_09_QĐ-BVPN_Phu luc danh mục.xlsx', 'MEDICINE_STANDARD', 'PROCESSED')
+
+packages
+('IB2500452628', '09/QĐ-BVPN', '00', 'excel', 0, 'D:\\startup\\muasamcong\\BIDFinder\\crawler_engine\\raw_data\\20260403\\archive\\IB2500452628_v00_09_QĐ-BVPN_5.10 Phu luc danh mục.xlsx')
+('IB2500452628', '09/QĐ-BVPN', '00', 'pdf', 0, 'D:\\startup\\muasamcong\\BIDFinder\\crawler_engine\\raw_data\\20260403\\archive\\IB2500452628_v00_09_QĐ-BVPN_QĐ09_0001.pdf')
+('IB2500452628', '09/QĐ-BVPN', '01', 'excel', 1, 'D:\\startup\\muasamcong\\BIDFinder\\crawler_engine\\raw_data\\20260403\\latest\\IB2500452628_v01_09_QĐ-BVPN_Phu luc danh mục.xlsx')
+('IB2500452628', '09/QĐ-BVPN', '01', 'pdf', 1, 'D:\\startup\\muasamcong\\BIDFinder\\crawler_engine\\raw_data\\20260403\\latest\\IB2500452628_v01_09_QĐ-BVPN_46 qd_0001 dang tai.pdf')

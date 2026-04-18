@@ -62,6 +62,8 @@
       'register-full-name',
       'register-email',
       'register-password',
+      'register-work-unit',
+      'register-position',
       'register-password-note',
       'login-email',
       'login-password',
@@ -258,24 +260,25 @@
   }
 
   function populatePositionOptions() {
-    const select = els['profile-position'];
-    if (!select) return;
-
     const options = Array.isArray(state.config?.position_options)
       ? state.config.position_options
       : [];
+    ['register-position', 'profile-position'].forEach((fieldId) => {
+      const select = els[fieldId];
+      if (!select) return;
 
-    const currentValue = select.value;
-    select.innerHTML = '<option value="">Chưa chọn</option>';
+      const currentValue = select.value;
+      select.innerHTML = '<option value="">Chưa chọn</option>';
 
-    options.forEach((option) => {
-      const el = document.createElement('option');
-      el.value = option;
-      el.textContent = option;
-      select.appendChild(el);
+      options.forEach((option) => {
+        const el = document.createElement('option');
+        el.value = option;
+        el.textContent = option;
+        select.appendChild(el);
+      });
+
+      select.value = currentValue || '';
     });
-
-    select.value = currentValue || '';
   }
 
   function populateProfileForm() {
@@ -565,7 +568,9 @@
       const payload = await submitJson('/api/auth/register', {
         full_name: els['register-full-name']?.value?.trim() || '',
         email: els['register-email']?.value?.trim() || '',
-        password: els['register-password']?.value || ''
+        password: els['register-password']?.value || '',
+        work_unit: els['register-work-unit']?.value?.trim() || '',
+        position: els['register-position']?.value || ''
       });
 
       applyAuthResult(payload, 'register');

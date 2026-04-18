@@ -2,6 +2,7 @@ from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from typing import Optional, List, Dict, Any, Literal
 import time
+import copy
 
 import asyncio
 import asyncpg
@@ -35,6 +36,9 @@ auth_schema_lock = asyncio.Lock()
 rate_limit_lock = asyncio.Lock()
 rate_limit_buckets: Dict[str, deque] = defaultdict(deque)
 auth_schema_ready = False
+cache_lock = asyncio.Lock()
+preview_cache: Dict[str, Dict[str, Any]] = {}
+autocomplete_cache: Dict[str, Dict[str, Any]] = {}
 
 ssl_context = ssl.create_default_context()
 ssl_context.check_hostname = False
@@ -59,11 +63,17 @@ ALLOWED_ORIGINS = [
 RATE_LIMIT_WINDOW_SECONDS = max(10, int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60")))
 QUERY_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("QUERY_RATE_LIMIT_PER_MINUTE", "30")))
 AUTOCOMPLETE_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("AUTOCOMPLETE_RATE_LIMIT_PER_MINUTE", "120")))
+PREVIEW_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("PREVIEW_RATE_LIMIT_PER_MINUTE", "90")))
 METADATA_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("METADATA_RATE_LIMIT_PER_MINUTE", "20")))
 FILTER_CONFIG_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("FILTER_CONFIG_RATE_LIMIT_PER_MINUTE", "30")))
 AUTH_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("AUTH_RATE_LIMIT_PER_MINUTE", "20")))
 AUTH_CONFIG_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("AUTH_CONFIG_RATE_LIMIT_PER_MINUTE", "60")))
 MAX_QUERY_LIMIT = max(50, int(os.getenv("MAX_QUERY_LIMIT", "200")))
+PREVIEW_BUCKET_LIMIT = max(10, int(os.getenv("PREVIEW_BUCKET_LIMIT", "100")))
+DB_POOL_MAX_SIZE = max(1, int(os.getenv("DB_POOL_MAX_SIZE", "8")))
+PREVIEW_CACHE_TTL_SECONDS = max(1, int(os.getenv("PREVIEW_CACHE_TTL_SECONDS", "15")))
+AUTOCOMPLETE_CACHE_TTL_SECONDS = max(1, int(os.getenv("AUTOCOMPLETE_CACHE_TTL_SECONDS", "20")))
+CACHE_MAX_ENTRIES = max(50, int(os.getenv("CACHE_MAX_ENTRIES", "500")))
 AUTH_REQUIRED_FOR_DATA_ACCESS = os.getenv("AUTH_REQUIRED_FOR_DATA_ACCESS", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
@@ -74,10 +84,18 @@ AUTH_REQUIRED_FOR_DATA_ACCESS = os.getenv("AUTH_REQUIRED_FOR_DATA_ACCESS", "fals
 DF1_CTE = """
 WITH df1_full AS (
     SELECT
+        m.id AS "__row_id",
+        EXISTS (
+            SELECT 1
+            FROM processed_duplicate_flags f
+            WHERE f.dataset_scope = 'medicine'
+              AND f.processed_row_id = m.id
+        ) AS "__has_duplicate_warning",
         'medicine' AS "_dataset",
         m.ma_tbmt AS "Mã TBMT",
         m.so_qd AS "Quyết định phê duyệt",
         m.version AS "Version",
+        m.ma_thuoc AS "Mã thuốc",
         m.ten_thuoc AS "Tên thuốc",
         m.ten_hoat_chat AS "Tên hoạt chất",
         m.nong_do_ham_luong AS "Nồng độ, hàm lượng",
@@ -96,15 +114,34 @@ WITH df1_full AS (
         m.nha_thau_trung_thau AS "Nhà thầu trúng thầu",
         p.chu_dau_tu AS "Chủ đầu tư",
         p.ngay_phe_duyet AS "Ngày phê duyệt",
+        COALESCE(
+            p.ngay_phe_duyet_date,
+            CASE
+                WHEN p.ngay_phe_duyet ~ '^\\d{2}/\\d{2}/\\d{4}$' THEN TO_DATE(p.ngay_phe_duyet, 'DD/MM/YYYY')
+                ELSE NULL
+            END
+        ) AS "__approval_date",
         p.hinh_thuc_lcnt AS "Hình thức LCNT",
         p.dia_diem AS "Địa điểm",
         m.created_at AS "Ngày cập nhật DB",
         TO_CHAR(p.ngay_het_hieu_luc, 'DD/MM/YYYY') AS "Ngày hết hiệu lực",
-        CASE
-            WHEN p.ngay_het_hieu_luc IS NULL THEN 'Chưa xác định'
-            WHEN p.ngay_het_hieu_luc >= CURRENT_DATE THEN 'Còn hiệu lực'
-            ELSE 'Hết hiệu lực'
-        END AS "Tình trạng hiệu lực"
+        p.ngay_het_hieu_luc AS "__expiry_date",
+        COALESCE(
+            NULLIF(
+                CASE
+                    WHEN p.tinh_trang_hieu_luc = 'CÒN HIỆU LỰC' THEN 'Còn hiệu lực'
+                    WHEN p.tinh_trang_hieu_luc = 'HẾT HIỆU LỰC' THEN 'Hết hiệu lực'
+                    WHEN p.tinh_trang_hieu_luc = 'KHÔNG XÁC ĐỊNH' THEN 'Chưa xác định'
+                    ELSE p.tinh_trang_hieu_luc
+                END,
+                ''
+            ),
+            CASE
+                WHEN p.ngay_het_hieu_luc IS NULL THEN 'Chưa xác định'
+                WHEN p.ngay_het_hieu_luc >= CURRENT_DATE THEN 'Còn hiệu lực'
+                ELSE 'Hết hiệu lực'
+            END
+        ) AS "Tình trạng hiệu lực"
     FROM processed_medicines m
     LEFT JOIN package_metadata p
         ON m.ma_tbmt = p.ma_tbmt
@@ -116,6 +153,13 @@ WITH df1_full AS (
 DF2_CTE = """
 WITH df2_full AS (
     SELECT
+        g.id AS "__row_id",
+        EXISTS (
+            SELECT 1
+            FROM processed_duplicate_flags f
+            WHERE f.dataset_scope = 'goods'
+              AND f.processed_row_id = g.id
+        ) AS "__has_duplicate_warning",
         'goods' AS "_dataset",
         g.ma_tbmt AS "Mã TBMT",
         g.so_qd AS "Quyết định phê duyệt",
@@ -137,15 +181,135 @@ WITH df2_full AS (
         g.thanh_tien AS "Thành tiền (VND)",
         p.chu_dau_tu AS "Chủ đầu tư",
         p.ngay_phe_duyet AS "Ngày phê duyệt",
+        COALESCE(
+            p.ngay_phe_duyet_date,
+            CASE
+                WHEN p.ngay_phe_duyet ~ '^\\d{2}/\\d{2}/\\d{4}$' THEN TO_DATE(p.ngay_phe_duyet, 'DD/MM/YYYY')
+                ELSE NULL
+            END
+        ) AS "__approval_date",
         p.hinh_thuc_lcnt AS "Hình thức LCNT",
         p.dia_diem AS "Địa điểm",
         g.created_at AS "Ngày cập nhật DB",
         TO_CHAR(p.ngay_het_hieu_luc, 'DD/MM/YYYY') AS "Ngày hết hiệu lực",
-        CASE
-            WHEN p.ngay_het_hieu_luc IS NULL THEN 'Chưa xác định'
-            WHEN p.ngay_het_hieu_luc >= CURRENT_DATE THEN 'Còn hiệu lực'
-            ELSE 'Hết hiệu lực'
-        END AS "Tình trạng hiệu lực",
+        p.ngay_het_hieu_luc AS "__expiry_date",
+        COALESCE(
+            NULLIF(
+                CASE
+                    WHEN p.tinh_trang_hieu_luc = 'CÒN HIỆU LỰC' THEN 'Còn hiệu lực'
+                    WHEN p.tinh_trang_hieu_luc = 'HẾT HIỆU LỰC' THEN 'Hết hiệu lực'
+                    WHEN p.tinh_trang_hieu_luc = 'KHÔNG XÁC ĐỊNH' THEN 'Chưa xác định'
+                    ELSE p.tinh_trang_hieu_luc
+                END,
+                ''
+            ),
+            CASE
+                WHEN p.ngay_het_hieu_luc IS NULL THEN 'Chưa xác định'
+                WHEN p.ngay_het_hieu_luc >= CURRENT_DATE THEN 'Còn hiệu lực'
+                ELSE 'Hết hiệu lực'
+            END
+        ) AS "Tình trạng hiệu lực",
+        CONCAT_WS(
+            ' | ',
+            g.ten_phan_lo,
+            g.danh_muc_hang_hoa,
+            g.ky_ma_hieu,
+            g.nhan_hieu,
+            g.mat_hang_du_thau,
+            g.tinh_nang_ky_thuat
+        ) AS "Search blob"
+    FROM processed_goods g
+    LEFT JOIN package_metadata p
+        ON g.ma_tbmt = p.ma_tbmt
+       AND g.so_qd = p.so_qd
+       AND g.version = p.version
+)
+"""
+
+DF1_PREVIEW_CTE = """
+WITH df1_preview AS (
+    SELECT
+        m.so_qd AS "Quyết định phê duyệt",
+        m.ten_thuoc AS "Tên thuốc",
+        m.ten_hoat_chat AS "Tên hoạt chất",
+        m.nong_do_ham_luong AS "Nồng độ, hàm lượng",
+        m.duong_dung AS "Đường dùng",
+        m.dang_bao_che AS "Dạng bào chế",
+        m.quy_cach AS "Quy cách",
+        m.nhom_thuoc AS "Nhóm thuốc",
+        m.so_dk_gpnk AS "GĐKLH hoặc GPNK",
+        m.don_vi_tinh AS "Đơn vị tính",
+        m.co_so_san_xuat AS "Cơ sở sản xuất",
+        m.xuat_xu AS "Xuất xứ",
+        p.chu_dau_tu AS "Chủ đầu tư",
+        p.ngay_phe_duyet AS "Ngày phê duyệt",
+        COALESCE(
+            p.ngay_phe_duyet_date,
+            CASE
+                WHEN p.ngay_phe_duyet ~ '^\\d{2}/\\d{2}/\\d{4}$' THEN TO_DATE(p.ngay_phe_duyet, 'DD/MM/YYYY')
+                ELSE NULL
+            END
+        ) AS "__approval_date",
+        p.hinh_thuc_lcnt AS "Hình thức LCNT",
+        p.dia_diem AS "Địa điểm",
+        COALESCE(
+            NULLIF(
+                CASE
+                    WHEN p.tinh_trang_hieu_luc = 'CÒN HIỆU LỰC' THEN 'Còn hiệu lực'
+                    WHEN p.tinh_trang_hieu_luc = 'HẾT HIỆU LỰC' THEN 'Hết hiệu lực'
+                    WHEN p.tinh_trang_hieu_luc = 'KHÔNG XÁC ĐỊNH' THEN 'Chưa xác định'
+                    ELSE p.tinh_trang_hieu_luc
+                END,
+                ''
+            ),
+            CASE
+                WHEN p.ngay_het_hieu_luc IS NULL THEN 'Chưa xác định'
+                WHEN p.ngay_het_hieu_luc >= CURRENT_DATE THEN 'Còn hiệu lực'
+                ELSE 'Hết hiệu lực'
+            END
+        ) AS "Tình trạng hiệu lực"
+    FROM processed_medicines m
+    LEFT JOIN package_metadata p
+        ON m.ma_tbmt = p.ma_tbmt
+       AND m.so_qd = p.so_qd
+       AND m.version = p.version
+)
+"""
+
+DF2_PREVIEW_CTE = """
+WITH df2_preview AS (
+    SELECT
+        g.so_qd AS "Quyết định phê duyệt",
+        g.don_vi_tinh AS "Đơn vị tính",
+        g.hang_san_xuat AS "Hãng sản xuất",
+        g.xuat_xu AS "Xuất xứ",
+        p.chu_dau_tu AS "Chủ đầu tư",
+        p.ngay_phe_duyet AS "Ngày phê duyệt",
+        COALESCE(
+            p.ngay_phe_duyet_date,
+            CASE
+                WHEN p.ngay_phe_duyet ~ '^\\d{2}/\\d{2}/\\d{4}$' THEN TO_DATE(p.ngay_phe_duyet, 'DD/MM/YYYY')
+                ELSE NULL
+            END
+        ) AS "__approval_date",
+        p.hinh_thuc_lcnt AS "Hình thức LCNT",
+        p.dia_diem AS "Địa điểm",
+        COALESCE(
+            NULLIF(
+                CASE
+                    WHEN p.tinh_trang_hieu_luc = 'CÒN HIỆU LỰC' THEN 'Còn hiệu lực'
+                    WHEN p.tinh_trang_hieu_luc = 'HẾT HIỆU LỰC' THEN 'Hết hiệu lực'
+                    WHEN p.tinh_trang_hieu_luc = 'KHÔNG XÁC ĐỊNH' THEN 'Chưa xác định'
+                    ELSE p.tinh_trang_hieu_luc
+                END,
+                ''
+            ),
+            CASE
+                WHEN p.ngay_het_hieu_luc IS NULL THEN 'Chưa xác định'
+                WHEN p.ngay_het_hieu_luc >= CURRENT_DATE THEN 'Còn hiệu lực'
+                ELSE 'Hết hiệu lực'
+            END
+        ) AS "Tình trạng hiệu lực",
         CONCAT_WS(
             ' | ',
             g.ten_phan_lo,
@@ -210,6 +374,11 @@ class QueryRequest(BaseModel):
     filters: Optional[FilterRequest] = None
     sort: Optional[List[SortRule]] = None
     limit: int = 200
+
+
+class QueryPreviewRequest(BaseModel):
+    scope: Literal["all", "medicine", "goods"] = "all"
+    filters: Optional[FilterRequest] = None
 
 
 class AutocompleteRequest(BaseModel):
@@ -357,8 +526,8 @@ BASE_SORT_MAP = {
     "ma_tbmt": '"Mã TBMT"',
     "investor": '"Chủ đầu tư"',
     "approvalDecision": '"Quyết định phê duyệt"',
-    "approvalDate": 'TO_DATE("Ngày phê duyệt", \'DD/MM/YYYY\')',
-    "expiryDate": 'TO_DATE("Ngày hết hiệu lực", \'DD/MM/YYYY\')',
+    "approvalDate": '"__approval_date"',
+    "expiryDate": '"__expiry_date"',
     "unit": '"Đơn vị tính"',
     "unitPrice": '"Đơn giá trúng thầu (VND)"',
     "amount": '"Thành tiền (VND)"',
@@ -410,7 +579,7 @@ async def get_db_pool():
     return await asyncpg.create_pool(
         dsn=DATABASE_URL,
         min_size=1,
-        max_size=20,
+        max_size=DB_POOL_MAX_SIZE,
         command_timeout=60,
         max_inactive_connection_lifetime=300,
         setup=setup_connection,
@@ -562,10 +731,10 @@ def build_token_condition(column: str, token_filter: TokenFilter, params: List[A
             continue
 
         p = next_param(params, f"%{value}%")
-        expr = f"LOWER({column}) LIKE LOWER({p})"
+        expr = f"{column} ILIKE {p}"
 
         if item.op == "NOT":
-            not_parts.append(f"LOWER({column}) NOT LIKE LOWER({p})")
+            not_parts.append(f"{column} NOT ILIKE {p}")
         elif item.op == "AND":
             and_parts.append(expr)
         else:
@@ -636,19 +805,24 @@ def build_scope_filters(scope_name: str, filters: Optional[FilterRequest], param
 
     if filters.dateFrom:
         p = next_param(params, filters.dateFrom)
-        conditions.append(f'TO_DATE("Ngày phê duyệt", \'DD/MM/YYYY\') >= TO_DATE({p}, \'YYYY-MM-DD\')')
+        conditions.append(f'"__approval_date" >= TO_DATE({p}, \'YYYY-MM-DD\')')
 
     if filters.dateTo:
         p = next_param(params, filters.dateTo)
-        conditions.append(f'TO_DATE("Ngày phê duyệt", \'DD/MM/YYYY\') <= TO_DATE({p}, \'YYYY-MM-DD\')')
+        conditions.append(f'"__approval_date" <= TO_DATE({p}, \'YYYY-MM-DD\')')
 
     return conditions
 
 
-def build_result_query(scope_name: str, filters: Optional[FilterRequest], sort_rules: List[SortRule], limit: int):
+def build_result_query(
+    scope_name: str,
+    filters: Optional[FilterRequest],
+    sort_rules: List[SortRule],
+    limit: int,
+    include_overflow_probe: bool = False,
+):
     params: List[Any] = []
-    cte = DF1_CTE if scope_name == "medicine" else DF2_CTE
-    table_name = "df1_full" if scope_name == "medicine" else "df2_full"
+    cte, table_name = get_scope_query_parts(scope_name, variant="full")
 
     query = f"{cte} SELECT * FROM {table_name}"
     conditions = build_scope_filters(scope_name, filters, params)
@@ -665,15 +839,115 @@ def build_result_query(scope_name: str, filters: Optional[FilterRequest], sort_r
     if order_parts:
         query += " ORDER BY " + ", ".join(order_parts)
     else:
-        query += ' ORDER BY TO_DATE("Ngày phê duyệt", \'DD/MM/YYYY\') DESC NULLS LAST, "Mã TBMT" ASC'
+        query += ' ORDER BY "__approval_date" DESC NULLS LAST, "Mã TBMT" ASC'
 
-    query += f" LIMIT {int(limit)}"
+    effective_limit = int(limit) + (1 if include_overflow_probe else 0)
+    query += f" LIMIT {effective_limit}"
+    return query, params
 
-    count_query = f"{cte} SELECT COUNT(*) FROM {table_name}"
+
+def get_scope_query_parts(scope_name: str, variant: Literal["full", "preview"] = "full"):
+    query_map = {
+        "medicine": {
+            "full": (DF1_CTE, "df1_full"),
+            "preview": (DF1_PREVIEW_CTE, "df1_preview"),
+        },
+        "goods": {
+            "full": (DF2_CTE, "df2_full"),
+            "preview": (DF2_PREVIEW_CTE, "df2_preview"),
+        },
+    }
+    return query_map[scope_name][variant]
+
+
+def build_preview_query(scope_name: str, filters: Optional[FilterRequest], bucket_limit: int):
+    params: List[Any] = []
+    cte, table_name = get_scope_query_parts(scope_name, variant="preview")
+
+    query = f"{cte} SELECT 1 FROM {table_name}"
+    conditions = build_scope_filters(scope_name, filters, params)
+
     if conditions:
-        count_query += " WHERE " + " AND ".join(conditions)
+        query += " WHERE " + " AND ".join(conditions)
 
-    return query, params, count_query, params.copy()
+    query += f" LIMIT {int(bucket_limit) + 1}"
+    return query, params
+
+
+def to_cache_data(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if hasattr(value, "model_dump"):
+        return to_cache_data(value.model_dump(exclude_none=True))
+    if isinstance(value, dict):
+        return {str(k): to_cache_data(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [to_cache_data(item) for item in value]
+    return str(value)
+
+
+def make_cache_key(prefix: str, payload: Dict[str, Any]) -> str:
+    serialized = json.dumps(to_cache_data(payload), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return f"{prefix}:{serialized}"
+
+
+def build_count_meta(count: int, exact: bool) -> Dict[str, Any]:
+    safe_count = max(0, int(count))
+    return {
+        "count": safe_count,
+        "exact": bool(exact),
+        "label": str(safe_count) if exact else f"{safe_count}+",
+        "summary": str(safe_count) if exact else f"hơn {safe_count}",
+    }
+
+
+def combine_count_meta(items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    total_count = sum(int(item.get("count") or 0) for item in items)
+    total_exact = all(bool(item.get("exact")) for item in items) if items else True
+    return build_count_meta(total_count, total_exact)
+
+
+def combine_preview_count_meta(items: List[Dict[str, Any]], bucket_limit: int) -> Dict[str, Any]:
+    safe_limit = max(1, int(bucket_limit))
+    total_count = sum(int(item.get("count") or 0) for item in items)
+    total_exact = all(bool(item.get("exact")) for item in items) if items else True
+
+    if total_exact and total_count <= safe_limit:
+        return build_count_meta(total_count, exact=True)
+
+    return build_count_meta(safe_limit, exact=False)
+
+
+async def get_cached_payload(cache: Dict[str, Dict[str, Any]], key: str) -> Optional[Any]:
+    now = time.monotonic()
+    async with cache_lock:
+        entry = cache.get(key)
+        if not entry:
+            return None
+        if entry["expires_at"] <= now:
+            cache.pop(key, None)
+            return None
+        return copy.deepcopy(entry["value"])
+
+
+async def set_cached_payload(cache: Dict[str, Dict[str, Any]], key: str, value: Any, ttl_seconds: int) -> None:
+    now = time.monotonic()
+    expires_at = now + max(1, int(ttl_seconds))
+    payload = copy.deepcopy(value)
+
+    async with cache_lock:
+        expired_keys = [cache_key for cache_key, entry in cache.items() if entry["expires_at"] <= now]
+        for cache_key in expired_keys:
+            cache.pop(cache_key, None)
+
+        if len(cache) >= CACHE_MAX_ENTRIES and cache:
+            oldest_key = min(cache.items(), key=lambda item: item[1]["expires_at"])[0]
+            cache.pop(oldest_key, None)
+
+        cache[key] = {
+            "expires_at": expires_at,
+            "value": payload,
+        }
 
 
 def build_autocomplete_query(req: AutocompleteRequest, scope_name: str):
@@ -685,8 +959,7 @@ def build_autocomplete_query(req: AutocompleteRequest, scope_name: str):
     if not column:
         return None, None
 
-    cte = DF1_CTE if scope_name == "medicine" else DF2_CTE
-    table_name = "df1_full" if scope_name == "medicine" else "df2_full"
+    cte, table_name = get_scope_query_parts(scope_name, variant="preview")
 
     params: List[Any] = []
     conditions = build_scope_filters(
@@ -699,7 +972,7 @@ def build_autocomplete_query(req: AutocompleteRequest, scope_name: str):
     keyword = (req.keyword or "").strip()
     if keyword:
         p = next_param(params, f"%{keyword}%")
-        conditions.append(f"LOWER({column}) LIKE LOWER({p})")
+        conditions.append(f"{column} ILIKE {p}")
 
     conditions.append(f"{column} IS NOT NULL")
     conditions.append(f"TRIM({column}) <> ''")
@@ -724,9 +997,23 @@ async def fetch_autocomplete_suggestions(conn, req: AutocompleteRequest, scope_n
     if not keyword:
         return []
 
+    cache_key = make_cache_key(
+        "autocomplete",
+        {
+            "scope": scope_name,
+            "field": req.field,
+            "keyword": keyword.lower(),
+            "filters": req.filters,
+            "exclude_self": bool(req.excludeSelf),
+            "limit": int(req.limit or 10),
+        },
+    )
+    cached = await get_cached_payload(autocomplete_cache, cache_key)
+    if cached is not None:
+        return cached
+
     params: List[Any] = []
-    cte = DF1_CTE if scope_name == "medicine" else DF2_CTE
-    table_name = "df1_full" if scope_name == "medicine" else "df2_full"
+    cte, table_name = get_scope_query_parts(scope_name, variant="preview")
 
     conditions = build_scope_filters(
         scope_name=scope_name,
@@ -756,7 +1043,7 @@ async def fetch_autocomplete_suggestions(conn, req: AutocompleteRequest, scope_n
             {cte}
             SELECT DISTINCT {med_col} AS suggestion
             FROM {table_name}
-            WHERE {" AND ".join(conditions + [f"{med_col} IS NOT NULL", f"TRIM({med_col}) <> ''", f"LOWER({med_col}) LIKE LOWER({p})"])}
+            WHERE {" AND ".join(conditions + [f"{med_col} IS NOT NULL", f"TRIM({med_col}) <> ''", f"{med_col} ILIKE {p}"])}
             ORDER BY suggestion
             LIMIT {max(10, int(req.limit or 10))}
             """
@@ -775,7 +1062,7 @@ async def fetch_autocomplete_suggestions(conn, req: AutocompleteRequest, scope_n
             {cte}
             SELECT DISTINCT {goods_col} AS suggestion
             FROM {table_name}
-            WHERE {" AND ".join(conditions + [f"{goods_col} IS NOT NULL", f"TRIM({goods_col}) <> ''", f"LOWER({goods_col}) LIKE LOWER({p})"])}
+            WHERE {" AND ".join(conditions + [f"{goods_col} IS NOT NULL", f"TRIM({goods_col}) <> ''", f"{goods_col} ILIKE {p}"])}
             ORDER BY suggestion
             LIMIT {max(10, int(req.limit or 10))}
             """
@@ -790,14 +1077,86 @@ async def fetch_autocomplete_suggestions(conn, req: AutocompleteRequest, scope_n
             {cte}
             SELECT DISTINCT {blob_col} AS suggestion
             FROM {table_name}
-            WHERE {" AND ".join(conditions + [f"{blob_col} IS NOT NULL", f"TRIM({blob_col}) <> ''", f"LOWER({blob_col}) LIKE LOWER({p})"])}
+            WHERE {" AND ".join(conditions + [f"{blob_col} IS NOT NULL", f"TRIM({blob_col}) <> ''", f"{blob_col} ILIKE {p}"])}
             LIMIT {max(20, int(req.limit or 10) * 3)}
             """
             rows = await conn.fetch(q, *params_blob)
             for row in rows:
                 push(extract_goods_snippet(row["suggestion"], keyword))
 
+    await set_cached_payload(autocomplete_cache, cache_key, results, AUTOCOMPLETE_CACHE_TTL_SECONDS)
     return results
+
+
+async def fetch_preview_bucket(conn: asyncpg.Connection, scope_name: str, filters: Optional[FilterRequest], bucket_limit: int) -> Dict[str, Any]:
+    query, params = build_preview_query(scope_name, filters, bucket_limit)
+    rows = await conn.fetch(query, *params)
+    exact = len(rows) <= bucket_limit
+    count = len(rows) if exact else bucket_limit
+    return build_count_meta(count, exact)
+
+
+async def fetch_preview_bucket_cached(
+    conn: asyncpg.Connection,
+    scope_name: str,
+    filters: Optional[FilterRequest],
+    bucket_limit: int,
+) -> Dict[str, Any]:
+    cache_key = make_cache_key(
+        "preview",
+        {
+            "scope": scope_name,
+            "filters": filters,
+            "bucket_limit": int(bucket_limit),
+        },
+    )
+    cached = await get_cached_payload(preview_cache, cache_key)
+    if cached is not None:
+        return cached
+
+    preview = await fetch_preview_bucket(conn, scope_name, filters, bucket_limit)
+    await set_cached_payload(preview_cache, cache_key, preview, PREVIEW_CACHE_TTL_SECONDS)
+    return preview
+
+
+async def fetch_result_page(
+    conn: asyncpg.Connection,
+    scope_name: str,
+    filters: Optional[FilterRequest],
+    sort_rules: List[SortRule],
+    limit: int,
+) -> Dict[str, Any]:
+    query, params = build_result_query(
+        scope_name=scope_name,
+        filters=filters,
+        sort_rules=sort_rules,
+        limit=limit,
+        include_overflow_probe=True,
+    )
+    rows = await conn.fetch(query, *params)
+    has_more = len(rows) > limit
+    visible_rows = rows[:limit]
+
+    if has_more:
+        count_meta = await fetch_preview_bucket_cached(
+            conn,
+            scope_name,
+            filters,
+            max(limit, PREVIEW_BUCKET_LIMIT),
+        )
+    else:
+        count_meta = build_count_meta(len(visible_rows), exact=True)
+
+    return {
+        "data": clean_records(visible_rows),
+        "count": int(count_meta["count"]),
+        "count_exact": bool(count_meta["exact"]),
+        "count_label": count_meta["label"],
+        "count_summary": count_meta["summary"],
+        "displayed": len(visible_rows),
+        "has_more": has_more,
+        "approx_total": None if count_meta["exact"] else int(count_meta["count"]),
+    }
 
 
 # =========================
@@ -1082,29 +1441,32 @@ async def query_data(request: Request, payload: QueryRequest):
         limit = max(1, min(payload.limit or 200, MAX_QUERY_LIMIT))
 
         result = {"success": True}
+        count_parts: List[Dict[str, Any]] = []
 
         async with pool.acquire() as conn:
             await maybe_require_data_access_auth(conn, request)
 
             if payload.scope in ("all", "medicine"):
-                q, p, cq, cp = build_result_query("medicine", filters, sort_rules, limit)
-                rows = await conn.fetch(q, *p)
-                total = await conn.fetchval(cq, *cp)
-                result["df1"] = {
-                    "data": clean_records(rows),
-                    "count": int(total),
-                    "displayed": len(rows)
-                }
+                page = await fetch_result_page(conn, "medicine", filters, sort_rules, limit)
+                result["df1"] = page
+                count_parts.append({
+                    "count": page["count"],
+                    "exact": page["count_exact"],
+                })
 
             if payload.scope in ("all", "goods"):
-                q, p, cq, cp = build_result_query("goods", filters, sort_rules, limit)
-                rows = await conn.fetch(q, *p)
-                total = await conn.fetchval(cq, *cp)
-                result["df2"] = {
-                    "data": clean_records(rows),
-                    "count": int(total),
-                    "displayed": len(rows)
-                }
+                page = await fetch_result_page(conn, "goods", filters, sort_rules, limit)
+                result["df2"] = page
+                count_parts.append({
+                    "count": page["count"],
+                    "exact": page["count_exact"],
+                })
+
+        combined_meta = combine_preview_count_meta(count_parts, PREVIEW_BUCKET_LIMIT)
+        result["total_count"] = int(combined_meta["count"])
+        result["total_count_exact"] = bool(combined_meta["exact"])
+        result["total_count_label"] = combined_meta["label"]
+        result["total_count_summary"] = combined_meta["summary"]
 
         return JSONResponse(content=result)
 
@@ -1112,6 +1474,49 @@ async def query_data(request: Request, payload: QueryRequest):
         return auth_error_response(exc)
     except Exception as e:
         return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+
+
+@app.post("/api/query-preview")
+async def preview_query(request: Request, payload: QueryPreviewRequest):
+    limited = await enforce_rate_limit(request, "query-preview", PREVIEW_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        filters = payload.filters or FilterRequest()
+        result = {"success": True}
+        count_parts: List[Dict[str, Any]] = []
+
+        async with pool.acquire() as conn:
+            await maybe_require_data_access_auth(conn, request)
+
+            if payload.scope in ("all", "medicine"):
+                preview = await fetch_preview_bucket_cached(conn, "medicine", filters, PREVIEW_BUCKET_LIMIT)
+                result["df1"] = preview
+                result["medicine_estimate"] = preview
+                count_parts.append(preview)
+
+            if payload.scope in ("all", "goods"):
+                preview = await fetch_preview_bucket_cached(conn, "goods", filters, PREVIEW_BUCKET_LIMIT)
+                result["df2"] = preview
+                result["goods_estimate"] = preview
+                count_parts.append(preview)
+
+        total_meta = combine_preview_count_meta(count_parts, PREVIEW_BUCKET_LIMIT)
+        result["total"] = int(total_meta["count"])
+        result["exact"] = bool(total_meta["exact"])
+        result["display"] = total_meta["label"]
+        result["summary"] = total_meta["summary"]
+        result["total_estimate"] = total_meta
+        result["is_estimated"] = not bool(total_meta["exact"])
+        result["bucket_limit"] = PREVIEW_BUCKET_LIMIT
+
+        return JSONResponse(content=result)
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        return validation_error_response(str(exc), status_code=500)
 
 
 @app.post("/api/autocomplete")

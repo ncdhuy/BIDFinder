@@ -75,6 +75,7 @@ class DatabaseMigrator:
                     
                     -- Quyết định & Phê duyệt
                     ngay_phe_duyet TEXT,
+                    ngay_phe_duyet_date DATE,
                     trang_thai_phe_duyet TEXT,
                     co_quan_phe_duyet TEXT,
                     
@@ -87,10 +88,15 @@ class DatabaseMigrator:
                     dia_diem TEXT,
                     cach_thuc_tai_ve TEXT,
                     updated_at TIMESTAMP,
+                    tinh_trang_hieu_luc TEXT,
                     ngay_het_hieu_luc DATE,
                                 
                     PRIMARY KEY (ma_tbmt, so_qd, version)
                 )
+            """)
+            self.cursor.execute("""
+                ALTER TABLE package_metadata
+                ADD COLUMN IF NOT EXISTS ngay_phe_duyet_date DATE
             """)
 
             # 4. Bảng Run Sessions
@@ -110,8 +116,10 @@ class DatabaseMigrator:
                     id SERIAL PRIMARY KEY,
                     ma_tbmt TEXT,
                     so_qd TEXT,
+                    qd_display TEXT,
                     version TEXT,
                     ma_phan_lo TEXT,
+                    ma_thuoc TEXT,
                     ten_thuoc TEXT,
                     ten_hoat_chat TEXT,
                     nong_do_ham_luong TEXT,
@@ -128,10 +136,7 @@ class DatabaseMigrator:
                     don_gia_trung_thau NUMERIC,
                     thanh_tien NUMERIC,
                     nha_thau_trung_thau TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    
-                    CONSTRAINT uq_medicines UNIQUE(ma_tbmt, so_qd, version, ma_phan_lo, ten_thuoc, ten_hoat_chat, nong_do_ham_luong, duong_dung, 
-                                dang_bao_che, quy_cach, nhom_thuoc, so_dk_gpnk, so_luong, don_gia_trung_thau)
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
 
@@ -141,6 +146,7 @@ class DatabaseMigrator:
                     id SERIAL PRIMARY KEY,
                     ma_tbmt TEXT,
                     so_qd TEXT,
+                    qd_display TEXT,
                     version TEXT,
                     ma_phan_lo TEXT,
                     ten_phan_lo TEXT,
@@ -155,15 +161,89 @@ class DatabaseMigrator:
                     xuat_xu TEXT,
                     nam_san_xuat TEXT,
                     tinh_nang_ky_thuat TEXT,
+                    ky_ma_hieu_hash TEXT GENERATED ALWAYS AS (md5(COALESCE(ky_ma_hieu, ''))) STORED,
+                    nhan_hieu_hash TEXT GENERATED ALWAYS AS (md5(COALESCE(nhan_hieu, ''))) STORED,
+                    tinh_nang_ky_thuat_hash TEXT GENERATED ALWAYS AS (md5(COALESCE(tinh_nang_ky_thuat, ''))) STORED,
                     don_gia_trung_thau NUMERIC,
                     thanh_tien NUMERIC,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    
-                    CONSTRAINT uq_goods UNIQUE(ma_tbmt, so_qd, version, ma_phan_lo, danh_muc_hang_hoa, nha_thau_trung_thau, khoi_luong, don_gia_trung_thau)
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
 
             # 7. Bảng Quản lý Lỗi (Anomalies)
+            self.cursor.execute("""
+                ALTER TABLE processed_medicines
+                ADD COLUMN IF NOT EXISTS qd_display TEXT
+            """)
+            self.cursor.execute("""
+                ALTER TABLE processed_medicines
+                ADD COLUMN IF NOT EXISTS ma_thuoc TEXT
+            """)
+            self.cursor.execute("""
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.table_constraints
+                        WHERE table_name = 'processed_medicines'
+                          AND constraint_name = 'uq_medicines'
+                    ) THEN
+                        ALTER TABLE processed_medicines DROP CONSTRAINT uq_medicines;
+                    END IF;
+                END $$;
+            """)
+            self.cursor.execute("""
+                ALTER TABLE processed_goods
+                ADD COLUMN IF NOT EXISTS qd_display TEXT
+            """)
+            self.cursor.execute("""
+                ALTER TABLE processed_goods
+                ADD COLUMN IF NOT EXISTS ky_ma_hieu_hash TEXT GENERATED ALWAYS AS (md5(COALESCE(ky_ma_hieu, ''))) STORED
+            """)
+            self.cursor.execute("""
+                ALTER TABLE processed_goods
+                ADD COLUMN IF NOT EXISTS nhan_hieu_hash TEXT GENERATED ALWAYS AS (md5(COALESCE(nhan_hieu, ''))) STORED
+            """)
+            self.cursor.execute("""
+                ALTER TABLE processed_goods
+                ADD COLUMN IF NOT EXISTS tinh_nang_ky_thuat_hash TEXT GENERATED ALWAYS AS (md5(COALESCE(tinh_nang_ky_thuat, ''))) STORED
+            """)
+            self.cursor.execute("""
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.table_constraints
+                        WHERE table_name = 'processed_goods'
+                          AND constraint_name = 'uq_goods'
+                    ) THEN
+                        ALTER TABLE processed_goods DROP CONSTRAINT uq_goods;
+                    END IF;
+                END $$;
+            """)
+            self.cursor.execute("""
+                CREATE TABLE IF NOT EXISTS processed_duplicate_flags (
+                    id SERIAL PRIMARY KEY,
+                    dataset_scope TEXT NOT NULL,
+                    processed_row_id INTEGER NOT NULL,
+                    ma_tbmt TEXT NOT NULL,
+                    so_qd TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    duplicate_key TEXT NOT NULL,
+                    duplicate_count INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT uq_processed_duplicate_flag UNIQUE (dataset_scope, processed_row_id)
+                )
+            """)
+            self.cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_processed_duplicate_flags_unit
+                ON processed_duplicate_flags (dataset_scope, ma_tbmt, so_qd, version)
+            """)
+            self.cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_processed_duplicate_flags_row
+                ON processed_duplicate_flags (dataset_scope, processed_row_id)
+            """)
+
             self.cursor.execute("""
                 CREATE TABLE IF NOT EXISTS scan_anomalies (
                     id SERIAL PRIMARY KEY,
@@ -274,7 +354,31 @@ class DatabaseMigrator:
                 )
             """)
 
-            # 11. Bảng quan hệ QĐ
+            # 11. Bảng facts nhà thầu trúng thầu lấy từ web detail
+            self.cursor.execute("""
+                CREATE TABLE IF NOT EXISTS web_winner_facts (
+                    ma_tbmt TEXT NOT NULL,
+                    so_qd TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    capture_status TEXT NOT NULL,
+                    only_winner_name TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                    PRIMARY KEY (ma_tbmt, so_qd, version)
+                )
+            """)
+            self.cursor.execute("""
+                ALTER TABLE web_winner_facts
+                DROP COLUMN IF EXISTS winner_count,
+                DROP COLUMN IF EXISTS winner_names_json,
+                DROP COLUMN IF EXISTS capture_note,
+                DROP COLUMN IF EXISTS created_at
+            """)
+            self.cursor.execute("""
+                DROP INDEX IF EXISTS idx_web_winner_facts_status
+            """)
+
+            # 12. Bảng quan hệ QĐ
             self.cursor.execute("""
                 CREATE TABLE IF NOT EXISTS qd_relations (
                     ma_tbmt      TEXT NOT NULL,
@@ -288,17 +392,48 @@ class DatabaseMigrator:
                 )
             """)
 
-            # 12. Kích hoạt extension hỗ trợ tìm kiếm chuỗi con siêu tốc
+            # 13. Kích hoạt extension hỗ trợ tìm kiếm chuỗi con siêu tốc
             self.cursor.execute("""
                 CREATE EXTENSION IF NOT EXISTS pg_trgm;
             """)
 
-            # 13. Tạo GIN Index cho các cột cần làm autocomplete
+            # 14. Tạo GIN Index cho các cột cần làm autocomplete
             self.cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_medicines_join_keys
+                ON processed_medicines (ma_tbmt, so_qd, version);
+                CREATE INDEX IF NOT EXISTS idx_goods_join_keys
+                ON processed_goods (ma_tbmt, so_qd, version);
                 CREATE INDEX IF NOT EXISTS idx_medicines_ten_thuoc_trgm ON processed_medicines USING gin (ten_thuoc gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_medicines_ten_hoat_chat_trgm ON processed_medicines USING gin (ten_hoat_chat gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_medicines_nong_do_ham_luong_trgm ON processed_medicines USING gin (nong_do_ham_luong gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_medicines_duong_dung_trgm ON processed_medicines USING gin (duong_dung gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_medicines_dang_bao_che_trgm ON processed_medicines USING gin (dang_bao_che gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_medicines_nhom_thuoc_trgm ON processed_medicines USING gin (nhom_thuoc gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_medicines_co_so_san_xuat_trgm ON processed_medicines USING gin (co_so_san_xuat gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_medicines_xuat_xu_trgm ON processed_medicines USING gin (xuat_xu gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_medicines_nha_thau_trung_thau_trgm ON processed_medicines USING gin (nha_thau_trung_thau gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_goods_danh_muc_hang_hoa_trgm ON processed_goods USING gin (danh_muc_hang_hoa gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_goods_ten_phan_lo_trgm ON processed_goods USING gin (ten_phan_lo gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_goods_hang_san_xuat_trgm ON processed_goods USING gin (hang_san_xuat gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_goods_xuat_xu_trgm ON processed_goods USING gin (xuat_xu gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_goods_nha_thau_trung_thau_trgm ON processed_goods USING gin (nha_thau_trung_thau gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_goods_search_blob_trgm
+                ON processed_goods
+                USING gin (((
+                    COALESCE(ten_phan_lo, '') || ' | ' ||
+                    COALESCE(danh_muc_hang_hoa, '') || ' | ' ||
+                    COALESCE(ky_ma_hieu, '') || ' | ' ||
+                    COALESCE(nhan_hieu, '') || ' | ' ||
+                    COALESCE(mat_hang_du_thau, '') || ' | ' ||
+                    COALESCE(tinh_nang_ky_thuat, '')
+                )) gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_metadata_chu_dau_tu_trgm ON package_metadata USING gin (chu_dau_tu gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_metadata_hinh_thuc_lcnt ON package_metadata (hinh_thuc_lcnt);
+                CREATE INDEX IF NOT EXISTS idx_metadata_dia_diem ON package_metadata (dia_diem);
+                CREATE INDEX IF NOT EXISTS idx_metadata_tinh_trang_hieu_luc ON package_metadata (tinh_trang_hieu_luc);
+                CREATE INDEX IF NOT EXISTS idx_metadata_ngay_phe_duyet_date ON package_metadata (ngay_phe_duyet_date);
                 CREATE INDEX IF NOT EXISTS idx_human_task_queue_lookup ON human_task_queue (work_date, task_type, status);
+                CREATE INDEX IF NOT EXISTS idx_web_winner_facts_status ON web_winner_facts (capture_status);
             """)
 
             self.conn.commit()

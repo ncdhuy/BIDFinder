@@ -1449,6 +1449,7 @@ class CustomSearchForm extends HTMLElement {
             refreshFromSelect();
             this.updateApplyButtonState();
             this.renderActiveChips();
+            this.clearPreviewEstimate();
             this.queueFocusActiveField();
         });
 
@@ -1480,6 +1481,7 @@ class CustomSearchForm extends HTMLElement {
                 refreshFromSelect();
                 this.updateApplyButtonState();
                 this.renderActiveChips();
+                this.queuePreviewUpdate();
             }
         });
 
@@ -1504,25 +1506,37 @@ class CustomSearchForm extends HTMLElement {
 
         const payload = this.collectFilterPayload();
         const filters = payload?.filters || {};
-
-        const hasAnyValue = Object.values(filters).some(value => {
-            if (Array.isArray(value)) return value.length > 0;
-            if (value && typeof value === 'object' && Array.isArray(value.tokens)) {
-                return value.tokens.length > 0;
-            }
-            return value !== null && value !== undefined && String(value).trim() !== '';
-        });
+        const hasAnyValue = this.hasAnyFilterValue(filters);
 
         applyBtn.disabled = !hasAnyValue;
         resetBtn.disabled = !hasAnyValue;
 
         applyBtn.title = hasAnyValue ? '' : 'Vui lòng nhập hoặc chọn ít nhất một tiêu chí tìm kiếm';
         resetBtn.title = hasAnyValue ? '' : 'Không có điều kiện để đặt lại';
-        this.queuePreviewUpdate(hasAnyValue);
+        if (!hasAnyValue) {
+            this.setPreviewResult({ idle: true });
+        }
     }
 
-    queuePreviewUpdate(hasAnyValue = true) {
+    hasAnyFilterValue(filters = {}) {
+        return Object.values(filters).some(value => {
+            if (Array.isArray(value)) return value.length > 0;
+            if (value && typeof value === 'object' && Array.isArray(value.tokens)) {
+                return value.tokens.length > 0;
+            }
+            return value !== null && value !== undefined && String(value).trim() !== '';
+        });
+    }
+
+    clearPreviewEstimate() {
         clearTimeout(this.previewDebounceTimer);
+        this.setPreviewResult({ idle: true });
+    }
+
+    queuePreviewUpdate() {
+        clearTimeout(this.previewDebounceTimer);
+        const payload = this.collectFilterPayload();
+        const hasAnyValue = this.hasAnyFilterValue(payload?.filters || {});
 
         if (!hasAnyValue) {
             this.setPreviewResult({ idle: true });
@@ -1531,7 +1545,6 @@ class CustomSearchForm extends HTMLElement {
 
         this.setPreviewResult({ loading: true });
         this.previewDebounceTimer = setTimeout(() => {
-            const payload = this.collectFilterPayload();
             this.dispatchEvent(new CustomEvent('preview-filters', {
                 detail: payload,
                 bubbles: true,
@@ -1595,7 +1608,7 @@ class CustomSearchForm extends HTMLElement {
         }
     }
 
-    setPreviewResult({ idle = false, loading = false, total = null, error = false } = {}) {
+    setPreviewResult({ idle = false, loading = false, total = null, totalLabel = '', exact = true, error = false } = {}) {
         const root = this.shadowRoot;
         const previewEl = root?.getElementById('preview-result');
         if (!previewEl) return;
@@ -1620,8 +1633,12 @@ class CustomSearchForm extends HTMLElement {
             return;
         }
 
-        if (typeof total === 'number') {
-            previewEl.textContent = `Có ${total.toLocaleString('vi-VN')} kết quả`;
+        if (typeof total === 'number' || totalLabel) {
+            const displayValue = totalLabel || total.toLocaleString('vi-VN');
+            const usesPlusLabel = typeof displayValue === 'string' && displayValue.includes('+');
+            previewEl.textContent = (exact || usesPlusLabel)
+                ? `Có ${displayValue} kết quả`
+                : `Có ${displayValue} kết quả trở lên`;
             if (total === 0) previewEl.classList.add('is-warning');
         }
     }
@@ -1668,7 +1685,7 @@ class CustomSearchForm extends HTMLElement {
                 manager.tokens = [];
                 if (manager.input) manager.input.value = '';
                 manager.renderTokens();
-                manager.syncToHiddenInput();
+                manager.syncToHiddenInput({ reason: 'reset' });
                 if (manager.closeDropdown) manager.closeDropdown();
             });
         }
@@ -1752,7 +1769,7 @@ class CustomSearchForm extends HTMLElement {
 
                 if (manager.input) manager.input.value = '';
                 manager.renderTokens();
-                manager.syncToHiddenInput();
+                manager.syncToHiddenInput({ reason: 'populate' });
             });
         }
 
@@ -1829,6 +1846,7 @@ class CustomSearchForm extends HTMLElement {
 
             this.updateApplyButtonState();
             this.renderActiveChips();
+            this.clearPreviewEstimate();
             };
 
             el.addEventListener('input', handler);
@@ -1873,13 +1891,18 @@ class CustomSearchForm extends HTMLElement {
             fieldName: config.field,
             shadowRoot: root,
             hiddenInputId: config.hiddenId,
-            getContextFilters: () => this.collectFilterPayload(config.field),
-            onStateChange: () => {
+            getContextFilters: () => this.collectFilterPayload({ excludeField: config.field }),
+            onStateChange: (_, meta = {}) => {
                 const normalized = manager.getNormalizedValue();
                 if (normalized) this.rememberFilterOrder(config.hiddenId);
                 else this.clearFilterOrder(config.hiddenId);
                 this.updateApplyButtonState();
                 this.renderActiveChips();
+                if (meta.triggerPreview) {
+                    this.queuePreviewUpdate();
+                } else {
+                    this.clearPreviewEstimate();
+                }
             }
             });
 
@@ -2062,7 +2085,7 @@ class CustomSearchForm extends HTMLElement {
                 manager.tokens = [];
                 if (manager.input) manager.input.value = '';
                 manager.renderTokens();
-                manager.syncToHiddenInput();
+                manager.syncToHiddenInput({ reason: 'token-removed' });
                 }
             } else if (['filter-selection-method', 'filter-place'].includes(id)) {
                 const select = root.getElementById(id);
@@ -2210,10 +2233,9 @@ class AdvancedFilterManager {
                 }
 
                 if (raw) {
-                    this.appendValueToken(raw);
+                    this.appendValueToken(raw, { triggerPreview: true });
                     this.input.value = '';
                     this.closeDropdown();
-                    this.syncToHiddenInput();
                     requestAnimationFrame(() => {
                         this.input?.focus();
                     });
@@ -2225,7 +2247,7 @@ class AdvancedFilterManager {
                 if (this.tokens.length > 0) {
                     this.tokens.splice(-2);
                     this.renderTokens();
-                    this.syncToHiddenInput();
+                    this.syncToHiddenInput({ reason: 'token-removed' });
                     requestAnimationFrame(() => this.input?.focus());
                 }
                 return;
@@ -2257,7 +2279,7 @@ class AdvancedFilterManager {
                     let nextIdx = (ops.indexOf(token.text) + 1) % ops.length;
                     token.text = ops[nextIdx];
                     this.renderTokens();
-                    this.syncToHiddenInput();
+                    this.syncToHiddenInput({ reason: 'operator-changed' });
                 });
             } else {
                 el.className = 'token-tag';
@@ -2277,7 +2299,7 @@ class AdvancedFilterManager {
                         this.tokens = [];
                     }
                     this.renderTokens();
-                    this.syncToHiddenInput();
+                    this.syncToHiddenInput({ reason: 'token-removed' });
                     requestAnimationFrame(() => this.input?.focus());
                 });
             }
@@ -2286,14 +2308,14 @@ class AdvancedFilterManager {
         });
     }
 
-    syncToHiddenInput() {
+    syncToHiddenInput({ reason = 'sync', triggerPreview = false } = {}) {
         const normalized = this.getNormalizedValue();
         if (this.hiddenInput) {
             this.hiddenInput.value = normalized ? JSON.stringify(normalized) : '';
             this.hiddenInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
             this.hiddenInput.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
         }
-        this.onStateChange(normalized);
+        this.onStateChange(normalized, { reason, triggerPreview });
     }
 
 
@@ -2384,7 +2406,7 @@ class AdvancedFilterManager {
 
 
 
-    appendValueToken(selectedText) {
+    appendValueToken(selectedText, { triggerPreview = false } = {}) {
         const cleanText = (selectedText || '').trim();
         if (!cleanText) return;
 
@@ -2402,7 +2424,7 @@ class AdvancedFilterManager {
             this.input?.focus();
         });
         this.renderTokens();
-        this.syncToHiddenInput();
+        this.syncToHiddenInput({ reason: 'token-added', triggerPreview });
     }
 
 
@@ -2430,7 +2452,7 @@ class AdvancedFilterManager {
 
             li.addEventListener('click', () => {
                 const selectedText = li.dataset.value;
-                this.appendValueToken(selectedText);
+                this.appendValueToken(selectedText, { triggerPreview: true });
                 requestAnimationFrame(() => {
                     this.input?.focus();
                 });
@@ -2465,11 +2487,11 @@ class AdvancedFilterManager {
 
             if (this.currentIndex >= 0 && this.currentIndex < items.length) {
                 const itemValue = items[this.currentIndex].dataset.value;
-                this.appendValueToken(itemValue);
+                this.appendValueToken(itemValue, { triggerPreview: true });
             } else {
                 const rawText = this.input.value.trim();
                 if (rawText !== '') {
-                    this.appendValueToken(rawText);
+                    this.appendValueToken(rawText, { triggerPreview: true });
                 }
             }
         }

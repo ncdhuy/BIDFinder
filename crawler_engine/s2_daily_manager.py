@@ -9,9 +9,36 @@ from schema_config import SCHEMAS
 from dotenv import load_dotenv
 from psycopg2.extras import execute_values, Json
 from storage_adapter import ensure_local_file, upload_file, build_r2_key, is_r2_key, delete_object
+from web_winner_facts import (
+    apply_vendor_single_winner_fallback,
+    clear_web_winner_fact_cache,
+    prefetch_web_winner_facts,
+)
+from s3_etl_pipeline import (
+    analyze_review_column_gaps as etl_analyze_review_column_gaps,
+    normalize_grouped_rows_generic as etl_normalize_grouped_rows_generic,
+    drop_summary_rows as etl_drop_summary_rows,
+    autofill_group_header_values as etl_autofill_group_header_values,
+    detect_sparse_vendor_autocomplete_manual_reason as etl_detect_sparse_vendor_autocomplete_manual_reason,
+    fill_vendor_from_sparse_group_headers as etl_fill_vendor_from_sparse_group_headers,
+)
 import logging
 import re
 import warnings
+from schema_normalization_shared import (
+    KEYWORD_RULES as SHARED_KEYWORD_RULES,
+    build_schema_mapping_config as shared_build_schema_mapping_config,
+    clean_col_str as shared_clean_col_str,
+    clean_numeric_series as shared_clean_numeric_series,
+    collapse_duplicate_columns as shared_collapse_duplicate_columns,
+    count_excel_rows_with_detected_header,
+    drop_header_legend_rows as shared_drop_header_legend_rows,
+    drop_invalid_value_rows as shared_drop_invalid_value_rows,
+    get_excel_sheet_name_groups,
+    get_smart_column_mapping as shared_get_smart_column_mapping,
+    load_excel_with_detected_header,
+    resolve_excel_readable_path,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,6 +72,24 @@ warnings.filterwarnings(
     category=UserWarning,
     module="openpyxl.reader.workbook",
 )
+warnings.filterwarnings(
+    "ignore",
+    message=r"Cannot parse header or footer so it will be ignored",
+    category=UserWarning,
+    module="openpyxl.worksheet.header_footer",
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r"Unknown extension is not supported and will be removed",
+    category=UserWarning,
+    module=r"openpyxl\.worksheet\._reader",
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r"Conditional Formatting extension is not supported and will be removed",
+    category=UserWarning,
+    module=r"openpyxl\.worksheet\._reader",
+)
 
 # =====================================================================
 # CONFIGURATION
@@ -68,6 +113,8 @@ HUMAN_WORKSPACE_ROOT = os.path.join(ROOT_DATA_DIR, "human_workspace")
 SIZE_DROP_THRESHOLD = 0.5 
 TARGET_DATE = None
 SOURCE_DIR = None
+ACTIVE_HUMAN_TASK_STATUSES = ("PENDING_EXPORT", "EXPORTED", "IN_PROGRESS", "INVALID_OUTPUT")
+COMPLETED_HUMAN_TASK_STATUS = "COMPLETED"
 
 
 # =====================================================================
@@ -141,7 +188,7 @@ def build_expected_result_filename(source_filename: str, force_excel: bool = Fal
     base_name = os.path.basename(str(source_filename or ""))
     stem, ext = os.path.splitext(base_name)
     ext = ext.lower()
-    if not force_excel and ext in (".xlsx", ".xls"):
+    if not force_excel and ext == ".xlsx":
         return base_name
     return f"{stem}.xlsx"
 
@@ -392,24 +439,79 @@ def load_ignored_qd_map(cursor):
         ignored_map.setdefault(tbmt, set()).add(so_qd)
     return ignored_map
 
+
+def build_cancelled_unit_key_set(cursor, target_tbmts):
+    if not target_tbmts:
+        return set()
+
+    cursor.execute("""
+        SELECT ma_tbmt, so_qd, version, trang_thai_dang_tai_kq
+        FROM package_metadata
+        WHERE ma_tbmt IN %s
+    """, (tuple(target_tbmts),))
+
+    cancelled_units = set()
+    cancelled_status = clean_col_str("Đã hủy")
+    for tbmt, so_qd, version, posting_status in cursor.fetchall():
+        if clean_col_str(posting_status) == cancelled_status and tbmt and so_qd and version:
+            cancelled_units.add((tbmt, so_qd, version))
+    return cancelled_units
+
+
+FILE_ANALYSIS_CACHE = {
+    "size": {},
+    "excel_row_count": {},
+    "sheet_names": {},
+}
+
+
+def clear_file_analysis_caches():
+    for cache in FILE_ANALYSIS_CACHE.values():
+        cache.clear()
+
+
+def build_file_analysis_cache_key(path_value):
+    path_text = str(path_value or "")
+    if is_r2_key(path_text):
+        return ("r2", path_text)
+
+    normalized_path = os.path.normcase(os.path.abspath(path_text))
+    try:
+        stat = os.stat(normalized_path)
+        return ("local", normalized_path, int(stat.st_mtime_ns), int(stat.st_size))
+    except OSError:
+        return ("local", normalized_path, None, None)
+
 def get_file_size_any(path_value, temp_subdir="daily_manager_size"):
+    cache_key = build_file_analysis_cache_key(path_value)
+    cached = FILE_ANALYSIS_CACHE["size"].get(cache_key)
+    if cached is not None:
+        return cached
+
     try:
         local_path = ensure_local_file(path_value, temp_subdir=temp_subdir)
-        return os.path.getsize(local_path)
+        result = os.path.getsize(local_path)
     except Exception:
-        return 0
+        result = 0
+
+    FILE_ANALYSIS_CACHE["size"][cache_key] = result
+    return result
 
 
 def get_excel_row_count_any(path_value, temp_subdir="daily_manager_excel_rows"):
+    cache_key = build_file_analysis_cache_key(path_value)
+    cached = FILE_ANALYSIS_CACHE["excel_row_count"].get(cache_key)
+    if cached is not None:
+        return cached
+
     try:
         local_path = ensure_local_file(path_value, temp_subdir=temp_subdir)
-        df_temp = pd.read_excel(local_path, header=None, nrows=15)
-        header_idx = df_temp.notna().sum(axis=1).idxmax()
-        df = pd.read_excel(local_path, header=header_idx)
-        df = df.dropna(how="all")
-        return len(df)
+        result = count_excel_rows_with_detected_header(local_path)
     except Exception:
-        return None
+        result = None
+
+    FILE_ANALYSIS_CACHE["excel_row_count"][cache_key] = result
+    return result
 
 
 def normalize_docx_cell_text(text, keep_newlines=False):
@@ -427,6 +529,19 @@ def trim_docx_row_values(values):
     while trimmed and not normalize_docx_cell_text(trimmed[-1], keep_newlines=False):
         trimmed.pop()
     return trimmed
+
+
+def extract_docx_row_values(row):
+    values = []
+    previous_tc = None
+    for cell in row.cells:
+        current_tc = cell._tc
+        if previous_tc is not None and current_tc is previous_tc:
+            values.append("")
+        else:
+            values.append(cell.text)
+        previous_tc = current_tc
+    return trim_docx_row_values(values)
 
 
 def is_docx_numbering_row(values):
@@ -505,39 +620,165 @@ def make_docx_headers_unique(header_values, width):
     return result
 
 
-def convert_docx_table_to_excel(docx_path):
-    try:
-        from docx import Document
-    except ImportError:
-        logger.warning("⚠️ Thiếu thư viện python-docx, chưa thể auto-convert file Word.")
-        return None
+def docx_header_has_excluded_columns(header_values):
+    excluded_targets = {
+        clean_col_str("mã số thuế"),
+        clean_col_str("mã định danh"),
+        clean_col_str("địa chỉ"),
+    }
+    normalized_headers = {
+        clean_col_str(value)
+        for value in (header_values or [])
+        if normalize_docx_cell_text(value, keep_newlines=False)
+    }
+    return any(header in excluded_targets for header in normalized_headers)
 
-    xlsx_path = os.path.splitext(docx_path)[0] + ".xlsx"
-    if os.path.exists(xlsx_path) and os.path.getmtime(xlsx_path) >= os.path.getmtime(docx_path):
-        return xlsx_path
 
-    doc = Document(docx_path)
-    if not doc.tables:
-        return None
+CONTRACTOR_INFO_REQUIRED_ID_COLUMNS = {
+    shared_clean_col_str("mã số thuế"),
+    shared_clean_col_str("mã định danh"),
+}
+CONTRACTOR_INFO_EXCLUDED_COLUMNS = {
+    shared_clean_col_str("địa chỉ"),
+}
+CONTRACTOR_INFO_HINT_COLUMNS = {
+    shared_clean_col_str("tên nhà thầu"),
+    shared_clean_col_str("nhà thầu"),
+    shared_clean_col_str("giá dự thầu"),
+    shared_clean_col_str("kết quả"),
+    shared_clean_col_str("giá đánh giá"),
+    shared_clean_col_str("lý do không đáp ứng"),
+}
+PRODUCT_DETAIL_HINT_COLUMNS = {
+    shared_clean_col_str("tên thuốc"),
+    shared_clean_col_str("tên hoạt chất"),
+    shared_clean_col_str("danh mục hàng hóa"),
+    shared_clean_col_str("tên hàng hóa"),
+    shared_clean_col_str("tên hàng"),
+    shared_clean_col_str("số lượng"),
+    shared_clean_col_str("khối lượng"),
+    shared_clean_col_str("đơn giá"),
+}
+USELESS_EXCEL_FILE_CACHE = {}
 
-    target_table = max(
-        doc.tables,
-        key=lambda t: sum(
-            1 for row in t.rows for cell in row.cells if normalize_docx_cell_text(cell.text)
+
+def detect_bidder_info_excel(df_check: pd.DataFrame, file_path) -> tuple[bool, str | None]:
+    if df_check is None:
+        return False, None
+
+    normalized_headers = {
+        clean_col_str(col)
+        for col in list(df_check.columns)
+        if clean_col_str(col)
+    }
+    if not normalized_headers:
+        return False, None
+
+    strong_hits = sorted(normalized_headers.intersection(CONTRACTOR_INFO_REQUIRED_ID_COLUMNS))
+    if len(strong_hits) == len(CONTRACTOR_INFO_REQUIRED_ID_COLUMNS):
+        return True, (
+            "File Excel chứa thông tin nhà thầu trúng thầu, không phải dữ liệu hàng hóa. "
+            f"Phát hiện cột: {', '.join(strong_hits)}"
         )
-    )
 
-    rows = []
-    for row in target_table.rows:
-        values = trim_docx_row_values([cell.text for cell in row.cells])
-        if any(normalize_docx_cell_text(v) for v in values):
-            rows.append(values)
+    file_name = os.path.basename(str(file_path or "")).lower()
+    has_temp_import_hint = "temp_import" in file_name
+    contractor_hits = normalized_headers.intersection(CONTRACTOR_INFO_HINT_COLUMNS)
+    excluded_hits = normalized_headers.intersection(CONTRACTOR_INFO_EXCLUDED_COLUMNS)
+    product_hits = normalized_headers.intersection(PRODUCT_DETAIL_HINT_COLUMNS)
+    has_strong_bidder_signal = bool(strong_hits)
 
+    if has_strong_bidder_signal and (len(contractor_hits) >= 1 or excluded_hits) and not product_hits:
+        return True, (
+            "File Excel chứa thông tin nhà thầu trúng thầu, không phải dữ liệu hàng hóa. "
+            f"Phát hiện cột đặc trưng: {', '.join(strong_hits)}"
+        )
+
+    if has_temp_import_hint and (len(contractor_hits) >= 2 or excluded_hits or has_strong_bidder_signal) and not product_hits:
+        return True, (
+            "File Excel Temp_import chứa thông tin nhà thầu trúng thầu, không phải dữ liệu hàng hóa."
+        )
+
+    return False, None
+
+
+def detect_bidder_info_excel_file(file_path, validation_scope="quick"):
+    normalized_path = os.path.normpath(str(file_path or ""))
+    cache_key = (normalized_path, validation_scope)
+    cached = USELESS_EXCEL_FILE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    ext = os.path.splitext(normalized_path)[1].lower()
+    if ext not in (".xlsx", ".xls") or not os.path.exists(normalized_path):
+        result = (False, None)
+        USELESS_EXCEL_FILE_CACHE[cache_key] = result
+        return result
+
+    try:
+        df_check = load_excel_validation_frame(normalized_path, validation_scope=validation_scope)
+    except Exception:
+        result = (False, None)
+        USELESS_EXCEL_FILE_CACHE[cache_key] = result
+        return result
+
+    result = detect_bidder_info_excel(df_check, normalized_path)
+    USELESS_EXCEL_FILE_CACHE[cache_key] = result
+    return result
+
+
+def filter_out_bidder_info_excel_candidates(file_refs):
+    kept_files = []
+    excluded_files = []
+
+    for file_ref in file_refs or []:
+        full_path = file_ref
+        if not os.path.isabs(str(file_ref or "")):
+            full_path = os.path.join(SOURCE_DIR, str(file_ref)) if SOURCE_DIR else str(file_ref)
+        is_useless, reason = detect_bidder_info_excel_file(full_path, validation_scope="quick")
+        if is_useless:
+            excluded_files.append((file_ref, reason))
+        else:
+            kept_files.append(file_ref)
+
+    return kept_files, excluded_files
+
+
+def iter_docx_block_items(document):
+    from docx.oxml.table import CT_Tbl
+    from docx.oxml.text.paragraph import CT_P
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    body = document.element.body
+    for child in body.iterchildren():
+        if isinstance(child, CT_P):
+            yield Paragraph(child, document)
+        elif isinstance(child, CT_Tbl):
+            yield Table(child, document)
+
+
+def extract_docx_bidder_name(paragraph_texts):
+    for text in reversed(paragraph_texts or []):
+        normalized = normalize_docx_cell_text(text, keep_newlines=False)
+        if not normalized:
+            continue
+        match = re.search(r"nhà\s*thầu\s*:?\s*(.+)$", normalized, flags=re.IGNORECASE)
+        if match:
+            bidder_name = re.sub(r"\s+", " ", match.group(1)).strip(" .:-")
+            if bidder_name:
+                return bidder_name
+    return None
+
+
+def convert_docx_table_rows_to_dataframe(rows, bidder_name=None):
     if len(rows) < 2:
         return None
 
     header_idx = choose_docx_header_index(rows)
     header = [normalize_docx_cell_text(v, keep_newlines=False) for v in rows[header_idx]]
+    if docx_header_has_excluded_columns(header):
+        return None
     data_rows = rows[header_idx + 1:]
     while data_rows and is_docx_numbering_row([
         normalize_docx_cell_text(v, keep_newlines=False) for v in data_rows[0]
@@ -564,6 +805,57 @@ def convert_docx_table_to_excel(docx_path):
     ]
 
     df = pd.DataFrame(normalized_rows, columns=header)
+    if bidder_name:
+        bidder_col = next((c for c in df.columns if clean_col_str(c) == clean_col_str("Nhà thầu trúng thầu")), None)
+        if bidder_col:
+            df[bidder_col] = df[bidder_col].replace("", np.nan).fillna(bidder_name)
+        else:
+            df.insert(0, "Nhà thầu trúng thầu", bidder_name)
+    return df
+
+
+def convert_docx_table_to_excel(docx_path):
+    try:
+        from docx import Document
+    except ImportError:
+        logger.warning("⚠️ Thiếu thư viện python-docx, chưa thể auto-convert file Word.")
+        return None
+
+    xlsx_path = os.path.splitext(docx_path)[0] + ".xlsx"
+    if os.path.exists(xlsx_path) and os.path.getmtime(xlsx_path) >= os.path.getmtime(docx_path):
+        return xlsx_path
+
+    doc = Document(docx_path)
+    if not doc.tables:
+        return None
+
+    frames = []
+    recent_paragraphs = []
+
+    for block in iter_docx_block_items(doc):
+        if hasattr(block, "text") and not hasattr(block, "rows"):
+            paragraph_text = normalize_docx_cell_text(block.text, keep_newlines=False)
+            if paragraph_text:
+                recent_paragraphs.append(paragraph_text)
+                recent_paragraphs = recent_paragraphs[-5:]
+            continue
+
+        rows = []
+        for row in block.rows:
+            values = extract_docx_row_values(row)
+            if any(normalize_docx_cell_text(v) for v in values):
+                rows.append(values)
+
+        bidder_name = extract_docx_bidder_name(recent_paragraphs)
+        table_df = convert_docx_table_rows_to_dataframe(rows, bidder_name=bidder_name)
+        if table_df is not None and not table_df.empty:
+            frames.append(table_df)
+        recent_paragraphs = []
+
+    if not frames:
+        return None
+
+    df = pd.concat(frames, ignore_index=True, sort=False)
     df.to_excel(xlsx_path, index=False)
     return xlsx_path
 
@@ -635,13 +927,90 @@ def auto_convert_docx_files_in_source():
     return converted
 
 
+def auto_convert_xls_files_in_source():
+    if not SOURCE_DIR or not os.path.exists(SOURCE_DIR):
+        return []
+
+    converted = []
+    for fname in os.listdir(SOURCE_DIR):
+        if fname.startswith("~$") or not fname.lower().endswith(".xls"):
+            continue
+
+        full_path = os.path.join(SOURCE_DIR, fname)
+        xlsx_path = os.path.splitext(full_path)[0] + ".xlsx"
+        already_ready = os.path.exists(xlsx_path) and os.path.getmtime(xlsx_path) >= os.path.getmtime(full_path)
+
+        try:
+            readable_path = resolve_excel_readable_path(full_path)
+            if (
+                readable_path
+                and os.path.abspath(str(readable_path)) != os.path.abspath(full_path)
+                and os.path.exists(readable_path)
+                and not already_ready
+            ):
+                converted.append((fname, os.path.basename(readable_path)))
+        except Exception as e:
+            logger.warning(f"⚠️ Không thể auto-convert XLS {fname}: {e}")
+
+    return converted
+
+
+def canonicalize_excel_local_path(path_value):
+    normalized_path = os.path.normpath(str(path_value or ""))
+    if os.path.splitext(normalized_path)[1].lower() != ".xls":
+        return normalized_path
+
+    try:
+        readable_path = resolve_excel_readable_path(normalized_path)
+    except Exception:
+        return normalized_path
+
+    if readable_path and os.path.exists(readable_path):
+        return os.path.normpath(str(readable_path))
+    return normalized_path
+
+
+def canonicalize_source_file_ref(file_ref):
+    if not file_ref:
+        return file_ref
+
+    file_text = str(file_ref)
+    is_absolute = os.path.isabs(file_text)
+    full_path = file_text if is_absolute else os.path.join(SOURCE_DIR, file_text)
+    canonical_path = canonicalize_excel_local_path(full_path)
+
+    if os.path.normcase(canonical_path) == os.path.normcase(full_path):
+        return file_ref
+    return canonical_path if is_absolute else os.path.basename(canonical_path)
+
+
+def canonicalize_source_file_refs(file_refs):
+    output = []
+    seen = set()
+    for file_ref in file_refs or []:
+        canonical_ref = canonicalize_source_file_ref(file_ref)
+        ref_key = str(canonical_ref).lower()
+        if ref_key in seen:
+            continue
+        seen.add(ref_key)
+        output.append(canonical_ref)
+    return output
+
+
 def get_excel_sheet_names_any(path_value, temp_subdir="daily_manager_sheet_names"):
+    cache_key = build_file_analysis_cache_key(path_value)
+    cached = FILE_ANALYSIS_CACHE["sheet_names"].get(cache_key)
+    if cached is not None:
+        return cached
+
     try:
         local_path = ensure_local_file(path_value, temp_subdir=temp_subdir)
-        with pd.ExcelFile(local_path) as workbook:
-            return list(workbook.sheet_names or [])
+        result = get_excel_sheet_name_groups(local_path)
     except Exception:
-        return []
+        result = {"all": [], "visible": [], "hidden": []}
+
+    FILE_ANALYSIS_CACHE["sheet_names"][cache_key] = result
+    return result
 
 def choose_best_file(file_list):
     priority = {
@@ -775,6 +1144,10 @@ def build_unit_file_context(unit_row, physical_map):
         return None
 
     matched_files = find_matched_files_for_unit(candidates, file_paths, tbmt, qd_raw, version)
+    if not matched_files:
+        return None
+
+    matched_files, _ = filter_out_bidder_info_excel_candidates(matched_files)
     if not matched_files:
         return None
 
@@ -927,6 +1300,11 @@ def find_matched_files_for_unit(candidates, file_paths, tbmt, qd_raw, version):
 def upsert_manual_file_to_packages(tbmt, qd_raw, version, full_path, file_type):
     if file_type not in ("excel", "pdf"):
         return
+    if file_type == "excel":
+        full_path = canonicalize_excel_local_path(full_path)
+        is_useless_excel, _ = detect_bidder_info_excel_file(full_path, validation_scope="quick")
+        if is_useless_excel:
+            return
 
     with get_db_connection() as conn:
         with conn.cursor() as cursor:
@@ -1014,9 +1392,7 @@ def sync_manual_files_in_latest(all_physical_files, found_tbmts):
 # LOGIC NHẬN DIỆN VÀ MAP CỘT SCHEMA
 # =====================================================================
 def clean_col_str(s):
-    if not isinstance(s, str):
-        s = str(s)
-    return re.sub(r"\s+", " ", s).strip().lower()
+    return shared_clean_col_str(s)
 
 
 def is_vendor_group_column_name(col_name) -> bool:
@@ -1446,6 +1822,7 @@ def has_goods_group_header_with_vendor_column(df: pd.DataFrame) -> bool:
 
 
 SUMMARY_ROW_PREFIXES = (
+    "tổng",
     "tổng cộng",
     "thành tiền",
     "số tiền bằng chữ",
@@ -1482,6 +1859,72 @@ def _is_top_level_stt(value) -> bool:
 
 def _is_numeric_like_text(text) -> bool:
     return bool(re.match(r"^[\d\s.,()+\-/%xX*=]+$", text))
+
+
+def _extract_group_label_from_stt(value):
+    text = _normalize_stt_value(value)
+    if not text:
+        return None
+
+    match = re.match(r"^(\d+)\s*\.\s*(.+)$", text)
+    if not match:
+        return None
+
+    label = re.sub(r"\s+", " ", match.group(2)).strip(" .:-")
+    if not label or _is_numeric_like_text(label):
+        return None
+
+    label_lower = label.lower()
+    if any(label_lower.startswith(prefix) for prefix in SUMMARY_ROW_PREFIXES):
+        return None
+
+    return {
+        "root": match.group(1),
+        "text": label,
+    }
+
+
+def _is_section_marker_stt(value) -> bool:
+    text = _normalize_stt_value(value)
+    if not text:
+        return False
+    text = text.strip(" .:-)")
+    return bool(re.fullmatch(r"[ivxlcdm]+", text, flags=re.IGNORECASE))
+
+
+def _extract_sparse_stt_text_label(value):
+    text = _normalize_stt_value(value)
+    if not text:
+        return None
+    if _is_section_marker_stt(text):
+        return None
+    if _is_numeric_like_text(text):
+        return None
+
+    label = re.sub(r"\s+", " ", text).strip(" .:-")
+    if not label:
+        return None
+
+    label_lower = label.lower()
+    if any(label_lower.startswith(prefix) for prefix in SUMMARY_ROW_PREFIXES):
+        return None
+
+    roman_match = re.match(r"^(?P<prefix>[ivxlcdm]+)\s*[\.\-:)]\s*(?P<label>.+)$", label, flags=re.IGNORECASE)
+    if roman_match:
+        inner_label = re.sub(r"\s+", " ", roman_match.group("label")).strip(" .:-")
+        if inner_label and not _is_numeric_like_text(inner_label):
+            return {
+                "root": None,
+                "text": inner_label,
+            }
+
+    if re.match(r"^[A-Za-zÀ-ỹ].+", label):
+        return {
+            "root": None,
+            "text": label,
+        }
+
+    return None
 
 
 def _matches_group_target(col_name, target_name) -> bool:
@@ -1531,6 +1974,8 @@ def is_generic_summary_row(row: pd.Series, amount_col=None) -> bool:
     is_sparse_row = non_blank_count <= sparse_threshold
 
     strong_patterns = [
+        r"^tổng\b",
+        r"^cộng\b",
         r"tổng cộng giá .* hàng hóa",
         r"tổng giá .* hàng hóa",
         r"tổng cộng .* phí.*lệ phí",
@@ -1599,6 +2044,15 @@ def _belongs_same_group(current_stt, next_stt) -> bool:
     return (not next_stt) or (bool(current_root) and current_root == _stt_root_value(next_stt) and next_stt != current_stt)
 
 
+def _is_sparse_group_candidate_row(current: pd.Series, amount_col=None) -> bool:
+    if current is None:
+        return False
+    non_blank_count = sum(not _is_blank_cell(v) for v in current.tolist())
+    if non_blank_count == 0 or non_blank_count > 3:
+        return False
+    return not is_generic_summary_row(current, amount_col)
+
+
 def detect_true_group_header_generic(
     current: pd.Series,
     next_row: pd.Series | None,
@@ -1607,21 +2061,30 @@ def detect_true_group_header_generic(
     group_cols,
     amount_col=None,
 ):
-    if current is None or next_row is None or not stt_col or not group_cols:
+    if current is None or next_row is None or not group_cols:
         return None
 
-    current_stt = _normalize_stt_value(current.get(stt_col))
-    if not _is_top_level_stt(current_stt):
+    current_stt = _normalize_stt_value(current.get(stt_col)) if stt_col else ""
+    stt_group_label = _extract_group_label_from_stt(current.get(stt_col)) if stt_col else None
+    if not stt_group_label and stt_col:
+        stt_group_label = _extract_sparse_stt_text_label(current.get(stt_col))
+    if current_stt and not _is_top_level_stt(current_stt) and not stt_group_label:
         return None
 
     if any(not _is_blank_cell(current.get(col)) for col in detail_cols):
+        return None
+
+    if not _is_sparse_group_candidate_row(current, amount_col):
         return None
 
     source_group_cols = [col for col in group_cols if not _is_blank_cell(current.get(col))]
     if not source_group_cols:
         return None
 
-    if not _belongs_same_group(current_stt, next_row.get(stt_col)) or not has_detail_signal_generic(next_row, detail_cols, amount_col):
+    if not has_detail_signal_generic(next_row, detail_cols, amount_col):
+        return None
+
+    if current_stt and not stt_group_label and stt_col and not _belongs_same_group(current_stt, next_row.get(stt_col)):
         return None
 
     carry_values = {}
@@ -1633,7 +2096,7 @@ def detect_true_group_header_generic(
             carry_values[col] = value
 
     return {
-        "root": _stt_root_value(current_stt),
+        "root": None if stt_group_label or not current_stt or (stt_col and _is_section_marker_stt(current.get(stt_col))) else _stt_root_value(current_stt),
         "carry_values": carry_values,
         "source_cols": source_group_cols,
     }
@@ -1647,21 +2110,40 @@ def detect_wrong_column_group_header_generic(
     group_cols,
     amount_col=None,
 ):
-    if current is None or next_row is None or not stt_col:
+    if current is None or next_row is None:
         return None
 
-    current_stt = _normalize_stt_value(current.get(stt_col))
+    current_stt = _normalize_stt_value(current.get(stt_col)) if stt_col else ""
     current_has_stt = bool(current_stt)
-    if current_has_stt and not _is_top_level_stt(current_stt):
+    stt_group_label = _extract_group_label_from_stt(current.get(stt_col)) if stt_col else None
+    if not stt_group_label and stt_col:
+        stt_group_label = _extract_sparse_stt_text_label(current.get(stt_col))
+    if current_has_stt and not _is_top_level_stt(current_stt) and not stt_group_label:
         return None
 
-    if not _belongs_same_group(current_stt, next_row.get(stt_col)) or not has_detail_signal_generic(next_row, detail_cols, amount_col):
+    if not _is_sparse_group_candidate_row(current, amount_col):
+        return None
+
+    if not has_detail_signal_generic(next_row, detail_cols, amount_col):
+        return None
+
+    if (
+        current_has_stt
+        and not stt_group_label
+        and stt_col
+        and not _is_section_marker_stt(current.get(stt_col))
+        and not _belongs_same_group(current_stt, next_row.get(stt_col))
+    ):
         next_stt = _normalize_stt_value(next_row.get(stt_col))
-        if current_has_stt or not next_stt or not has_detail_signal_generic(next_row, detail_cols, amount_col):
+        if current_has_stt or not next_stt:
             return None
 
     texts = []
     source_cols = []
+    if stt_group_label:
+        texts.append(stt_group_label["text"])
+        source_cols.append(stt_col)
+
     for col in current.index:
         if col == stt_col or col == amount_col:
             continue
@@ -1681,20 +2163,13 @@ def detect_wrong_column_group_header_generic(
     if len(normalized_unique) != 1:
         return None
 
-    current_non_blank = sum(not _is_blank_cell(v) for v in current.tolist())
-    sparse_threshold = max(3, min(5, int(len(current) * 0.25) or 3))
-    if current_non_blank > sparse_threshold:
-        return None
-
-    if any(col in group_cols for col in source_cols):
-        return None
-
     next_non_blank = sum(not _is_blank_cell(v) for v in next_row.tolist())
+    current_non_blank = sum(not _is_blank_cell(v) for v in current.tolist())
     if next_non_blank <= current_non_blank:
         return None
 
     return {
-        "root": _stt_root_value(current_stt) if current_has_stt else None,
+        "root": None if stt_group_label or (stt_col and _is_section_marker_stt(current.get(stt_col))) else (_stt_root_value(current_stt) if current_has_stt else None),
         "text": texts[0],
         "source_cols": source_cols,
     }
@@ -1819,10 +2294,6 @@ def normalize_grouped_rows_generic(df: pd.DataFrame, schema_type: str, detect_co
             amount_col=amount_col,
         )
         if wrong_group:
-            if detect_conflicts and group_cols:
-                group_label = ", ".join(str(col) for col in group_cols[:2])
-                return working_df, f"Có group header nằm sai cột dù đã có cột {group_label}, cần kiểm tra tay"
-
             if auto_create_target and auto_create_target not in working_df.columns:
                 working_df[auto_create_target] = np.nan
                 current[auto_create_target] = np.nan
@@ -1867,75 +2338,42 @@ def normalize_grouped_rows_generic(df: pd.DataFrame, schema_type: str, detect_co
     normalized_df = merge_pseudo_group_rows_generic(normalized_df, stt_col, detail_cols, amount_col)
     return normalized_df, None
 
-KEYWORD_RULES = {
-    "Tên hoạt chất": ["hoạt chất"],
-    "Tên thuốc": ["tên thuốc"],
-    "Nồng độ, hàm lượng": ["nồng độ", "hàm lượng"],
-    "Số đăng ký": ["số đăng ký"],
-    "GĐKLH hoặc GPNK": ["gđklh", "gpnk"], 
-    "Đơn giá trúng thầu (VND)": ["đơn giá"],
-    "Thành tiền (VND)": ["thành tiền"],
-    "Nhà thầu trúng thầu": ["nhà thầu trúng thầu"],
-    
-    "Danh mục hàng hóa": ["hàng hóa", "danh mục hàng"],
-    "Tên phần/lô": ["tên phần", "tên lô"],
-    "Mặt hàng dự thầu": ["mặt hàng dự thầu", "mặt hàng"],
-    "Ký mã hiệu": ["ký mã", "mã hiệu"],
-    "Tính năng kỹ thuật": ["tính năng", "kỹ thuật"],
-    "Xuất xứ": ["xuất xứ", "nước sản xuất"],
-    "Hãng sản xuất": ["hãng sản xuất"],
-    "Năm sản xuất": ["năm sản xuất"]
-}
+
+# Use the ETL implementation as the single source of truth so daily manager
+# and ETL do not drift on summary/group-header behavior.
+def analyze_review_column_gaps(df: pd.DataFrame, schema_name: str) -> list[dict]:
+    config = SCHEMAS[schema_name]
+    review_cols = config.get("review_columns") or config.get("output_columns", [])
+    return etl_analyze_review_column_gaps(df, schema_name)
+
+
+def drop_summary_rows(df: pd.DataFrame, amount_col=None) -> pd.DataFrame:
+    return etl_drop_summary_rows(df, amount_col)
+
+
+def autofill_group_header_values(df: pd.DataFrame, schema_name: str) -> pd.DataFrame:
+    return etl_autofill_group_header_values(df, schema_name)
+
+
+def fill_vendor_from_sparse_group_headers(df: pd.DataFrame, schema_name: str) -> pd.DataFrame:
+    return etl_fill_vendor_from_sparse_group_headers(df, schema_name)
+
+
+def normalize_grouped_rows_generic(df: pd.DataFrame, schema_type: str, detect_conflicts: bool = False):
+    return etl_normalize_grouped_rows_generic(df, schema_type), None
+
+KEYWORD_RULES = SHARED_KEYWORD_RULES
 
 def get_smart_column_mapping(df_columns, mapping_config):
-    final_map = {}
-    clean_mapping_config = {clean_col_str(k): v for k, v in mapping_config.items()}
-    best_target_choice = {}
+    return shared_get_smart_column_mapping(df_columns, mapping_config)
 
-    def register_candidate(source_col, target_col, priority):
-        if not target_col:
-            return
-        candidate = (priority, len(str(source_col or "")))
-        current = best_target_choice.get(target_col)
-        if current is None or candidate > current[0]:
-            best_target_choice[target_col] = (candidate, source_col)
 
-    for col in df_columns:
-        col_clean = clean_col_str(col)
-        if col in mapping_config:
-            register_candidate(col, mapping_config[col], 3)
-            continue
-        if col_clean in clean_mapping_config:
-            register_candidate(col, clean_mapping_config[col_clean], 3)
-            continue
-
-        for target_col, keywords in KEYWORD_RULES.items():
-            if any(kw in col_clean for kw in keywords):
-                register_candidate(col, target_col, 1)
-                break
-
-    for target_col, (_, source_col) in best_target_choice.items():
-        final_map[source_col] = target_col
-    return final_map
+def build_schema_mapping_config(config):
+    return shared_build_schema_mapping_config(config)
 
 
 def collapse_duplicate_columns(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty or not df.columns.duplicated().any():
-        return df
-
-    collapsed = pd.DataFrame(index=df.index)
-    for col_name in df.columns.unique():
-        same_name = df.loc[:, df.columns == col_name]
-        if isinstance(same_name, pd.Series):
-            collapsed[col_name] = same_name
-            continue
-
-        merged = same_name.iloc[:, 0]
-        for idx in range(1, same_name.shape[1]):
-            merged = merged.combine_first(same_name.iloc[:, idx])
-        collapsed[col_name] = merged
-
-    return collapsed
+    return shared_collapse_duplicate_columns(df)
 
 def normalize_cols_for_check_smart(raw_cols, mapping):
     normalized_cols = set()
@@ -1974,48 +2412,11 @@ def apply_goods_trade_name_fallback(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def clean_numeric_series_loose(series: pd.Series) -> pd.Series:
-    s = series.astype(str).str.strip().replace(["nan", "None", "<NA>", "NaT"], "")
-    s = s.str.replace("\u00a0", " ", regex=False)
-    s = s.str.replace(r"[^\d,.\-]", "", regex=True)
-    s = s.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
-    return pd.to_numeric(s, errors="coerce")
+    return shared_clean_numeric_series(series)
 
 
 def drop_invalid_goods_value_rows(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return df
-
-    price_col = "Đơn giá trúng thầu (VND)"
-    amount_col = "Thành tiền (VND)"
-    quantity_col = "Khối lượng"
-
-    if price_col not in df.columns and amount_col not in df.columns:
-        return df
-
-    df = df.copy()
-
-    if quantity_col in df.columns:
-        df[quantity_col] = clean_numeric_series_loose(df[quantity_col])
-    if price_col in df.columns:
-        df[price_col] = clean_numeric_series_loose(df[price_col])
-    if amount_col in df.columns:
-        df[amount_col] = clean_numeric_series_loose(df[amount_col])
-
-    if all(col in df.columns for col in [quantity_col, price_col, amount_col]):
-        mask_missing_amount = df[amount_col].isna()
-        mask_has_inputs = df[quantity_col].notna() & df[price_col].notna()
-        df.loc[mask_missing_amount & mask_has_inputs, amount_col] = (
-            df.loc[mask_missing_amount & mask_has_inputs, quantity_col]
-            * df.loc[mask_missing_amount & mask_has_inputs, price_col]
-        )
-
-    price_series = df[price_col] if price_col in df.columns else pd.Series([pd.NA] * len(df), index=df.index)
-    amount_series = df[amount_col] if amount_col in df.columns else pd.Series([pd.NA] * len(df), index=df.index)
-
-    invalid_mask = (price_series.isna() & amount_series.isna())
-    invalid_mask |= amount_series.notna() & (amount_series <= 0)
-
-    return df.loc[~invalid_mask].copy()
+    return shared_drop_invalid_value_rows(df, "GOODS_STANDARD")
 
 def match_signature(current_cols, signature_list):
     signature = set(signature_list)
@@ -2023,111 +2424,365 @@ def match_signature(current_cols, signature_list):
     matched = signature.intersection(current_cols)
     return (len(matched) / len(signature)) >= 0.8
 
-def identify_file_status_detailed(file_path, file_ext, tbmt, all_files_in_batch):
+SCHEMA_TRIAGE_ANCHOR_COLUMNS = {
+    "MEDICINE_STANDARD": {
+        "Tên thuốc",
+        "Tên hoạt chất",
+        "Nồng độ, hàm lượng",
+        "Đường dùng",
+        "Dạng bào chế",
+        "Nhóm thuốc",
+    },
+    "GOODS_STANDARD": {
+        "Danh mục hàng hóa",
+        "Ký mã hiệu",
+        "Nhãn hiệu",
+        "Mặt hàng dự thầu",
+        "Hãng sản xuất",
+        "Năm sản xuất",
+        "Tính năng kỹ thuật",
+        "Tên phần/lô",
+    },
+}
+
+SCHEMA_VALIDATION_TIER_ORDER = ["STRUCTURE", "SCHEMA_FIT", "MANDATORY", "QUALITY"]
+SCHEMA_VALIDATION_TIER_LABELS = {
+    "STRUCTURE": "Structural",
+    "SCHEMA_FIT": "Schema Fit",
+    "MANDATORY": "Mandatory columns",
+    "QUALITY": "Data quality",
+}
+
+QUICK_VALIDATION_SAMPLE_ROWS = 50
+VALIDATION_SCOPE_QUICK = "quick"
+VALIDATION_SCOPE_DECISION = "decision"
+
+
+def _dedupe_issue_messages(messages):
+    ordered = []
+    seen = set()
+    for message in messages:
+        clean_message = str(message or "").strip()
+        if not clean_message or clean_message in seen:
+            continue
+        seen.add(clean_message)
+        ordered.append(clean_message)
+    return ordered
+
+
+def _add_schema_issue(issue_map, tier, message):
+    if not message:
+        return
+    issue_map.setdefault(tier, []).append(str(message).strip())
+
+
+def _summarize_issue_messages(messages, limit=3):
+    unique_messages = _dedupe_issue_messages(messages)
+    if not unique_messages:
+        return ""
+    if len(unique_messages) <= limit:
+        return "; ".join(unique_messages)
+    return "; ".join(unique_messages[:limit]) + f"; và {len(unique_messages) - limit} lỗi khác"
+
+
+def _format_column_set(columns):
+    ordered = sorted(str(col) for col in columns)
+    return "{" + ", ".join(ordered) + "}"
+
+
+def check_price_column_quality_for_schema(df: pd.DataFrame, schema_type: str):
+    target_col = None
+
+    if schema_type == "GOODS_STANDARD":
+        preferred_goods_cols = [
+            "Đơn giá trúng thầu (VND)",
+            "Đơn giá bao gồm thuế, phí, lệ phí liên quan đến nhập khẩu",
+            "Đơn giá dự thầu (đã bao gồm thuế, phí, lệ phí (nếu có))",
+        ]
+        for preferred in preferred_goods_cols:
+            if preferred in df.columns:
+                target_col = preferred
+                break
+
+    if not target_col:
+        for col in df.columns:
+            col_clean = clean_col_str(col)
+            if "đơn giá" in col_clean and "trúng" in col_clean:
+                target_col = col
+                break
+            if "đơn giá" in col_clean and "bao gồm" in col_clean:
+                target_col = col
+                break
+            if "đơn giá" in col_clean and "dự" in col_clean:
+                target_col = col
+                break
+
+    if not target_col:
+        potential_cols = [c for c in df.columns if "đơn giá" in clean_col_str(c)]
+        if potential_cols:
+            target_col = potential_cols[0]
+        else:
+            return False, "Không tìm thấy cột 'Đơn giá'"
+
+    s = df[target_col].astype(str).str.strip().replace("nan", "")
+    s = s.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
+    s_num = pd.to_numeric(s, errors="coerce")
+    total_rows = len(df)
+    if total_rows == 0:
+        return False, "File rỗng"
+    na_ratio = s_num.isna().sum() / total_rows
+    if na_ratio > 0.05:
+        return False, f"Cột '{target_col}' chứa {na_ratio:.1%} NA"
+    return True, "OK"
+
+
+def prepare_schema_validation_frame(df_check: pd.DataFrame, schema_type: str):
+    config = SCHEMAS[schema_type]
+    working_df = df_check.copy()
+    structure_issues = []
+
+    if schema_type == "MEDICINE_STANDARD":
+        working_df, group_conflict = normalize_grouped_rows_generic(working_df, "MEDICINE_STANDARD")
+        if group_conflict:
+            structure_issues.append(group_conflict)
+    elif schema_type == "GOODS_STANDARD":
+        working_df, group_conflict = normalize_grouped_rows_generic(
+            working_df,
+            "GOODS_STANDARD",
+            detect_conflicts=True,
+        )
+        if group_conflict:
+            structure_issues.append(group_conflict)
+        working_df = apply_goods_trade_name_fallback(working_df)
+
+    actual_mapping = get_smart_column_mapping(
+        list(working_df.columns),
+        build_schema_mapping_config(config),
+    )
+    working_df = working_df.rename(columns=actual_mapping)
+    working_df = collapse_duplicate_columns(working_df)
+    working_df = shared_drop_header_legend_rows(working_df)
+    post_map_amount_col = next((c for c in working_df.columns if clean_col_str(c) == "thành tiền (vnd)"), None)
+    working_df = drop_summary_rows(working_df, post_map_amount_col)
+    working_df = autofill_group_header_values(working_df, schema_type)
+    sparse_vendor_manual_reason = etl_detect_sparse_vendor_autocomplete_manual_reason(working_df, schema_type)
+    if sparse_vendor_manual_reason:
+        structure_issues.append(sparse_vendor_manual_reason)
+    else:
+        working_df = fill_vendor_from_sparse_group_headers(working_df, schema_type)
+    post_fill_amount_col = next((c for c in working_df.columns if clean_col_str(c) == "thành tiền (vnd)"), None)
+    working_df = drop_summary_rows(working_df, post_fill_amount_col)
+
+    if schema_type in ("MEDICINE_STANDARD", "GOODS_STANDARD"):
+        working_df = shared_drop_invalid_value_rows(working_df, schema_type)
+
+    if working_df.empty:
+        structure_issues.append("File rỗng sau chuẩn hóa")
+
+    return working_df, structure_issues
+
+
+def score_schema_candidate(df_check: pd.DataFrame, schema_type: str):
+    config = SCHEMAS[schema_type]
+    working_df, structure_issues = prepare_schema_validation_frame(df_check, schema_type)
+    normalized_cols = set(working_df.columns)
+
+    anchors = SCHEMA_TRIAGE_ANCHOR_COLUMNS[schema_type]
+    signature = set(config["signature_columns"])
+    non_vendor_mandatory = set(config.get("mandatory_columns", [])) - {"Nhà thầu trúng thầu"}
+
+    matched_anchors = anchors.intersection(normalized_cols)
+    matched_signature = signature.intersection(normalized_cols)
+    matched_mandatory = non_vendor_mandatory.intersection(normalized_cols)
+
+    score = (
+        len(matched_anchors) * 40
+        + len(matched_signature) * 15
+        + len(matched_mandatory) * 6
+        - len(structure_issues) * 8
+    )
+
+    return {
+        "schema_type": schema_type,
+        "score": score,
+        "matched_anchors": matched_anchors,
+        "matched_signature": matched_signature,
+        "matched_mandatory": matched_mandatory,
+    }
+
+
+def choose_manifest_schema(df_check: pd.DataFrame):
+    candidates = [
+        score_schema_candidate(df_check, "MEDICINE_STANDARD"),
+        score_schema_candidate(df_check, "GOODS_STANDARD"),
+    ]
+    ranked = sorted(candidates, key=lambda item: item["score"], reverse=True)
+    best = ranked[0]
+    runner_up = ranked[1]
+
+    def format_candidate(candidate):
+        matched_cols = list(candidate["matched_anchors"]) or list(candidate["matched_signature"])
+        matched_preview = ", ".join(sorted(matched_cols)[:3]) if matched_cols else "không có cột neo"
+        return f"{candidate['schema_type']}={candidate['score']} ({matched_preview})"
+
+    best_has_signal = bool(best["matched_anchors"] or best["matched_signature"])
+    score_gap = best["score"] - runner_up["score"]
+
+    if not best_has_signal or best["score"] <= 0:
+        return None, f"Không xác định được schema. {format_candidate(best)} | {format_candidate(runner_up)}"
+
+    if score_gap < 15 and best["score"] > 0 and runner_up["score"] > 0:
+        return None, f"Schema chưa đủ rõ ràng. {format_candidate(best)} | {format_candidate(runner_up)}"
+
+    return best["schema_type"], None
+
+
+def validate_manifest_schema(
+    df_check: pd.DataFrame,
+    schema_type: str,
+    tbmt,
+    so_qd,
+    version,
+    winner_fact_cursor=None,
+):
+    config = SCHEMAS[schema_type]
+    issues = {tier: [] for tier in SCHEMA_VALIDATION_TIER_ORDER}
+    working_df, structure_issues = prepare_schema_validation_frame(df_check, schema_type)
+
+    for message in structure_issues:
+        _add_schema_issue(issues, "STRUCTURE", message)
+
+    if working_df.empty:
+        return False, f"{schema_type} | {SCHEMA_VALIDATION_TIER_LABELS['STRUCTURE']}: File rỗng sau chuẩn hóa"
+
+    working_df, vendor_action = apply_vendor_single_winner_fallback(
+        working_df,
+        tbmt=tbmt,
+        so_qd=so_qd,
+        version=version,
+        cursor=winner_fact_cursor,
+    )
+
+    if vendor_action.get("status") == "MANUAL_REQUIRED":
+        _add_schema_issue(issues, "MANDATORY", vendor_action.get("reason"))
+    elif vendor_action.get("status") == "FILLED_FROM_WEB_SINGLE_WINNER":
+        logger.info(
+            f"🩹 [WEB-WINNER-FILL] Manifest {tbmt} / {so_qd} / v{version}: "
+            f"điền '{vendor_action.get('winner_name')}' cho {vendor_action.get('blank_count', 0)} dòng thiếu "
+            f"'{'Nhà thầu trúng thầu'}'."
+        )
+
+    norm_cols = set(working_df.columns)
+    signature = set(config["signature_columns"])
+    matched_sig = signature.intersection(norm_cols)
+    if not match_signature(norm_cols, config["signature_columns"]):
+        _add_schema_issue(
+            issues,
+            "SCHEMA_FIT",
+            f"Signature mismatch. Thiếu: {_format_column_set(signature - matched_sig)}",
+        )
+
+    mandatory = set(config.get("mandatory_columns", []))
+    missing_mandatory = mandatory - norm_cols
+    if missing_mandatory:
+        _add_schema_issue(
+            issues,
+            "MANDATORY",
+            f"Thiếu cột bắt buộc: {_format_column_set(missing_mandatory)}",
+        )
+
+    missing_non_vendor = missing_mandatory - {"Nhà thầu trúng thầu"}
+    should_run_quality = not issues["SCHEMA_FIT"] and not missing_non_vendor
+
+    if should_run_quality:
+        density_cols = [col for col in mandatory if col in working_df.columns]
+        total_cells = working_df[density_cols].size if density_cols else 0
+        if total_cells > 0:
+            null_cells = working_df[density_cols].isna().sum().sum()
+            null_ratio = null_cells / total_cells
+            if null_ratio > 0.3:
+                _add_schema_issue(issues, "QUALITY", f"File quá rỗng (Tỷ lệ NULL: {null_ratio:.1%})")
+
+        price_ok, price_reason = check_price_column_quality_for_schema(working_df, schema_type)
+        if not price_ok:
+            _add_schema_issue(issues, "QUALITY", price_reason)
+
+    active_tiers = [
+        tier for tier in SCHEMA_VALIDATION_TIER_ORDER
+        if _dedupe_issue_messages(issues.get(tier, []))
+    ]
+    if not active_tiers:
+        return True, "OK"
+
+    formatted_parts = []
+    for tier in active_tiers:
+        summary = _summarize_issue_messages(issues[tier])
+        if summary:
+            formatted_parts.append(f"{SCHEMA_VALIDATION_TIER_LABELS[tier]}: {summary}")
+
+    return False, f"{schema_type} | " + " | ".join(formatted_parts)
+
+
+def load_excel_validation_frame(file_path, validation_scope=VALIDATION_SCOPE_DECISION):
+    sample_rows = None
+    if validation_scope == VALIDATION_SCOPE_QUICK:
+        sample_rows = QUICK_VALIDATION_SAMPLE_ROWS
+    elif validation_scope != VALIDATION_SCOPE_DECISION:
+        raise ValueError(f"validation_scope không hợp lệ: {validation_scope}")
+
+    return load_excel_with_detected_header(
+        file_path,
+        sample_rows=sample_rows,
+    )
+
+
+def identify_file_status_detailed(
+    file_path,
+    file_ext,
+    tbmt,
+    so_qd,
+    version,
+    all_files_in_batch,
+    winner_fact_cursor=None,
+    validation_scope=VALIDATION_SCOPE_DECISION,
+):
     ext = file_ext.lower()
+    effective_batch_files, _ = filter_out_bidder_info_excel_candidates(all_files_in_batch or [])
     if ext in ['.xlsx', '.xls']:
         try:
             try:
-                df_temp = pd.read_excel(file_path, header=None, nrows=15) 
-                header_idx = df_temp.notna().sum(axis=1).idxmax()
-                df_header = pd.read_excel(file_path, header=header_idx, nrows=0)
-                df_check = pd.read_excel(file_path, header=header_idx, nrows=50) 
-                current_cols = set(df_header.columns)
-            except:
+                df_check = load_excel_validation_frame(
+                    file_path,
+                    validation_scope=validation_scope,
+                )
+            except Exception:
                 return "MANUAL_FIX_REQUIRED", "Lỗi đọc file Excel (Corrupt/Password/Header rỗng)"
 
-            def check_price_column_quality(df, schema_type):
-                target_col = None
+            is_bidder_info_excel, bidder_info_reason = detect_bidder_info_excel(df_check, file_path)
+            if is_bidder_info_excel:
+                return "OCR_REQUIRED", bidder_info_reason
 
-                if schema_type == "GOODS_STANDARD":
-                    preferred_goods_cols = [
-                        "Đơn giá trúng thầu (VND)",
-                        "Đơn giá bao gồm thuế, phí, lệ phí liên quan đến nhập khẩu",
-                        "Đơn giá dự thầu (đã bao gồm thuế, phí, lệ phí (nếu có))",
-                    ]
-                    for preferred in preferred_goods_cols:
-                        if preferred in df.columns:
-                            target_col = preferred
-                            break
+            chosen_schema, triage_reason = choose_manifest_schema(df_check)
+            if not chosen_schema:
+                return "MANUAL_FIX_REQUIRED", triage_reason
 
-                if not target_col:
-                    for col in df.columns:
-                        col_clean = clean_col_str(col)
-                        if "đơn giá" in col_clean and "trúng" in col_clean:
-                            target_col = col
-                            break
-                        elif "đơn giá" in col_clean and "bao gồm" in col_clean:
-                            target_col = col
-                            break
-                        elif "đơn giá" in col_clean and "dự" in col_clean:
-                            target_col = col
-                            break
+            is_valid, reason = validate_manifest_schema(
+                df_check=df_check,
+                schema_type=chosen_schema,
+                tbmt=tbmt,
+                so_qd=so_qd,
+                version=version,
+                winner_fact_cursor=winner_fact_cursor,
+            )
+            if is_valid:
+                return chosen_schema, "OK"
+            return "MANUAL_FIX_REQUIRED", reason
 
-                if not target_col:
-                    potential_cols = [c for c in df.columns if "đơn giá" in clean_col_str(c)]
-                    if potential_cols:
-                        target_col = potential_cols[0]
-                    else:
-                        return False, "Không tìm thấy cột 'Đơn giá'"
-                s = df[target_col].astype(str).str.strip().replace("nan", "")
-                s = s.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
-                s_num = pd.to_numeric(s, errors='coerce')
-                total_rows = len(df)
-                if total_rows == 0: return False, "File rỗng"
-                na_ratio = s_num.isna().sum() / total_rows
-                if na_ratio > 0.05: return False, f"Cột '{target_col}' chứa {na_ratio:.1%} NA"
-                return True, "OK"
-                
-            def check_schema_compliance(schema_type):
-                config = SCHEMAS[schema_type]
-                working_df = df_check.copy()
-                if schema_type == "MEDICINE_STANDARD":
-                    working_df, group_conflict = normalize_grouped_rows_generic(working_df, "MEDICINE_STANDARD")
-                    if group_conflict:
-                        return False, group_conflict
-                if schema_type == "GOODS_STANDARD":
-                    working_df, group_conflict = normalize_grouped_rows_generic(working_df, "GOODS_STANDARD", detect_conflicts=True)
-                    if group_conflict:
-                        return False, group_conflict
-                    working_df = apply_goods_trade_name_fallback(working_df)
-                actual_mapping = {
-                    source_col: target_col
-                    for source_col, target_col in get_smart_column_mapping(
-                        list(working_df.columns), config["column_mapping"]
-                    ).items()
-                }
-                working_df = working_df.rename(columns=actual_mapping)
-                working_df = collapse_duplicate_columns(working_df)
-                if schema_type == "GOODS_STANDARD":
-                    working_df = drop_invalid_goods_value_rows(working_df)
-
-                norm_cols = set(working_df.columns)
-                signature = set(config["signature_columns"])
-                matched_sig = signature.intersection(norm_cols)
-                if not match_signature(norm_cols, config["signature_columns"]):
-                    return False, f"Signature mismatch. Thiếu: {signature - matched_sig}."
-                mandatory = set(config.get("mandatory_columns", []))
-                missing_mandatory = mandatory - norm_cols
-                if missing_mandatory: return False, f"Thiếu cột bắt buộc: {missing_mandatory}"
-                density_cols = [col for col in mandatory if col in working_df.columns]
-                total_cells = working_df[density_cols].size if density_cols else 0
-                if total_cells > 0:
-                    null_cells = working_df[density_cols].isna().sum().sum()
-                    null_ratio = null_cells / total_cells
-                    if null_ratio > 0.3:
-                        return False, f"File quá rỗng (Tỷ lệ NULL: {null_ratio:.1%})"
-                return check_price_column_quality(working_df, schema_type)
-
-            is_med, reason_med = check_schema_compliance("MEDICINE_STANDARD")
-            if is_med: return "MEDICINE_STANDARD", "OK"
-            is_goods, reason_goods = check_schema_compliance("GOODS_STANDARD")
-            if is_goods: return "GOODS_STANDARD", "OK"
-            return "MANUAL_FIX_REQUIRED", f"MED: {reason_med} | GOODS: {reason_goods}"
-            
-        except Exception as e: return "MANUAL_FIX_REQUIRED", f"Lỗi không xác định: {str(e)}"
+        except Exception as e:
+            return "MANUAL_FIX_REQUIRED", f"Lỗi không xác định: {str(e)}"
     elif ext == '.pdf':
         better_formats = ('.xlsx', '.xls', '.doc', '.docx', '.rar', '.zip', '.7z', '.xml')
-        if not any(f.lower().endswith(better_formats) for f in all_files_in_batch):
+        if not any(str(f).lower().endswith(better_formats) for f in effective_batch_files):
             return "OCR_REQUIRED", "PDF Only"
         return "IGNORE", "Đã có file nguồn khác"
     elif ext in ['.doc', '.docx', '.rar', '.zip', '.7z', '.xml']:
@@ -2148,27 +2803,32 @@ def save_anomalies_to_db(report_list):
                 """, (TARGET_DATE,))
                 
                 if not report_list: return
-                
-                for item in report_list:
+
+                normalized_report_list = [normalize_scan_anomaly_item(item) for item in report_list]
+                historical_status_map = preload_historical_anomaly_status_map(c, normalized_report_list)
+
+                for item in normalized_report_list:
                     so_qd = item.get('So_qd', 'ALL')
                     version = item.get('Version', 'ALL')
+                    next_status = historical_status_map.get(
+                        build_anomaly_status_signature(item),
+                        'PENDING'
+                    )
+
                     c.execute("""
                         INSERT INTO scan_anomalies (scan_date, ma_tbmt, so_qd, version, issue_type, priority, details, files_involved, status)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'PENDING')
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (scan_date, ma_tbmt, so_qd, version, issue_type)
                         DO UPDATE SET 
                             priority = EXCLUDED.priority,
                             details = EXCLUDED.details,
                             files_involved = EXCLUDED.files_involved,
-                            status = CASE 
-                                WHEN scan_anomalies.status = 'IGNORED' THEN 'IGNORED' 
-                                WHEN scan_anomalies.status = 'PROCESSED'
-                                     AND COALESCE(scan_anomalies.details, '') = COALESCE(EXCLUDED.details, '')
-                                     AND COALESCE(scan_anomalies.files_involved, '') = COALESCE(EXCLUDED.files_involved, '')
-                                THEN 'PROCESSED'
-                                ELSE 'PENDING' 
-                            END
-                    """, (TARGET_DATE, item['TBMT'], so_qd, version, item['Issue'], item['Priority'], item['Details'], item['Files']))
+                            status = EXCLUDED.status
+                        WHERE scan_anomalies.priority IS DISTINCT FROM EXCLUDED.priority
+                           OR scan_anomalies.details IS DISTINCT FROM EXCLUDED.details
+                           OR scan_anomalies.files_involved IS DISTINCT FROM EXCLUDED.files_involved
+                           OR scan_anomalies.status IS DISTINCT FROM EXCLUDED.status
+                    """, (TARGET_DATE, item['TBMT'], so_qd, version, item['Issue'], item['Priority'], item['Details'], item['Files'], next_status))
     except psycopg2.Error as e:
         logger.error(f"❌ Lỗi Database khi lưu Anomalies: {e}")
 
@@ -2250,6 +2910,121 @@ def derive_status(schema_type: str) -> str:
     return "UNKNOWN"
 
 
+def normalize_anomaly_text(value):
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def normalize_anomaly_files(issue_type: str, files_value):
+    normalized = normalize_anomaly_text(files_value)
+    if issue_type == "Multi-QD":
+        parts = sorted({part.strip() for part in normalized.split(",") if part.strip()})
+        return ", ".join(parts)
+    return normalized
+
+
+def normalize_scan_anomaly_item(item):
+    normalized_item = dict(item)
+    normalized_item["Details"] = normalize_anomaly_text(item.get("Details", ""))
+    normalized_item["Files"] = normalize_anomaly_files(str(item.get("Issue", "")), item.get("Files", ""))
+    return normalized_item
+
+
+def build_anomaly_status_signature(item):
+    so_qd = item.get("So_qd", "ALL")
+    version = item.get("Version", "ALL")
+    issue_type = str(item.get("Issue", ""))
+    return (
+        item["TBMT"],
+        so_qd,
+        version,
+        issue_type,
+        item.get("Details", ""),
+        item.get("Files", ""),
+    )
+
+
+def preload_historical_anomaly_status_map(cursor, normalized_report_list):
+    base_keys = tuple({
+        (
+            item["TBMT"],
+            item.get("So_qd", "ALL"),
+            item.get("Version", "ALL"),
+            str(item.get("Issue", "")),
+        )
+        for item in normalized_report_list
+    })
+    if not base_keys:
+        return {}
+
+    cursor.execute("""
+        SELECT scan_date, ma_tbmt, so_qd, version, issue_type, status, details, files_involved, created_at
+        FROM scan_anomalies
+        WHERE (ma_tbmt, so_qd, version, issue_type) IN %s
+          AND status IN ('PROCESSED', 'IGNORED')
+        ORDER BY scan_date DESC, created_at DESC
+    """, (base_keys,))
+
+    status_map = {}
+    for _, tbmt, so_qd, version, issue_type, status, details, files_involved, _ in cursor.fetchall():
+        signature = (
+            tbmt,
+            so_qd,
+            version,
+            issue_type,
+            normalize_anomaly_text(details),
+            normalize_anomaly_files(issue_type, files_involved),
+        )
+        if signature not in status_map:
+            status_map[signature] = status
+    return status_map
+
+
+def fetch_manifest_status_counts(cursor, work_date: str) -> dict[str, int]:
+    cursor.execute("""
+        SELECT status, COUNT(*)
+        FROM daily_manifest
+        WHERE manifest_date = %s
+        GROUP BY status
+    """, (work_date,))
+    return {str(status or "UNKNOWN"): int(count or 0) for status, count in cursor.fetchall()}
+
+
+def fetch_active_human_task_counts(cursor, work_date: str) -> dict[str, int]:
+    cursor.execute("""
+        SELECT task_type, COUNT(*)
+        FROM human_task_queue
+        WHERE work_date = %s
+          AND status IN %s
+        GROUP BY task_type
+    """, (work_date, ACTIVE_HUMAN_TASK_STATUSES))
+    return {str(task_type or "UNKNOWN").upper(): int(count or 0) for task_type, count in cursor.fetchall()}
+
+
+def print_current_manifest_backlog(cursor, work_date: str):
+    manifest_counts = fetch_manifest_status_counts(cursor, work_date)
+    human_task_counts = fetch_active_human_task_counts(cursor, work_date)
+
+    ready_count = manifest_counts.get("READY", 0)
+    pending_ocr_count = manifest_counts.get("PENDING_OCR", 0)
+    pending_manual_count = manifest_counts.get("PENDING_MANUAL", 0)
+    processed_count = manifest_counts.get("PROCESSED", 0)
+    pending_review_count = manifest_counts.get("PENDING_ETL_REVIEW", 0)
+
+    print("📌 Tồn đọng hiện tại:")
+    print(f"   - READY: {ready_count} gói")
+    print(f"   - PENDING_OCR: {pending_ocr_count} gói")
+    print(f"   - PENDING_MANUAL: {pending_manual_count} gói")
+    if pending_review_count:
+        print(f"   - PENDING_ETL_REVIEW: {pending_review_count} gói")
+    if processed_count:
+        print(f"   - PROCESSED: {processed_count} gói")
+
+    active_ocr_tasks = human_task_counts.get("OCR", 0)
+    active_manual_tasks = human_task_counts.get("MANUAL", 0)
+    print(f"   - Human task OCR đang mở: {active_ocr_tasks} gói")
+    print(f"   - Human task MANUAL đang mở: {active_manual_tasks} gói")
+
+
 def save_manifest_issues(issue_list):
     if not issue_list:
         return
@@ -2263,6 +3038,17 @@ def save_manifest_issues(issue_list):
     try:
         with get_db_connection() as conn:
             with conn.cursor() as c:
+                issue_units = tuple({
+                    (item["TBMT"], item.get("So_qd"), item.get("Version"))
+                    for item in clean_list
+                })
+                if issue_units:
+                    c.execute("""
+                        DELETE FROM manifest_issues
+                        WHERE issue_date = %s
+                          AND (ma_tbmt, so_qd, version) IN %s
+                    """, (TARGET_DATE, issue_units))
+
                 for item in clean_list:
                     c.execute("""
                         INSERT INTO manifest_issues
@@ -2519,6 +3305,7 @@ def collect_crawl_batch_context(cursor, mode, crawl_date=None):
         table_queries = {
             "packages": "SELECT COUNT(*) FROM packages WHERE (ma_tbmt, so_qd, version) IN %s",
             "package_metadata": "SELECT COUNT(*) FROM package_metadata WHERE (ma_tbmt, so_qd, version) IN %s",
+            "web_winner_facts": "SELECT COUNT(*) FROM web_winner_facts WHERE (ma_tbmt, so_qd, version) IN %s",
             "qd_relations": "SELECT COUNT(*) FROM qd_relations WHERE (ma_tbmt, so_qd, version) IN %s",
             "processed_medicines": "SELECT COUNT(*) FROM processed_medicines WHERE (ma_tbmt, so_qd, version) IN %s",
             "processed_goods": "SELECT COUNT(*) FROM processed_goods WHERE (ma_tbmt, so_qd, version) IN %s",
@@ -2542,7 +3329,7 @@ def collect_crawl_batch_context(cursor, mode, crawl_date=None):
         summary["human_task_queue"] = cursor.fetchone()[0]
     else:
         for table_name in [
-            "packages", "package_metadata", "qd_relations", "processed_medicines",
+            "packages", "package_metadata", "web_winner_facts", "qd_relations", "processed_medicines",
             "processed_goods", "daily_manifest", "human_task_queue"
         ]:
             summary[table_name] = 0
@@ -2617,7 +3404,11 @@ def resolve_target_tbmts(cursor, ma_tbmt=None, package_phrase=None, investor_phr
             SELECT DISTINCT ma_tbmt
             FROM processed_goods
             WHERE LOWER(COALESCE(nha_thau_trung_thau, '')) LIKE %s
-        """, (like_value, like_value))
+            UNION
+            SELECT DISTINCT ma_tbmt
+            FROM web_winner_facts
+            WHERE LOWER(COALESCE(only_winner_name, '')) LIKE %s
+        """, (like_value, like_value, like_value))
         target_tbmts.update(row[0] for row in cursor.fetchall() if row[0])
 
     return target_tbmts
@@ -2686,6 +3477,7 @@ def collect_related_cleanup_context(cursor, tbmt_tuple, keep_filtered_skip_logs=
         ("scan_anomalies", "ma_tbmt"),
         ("packages", "ma_tbmt"),
         ("package_metadata", "ma_tbmt"),
+        ("web_winner_facts", "ma_tbmt"),
         ("qd_relations", "ma_tbmt"),
     ]
     if keep_filtered_skip_logs:
@@ -2865,6 +3657,7 @@ def purge_crawl_batch(mode="latest_run", crawl_date=None, dry_run=False):
                         ("processed_goods", "(ma_tbmt, so_qd, version) IN %s"),
                         ("packages", "(ma_tbmt, so_qd, version) IN %s"),
                         ("package_metadata", "(ma_tbmt, so_qd, version) IN %s"),
+                        ("web_winner_facts", "(ma_tbmt, so_qd, version) IN %s"),
                         ("qd_relations", "(ma_tbmt, so_qd, version) IN %s"),
                     ]
                     for table_name, where_clause in table_deletes:
@@ -3041,6 +3834,9 @@ def ignore_qd_unit(ma_tbmt, so_qd, version, correct_qd, note=None, dry_run=False
                         relation_type = 'TYPO_ERROR',
                         note = EXCLUDED.note,
                         updated_at = NOW()
+                    WHERE qd_relations.so_qd_original IS DISTINCT FROM EXCLUDED.so_qd_original
+                       OR qd_relations.relation_type IS DISTINCT FROM 'TYPO_ERROR'
+                       OR qd_relations.note IS DISTINCT FROM EXCLUDED.note
                 """, (ma_tbmt, so_qd, version, correct_qd, note or "Typo QĐ from source"))
 
                 path_sources = [
@@ -3084,6 +3880,7 @@ def ignore_qd_unit(ma_tbmt, so_qd, version, correct_qd, note=None, dry_run=False
                     ("scan_logs", "ma_tbmt = %s AND so_qd = %s"),
                     ("packages", "ma_tbmt = %s AND so_qd = %s"),
                     ("package_metadata", "ma_tbmt = %s AND so_qd = %s"),
+                    ("web_winner_facts", "ma_tbmt = %s AND so_qd = %s"),
                     ("qd_relations", "ma_tbmt = %s AND so_qd = %s"),
                 ]
 
@@ -3163,23 +3960,21 @@ def save_manifest_to_db(manifest_list):
                             item.get("Version")
                         )
                     c.execute("""
-                        DELETE FROM daily_manifest
-                        WHERE manifest_date = %s AND ma_tbmt = %s AND so_qd = %s AND version = %s
-                    """, (TARGET_DATE, item["TBMT"], item.get("So_qd"), item.get("Version")))
-
-                    c.execute("""
                         INSERT INTO daily_manifest
                         (manifest_date, ma_tbmt, so_qd, version, filename, schema_type, full_path, file_size_kb, status)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT ON CONSTRAINT uq_manifest
                         DO UPDATE SET
-                            ma_tbmt = EXCLUDED.ma_tbmt,
-                            so_qd = EXCLUDED.so_qd,
-                            version = EXCLUDED.version,
+                            filename = EXCLUDED.filename,
                             schema_type = EXCLUDED.schema_type,
                             full_path = EXCLUDED.full_path,
                             file_size_kb = EXCLUDED.file_size_kb,
                             status = EXCLUDED.status
+                        WHERE daily_manifest.filename IS DISTINCT FROM EXCLUDED.filename
+                           OR daily_manifest.schema_type IS DISTINCT FROM EXCLUDED.schema_type
+                           OR daily_manifest.full_path IS DISTINCT FROM EXCLUDED.full_path
+                           OR daily_manifest.file_size_kb IS DISTINCT FROM EXCLUDED.file_size_kb
+                           OR daily_manifest.status IS DISTINCT FROM EXCLUDED.status
                     """, (TARGET_DATE, item["TBMT"], item.get("So_qd"), item.get("Version"),
                           item["Filename"], item["Schema_Type"], item["Full_Path"], item["Size_KB"], status))
         logger.info(f"✅ Đã upsert {len(clean_list)} record vào DB [table: daily_manifest].")
@@ -3202,7 +3997,7 @@ def parse_source_files_json(value):
     return []
 
 
-def refresh_human_tasks_sheet(task_type: str, work_date: str | None = None):
+def refresh_human_tasks_sheet(task_type: str, work_date: str | None = None, include_completed: bool = False):
     work_date = work_date or TARGET_DATE
     if not work_date:
         return
@@ -3212,14 +4007,25 @@ def refresh_human_tasks_sheet(task_type: str, work_date: str | None = None):
 
     try:
         with get_db_connection() as conn, conn.cursor() as cursor:
-            cursor.execute("""
-                SELECT ma_tbmt, so_qd, version, source_filename, source_files_json,
-                       expected_output_filename, issue_reason, status, validation_message,
-                       result_filename, updated_at
-                FROM human_task_queue
-                WHERE work_date = %s AND task_type = %s
-                ORDER BY status, ma_tbmt, so_qd, version
-            """, (work_date, task_type))
+            if include_completed:
+                cursor.execute("""
+                    SELECT ma_tbmt, so_qd, version, source_filename, source_files_json,
+                           expected_output_filename, issue_reason, status, validation_message,
+                           result_filename, updated_at
+                    FROM human_task_queue
+                    WHERE work_date = %s AND task_type = %s
+                    ORDER BY status, ma_tbmt, so_qd, version
+                """, (work_date, task_type))
+            else:
+                cursor.execute("""
+                    SELECT ma_tbmt, so_qd, version, source_filename, source_files_json,
+                           expected_output_filename, issue_reason, status, validation_message,
+                           result_filename, updated_at
+                    FROM human_task_queue
+                    WHERE work_date = %s AND task_type = %s
+                      AND status IN %s
+                    ORDER BY status, ma_tbmt, so_qd, version
+                """, (work_date, task_type, ACTIVE_HUMAN_TASK_STATUSES))
             rows = cursor.fetchall()
     except psycopg2.Error as e:
         logger.error(f"❌ Không thể refresh tasks.xlsx cho {task_type}: {e}")
@@ -3265,6 +4071,7 @@ def export_human_tasks(task_type: str, task_list: list):
         for item in task_list
     }
     exported_count = 0
+    stale_artifact_paths = set()
 
     try:
         with get_db_connection() as conn, conn.cursor() as cursor:
@@ -3312,15 +4119,25 @@ def export_human_tasks(task_type: str, task_list: list):
                         workspace_result_dir = EXCLUDED.workspace_result_dir,
                         expected_output_filename = EXCLUDED.expected_output_filename,
                         issue_reason = EXCLUDED.issue_reason,
-                        status = CASE
-                            WHEN human_task_queue.status = 'COMPLETED' THEN human_task_queue.status
-                            ELSE 'EXPORTED'
-                        END,
-                        validation_message = CASE
-                            WHEN human_task_queue.status = 'COMPLETED' THEN human_task_queue.validation_message
-                            ELSE NULL
+                        status = 'EXPORTED',
+                        validation_message = NULL,
+                        result_filename = NULL,
+                        import_attempts = CASE
+                            WHEN human_task_queue.status = 'COMPLETED' THEN 0
+                            ELSE human_task_queue.import_attempts
                         END,
                         updated_at = CURRENT_TIMESTAMP
+                    WHERE
+                        human_task_queue.source_filename IS DISTINCT FROM EXCLUDED.source_filename
+                        OR human_task_queue.source_path IS DISTINCT FROM EXCLUDED.source_path
+                        OR human_task_queue.source_files_json IS DISTINCT FROM EXCLUDED.source_files_json
+                        OR human_task_queue.workspace_source_dir IS DISTINCT FROM EXCLUDED.workspace_source_dir
+                        OR human_task_queue.workspace_result_dir IS DISTINCT FROM EXCLUDED.workspace_result_dir
+                        OR human_task_queue.expected_output_filename IS DISTINCT FROM EXCLUDED.expected_output_filename
+                        OR human_task_queue.issue_reason IS DISTINCT FROM EXCLUDED.issue_reason
+                        OR human_task_queue.status IS DISTINCT FROM 'EXPORTED'
+                        OR human_task_queue.validation_message IS NOT NULL
+                        OR human_task_queue.result_filename IS NOT NULL
                 """, (
                     TARGET_DATE,
                     task_type,
@@ -3337,8 +4154,18 @@ def export_human_tasks(task_type: str, task_list: list):
                 ))
                 exported_count += 1
 
+            stale_artifact_paths = collect_stale_human_workspace_artifact_paths(
+                cursor,
+                task_type=task_type,
+                work_date=TARGET_DATE,
+            )
             conn.commit()
+        deleted_stale, failed_stale = cleanup_human_workspace_artifacts(stale_artifact_paths)
         refresh_human_tasks_sheet(task_type)
+        if deleted_stale:
+            logger.info(f"🧹 Đã dọn {len(deleted_stale)} artifact {task_type} đã hoàn tất khỏi human_workspace.")
+        if failed_stale:
+            logger.warning(f"⚠️ Có {len(failed_stale)} artifact {task_type} hoàn tất chưa xóa được.")
         logger.info(f"⚡ Đã export {exported_count} task {task_type} vào human_workspace.")
         return exported_count
     except psycopg2.Error as e:
@@ -3403,23 +4230,130 @@ def cleanup_human_workspace_artifacts(paths):
     return deleted_paths, failed_paths
 
 
+def collect_stale_human_workspace_artifact_paths(cursor, task_type: str, work_date: str):
+    cursor.execute("""
+        SELECT ma_tbmt, so_qd, version, source_files_json,
+               expected_output_filename, result_filename, status
+        FROM human_task_queue
+        WHERE work_date = %s AND task_type = %s
+    """, (work_date, task_type))
+    rows = cursor.fetchall()
+    if not rows:
+        return set()
+
+    protected_paths = set()
+    stale_paths = set()
+
+    for row in rows:
+        row_paths = build_human_task_artifact_paths(
+            task_type=task_type,
+            work_date=work_date,
+            tbmt=row[0],
+            so_qd=row[1],
+            version=row[2],
+            source_files=parse_source_files_json(row[3]),
+            expected_output_filename=row[4],
+            result_filename=row[5],
+        )
+        if row[6] in ACTIVE_HUMAN_TASK_STATUSES:
+            protected_paths.update(row_paths)
+        else:
+            stale_paths.update(row_paths)
+
+    return stale_paths - protected_paths
+
+
+def cleanup_resolved_human_tasks(cursor, task_type: str, work_date: str, ready_unit_keys):
+    if not ready_unit_keys:
+        return 0, set()
+
+    unit_tuple = tuple({
+        (str(tbmt), str(so_qd), str(version))
+        for tbmt, so_qd, version in ready_unit_keys
+        if tbmt and so_qd and version is not None
+    })
+    if not unit_tuple:
+        return 0, set()
+
+    cursor.execute("""
+        SELECT id, ma_tbmt, so_qd, version, source_files_json,
+               expected_output_filename, result_filename
+        FROM human_task_queue
+        WHERE work_date = %s
+          AND task_type = %s
+          AND status <> 'COMPLETED'
+          AND (ma_tbmt, so_qd, version) IN %s
+    """, (work_date, task_type, unit_tuple))
+    rows = cursor.fetchall()
+    if not rows:
+        return 0, set()
+
+    cleanup_paths = set()
+    row_ids = []
+    for row in rows:
+        row_ids.append(row[0])
+        cleanup_paths.update(
+            build_human_task_artifact_paths(
+                task_type=task_type,
+                work_date=work_date,
+                tbmt=row[1],
+                so_qd=row[2],
+                version=row[3],
+                source_files=parse_source_files_json(row[4]),
+                expected_output_filename=row[5],
+                result_filename=row[6],
+            )
+        )
+
+    cursor.execute("DELETE FROM human_task_queue WHERE id IN %s", (tuple(row_ids),))
+    return len(row_ids), cleanup_paths
+
+
+def sync_active_human_tasks_with_ready_manifest(cursor, work_date: str):
+    cursor.execute("""
+        SELECT ma_tbmt, so_qd, version
+        FROM daily_manifest
+        WHERE manifest_date = %s
+          AND status = 'READY'
+    """, (work_date,))
+    ready_unit_keys = [row for row in cursor.fetchall() if row[0] and row[1] and row[2] is not None]
+    if not ready_unit_keys:
+        return 0, set(), 0, set()
+
+    resolved_manual_count, manual_cleanup_paths = cleanup_resolved_human_tasks(
+        cursor,
+        task_type="MANUAL",
+        work_date=work_date,
+        ready_unit_keys=ready_unit_keys,
+    )
+    resolved_ocr_count, ocr_cleanup_paths = cleanup_resolved_human_tasks(
+        cursor,
+        task_type="OCR",
+        work_date=work_date,
+        ready_unit_keys=ready_unit_keys,
+    )
+    return resolved_manual_count, manual_cleanup_paths, resolved_ocr_count, ocr_cleanup_paths
+
+
 def upsert_ready_manifest_record(cursor, tbmt, so_qd, version, filename, full_path, schema_type):
     file_size_kb = round(os.path.getsize(full_path) / 1024, 2)
     clear_manifest_issues_for_unit(cursor, TARGET_DATE, tbmt, so_qd, version)
-    cursor.execute("""
-        DELETE FROM daily_manifest
-        WHERE manifest_date = %s AND ma_tbmt = %s AND so_qd = %s AND version = %s
-    """, (TARGET_DATE, tbmt, so_qd, version))
     cursor.execute("""
         INSERT INTO daily_manifest
         (manifest_date, ma_tbmt, so_qd, version, filename, schema_type, full_path, file_size_kb, status)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'READY')
         ON CONFLICT ON CONSTRAINT uq_manifest
         DO UPDATE SET
+            filename = EXCLUDED.filename,
             schema_type = EXCLUDED.schema_type,
             full_path = EXCLUDED.full_path,
             file_size_kb = EXCLUDED.file_size_kb,
             status = 'READY'
+        WHERE daily_manifest.filename IS DISTINCT FROM EXCLUDED.filename
+           OR daily_manifest.schema_type IS DISTINCT FROM EXCLUDED.schema_type
+           OR daily_manifest.full_path IS DISTINCT FROM EXCLUDED.full_path
+           OR daily_manifest.file_size_kb IS DISTINCT FROM EXCLUDED.file_size_kb
+           OR daily_manifest.status IS DISTINCT FROM 'READY'
     """, (TARGET_DATE, tbmt, so_qd, version, filename, schema_type, full_path, file_size_kb))
 
 
@@ -3447,6 +4381,12 @@ def import_human_results(task_type: str):
                 if not rows:
                     return print(f"❌ Không có task {task_type} nào đang chờ nhập.")
 
+                clear_web_winner_fact_cache()
+                prefetch_web_winner_facts(
+                    cursor,
+                    [(row[1], row[2], row[3]) for row in rows]
+                )
+
                 imported_count = 0
                 invalid_count = 0
                 cleanup_paths = set()
@@ -3464,26 +4404,24 @@ def import_human_results(task_type: str):
                         result_path,
                         os.path.splitext(result_filename)[1],
                         tbmt,
+                        so_qd,
+                        version,
                         source_files + [result_filename],
+                        winner_fact_cursor=cursor,
+                        validation_scope=VALIDATION_SCOPE_DECISION,
                     )
-
-                    cursor.execute("""
-                        UPDATE human_task_queue
-                        SET import_attempts = import_attempts + 1,
-                            result_filename = %s,
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id = %s
-                    """, (result_filename, task_id))
 
                     if status not in ['MEDICINE_STANDARD', 'GOODS_STANDARD']:
                         invalid_count += 1
                         cursor.execute("""
                             UPDATE human_task_queue
-                            SET status = 'INVALID_OUTPUT',
+                            SET import_attempts = import_attempts + 1,
+                                result_filename = %s,
+                                status = 'INVALID_OUTPUT',
                                 validation_message = %s,
                                 updated_at = CURRENT_TIMESTAMP
                             WHERE id = %s
-                        """, (reason, task_id))
+                        """, (result_filename, reason, task_id))
                         print(f"❌ {task_type} chưa đạt: {result_filename}\n   => {reason}")
                         continue
 
@@ -3494,11 +4432,13 @@ def import_human_results(task_type: str):
                     upsert_ready_manifest_record(cursor, tbmt, so_qd, version, dest_filename, dest_path, status)
                     cursor.execute("""
                         UPDATE human_task_queue
-                        SET status = 'COMPLETED',
+                        SET import_attempts = import_attempts + 1,
+                            result_filename = %s,
+                            status = 'COMPLETED',
                             validation_message = 'OK',
                             updated_at = CURRENT_TIMESTAMP
                         WHERE id = %s
-                    """, (task_id,))
+                    """, (result_filename, task_id))
                     cleanup_paths.update(
                         build_human_task_artifact_paths(
                             task_type=task_type,
@@ -3539,6 +4479,8 @@ def scan_anomalies():
     if not os.path.exists(SOURCE_DIR):
         print(f"❌ Không tìm thấy folder: {SOURCE_DIR}")
         return
+
+    clear_file_analysis_caches()
 
     converted_docx = auto_convert_docx_files_in_source()
     if converted_docx:
@@ -3600,7 +4542,28 @@ def scan_anomalies():
                     tbmt_qd_map.setdefault(tbmt, set()).add(qd_raw)
 
                 found_tbmts = tuple(tb for tb in tbmt_qd_map.keys() if tb and tb != "UNKNOWN_TBMT")
+                cancelled_unit_keys = build_cancelled_unit_key_set(cursor, found_tbmts)
                 if found_tbmts:
+                    cursor.execute("""
+                        SELECT ma_tbmt, so_qd, version
+                        FROM packages
+                        WHERE ma_tbmt IN %s AND is_latest = 1
+                    """, (found_tbmts,))
+                    active_qd_map = {}
+                    for db_tbmt, db_qd, db_version in cursor.fetchall():
+                        if (db_tbmt, db_qd, db_version) in cancelled_unit_keys:
+                            continue
+                        active_qd_map.setdefault(db_tbmt, set()).add(db_qd)
+
+                    tbmt_qd_map = {
+                        tbmt: {
+                            qd for qd in qds
+                            if qd == "UNKNOWN" or qd in active_qd_map.get(tbmt, set())
+                        }
+                        for tbmt, qds in tbmt_qd_map.items()
+                    }
+                    tbmt_qd_map = {tbmt: qds for tbmt, qds in tbmt_qd_map.items() if qds}
+
                     cursor.execute("""
                         SELECT DISTINCT ma_tbmt, so_qd
                         FROM packages
@@ -3614,9 +4577,10 @@ def scan_anomalies():
                 # 3. Ghi nhận lỗi
                 for tbmt, qds in tbmt_qd_map.items():
                     if len(qds) > 1 and tbmt not in configured_tbmts:
+                        ordered_qds = sorted(qds)
                         report_data.append({
                             "TBMT": tbmt, "So_qd": "ALL", "Version": "ALL", "Priority": "HIGH", "Issue": "Multi-QD",
-                            "Details": f"TBMT có {len(qds)} quyết định phê duyệt khác nhau", "Files": ", ".join(qds)
+                            "Details": f"TBMT có {len(ordered_qds)} quyết định phê duyệt khác nhau", "Files": ", ".join(ordered_qds)
                         })
 
                 if found_tbmts:
@@ -3626,11 +4590,14 @@ def scan_anomalies():
                         WHERE ma_tbmt IN %s AND is_latest = 1 AND file_type = 'excel'
                     """, (found_tbmts,))
                     for tbmt, so_qd, version, file_path in cursor.fetchall():
+                        if (tbmt, so_qd, version) in cancelled_unit_keys:
+                            continue
                         if so_qd in ignored_qd_map.get(tbmt, set()):
                             continue
 
-                        sheet_names = get_excel_sheet_names_any(file_path)
-                        if len(sheet_names) <= 1:
+                        sheet_groups = get_excel_sheet_names_any(file_path)
+                        visible_sheet_names = sheet_groups.get("visible", [])
+                        if len(visible_sheet_names) <= 1:
                             continue
 
                         report_data.append({
@@ -3640,9 +4607,9 @@ def scan_anomalies():
                             "Priority": "MEDIUM",
                             "Issue": "Multi-Sheet Excel",
                             "Details": (
-                                f"File Excel có {len(sheet_names)} sheet "
-                                f"({', '.join(sheet_names[:6])}{'...' if len(sheet_names) > 6 else ''}). "
-                                f"Hệ thống hiện mặc định đọc sheet đầu tiên, cần kiểm tra tay để tránh sót dữ liệu."
+                                f"File Excel có {len(visible_sheet_names)} sheet hiển thị "
+                                f"({', '.join(visible_sheet_names[:6])}{'...' if len(visible_sheet_names) > 6 else ''}). "
+                                f"Hệ thống chỉ đọc các sheet hiển thị; cần kiểm tra tay để tránh sót dữ liệu ở các sheet hiển thị còn lại."
                             ),
                             "Files": os.path.basename(str(file_path or ""))
                         })
@@ -3666,6 +4633,7 @@ def scan_anomalies():
                                 "is_latest": row[3],
                             }
                             for row in cursor.fetchall()
+                            if (tbmt, current_qd, row[0]) not in cancelled_unit_keys
                         ]
 
                         version_map = build_version_map(package_rows)
@@ -3714,10 +4682,21 @@ def scan_anomalies():
 # ----------------- TASK 2: ĐÁNH GIÁ, PHÂN LOẠI & CHỐT MANIFEST -----------------
 def finalize_and_generate_manifest(batch_limit=None):
     print(f"\n🚀 ĐANG TẠO MANIFEST ({TARGET_DATE})")
+    clear_web_winner_fact_cache()
+    clear_file_analysis_caches()
+    resolved_manual_cleanup_paths = set()
+    resolved_manual_task_count = 0
+    resolved_ocr_cleanup_paths = set()
+    resolved_ocr_task_count = 0
     converted_docx = auto_convert_docx_files_in_source()
     if converted_docx:
         logger.info(f"⚡ Đã auto-convert {len(converted_docx)} file Word sang Excel trước khi finalize.")
         for src_name, out_name in converted_docx:
+            logger.info(f"   ↳ {src_name} -> {out_name}")
+    converted_xls = auto_convert_xls_files_in_source()
+    if converted_xls:
+        logger.info(f"⚡ Đã auto-convert {len(converted_xls)} file XLS sang XLSX trước khi finalize.")
+        for src_name, out_name in converted_xls:
             logger.info(f"   ↳ {src_name} -> {out_name}")
     
     try:
@@ -3797,9 +4776,18 @@ def finalize_and_generate_manifest(batch_limit=None):
                     WHERE p.ma_tbmt IN %s AND p.is_latest = 1
                     GROUP BY p.ma_tbmt, p.so_qd, p.version, relation_type, qd_original
                 """, (tuple(found_tbmts),))
+                cancelled_unit_keys = build_cancelled_unit_key_set(cursor, found_tbmts)
 
-                db_rows = [
-                    {
+                db_rows_map = {}
+
+                for row in cursor.fetchall():
+                    unit_key = (row[0], row[1], row[2])
+                    if row[1] in ignored_qd_map.get(row[0], set()):
+                        continue
+                    if unit_key in cancelled_unit_keys:
+                        continue
+
+                    db_rows_map[unit_key] = {
                         "tbmt": row[0],
                         "so_qd": row[1],
                         "version": row[2],
@@ -3807,11 +4795,62 @@ def finalize_and_generate_manifest(batch_limit=None):
                         "relation_type": row[4],
                         "qd_original": row[5],
                     }
-                    for row in cursor.fetchall()
-                    if row[1] not in ignored_qd_map.get(row[0], set())
-                ]
+                cursor.execute("""
+                    SELECT dm.ma_tbmt,
+                           dm.so_qd,
+                           dm.version,
+                           array_remove(array_agg(DISTINCT p.file_path), NULL) AS file_paths,
+                           'MANIFEST_BACKLOG' AS relation_type,
+                           dm.so_qd AS qd_original
+                    FROM daily_manifest dm
+                    LEFT JOIN packages p
+                      ON p.ma_tbmt = dm.ma_tbmt
+                     AND p.so_qd = dm.so_qd
+                     AND p.version = dm.version
+                    WHERE dm.manifest_date = %s
+                      AND dm.ma_tbmt IN %s
+                      AND dm.status IN ('PENDING_MANUAL', 'PENDING_OCR', 'READY')
+                    GROUP BY dm.ma_tbmt, dm.so_qd, dm.version
+                """, (TARGET_DATE, tuple(found_tbmts)))
+
+                for row in cursor.fetchall():
+                    unit_key = (row[0], row[1], row[2])
+                    if row[1] in ignored_qd_map.get(row[0], set()):
+                        continue
+                    if unit_key in cancelled_unit_keys:
+                        continue
+                    if unit_key in db_rows_map:
+                        continue
+
+                    db_rows_map[unit_key] = {
+                        "tbmt": row[0],
+                        "so_qd": row[1],
+                        "version": row[2],
+                        "file_paths": row[3] or [],
+                        "relation_type": row[4],
+                        "qd_original": row[5],
+                    }
+
+                db_rows = list(db_rows_map.values())
                 if not db_rows:
+                    sync_manual_count, sync_manual_paths, sync_ocr_count, sync_ocr_paths = sync_active_human_tasks_with_ready_manifest(
+                        cursor,
+                        TARGET_DATE,
+                    )
+                    resolved_manual_task_count += sync_manual_count
+                    resolved_ocr_task_count += sync_ocr_count
+                    resolved_manual_cleanup_paths.update(sync_manual_paths)
+                    resolved_ocr_cleanup_paths.update(sync_ocr_paths)
+                    conn.commit()
+                    print_current_manifest_backlog(cursor, TARGET_DATE)
+                    if cancelled_unit_keys:
+                        return print(f"🟡 Tất cả unit liên quan đã có trạng thái 'Đã hủy'. Bỏ qua {len(cancelled_unit_keys)} gói.")
                     return print("⚠️ Không tìm thấy metadata trong DB.")
+
+                prefetch_web_winner_facts(
+                    cursor,
+                    [(row["tbmt"], row["so_qd"], row["version"]) for row in db_rows]
+                )
 
                 relation_superseded_map = build_relation_superseded_units(db_rows, physical_map)
                 relation_superseded_units = set(relation_superseded_map.keys())
@@ -3853,6 +4892,8 @@ def finalize_and_generate_manifest(batch_limit=None):
                 total_ocr_source_files = 0
                 blocked_by_anomaly_count = 0
                 blocked_by_temp_abort_count = 0
+                missing_pdf_source_count = 0
+                cancelled_unit_count = len(cancelled_unit_keys)
 
                 for unit in db_rows:
                     tbmt = unit["tbmt"]
@@ -3908,8 +4949,15 @@ def finalize_and_generate_manifest(batch_limit=None):
 
                     matched_files = find_matched_files_for_unit(candidates, file_paths, tbmt, qd_raw, version)
                     if not matched_files: continue
+                    matched_files = canonicalize_source_file_refs(matched_files)
 
-                    best_file = choose_best_file(matched_files)
+                    usable_matched_files, excluded_bidder_info_files = filter_out_bidder_info_excel_candidates(matched_files)
+                    candidate_files_for_status = usable_matched_files or matched_files
+                    pdf_candidate_files = [f for f in matched_files if str(f).lower().endswith('.pdf')]
+                    if not usable_matched_files and excluded_bidder_info_files and pdf_candidate_files:
+                        candidate_files_for_status = pdf_candidate_files
+
+                    best_file = choose_best_file(candidate_files_for_status)
                     if not best_file or best_file in processed_filenames: continue
                     processed_filenames.add(best_file)
 
@@ -3920,9 +4968,21 @@ def finalize_and_generate_manifest(batch_limit=None):
                     if manual_file_type in ('excel', 'pdf'):
                         upsert_manual_file_to_packages(tbmt, qd_raw, version, full_path, manual_file_type)
 
-                    status, reason = identify_file_status_detailed(full_path, best_ext, tbmt, matched_files)
+                    status, reason = identify_file_status_detailed(
+                        full_path,
+                        best_ext,
+                        tbmt,
+                        qd_raw,
+                        version,
+                        candidate_files_for_status,
+                        winner_fact_cursor=cursor,
+                        validation_scope=VALIDATION_SCOPE_DECISION,
+                    )
 
                     if status == "IGNORE": continue
+                    manifest_filename = best_file
+                    manifest_full_path = full_path
+
                     if status == "MANUAL_FIX_REQUIRED":
                         print(f"🔴 CẦN SỬA TAY: {best_file}\n   => Lý do: {reason}")
                         manifest_issues.append({
@@ -3938,12 +4998,38 @@ def finalize_and_generate_manifest(batch_limit=None):
                             "So_qd": qd_raw,
                             "Version": version,
                             "Source_Filename": best_file,
-                            "Source_Files": matched_files,
+                            "Source_Files": candidate_files_for_status,
                             "Expected_Output_Filename": build_expected_result_filename(best_file),
                             "Issue_Reason": reason,
                         })
 
                     if status == "OCR_REQUIRED":
+                        pdf_sources = [f for f in candidate_files_for_status if f.lower().endswith('.pdf')]
+                        if not pdf_sources and excluded_bidder_info_files:
+                            logger.info(
+                                f"🗂️ Bỏ qua {len(excluded_bidder_info_files)} file Excel contractor-info cho {tbmt} / {qd_raw} / v{version}: "
+                                + ", ".join(str(item[0]) for item in excluded_bidder_info_files[:3])
+                            )
+                        if not pdf_sources:
+                            missing_pdf_source_count += 1
+                            missing_pdf_reason = (
+                                "Chỉ phát hiện file Excel thông tin nhà thầu trúng thầu, chưa có PDF quyết định phê duyệt "
+                                "để đưa sang OCR. Hãy tải PDF nguồn và thêm vào thư mục latest."
+                            )
+                            print(
+                                f"🟠 THIẾU PDF NGUỒN: {tbmt} / {qd_raw} / v{version}\n"
+                                f"   => {missing_pdf_reason}"
+                            )
+                            manifest_issues.append({
+                                "TBMT": tbmt,
+                                "So_qd": qd_raw,
+                                "Version": version,
+                                "Filename": best_file,
+                                "Issue_Type": "MISSING_PDF_SOURCE",
+                                "Issue_Reason": missing_pdf_reason,
+                            })
+                            continue
+
                         manifest_issues.append({
                             "TBMT": tbmt,
                             "So_qd": qd_raw,
@@ -3952,10 +5038,11 @@ def finalize_and_generate_manifest(batch_limit=None):
                             "Issue_Type": "OCR_REQUIRED",
                             "Issue_Reason": reason
                         })
-                        pdf_sources = [f for f in matched_files if f.lower().endswith('.pdf')]
                         if pdf_sources:
                             total_ocr_source_files += len(pdf_sources)
                             primary_pdf = next((f for f in pdf_sources if f == best_file), pdf_sources[0])
+                            manifest_filename = primary_pdf
+                            manifest_full_path = os.path.join(SOURCE_DIR, primary_pdf)
                             ocr_human_tasks.append({
                                 "TBMT": tbmt,
                                 "So_qd": qd_raw,
@@ -3967,12 +5054,22 @@ def finalize_and_generate_manifest(batch_limit=None):
                             })
                                 
                     manifest_data.append({
-                        "TBMT": tbmt, "Filename": best_file, "Schema_Type": status,
-                        "Full_Path": full_path, "Size_KB": round(os.path.getsize(full_path)/1024, 2),
+                        "TBMT": tbmt, "Filename": manifest_filename, "Schema_Type": status,
+                        "Full_Path": manifest_full_path, "Size_KB": round(os.path.getsize(manifest_full_path)/1024, 2),
                         "So_qd": qd_raw, "Version": version
                     })
 
                 if todo_count == 0 and blocked_by_anomaly_count == 0 and blocked_by_temp_abort_count == 0:
+                    sync_manual_count, sync_manual_paths, sync_ocr_count, sync_ocr_paths = sync_active_human_tasks_with_ready_manifest(
+                        cursor,
+                        TARGET_DATE,
+                    )
+                    resolved_manual_task_count += sync_manual_count
+                    resolved_ocr_task_count += sync_ocr_count
+                    resolved_manual_cleanup_paths.update(sync_manual_paths)
+                    resolved_ocr_cleanup_paths.update(sync_ocr_paths)
+                    conn.commit()
+                    print_current_manifest_backlog(cursor, TARGET_DATE)
                     return print(f"✅ Tất cả file đã đạt READY.")
 
                 if manifest_issues:
@@ -3980,6 +5077,46 @@ def finalize_and_generate_manifest(batch_limit=None):
 
                 if manifest_data:
                     save_manifest_to_db(manifest_data)
+                    ready_unit_keys = [
+                        (item["TBMT"], item["So_qd"], item["Version"])
+                        for item in manifest_data
+                        if item["Schema_Type"] in ["MEDICINE_STANDARD", "GOODS_STANDARD"]
+                    ]
+                    ocr_unit_keys = [
+                        (item["TBMT"], item["So_qd"], item["Version"])
+                        for item in manifest_data
+                        if item["Schema_Type"] == "OCR_REQUIRED"
+                    ]
+                    manual_unit_keys = [
+                        (item["TBMT"], item["So_qd"], item["Version"])
+                        for item in manifest_data
+                        if item["Schema_Type"] == "MANUAL_FIX_REQUIRED"
+                    ]
+
+                    manual_cleanup_targets = ready_unit_keys + ocr_unit_keys
+                    if manual_cleanup_targets:
+                        resolved_manual_task_count, resolved_manual_cleanup_paths = cleanup_resolved_human_tasks(
+                            cursor,
+                            task_type="MANUAL",
+                            work_date=TARGET_DATE,
+                            ready_unit_keys=manual_cleanup_targets,
+                        )
+                    ocr_cleanup_targets = ready_unit_keys + manual_unit_keys
+                    if ocr_cleanup_targets:
+                        resolved_ocr_task_count, resolved_ocr_cleanup_paths = cleanup_resolved_human_tasks(
+                            cursor,
+                            task_type="OCR",
+                            work_date=TARGET_DATE,
+                            ready_unit_keys=ocr_cleanup_targets,
+                        )
+                    sync_manual_count, sync_manual_paths, sync_ocr_count, sync_ocr_paths = sync_active_human_tasks_with_ready_manifest(
+                        cursor,
+                        TARGET_DATE,
+                    )
+                    resolved_manual_task_count += sync_manual_count
+                    resolved_ocr_task_count += sync_ocr_count
+                    resolved_manual_cleanup_paths.update(sync_manual_paths)
+                    resolved_ocr_cleanup_paths.update(sync_ocr_paths)
                     ocr_exported = export_human_tasks("OCR", ocr_human_tasks)
                     manual_exported = export_human_tasks("MANUAL", manual_human_tasks)
 
@@ -3991,20 +5128,63 @@ def finalize_and_generate_manifest(batch_limit=None):
                     print(f"   - Sẵn sàng ETL (READY): {ready_count} gói")
                     print(f"   - Cần OCR: {ocr_pkg_count} gói (Tổng cộng {total_ocr_source_files} file PDF)")
                     print(f"   - Cần sửa tay: {manual_count} gói")
+                    if missing_pdf_source_count:
+                        print(f"   - Thiếu PDF nguồn để OCR: {missing_pdf_source_count} gói")
+                    if cancelled_unit_count:
+                        print(f"   - Bỏ qua do trạng thái 'Đã hủy': {cancelled_unit_count} gói")
+                    if resolved_manual_task_count:
+                        print(f"   - Đã dọn task MANUAL cũ nay không còn cần: {resolved_manual_task_count} gói")
+                    if resolved_ocr_task_count:
+                        print(f"   - Đã dọn task OCR cũ nay không còn cần: {resolved_ocr_task_count} gói")
                     if blocked_by_temp_abort_count:
                         print(f"   - Tạm hoãn do TEMP_ABORT: {blocked_by_temp_abort_count} gói")
                     if blocked_by_anomaly_count:
                         print(f"   - Tạm hoãn do Scan Anomalies: {blocked_by_anomaly_count} gói")
+                    print_current_manifest_backlog(cursor, TARGET_DATE)
                 else:
-                    if blocked_by_temp_abort_count or blocked_by_anomaly_count:
+                    if blocked_by_temp_abort_count or blocked_by_anomaly_count or missing_pdf_source_count or cancelled_unit_count:
                         detail_parts = []
                         if blocked_by_temp_abort_count:
                             detail_parts.append(f"{blocked_by_temp_abort_count} gói TEMP_ABORT")
                         if blocked_by_anomaly_count:
                             detail_parts.append(f"{blocked_by_anomaly_count} gói Scan Anomalies")
+                        if missing_pdf_source_count:
+                            detail_parts.append(f"{missing_pdf_source_count} gói thiếu PDF nguồn")
+                        if cancelled_unit_count:
+                            detail_parts.append(f"{cancelled_unit_count} gói đã hủy")
                         print(f"🟡 Không tạo manifest vì {' và '.join(detail_parts)} đang bị chặn.")
                     else:
                         print("⚠️ Không tạo được manifest mục nào.")
+                    sync_manual_count, sync_manual_paths, sync_ocr_count, sync_ocr_paths = sync_active_human_tasks_with_ready_manifest(
+                        cursor,
+                        TARGET_DATE,
+                    )
+                    resolved_manual_task_count += sync_manual_count
+                    resolved_ocr_task_count += sync_ocr_count
+                    resolved_manual_cleanup_paths.update(sync_manual_paths)
+                    resolved_ocr_cleanup_paths.update(sync_ocr_paths)
+                    conn.commit()
+                    print_current_manifest_backlog(cursor, TARGET_DATE)
+
+        manual_cleanup_all = resolved_manual_cleanup_paths
+        if manual_cleanup_all:
+            deleted_artifacts, failed_cleanup = cleanup_human_workspace_artifacts(manual_cleanup_all)
+            refresh_human_tasks_sheet("MANUAL", TARGET_DATE)
+            print(f"🧹 Đã dọn {len(deleted_artifacts)} artifact MANUAL cũ không còn cần thiết.")
+            if failed_cleanup:
+                print(f"⚠️ Có {len(failed_cleanup)} artifact MANUAL chưa xóa được.")
+                for path_value, reason in failed_cleanup[:10]:
+                    print(f"   - {path_value} -> {reason}")
+
+        ocr_cleanup_all = resolved_ocr_cleanup_paths
+        if ocr_cleanup_all:
+            deleted_artifacts, failed_cleanup = cleanup_human_workspace_artifacts(ocr_cleanup_all)
+            refresh_human_tasks_sheet("OCR", TARGET_DATE)
+            print(f"🧹 Đã dọn {len(deleted_artifacts)} artifact OCR cũ không còn cần thiết.")
+            if failed_cleanup:
+                print(f"⚠️ Có {len(failed_cleanup)} artifact OCR chưa xóa được.")
+                for path_value, reason in failed_cleanup[:10]:
+                    print(f"   - {path_value} -> {reason}")
 
     except psycopg2.Error as e:
         logger.error(f"❌ DB Error finalize: {e}")

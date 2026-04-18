@@ -12,8 +12,26 @@ import re
 from dateutil.relativedelta import relativedelta
 import shutil
 from storage_adapter import ensure_local_file, is_r2_key, move_object, build_r2_key
+from web_winner_facts import (
+    WebWinnerManualReviewRequired,
+    apply_vendor_single_winner_fallback,
+    clear_web_winner_fact_cache,
+    prefetch_web_winner_facts,
+)
 import logging
 import warnings
+from schema_normalization_shared import (
+    KEYWORD_RULES as SHARED_KEYWORD_RULES,
+    build_schema_mapping_config as shared_build_schema_mapping_config,
+    clean_col_str as shared_clean_col_str,
+    clean_numeric_series as shared_clean_numeric_series,
+    collapse_duplicate_columns as shared_collapse_duplicate_columns,
+    count_excel_rows_with_detected_header,
+    drop_header_legend_rows as shared_drop_header_legend_rows,
+    drop_invalid_value_rows as shared_drop_invalid_value_rows,
+    get_smart_column_mapping as shared_get_smart_column_mapping,
+    load_excel_with_detected_header,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,6 +63,24 @@ warnings.filterwarnings(
     message=r"Defined names for sheet index \d+ cannot be located",
     category=UserWarning,
     module="openpyxl.reader.workbook",
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r"Cannot parse header or footer so it will be ignored",
+    category=UserWarning,
+    module="openpyxl.worksheet.header_footer",
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r"Unknown extension is not supported and will be removed",
+    category=UserWarning,
+    module=r"openpyxl\.worksheet\._reader",
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r"Conditional Formatting extension is not supported and will be removed",
+    category=UserWarning,
+    module=r"openpyxl\.worksheet\._reader",
 )
 
 # =====================================================================
@@ -114,30 +150,10 @@ def version_key(version_value):
 # =====================================================================
 # TỪ KHÓA MAPPING & DATA CLEANING
 # =====================================================================
-KEYWORD_RULES = {
-    "Tên hoạt chất": ["hoạt chất"],
-    "Tên thuốc": ["tên thuốc"],
-    "Nồng độ, hàm lượng": ["hàm lượng"],
-    "Số đăng ký": ["số đăng ký"],
-    "GĐKLH hoặc GPNK": ["gđklh", "gpnk"],
-    "Đơn giá trúng thầu (VND)": ["đơn giá"],
-    "Thành tiền (VND)": ["thành tiền"],
-    "Nhà thầu trúng thầu": ["nhà thầu"],
-    
-    "Danh mục hàng hóa": ["tên hàng", "danh mục hàng"],
-    "Tên phần/lô": ["tên phần", "tên lô"],
-    "Mặt hàng dự thầu": ["mặt hàng dự thầu", "mặt hàng"],
-    "Ký mã hiệu": ["ký mã", "mã hiệu"],
-    "Tính năng kỹ thuật": ["tính năng", "kỹ thuật"],
-    "Xuất xứ": ["xuất xứ", "nước sản xuất"],
-    "Hãng sản xuất": ["hãng sản xuất"],
-    "Năm sản xuất": ["năm sản xuất"]
-}
+KEYWORD_RULES = SHARED_KEYWORD_RULES
 
 def clean_col_str(s: str) -> str:
-    if not isinstance(s, str):
-        s = str(s)
-    return re.sub(r"\s+", " ", s).strip().lower()
+    return shared_clean_col_str(s)
 
 
 def is_vendor_group_column_name(col_name) -> bool:
@@ -151,61 +167,18 @@ def is_vendor_group_column_name(col_name) -> bool:
     return True
 
 def get_smart_column_mapping(df_columns: list, mapping_config: dict) -> dict:
-    final_map = {}
-    clean_mapping_config = {clean_col_str(k): v for k, v in mapping_config.items()}
-    best_target_choice = {}
+    return shared_get_smart_column_mapping(df_columns, mapping_config)
 
-    def register_candidate(source_col, target_col, priority):
-        if not target_col:
-            return
-        candidate = (priority, len(str(source_col or "")))
-        current = best_target_choice.get(target_col)
-        if current is None or candidate > current[0]:
-            best_target_choice[target_col] = (candidate, source_col)
 
-    for col in df_columns:
-        col_clean = clean_col_str(col)
-        if col in mapping_config:
-            register_candidate(col, mapping_config[col], 3)
-            continue
-        if col_clean in clean_mapping_config:
-            register_candidate(col, clean_mapping_config[col_clean], 3)
-            continue
-            
-        for target_col, keywords in KEYWORD_RULES.items():
-            if any(kw in col_clean for kw in keywords):
-                register_candidate(col, target_col, 1)
-                break
-
-    for target_col, (_, source_col) in best_target_choice.items():
-        final_map[source_col] = target_col
-    return final_map
+def build_schema_mapping_config(config: dict) -> dict:
+    return shared_build_schema_mapping_config(config)
 
 def clean_numeric_series(series: pd.Series) -> pd.Series:
-    s = series.astype(str).str.strip().replace(["nan", "None"], "")
-    s = s.str.replace("\u00a0", " ", regex=False)
-    s = s.str.replace(r"[^\d,.\-]", "", regex=True)
-    s = s.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
-    return pd.to_numeric(s, errors='coerce')
+    return shared_clean_numeric_series(series)
 
 
 def collapse_duplicate_columns(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty or not df.columns.duplicated().any():
-        return df
-
-    collapsed = pd.DataFrame(index=df.index)
-    for col_name in df.columns.unique():
-        same_name = df.loc[:, df.columns == col_name]
-        if isinstance(same_name, pd.Series):
-            collapsed[col_name] = same_name
-            continue
-
-        merged = same_name.iloc[:, 0]
-        for idx in range(1, same_name.shape[1]):
-            merged = merged.combine_first(same_name.iloc[:, idx])
-        collapsed[col_name] = merged
-
-    return collapsed
+    return shared_collapse_duplicate_columns(df)
 
 
 def is_blank_cell(value) -> bool:
@@ -223,11 +196,17 @@ def analyze_review_column_gaps(df: pd.DataFrame, schema_name: str) -> list[dict]
     config = SCHEMAS[schema_name]
     review_cols = config.get("review_columns") or config.get("output_columns", [])
     gap_details = []
-    total_rows = len(df.index)
+    amount_col = next((c for c in df.columns if "thành tiền" in clean_col_str(c)), None)
+    summary_like_mask = df.apply(lambda row: _is_summary_like_row_for_review(row, amount_col), axis=1)
+    review_df = df.loc[~summary_like_mask].copy()
+    total_rows = len(review_df.index)
+
+    if total_rows == 0:
+        return []
 
     for col in review_cols:
         blank_count = total_rows
-        if col not in df.columns:
+        if col not in review_df.columns:
             gap_details.append({
                 "column": col,
                 "blank_count": total_rows,
@@ -235,7 +214,7 @@ def analyze_review_column_gaps(df: pd.DataFrame, schema_name: str) -> list[dict]
             })
             continue
 
-        blank_mask = df[col].map(is_blank_cell)
+        blank_mask = review_df[col].map(is_blank_cell)
         blank_count = int(blank_mask.sum())
         if blank_count > 0:
             gap_details.append({
@@ -263,9 +242,9 @@ def log_pending_review_summary(flagged_units: list[dict], context_label: str, li
             for gap in gaps
         ) or "N/A"
         logger.warning(
-            f"   - TBMT={item.get('ma_tbmt')} | so_qd={item.get('so_qd')} | "
-            f"version={item.get('version')} | schema={item.get('schema_name')} | "
-            f"column_gaps=[{cols_display}]"
+            f"   - TBMT = {item.get('ma_tbmt')} | so_qd = {item.get('so_qd')} | "
+            f"version = {item.get('version')} | schema = {item.get('schema_name')} | "
+            f"column_gaps = [{cols_display}]"
         )
 
     remaining = len(flagged_units) - limit
@@ -292,6 +271,7 @@ def apply_bdg_group_fill_rule(df: pd.DataFrame, package_title: str | None, schem
         return df
 
     df = df.copy()
+    df["Nhóm thuốc"] = df["Nhóm thuốc"].astype("string")
     blank_mask = df["Nhóm thuốc"].map(is_blank_cell)
     filled_count = int(blank_mask.sum())
     if filled_count <= 0:
@@ -569,7 +549,7 @@ def detect_single_value_goods_group_header(
         if not text or is_numeric_like(text):
             continue
         text_lower = text.lower()
-        if text_lower.startswith(("tổng cộng", "thành tiền", "số tiền bằng chữ", "giá trị bằng chữ", "cộng")):
+        if text_lower.startswith(("tổng cộng", "cộng tổng", "thành tiền", "số tiền bằng chữ", "giá trị bằng chữ", "cộng")):
             continue
         texts.append(text)
         source_cols.append(col)
@@ -607,11 +587,31 @@ def detect_single_value_goods_group_header(
 
 
 SUMMARY_ROW_PREFIXES = (
+    "tổng",
     "tổng cộng",
+    "cộng tổng",
     "thành tiền",
     "số tiền bằng chữ",
     "giá trị bằng chữ",
     "cộng",
+)
+
+SUMMARY_ROW_EXACT_LABELS = (
+    "cộng",
+    "tổng",
+    "cộng tổng",
+)
+
+SUMMARY_ROW_SUFFIX_LABELS = (
+    "cộng tổng",
+    "tổng cộng",
+    "tổng giá",
+    "tổng tiền",
+    "tổng số",
+    "thành tiền",
+    "bằng tiền",
+    "số tiền bằng chữ",
+    "giá trị bằng chữ",
 )
 
 
@@ -621,6 +621,113 @@ def _is_blank_cell(value) -> bool:
 
 def _clean_cell_text(value) -> str:
     return str(value).strip() if not pd.isna(value) else ""
+
+
+def _normalize_summary_text(value) -> str:
+    text = _clean_cell_text(value).lower()
+    text = re.sub(r"\s+", " ", text)
+    return text.strip(" :;,-")
+
+
+def _extract_summary_label_base(text: str) -> str | None:
+    normalized = _normalize_summary_text(text)
+    if not normalized or _is_numeric_like_text(normalized):
+        return None
+
+    for label in sorted(SUMMARY_ROW_SUFFIX_LABELS, key=len, reverse=True):
+        if normalized == label:
+            return label
+        if normalized.startswith(label + ":") or normalized.startswith(label + "-") or normalized.startswith(label + ";"):
+            return label
+        if normalized.startswith(label + " "):
+            return label
+
+    for label in SUMMARY_ROW_EXACT_LABELS:
+        if normalized == label:
+            return label
+        if normalized.startswith(label + ":") or normalized.startswith(label + "-") or normalized.startswith(label + ";"):
+            return label
+
+    return None
+
+
+def _is_summary_label_text(text: str) -> bool:
+    return _extract_summary_label_base(text) is not None
+
+
+def _is_summary_candidate_column(row: pd.Series, col_name, amount_col=None, max_label_col_idx: int = 5) -> bool:
+    if row is None:
+        return False
+    col_clean = clean_col_str(col_name)
+    if amount_col and col_clean == clean_col_str(amount_col):
+        return True
+    try:
+        col_idx = list(row.index).index(col_name)
+    except ValueError:
+        return False
+    return col_idx < max_label_col_idx
+
+
+def _looks_like_amount_in_words_text(text: str) -> bool:
+    normalized = _normalize_summary_text(text)
+    if not normalized:
+        return False
+    if "đồng" not in normalized:
+        return False
+    if len(normalized) < 12:
+        return False
+    if _is_numeric_like_text(normalized):
+        return False
+    amount_words_markers = (
+        "mươi", "trăm", "nghìn", "ngàn", "triệu", "tỷ", "chục",
+        "linh", "lẻ", "mốt", "mươi", "mười",
+    )
+    return any(marker in normalized for marker in amount_words_markers)
+
+
+def _is_summary_like_row_for_review(row: pd.Series, amount_col=None, max_non_blank: int = 4) -> bool:
+    if row is None:
+        return False
+
+    populated_cells = [
+        (col, _clean_cell_text(value))
+        for col, value in row.items()
+        if not _is_blank_cell(value)
+    ]
+    if not populated_cells or len(populated_cells) > max_non_blank:
+        return False
+
+    has_summary_label = False
+    has_amount_value = False
+    has_unit_price_value = False
+    has_other_numeric_value = False
+    numeric_value_count = 0
+
+    for col, text in populated_cells:
+        col_clean = clean_col_str(col)
+        if _is_summary_label_text(text) and _is_summary_candidate_column(row, col, amount_col):
+            has_summary_label = True
+        if amount_col and col_clean == clean_col_str(amount_col) and _is_numeric_like_text(text):
+            has_amount_value = True
+            numeric_value_count += 1
+            continue
+        if "đơn giá" in col_clean and _is_numeric_like_text(text):
+            has_unit_price_value = True
+            numeric_value_count += 1
+            continue
+        if _is_numeric_like_text(text):
+            has_other_numeric_value = True
+            numeric_value_count += 1
+
+    if not has_summary_label:
+        return False
+    if has_other_numeric_value:
+        return False
+    if has_amount_value:
+        return True
+    if has_unit_price_value and numeric_value_count == 1:
+        return True
+    return numeric_value_count == 0
 
 
 def _normalize_stt_value(value) -> str:
@@ -645,6 +752,70 @@ def _is_numeric_like_text(text) -> bool:
     return bool(re.match(r"^[\d\s.,()+\-/%xX*=]+$", text))
 
 
+def _extract_group_label_from_stt(value):
+    text = _normalize_stt_value(value)
+    if not text:
+        return None
+
+    match = re.match(r"^(\d+)\s*\.\s*(.+)$", text)
+    if not match:
+        return None
+
+    label = re.sub(r"\s+", " ", match.group(2)).strip(" .:-")
+    if not label or _is_numeric_like_text(label):
+        return None
+
+    if _is_summary_label_text(label):
+        return None
+
+    return {
+        "root": match.group(1),
+        "text": label,
+    }
+
+
+def _is_section_marker_stt(value) -> bool:
+    text = _normalize_stt_value(value)
+    if not text:
+        return False
+    text = text.strip(" .:-)")
+    return bool(re.fullmatch(r"[ivxlcdm]+", text, flags=re.IGNORECASE))
+
+
+def _extract_sparse_stt_text_label(value):
+    text = _normalize_stt_value(value)
+    if not text:
+        return None
+    if _is_section_marker_stt(text):
+        return None
+    if _is_numeric_like_text(text):
+        return None
+
+    label = re.sub(r"\s+", " ", text).strip(" .:-")
+    if not label:
+        return None
+
+    if _is_summary_label_text(label):
+        return None
+
+    roman_match = re.match(r"^(?P<prefix>[ivxlcdm]+)\s*[\.\-:)]\s*(?P<label>.+)$", label, flags=re.IGNORECASE)
+    if roman_match:
+        inner_label = re.sub(r"\s+", " ", roman_match.group("label")).strip(" .:-")
+        if inner_label and not _is_numeric_like_text(inner_label):
+            return {
+                "root": None,
+                "text": inner_label,
+            }
+
+    if re.match(r"^[A-Za-zÀ-ỹ].+", label):
+        return {
+            "root": None,
+            "text": label,
+        }
+
+    return None
+
+
 def _matches_group_target(col_name, target_name) -> bool:
     col_clean = clean_col_str(col_name)
     target_clean = clean_col_str(target_name)
@@ -664,16 +835,22 @@ def get_group_row_engine_settings(df: pd.DataFrame, schema_type: str):
             c for c in df.columns
             if any(token in clean_col_str(c) for token in ("tên hàng hóa", "danh mục hàng hóa", "tên thương mại"))
         ]
-        group_targets = ["Nhà thầu trúng thầu"]
+        group_targets = ["Mã phần/lô", "Tên phần/lô", "Nhà thầu trúng thầu"]
         auto_create_target = "Nhà thầu trúng thầu"
+        autofill_source_targets = ["Mã phần/lô", "Tên phần/lô", "Nhà thầu trúng thầu"]
     else:
         detail_cols = [c for c in df.columns if "tên thuốc" in clean_col_str(c)]
-        group_targets = ["Nhà thầu trúng thầu", "Nhóm thuốc"]
+        group_targets = ["Mã phần/lô", "Nhà thầu trúng thầu", "Nhóm thuốc"]
         auto_create_target = "Nhà thầu trúng thầu"
+        autofill_source_targets = ["Mã phần/lô", "Nhà thầu trúng thầu", "Nhóm thuốc"]
 
     existing_group_cols = [
         c for c in df.columns
         if any(_matches_group_target(c, target) for target in group_targets)
+    ]
+    autofill_source_cols = [
+        c for c in df.columns
+        if any(_matches_group_target(c, target) for target in autofill_source_targets)
     ]
 
     return {
@@ -682,30 +859,79 @@ def get_group_row_engine_settings(df: pd.DataFrame, schema_type: str):
         "detail_cols": detail_cols,
         "group_targets": group_targets,
         "existing_group_cols": existing_group_cols,
+        "autofill_source_cols": autofill_source_cols,
         "auto_create_target": auto_create_target,
     }
 
 
 def is_generic_summary_row(row: pd.Series, amount_col=None) -> bool:
+    if row is None:
+        return False
+
     non_blank_count = sum(not _is_blank_cell(v) for v in row.tolist())
-    sparse_threshold = max(4, int(len(row) * 0.35))
-    is_sparse_row = non_blank_count <= sparse_threshold
+    if non_blank_count == 0 or non_blank_count > 4:
+        return False
 
-    strong_patterns = [
-        r"tổng cộng giá .* hàng hóa",
-        r"tổng giá .* hàng hóa",
-        r"tổng cộng .* phí.*lệ phí",
+    populated_cells = [
+        (col, _clean_cell_text(value))
+        for col, value in row.items()
+        if not _is_blank_cell(value)
     ]
+    if not populated_cells:
+        return False
 
-    for value in row.tolist():
-        text = _clean_cell_text(value).lower()
+    non_numeric_text_cells = [
+        (col, text)
+        for col, text in populated_cells
+        if text and not _is_numeric_like_text(text)
+    ]
+    if len(non_numeric_text_cells) == 1:
+        text_col, text_value = non_numeric_text_cells[0]
+        numeric_cols = [
+            col for col, text in populated_cells
+            if text and _is_numeric_like_text(text)
+        ]
+        has_amount_like_numeric = any(
+            (amount_col and clean_col_str(col) == clean_col_str(amount_col))
+            or ("đơn giá" in clean_col_str(col))
+            or ("thành tiền" in clean_col_str(col))
+            for col in numeric_cols
+        )
+        if _looks_like_amount_in_words_text(text_value) and has_amount_like_numeric:
+            return True
+
+    summary_label_cells = []
+    other_text_cells = []
+    for col, text in populated_cells:
         if not text:
             continue
-        if any(re.search(pattern, text) for pattern in strong_patterns):
-            return True
-        if is_sparse_row and any(text.startswith(prefix) for prefix in SUMMARY_ROW_PREFIXES):
-            return True
-    return False
+        if _is_numeric_like_text(text):
+            continue
+        if _is_summary_label_text(text):
+            if not _is_summary_candidate_column(row, col, amount_col):
+                return False
+            summary_label_cells.append((col, text))
+            continue
+        other_text_cells.append((col, text))
+
+    if not summary_label_cells:
+        return False
+
+    non_label_text_cells = [
+        (col, text)
+        for col, text in other_text_cells
+        if not (amount_col and clean_col_str(col) == clean_col_str(amount_col))
+    ]
+    if non_label_text_cells:
+        summary_bases = {
+            _extract_summary_label_base(text)
+            for _, text in summary_label_cells
+        }
+        by_words_row = bool(summary_bases & {"số tiền bằng chữ", "giá trị bằng chữ", "bằng tiền"})
+        if not by_words_row:
+            return False
+
+    return _is_summary_like_row_for_review(row, amount_col, max_non_blank=4)
 
 
 def is_summary_continuation_row(row: pd.Series, prev_row: pd.Series | None, amount_col=None) -> bool:
@@ -728,6 +954,19 @@ def is_summary_continuation_row(row: pd.Series, prev_row: pd.Series | None, amou
         if "thành tiền" in clean_col_str(col) or "đơn giá" in clean_col_str(col):
             continue
     return True
+
+
+def drop_summary_rows(df: pd.DataFrame, amount_col=None) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+
+    keep_mask = []
+    prev_row = None
+    for _, row in df.iterrows():
+        is_summary = is_generic_summary_row(row, amount_col) or is_summary_continuation_row(row, prev_row, amount_col)
+        keep_mask.append(not is_summary)
+        prev_row = row
+    return df.loc[keep_mask].reset_index(drop=True)
 
 
 def has_detail_signal_generic(row: pd.Series, detail_cols: list, amount_col=None) -> bool:
@@ -760,6 +999,15 @@ def _belongs_same_group(current_stt, next_stt) -> bool:
     return (not next_stt) or (bool(current_root) and current_root == _stt_root_value(next_stt) and next_stt != current_stt)
 
 
+def _is_sparse_group_candidate_row(current: pd.Series, amount_col=None) -> bool:
+    if current is None:
+        return False
+    non_blank_count = sum(not _is_blank_cell(v) for v in current.tolist())
+    if non_blank_count == 0 or non_blank_count > 3:
+        return False
+    return not is_generic_summary_row(current, amount_col)
+
+
 def detect_true_group_header_generic(
     current: pd.Series,
     next_row: pd.Series | None,
@@ -768,35 +1016,48 @@ def detect_true_group_header_generic(
     group_cols,
     amount_col=None,
 ):
-    if current is None or next_row is None or not stt_col or not group_cols:
+    if current is None or next_row is None or not group_cols:
         return None
 
-    current_stt = _normalize_stt_value(current.get(stt_col))
-    if not _is_top_level_stt(current_stt):
+    current_stt = _normalize_stt_value(current.get(stt_col)) if stt_col else ""
+    stt_group_label = _extract_group_label_from_stt(current.get(stt_col)) if stt_col else None
+    if not stt_group_label and stt_col:
+        stt_group_label = _extract_sparse_stt_text_label(current.get(stt_col))
+    if current_stt and not _is_top_level_stt(current_stt) and not stt_group_label:
         return None
 
     if any(not _is_blank_cell(current.get(col)) for col in detail_cols):
+        return None
+
+    if not _is_sparse_group_candidate_row(current, amount_col):
         return None
 
     source_group_cols = [col for col in group_cols if not _is_blank_cell(current.get(col))]
     if not source_group_cols:
         return None
 
-    if not _belongs_same_group(current_stt, next_row.get(stt_col)) or not has_detail_signal_generic(next_row, detail_cols, amount_col):
+    if current_stt and not stt_group_label and stt_col and not _belongs_same_group(current_stt, next_row.get(stt_col)):
         return None
 
-    carry_values = {}
-    for col in current.index:
-        if col == amount_col:
-            continue
-        value = current.get(col)
-        if not _is_blank_cell(value):
-            carry_values[col] = value
+    autofill_context = _detect_shape_autofill_context(
+        current=current,
+        next_row=next_row,
+        source_cols=source_group_cols,
+        detail_cols=detail_cols,
+        extra_allowed_cols=[
+            stt_col,
+            amount_col,
+            *[col for col in current.index if "đơn giá" in clean_col_str(col)],
+        ],
+        amount_col=amount_col,
+    )
+    if not autofill_context:
+        return None
 
     return {
-        "root": _stt_root_value(current_stt),
-        "carry_values": carry_values,
-        "source_cols": source_group_cols,
+        "root": None if stt_group_label or not current_stt or (stt_col and _is_section_marker_stt(current.get(stt_col))) else _stt_root_value(current_stt),
+        "carry_values": autofill_context["carry_values"],
+        "source_cols": autofill_context["source_cols"],
     }
 
 
@@ -808,29 +1069,47 @@ def detect_wrong_column_group_header_generic(
     group_cols,
     amount_col=None,
 ):
-    if current is None or next_row is None or not stt_col:
+    if current is None or next_row is None:
         return None
 
-    current_stt = _normalize_stt_value(current.get(stt_col))
+    current_stt = _normalize_stt_value(current.get(stt_col)) if stt_col else ""
     current_has_stt = bool(current_stt)
-    if current_has_stt and not _is_top_level_stt(current_stt):
+    stt_group_label = _extract_group_label_from_stt(current.get(stt_col)) if stt_col else None
+    if not stt_group_label and stt_col:
+        stt_group_label = _extract_sparse_stt_text_label(current.get(stt_col))
+    if current_has_stt and not _is_top_level_stt(current_stt) and not stt_group_label:
         return None
 
-    if not _belongs_same_group(current_stt, next_row.get(stt_col)) or not has_detail_signal_generic(next_row, detail_cols, amount_col):
+    if not _is_sparse_group_candidate_row(current, amount_col):
+        return None
+
+    if not has_detail_signal_generic(next_row, detail_cols, amount_col):
+        return None
+
+    if (
+        current_has_stt
+        and not stt_group_label
+        and stt_col
+        and not _is_section_marker_stt(current.get(stt_col))
+        and not _belongs_same_group(current_stt, next_row.get(stt_col))
+    ):
         next_stt = _normalize_stt_value(next_row.get(stt_col))
-        if current_has_stt or not next_stt or not has_detail_signal_generic(next_row, detail_cols, amount_col):
+        if current_has_stt or not next_stt:
             return None
 
     texts = []
     source_cols = []
+    if stt_group_label:
+        texts.append(stt_group_label["text"])
+        source_cols.append(stt_col)
+
     for col in current.index:
         if col == stt_col or col == amount_col:
             continue
         text = _clean_cell_text(current.get(col))
         if not text or _is_numeric_like_text(text):
             continue
-        text_lower = text.lower()
-        if any(text_lower.startswith(prefix) for prefix in SUMMARY_ROW_PREFIXES):
+        if _is_summary_label_text(text):
             continue
         texts.append(text)
         source_cols.append(col)
@@ -842,20 +1121,13 @@ def detect_wrong_column_group_header_generic(
     if len(normalized_unique) != 1:
         return None
 
-    current_non_blank = sum(not _is_blank_cell(v) for v in current.tolist())
-    sparse_threshold = max(3, min(5, int(len(current) * 0.25) or 3))
-    if current_non_blank > sparse_threshold:
-        return None
-
-    if any(col in group_cols for col in source_cols):
-        return None
-
     next_non_blank = sum(not _is_blank_cell(v) for v in next_row.tolist())
+    current_non_blank = sum(not _is_blank_cell(v) for v in current.tolist())
     if next_non_blank <= current_non_blank:
         return None
 
     return {
-        "root": _stt_root_value(current_stt) if current_has_stt else None,
+        "root": None if stt_group_label or (stt_col and _is_section_marker_stt(current.get(stt_col))) else (_stt_root_value(current_stt) if current_has_stt else None),
         "text": texts[0],
         "source_cols": source_cols,
     }
@@ -864,6 +1136,24 @@ def detect_wrong_column_group_header_generic(
 def merge_pseudo_group_rows_generic(df: pd.DataFrame, stt_col, detail_cols, amount_col=None) -> pd.DataFrame:
     if df.empty or not stt_col:
         return df
+
+    def can_strictly_complement(current: pd.Series, next_row: pd.Series) -> bool:
+        next_non_blank = []
+        for col in df.columns:
+            value = next_row.get(col)
+            if _is_blank_cell(value):
+                continue
+            if col == stt_col:
+                return False
+            if amount_col and col == amount_col:
+                # Same total amount often appears on split rows; do not use it
+                # as a reason to merge, but also do not treat it as a conflict.
+                continue
+            current_value = current.get(col)
+            if not _is_blank_cell(current_value):
+                return False
+            next_non_blank.append(col)
+        return bool(next_non_blank)
 
     merged_rows = []
     i = 0
@@ -878,6 +1168,7 @@ def merge_pseudo_group_rows_generic(df: pd.DataFrame, stt_col, detail_cols, amou
             current_has_stt = not _is_blank_cell(current.get(stt_col))
             next_has_stt = not _is_blank_cell(next_row.get(stt_col))
             next_next_row = df.iloc[i + 2].copy() if i + 2 < len(df) else None
+            next_is_summary_like = is_generic_summary_row(next_row, amount_col) or _is_summary_like_row_for_review(next_row, amount_col)
             same_amount = True
             if amount_col:
                 cur_amount = _clean_cell_text(current.get(amount_col))
@@ -893,7 +1184,15 @@ def merge_pseudo_group_rows_generic(df: pd.DataFrame, stt_col, detail_cols, amou
                 group_cols=[],
                 amount_col=amount_col,
             ) is not None
-            should_merge = current_has_stt and not next_has_stt and same_amount and next_has_detail and not next_is_group_header
+            should_merge = (
+                current_has_stt
+                and not next_has_stt
+                and same_amount
+                and next_has_detail
+                and not next_is_group_header
+                and not next_is_summary_like
+                and can_strictly_complement(current, next_row)
+            )
 
             if not should_merge and primary_detail_col:
                 current_has_name = not _is_blank_cell(current.get(primary_detail_col))
@@ -906,7 +1205,14 @@ def merge_pseudo_group_rows_generic(df: pd.DataFrame, stt_col, detail_cols, amou
                 )
                 sparse_current = sum(not _is_blank_cell(v) for v in current.tolist()) <= 5
                 richer_next = sum(not _is_blank_cell(v) for v in next_row.tolist()) > sum(not _is_blank_cell(v) for v in current.tolist())
-                should_merge = same_stt_group and current_has_name and sparse_current and richer_next
+                should_merge = (
+                    same_stt_group
+                    and current_has_name
+                    and sparse_current
+                    and richer_next
+                    and not next_is_summary_like
+                    and can_strictly_complement(current, next_row)
+                )
 
         if should_merge and next_row is not None:
             for col in df.columns:
@@ -926,6 +1232,87 @@ def merge_pseudo_group_rows_generic(df: pd.DataFrame, stt_col, detail_cols, amou
     return pd.DataFrame(merged_rows, columns=df.columns)
 
 
+def detect_autofill_group_header_row(
+    current: pd.Series,
+    next_row: pd.Series | None,
+    stt_col,
+    detail_cols,
+    source_cols,
+    amount_col=None,
+):
+    extra_allowed_cols = []
+    if stt_col:
+        extra_allowed_cols.append(stt_col)
+    extra_allowed_cols.extend([
+        col for col in current.index
+        if "đơn giá" in clean_col_str(col)
+    ])
+    if amount_col:
+        extra_allowed_cols.append(amount_col)
+    return _detect_shape_autofill_context(
+        current=current,
+        next_row=next_row,
+        source_cols=source_cols,
+        detail_cols=detail_cols,
+        extra_allowed_cols=extra_allowed_cols,
+        amount_col=amount_col,
+    )
+
+
+def _detect_shape_autofill_context(
+    current: pd.Series,
+    next_row: pd.Series | None,
+    source_cols: list[str],
+    detail_cols: list[str],
+    extra_allowed_cols: list[str] | None = None,
+    amount_col=None,
+):
+    if current is None or next_row is None or not source_cols:
+        return None
+    if is_generic_summary_row(current, amount_col):
+        return None
+    if not has_detail_signal_generic(next_row, detail_cols, amount_col):
+        return None
+    if any(not _is_blank_cell(current.get(col)) for col in detail_cols):
+        return None
+
+    carry_values = {
+        col: current.get(col)
+        for col in source_cols
+        if col in current.index and not _is_blank_cell(current.get(col))
+    }
+    if not carry_values:
+        return None
+
+    allowed_cols = {col for col in source_cols if col in current.index}
+    for col in extra_allowed_cols or []:
+        if col in current.index:
+            allowed_cols.add(col)
+
+    current_populated = [col for col, value in current.items() if not _is_blank_cell(value)]
+    if not current_populated:
+        return None
+    if any(col not in allowed_cols for col in current_populated):
+        return None
+
+    if any(not _is_blank_cell(next_row.get(col)) for col in carry_values):
+        return None
+
+    next_populated = [col for col, value in next_row.items() if not _is_blank_cell(value)]
+    if len(next_populated) <= len(current_populated):
+        return None
+
+    complement_cols = [col for col in next_populated if col not in carry_values]
+    if not complement_cols:
+        return None
+
+    return {
+        "root": None,
+        "carry_values": carry_values,
+        "source_cols": list(carry_values.keys()),
+    }
+
+
 def normalize_grouped_rows_generic(df: pd.DataFrame, schema_type: str):
     if df is None or df.empty:
         return df
@@ -936,6 +1323,7 @@ def normalize_grouped_rows_generic(df: pd.DataFrame, schema_type: str):
     detail_cols = settings["detail_cols"]
     amount_col = settings["amount_col"]
     group_cols = list(settings["existing_group_cols"])
+    autofill_source_cols = list(settings["autofill_source_cols"])
     auto_create_target = settings["auto_create_target"]
 
     if not stt_col or not detail_cols:
@@ -958,6 +1346,18 @@ def normalize_grouped_rows_generic(df: pd.DataFrame, schema_type: str):
     for idx, (_, row) in enumerate(working_df.iterrows()):
         current = row.copy()
         next_row = working_df.iloc[idx + 1] if idx + 1 < len(working_df) else None
+
+        autofill_group = detect_autofill_group_header_row(
+            current=current,
+            next_row=next_row,
+            stt_col=stt_col,
+            detail_cols=detail_cols,
+            source_cols=autofill_source_cols,
+            amount_col=amount_col,
+        )
+        if autofill_group:
+            current_context = autofill_group
+            continue
 
         true_group = detect_true_group_header_generic(
             current=current,
@@ -1060,8 +1460,8 @@ def apply_numeric_cleaning(df: pd.DataFrame, schema_name: str | None = None) -> 
     df = collapse_duplicate_columns(df)
     str_cols = df.select_dtypes(include=['object']).columns
     for c in str_cols:
-        df[c] = df[c].astype(str).str.strip().str.lstrip('\'"')
-        df[c] = df[c].replace(["nan", "None", "<NA>", "NaT"], np.nan)
+        normalized = df[c].astype("string").str.strip().str.lstrip('\'"')
+        df[c] = normalized.mask(normalized.isin(["nan", "None", "<NA>", "NaT"]), pd.NA)
         
     cols_num = ['Số lượng', 'Khối lượng', 'Đơn giá trúng thầu (VND)', 'Thành tiền (VND)']
     for c in cols_num:
@@ -1097,24 +1497,21 @@ def get_size_for_etl(path_value: str) -> int:
 def get_excel_row_count_for_etl(path_value: str) -> int | None:
     try:
         local_path = resolve_local_for_etl(path_value)
-        df_temp = pd.read_excel(local_path, header=None, nrows=15)
-        header_idx = df_temp.notna().sum(axis=1).idxmax()
-        df = pd.read_excel(local_path, header=header_idx)
-        df = df.dropna(how="all")
-        return len(df)
+        return count_excel_rows_with_detected_header(local_path)
     except Exception:
         return None
 
-def read_and_normalize_excel(file_path: str, schema_name: str) -> pd.DataFrame:
+def read_and_normalize_excel(file_path: str, schema_name: str, tbmt=None, so_qd=None, version=None) -> pd.DataFrame:
     resolved_path = ensure_local_file(file_path, temp_subdir="etl_input")
     if not os.path.exists(resolved_path):
         raise FileNotFoundError(f"Không tìm thấy file: {file_path}")
 
-    df_temp = pd.read_excel(resolved_path, header=None, nrows=10)
-    header_idx = df_temp.notna().sum(axis=1).idxmax()
-    df = pd.read_excel(resolved_path, header=header_idx, dtype=str)
+    df = load_excel_with_detected_header(
+        resolved_path,
+        dtype=str,
+    )
 
-    return normalize_data(df, schema_name)
+    return normalize_data(df, schema_name, tbmt=tbmt, so_qd=so_qd, version=version)
 
 
 # =====================================================================
@@ -1126,25 +1523,50 @@ def process_qd_cluster(tbmt: str, qd_original: str, units_in_cluster: list, sche
     adj_units = [u for u in units_in_cluster if u['relation_type'] == 'ADJUSTMENT']
     rep_units = [u for u in units_in_cluster if u['relation_type'] == 'REPLACEMENT']
     indep_units = [u for u in units_in_cluster if u['relation_type'] == 'INDEPENDENT']
+    cancellation_units = [u for u in units_in_cluster if u['relation_type'] == 'CANCELLATION']
 
     files_to_archive = [] 
+
+    def build_qd_display(main_qd: str | None, cancellation_qds: list[str] | None = None) -> str:
+        ordered = []
+        if main_qd:
+            ordered.append(str(main_qd).strip())
+        for qd in cancellation_qds or []:
+            qd_text = str(qd or "").strip()
+            if qd_text and qd_text not in ordered:
+                ordered.append(qd_text)
+        return "; ".join(ordered)
+
+    cancellation_qds = [u["so_qd"] for u in sorted(cancellation_units, key=lambda x: version_key(x["version"]))]
 
     # 1. TRƯỜNG HỢP KHÔNG CÓ CẤU HÌNH (INDEPENDENT)
     if indep_units or not base_units:
         all_dfs = []
         max_ver = "00"
-        for u in units_in_cluster:
+        processable_units = [
+            u for u in units_in_cluster
+            if u.get("relation_type") != "CANCELLATION"
+        ]
+        for u in processable_units:
             try:
-                df = read_and_normalize_excel(u['file_path'], schema_name)
+                df = read_and_normalize_excel(
+                    u['file_path'],
+                    schema_name,
+                    tbmt=tbmt,
+                    so_qd=u['so_qd'],
+                    version=u['version'],
+                )
                 df['Mã TBMT'] = tbmt
                 df['so_qd_sanitized'] = u['so_qd']
-                df['qd_display'] = u['so_qd']
+                df['qd_display'] = build_qd_display(u['so_qd'])
                 df['version_code'] = u['version']
                 max_ver = max(max_ver, u['version'], key=version_key)
                 all_dfs.append(df)
+            except WebWinnerManualReviewRequired:
+                raise
             except Exception as e:
                 logger.error(f"Lỗi đọc file INDEPENDENT {u['file_path']}: {e}")
-        
+
         return pd.concat(all_dfs, ignore_index=True) if all_dfs else None, qd_original, max_ver, files_to_archive
 
     base = max(base_units, key=lambda x: version_key(x['version']))
@@ -1155,12 +1577,20 @@ def process_qd_cluster(tbmt: str, qd_original: str, units_in_cluster: list, sche
     if rep_units:
         best_rep = max(rep_units, key=lambda x: version_key(x['version']))
         try:
-            df_final = read_and_normalize_excel(best_rep['file_path'], schema_name)
+            df_final = read_and_normalize_excel(
+                best_rep['file_path'],
+                schema_name,
+                tbmt=tbmt,
+                so_qd=best_rep['so_qd'],
+                version=best_rep['version'],
+            )
+        except WebWinnerManualReviewRequired:
+            raise
         except Exception as e:
             logger.error(f"Lỗi đọc file REPLACEMENT {best_rep['file_path']}: {e}")
             return None, None, None, []
 
-        final_qd_display = f"QĐ gốc: {base['so_qd']}, QĐ thay thế: {best_rep['so_qd']}"
+        final_qd_display = build_qd_display(best_rep['so_qd'], cancellation_qds)
         logger.info(f"🔄 [REPLACEMENT] {tbmt}: Đang dùng QĐ {best_rep['so_qd']} thay thế hoàn toàn cho {base['so_qd']}.")
         
         try:
@@ -1191,16 +1621,24 @@ def process_qd_cluster(tbmt: str, qd_original: str, units_in_cluster: list, sche
     
     for a in adj_units_sorted:
         try:
-            df_adj = read_and_normalize_excel(a['file_path'], schema_name)
+            df_adj = read_and_normalize_excel(
+                a['file_path'],
+                schema_name,
+                tbmt=tbmt,
+                so_qd=a['so_qd'],
+                version=a['version'],
+            )
             adj_size = get_size_for_etl(a["file_path"])
 
             enriched_adjs.append({'unit': a, 'df': df_adj, 'rows': len(df_adj), 'size': adj_size})
+        except WebWinnerManualReviewRequired:
+            raise
         except Exception:
             continue
 
     if enriched_adjs:
         adj_raw_names = [a['unit']['so_qd'] for a in enriched_adjs]
-        final_qd_display = f"QĐ gốc: {base['so_qd']}, QĐ điều chỉnh: {', '.join(adj_raw_names)}"
+        final_qd_display = build_qd_display(adj_raw_names[-1], cancellation_qds)
         last_adj = enriched_adjs[-1]
 
         if (
@@ -1223,8 +1661,16 @@ def process_qd_cluster(tbmt: str, qd_original: str, units_in_cluster: list, sche
             return df_final, final_qd_display, last_adj['unit']['version'], []
 
     try:
-        df_base = read_and_normalize_excel(base['file_path'], schema_name)
+        df_base = read_and_normalize_excel(
+            base['file_path'],
+            schema_name,
+            tbmt=tbmt,
+            so_qd=base['so_qd'],
+            version=base['version'],
+        )
         base_rows = len(df_base)
+    except WebWinnerManualReviewRequired:
+        raise
     except Exception as e:
         logger.error(f"Lỗi đọc QĐ gốc {base['file_path']}: {e}")
         return None, None, None, []
@@ -1232,9 +1678,9 @@ def process_qd_cluster(tbmt: str, qd_original: str, units_in_cluster: list, sche
     if not enriched_adjs:
         df_base['Mã TBMT'] = tbmt
         df_base['so_qd_sanitized'] = base['so_qd']
-        df_base['qd_display'] = f"QĐ gốc: {base['so_qd']}"
+        df_base['qd_display'] = build_qd_display(base['so_qd'], cancellation_qds)
         df_base['version_code'] = base['version']
-        return df_base, f"QĐ gốc: {base['so_qd']}", base['version'], []
+        return df_base, build_qd_display(base['so_qd'], cancellation_qds), base['version'], []
 
     last_adj = enriched_adjs[-1]
     is_replace = (last_adj['rows'] >= base_rows * 0.9) or (base_size > 0 and last_adj['size'] >= base_size * 0.9)
@@ -1304,6 +1750,10 @@ def cleanup_orphaned_data():
                             DELETE FROM {table_name} 
                             WHERE ({db_tbmt}, {db_qd}, {db_ver}) IN %s
                         """, (invalid_units_tuple,))
+                cursor.execute("""
+                    DELETE FROM processed_duplicate_flags
+                    WHERE (ma_tbmt, so_qd, version) IN %s
+                """, (invalid_units_tuple,))
 
                 cursor.execute("""
                     DELETE FROM daily_manifest 
@@ -1321,7 +1771,10 @@ def mark_manifest_processed(ids_list: list):
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
-                cursor.execute("UPDATE daily_manifest SET status='PROCESSED' WHERE id IN %s", (tuple(ids_list),))
+                cursor.execute(
+                    "UPDATE daily_manifest SET status='PROCESSED' WHERE id IN %s AND status IS DISTINCT FROM 'PROCESSED'",
+                    (tuple(ids_list),)
+                )
                 cursor.execute("""
                     DELETE FROM manifest_issues
                     WHERE issue_date = %s
@@ -1343,7 +1796,7 @@ def mark_manifest_pending_review(ids_list: list):
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
-                    "UPDATE daily_manifest SET status='PENDING_ETL_REVIEW' WHERE id IN %s",
+                    "UPDATE daily_manifest SET status='PENDING_ETL_REVIEW' WHERE id IN %s AND status IS DISTINCT FROM 'PENDING_ETL_REVIEW'",
                     (tuple(ids_list),)
                 )
             conn.commit()
@@ -1373,6 +1826,8 @@ def save_manifest_issue_records(issue_records: list[dict]):
                             filename = EXCLUDED.filename,
                             issue_reason = EXCLUDED.issue_reason,
                             updated_at = CURRENT_TIMESTAMP
+                        WHERE manifest_issues.filename IS DISTINCT FROM EXCLUDED.filename
+                           OR manifest_issues.issue_reason IS DISTINCT FROM EXCLUDED.issue_reason
                     """, (
                         item.get("issue_date") or TARGET_DATE,
                         item["ma_tbmt"],
@@ -1393,6 +1848,7 @@ def delete_processed_units(schema_name: str, units: list[dict]):
 
     config = SCHEMAS[schema_name]
     table_name = config["table_name"]
+    dataset_scope = "medicine" if table_name == "processed_medicines" else "goods"
     db_mapping = config["db_mapping"]
     db_tbmt = db_mapping.get('Mã TBMT', 'ma_tbmt')
     db_qd = db_mapping.get('so_qd_sanitized', 'so_qd')
@@ -1409,6 +1865,11 @@ def delete_processed_units(schema_name: str, units: list[dict]):
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
+                cursor.execute("""
+                    DELETE FROM processed_duplicate_flags
+                    WHERE dataset_scope = %s
+                      AND (ma_tbmt, so_qd, version) IN %s
+                """, (dataset_scope, unit_tuple))
                 cursor.execute(f"""
                     DELETE FROM {table_name}
                     WHERE ({db_tbmt}, {db_qd}, {db_ver}) IN %s
@@ -1416,6 +1877,113 @@ def delete_processed_units(schema_name: str, units: list[dict]):
             conn.commit()
     except Exception as e:
         logger.error(f"⚠️ Lỗi xóa dữ liệu processed cũ ở {table_name}: {e}")
+
+
+def refresh_duplicate_flags(cursor, table_name: str, unit_tuple):
+    if not unit_tuple:
+        return
+
+    dataset_scope = "medicine" if table_name == "processed_medicines" else "goods"
+    cursor.execute("""
+        DELETE FROM processed_duplicate_flags
+        WHERE dataset_scope = %s
+          AND (ma_tbmt, so_qd, version) IN %s
+    """, (dataset_scope, unit_tuple))
+
+    if dataset_scope == "medicine":
+        duplicate_key_sql = """
+            md5(CONCAT_WS(
+                '||',
+                COALESCE(p.ma_tbmt, ''),
+                COALESCE(p.so_qd, ''),
+                COALESCE(p.version, ''),
+                COALESCE(p.ma_phan_lo, ''),
+                COALESCE(p.ma_thuoc, ''),
+                COALESCE(p.ten_thuoc, ''),
+                COALESCE(p.ten_hoat_chat, ''),
+                COALESCE(p.nong_do_ham_luong, ''),
+                COALESCE(p.duong_dung, ''),
+                COALESCE(p.dang_bao_che, ''),
+                COALESCE(p.quy_cach, ''),
+                COALESCE(p.nhom_thuoc, ''),
+                COALESCE(p.so_dk_gpnk, ''),
+                COALESCE(p.so_luong::text, ''),
+                COALESCE(p.don_gia_trung_thau::text, '')
+            ))
+        """
+        partition_sql = """
+            PARTITION BY
+                p.ma_tbmt, p.so_qd, p.version,
+                COALESCE(p.ma_phan_lo, ''),
+                COALESCE(p.ma_thuoc, ''),
+                COALESCE(p.ten_thuoc, ''),
+                COALESCE(p.ten_hoat_chat, ''),
+                COALESCE(p.nong_do_ham_luong, ''),
+                COALESCE(p.duong_dung, ''),
+                COALESCE(p.dang_bao_che, ''),
+                COALESCE(p.quy_cach, ''),
+                COALESCE(p.nhom_thuoc, ''),
+                COALESCE(p.so_dk_gpnk, ''),
+                COALESCE(p.so_luong::text, ''),
+                COALESCE(p.don_gia_trung_thau::text, '')
+        """
+    else:
+        duplicate_key_sql = """
+            md5(CONCAT_WS(
+                '||',
+                COALESCE(p.ma_tbmt, ''),
+                COALESCE(p.so_qd, ''),
+                COALESCE(p.version, ''),
+                COALESCE(p.ma_phan_lo, ''),
+                COALESCE(p.danh_muc_hang_hoa, ''),
+                COALESCE(p.nha_thau_trung_thau, ''),
+                COALESCE(p.khoi_luong::text, ''),
+                COALESCE(p.don_gia_trung_thau::text, ''),
+                COALESCE(p.ky_ma_hieu_hash, ''),
+                COALESCE(p.nhan_hieu_hash, ''),
+                COALESCE(p.tinh_nang_ky_thuat_hash, '')
+            ))
+        """
+        partition_sql = """
+            PARTITION BY
+                p.ma_tbmt, p.so_qd, p.version,
+                COALESCE(p.ma_phan_lo, ''),
+                COALESCE(p.danh_muc_hang_hoa, ''),
+                COALESCE(p.nha_thau_trung_thau, ''),
+                COALESCE(p.khoi_luong::text, ''),
+                COALESCE(p.don_gia_trung_thau::text, ''),
+                COALESCE(p.ky_ma_hieu_hash, ''),
+                COALESCE(p.nhan_hieu_hash, ''),
+                COALESCE(p.tinh_nang_ky_thuat_hash, '')
+        """
+
+    cursor.execute(f"""
+        INSERT INTO processed_duplicate_flags (
+            dataset_scope, processed_row_id, ma_tbmt, so_qd, version, duplicate_key, duplicate_count
+        )
+        SELECT
+            %s,
+            flagged.id,
+            flagged.ma_tbmt,
+            flagged.so_qd,
+            flagged.version,
+            flagged.duplicate_key,
+            flagged.duplicate_count
+        FROM (
+            SELECT
+                p.id,
+                p.ma_tbmt,
+                p.so_qd,
+                p.version,
+                {duplicate_key_sql} AS duplicate_key,
+                COUNT(*) OVER (
+                    {partition_sql}
+                ) AS duplicate_count
+            FROM {table_name} p
+            WHERE (p.ma_tbmt, p.so_qd, p.version) IN %s
+        ) flagged
+        WHERE flagged.duplicate_count > 1
+    """, (dataset_scope, unit_tuple))
 
 
 def build_blank_count_sql_expr(column_name: str) -> str:
@@ -1539,7 +2107,7 @@ def audit_processed_units_for_empty_review_columns(manifest_date: str | None = N
 
                 delete_processed_units(schema_name, delete_units)
                 cursor.execute(
-                    "UPDATE daily_manifest SET status='PENDING_ETL_REVIEW' WHERE id IN %s",
+                    "UPDATE daily_manifest SET status='PENDING_ETL_REVIEW' WHERE id IN %s AND status IS DISTINCT FROM 'PENDING_ETL_REVIEW'",
                     (tuple(flagged_ids),)
                 )
                 conn.commit()
@@ -1571,7 +2139,7 @@ def ensure_indexes(conn, table_name: str, index_columns: list):
 
 import psycopg2.extras
 
-def save_to_db(df: pd.DataFrame, schema_name: str) -> bool:
+def save_to_db(df: pd.DataFrame, schema_name: str, delete_units: list[dict] | None = None) -> bool:
     if df.empty: 
         return False
         
@@ -1587,17 +2155,14 @@ def save_to_db(df: pd.DataFrame, schema_name: str) -> bool:
     if df_db.empty:
         return False
 
+    df_db = df_db.astype(object).where(pd.notna(df_db), None)
     columns = list(df_db.columns)
     values = [tuple(x) for x in df_db.to_numpy()]
 
     cols_str = ",".join(columns)
-    unique_constraint = "uq_medicines" if table_name == "processed_medicines" else "uq_goods"
-    
     insert_query = f"""
         INSERT INTO {table_name} ({cols_str}) 
-        VALUES %s 
-        ON CONFLICT ON CONSTRAINT {unique_constraint} 
-        DO NOTHING;
+        VALUES %s;
     """
 
     engine = get_engine()
@@ -1607,11 +2172,24 @@ def save_to_db(df: pd.DataFrame, schema_name: str) -> bool:
         db_qd = db_mapping.get('so_qd_sanitized', 'so_qd')
         db_ver = db_mapping.get('version_code', 'version')
         
-        unit_list = df[['Mã TBMT', 'so_qd_sanitized', 'version_code']].drop_duplicates().values.tolist()
-        unit_tuple = tuple(tuple(x) for x in unit_list)
+        if delete_units:
+            unit_list = [
+                [item.get("tbmt"), item.get("so_qd"), item.get("version")]
+                for item in delete_units
+                if item.get("tbmt") and item.get("so_qd") and item.get("version")
+            ]
+        else:
+            unit_list = df[['Mã TBMT', 'so_qd_sanitized', 'version_code']].drop_duplicates().values.tolist()
+        unit_tuple = tuple(dict.fromkeys(tuple(x) for x in unit_list))
         
         with conn.cursor() as cursor:
             if unit_tuple:
+                dataset_scope = "medicine" if table_name == "processed_medicines" else "goods"
+                cursor.execute("""
+                    DELETE FROM processed_duplicate_flags
+                    WHERE dataset_scope = %s
+                      AND (ma_tbmt, so_qd, version) IN %s
+                """, (dataset_scope, unit_tuple))
                 cursor.execute(f"""
                     DELETE FROM {table_name} 
                     WHERE ({db_tbmt}, {db_qd}, {db_ver}) IN %s
@@ -1620,9 +2198,11 @@ def save_to_db(df: pd.DataFrame, schema_name: str) -> bool:
             psycopg2.extras.execute_values(
                 cursor, insert_query, values, template=None, page_size=1000
             )
+            if unit_tuple:
+                refresh_duplicate_flags(cursor, table_name, unit_tuple)
             
         conn.commit()
-        logger.info(f"✅ Ghi DB thành công (đã bỏ qua dòng trùng) vào bảng '{table_name}'.")
+        logger.info(f"✅ Ghi DB thành công vào bảng '{table_name}' và cập nhật duplicate flags.")
         
         ensure_indexes(conn, table_name, index_columns)
         return True
@@ -1708,6 +2288,10 @@ def sync_and_clean_all_metadata():
                     ALTER TABLE package_metadata 
                     ADD COLUMN IF NOT EXISTS tinh_trang_hieu_luc TEXT;
                 """)
+                cursor.execute("""
+                    ALTER TABLE package_metadata
+                    ADD COLUMN IF NOT EXISTS ngay_phe_duyet_date DATE;
+                """)
                 
                 cursor.execute("""
                     SELECT ma_tbmt, so_qd, version, 
@@ -1729,6 +2313,7 @@ def sync_and_clean_all_metadata():
                     
                     gia_clean = clean_vnd_to_numeric(gia_raw)
                     dia_diem_clean = extract_province(dia_diem_raw)
+                    ngay_phe_duyet_date = parse_ddmmyyyy(ngay_pd_raw)
                     ngay_het_hl_calc = compute_end_date(ngay_pd_raw, tg_thuc_hien_raw)
                     
                     tinh_trang = "KHÔNG XÁC ĐỊNH"
@@ -1740,19 +2325,33 @@ def sync_and_clean_all_metadata():
                         UPDATE package_metadata
                         SET 
                             gia_goi_thau = %s,
+                            ngay_phe_duyet_date = %s::DATE,
                             ngay_het_hieu_luc = %s::DATE,
                             tinh_trang_hieu_luc = %s,
                             dia_diem = %s,
                             updated_at = CURRENT_TIMESTAMP
                         WHERE ma_tbmt = %s AND so_qd = %s AND version = %s
+                          AND (
+                              gia_goi_thau IS DISTINCT FROM %s
+                              OR ngay_phe_duyet_date IS DISTINCT FROM %s::DATE
+                              OR ngay_het_hieu_luc IS DISTINCT FROM %s::DATE
+                              OR tinh_trang_hieu_luc IS DISTINCT FROM %s
+                              OR dia_diem IS DISTINCT FROM %s
+                          )
                     """, (
                         gia_clean, 
+                        ngay_phe_duyet_date,
                         ngay_het_hl_calc, 
                         tinh_trang, 
                         dia_diem_clean,
-                        ma_tbmt, so_qd, version
+                        ma_tbmt, so_qd, version,
+                        gia_clean,
+                        ngay_phe_duyet_date,
+                        ngay_het_hl_calc,
+                        tinh_trang,
+                        dia_diem_clean
                     ))
-                    updated_count += 1
+                    updated_count += cursor.rowcount
             
             conn.commit()
             logger.info(f"✨ Đã đồng bộ trạng thái Hiệu lực & Clean xong {updated_count} dòng Metadata.")
@@ -1792,7 +2391,7 @@ def fix_vendor_group_header(df: pd.DataFrame) -> pd.DataFrame:
 
     vendor_col = "Nhà thầu trúng thầu"
     if vendor_col not in df.columns:
-        df[vendor_col] = np.nan
+        df[vendor_col] = pd.Series(pd.NA, index=df.index, dtype="string")
 
     current_vendor = None
     current_group_root = None
@@ -1857,50 +2456,333 @@ def apply_goods_trade_name_fallback(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def drop_invalid_value_rows(df: pd.DataFrame, schema_name: str) -> pd.DataFrame:
-    if df is None or df.empty:
+    return shared_drop_invalid_value_rows(df, schema_name)
+
+
+VENDOR_GROUP_HEADER_IGNORE_PATTERNS = (
+    r"^nhóm\b",
+    r"^thuốc\b",
+    r"^generic\b",
+    r"^biệt dược\b",
+    r"^bdg\b",
+    r"^gói\b",
+    r"^phần\b",
+    r"^lô\b",
+    r"^tổng\b",
+    r"^cộng\b",
+    r"^ghi chú\b",
+    r"^ghi chu\b",
+)
+
+
+def _is_vendor_group_stt_token(text: str) -> bool:
+    if not text:
+        return False
+    normalized = re.sub(r"\s+", "", str(text)).strip()
+    return bool(
+        re.fullmatch(r"\d+[.)]?", normalized)
+        or re.fullmatch(r"[IVXLCDM]+[.)]?", normalized, flags=re.IGNORECASE)
+    )
+
+
+def _strip_vendor_group_prefix(text: str) -> str:
+    cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
+    cleaned = re.sub(r"^\d+\s*[.)]\s*", "", cleaned)
+    cleaned = re.sub(r"^\d+\s+", "", cleaned)
+    cleaned = re.sub(r"^[IVXLCDM]+\s*[.)]\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^[IVXLCDM]+\s+", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip(" .:-")
+
+
+def _is_vendor_group_header_text(text: str) -> bool:
+    cleaned = _strip_vendor_group_prefix(text)
+    if not cleaned:
+        return False
+    if _is_numeric_like_text(cleaned) or _is_vendor_group_stt_token(cleaned):
+        return False
+
+    lowered = clean_col_str(cleaned)
+    if any(re.search(pattern, lowered) for pattern in VENDOR_GROUP_HEADER_IGNORE_PATTERNS):
+        return False
+    return True
+
+
+def _get_vendor_group_candidate_columns(df: pd.DataFrame, max_scan_cols: int = 7) -> list[str]:
+    excluded_exact = {
+        "nhà thầu trúng thầu",
+        "số lượng",
+        "khối lượng",
+        "đơn giá trúng thầu (vnd)",
+        "thành tiền (vnd)",
+    }
+    candidate_cols = []
+    for col in list(df.columns)[:max_scan_cols]:
+        col_clean = clean_col_str(col)
+        if col_clean in excluded_exact:
+            continue
+        if "đơn giá" in col_clean or "thành tiền" in col_clean:
+            continue
+        candidate_cols.append(col)
+    return candidate_cols
+
+
+def detect_vendor_group_header_row(
+    current: pd.Series,
+    next_row: pd.Series | None,
+    candidate_cols: list[str],
+    detail_cols: list[str],
+    amount_col=None,
+):
+    if current is None or next_row is None or not candidate_cols:
+        return None
+    if is_generic_summary_row(current, amount_col):
+        return None
+    if has_detail_signal_generic(current, detail_cols, amount_col):
+        return None
+    if not has_detail_signal_generic(next_row, detail_cols, amount_col):
+        return None
+
+    populated = []
+    for col in candidate_cols:
+        value = current.get(col)
+        if _is_blank_cell(value):
+            continue
+        text = _clean_cell_text(value)
+        if not text:
+            continue
+        populated.append((col, text))
+
+    if not populated or len(populated) > 2:
+        return None
+
+    stt_cells = [(col, text) for col, text in populated if _is_vendor_group_stt_token(text)]
+    text_cells = [(col, text) for col, text in populated if not _is_vendor_group_stt_token(text)]
+
+    if len(text_cells) != 1:
+        return None
+    if len(populated) == 2 and len(stt_cells) != 1:
+        return None
+
+    vendor_text = _strip_vendor_group_prefix(text_cells[0][1])
+    if not _is_vendor_group_header_text(vendor_text):
+        return None
+
+    return {
+        "vendor_name": vendor_text,
+        "source_cols": [col for col, _ in populated],
+    }
+
+
+def _looks_like_vendor_autocomplete_header(
+    current: pd.Series,
+    next_row: pd.Series | None,
+    source_cols: list[str],
+    detail_cols: list[str],
+    amount_col=None,
+) -> bool:
+    if current is None or next_row is None or not source_cols:
+        return False
+    if is_generic_summary_row(current, amount_col):
+        return False
+    if has_detail_signal_generic(current, detail_cols, amount_col):
+        return False
+    if not has_detail_signal_generic(next_row, detail_cols, amount_col):
+        return False
+
+    populated = []
+    for col in source_cols:
+        value = current.get(col)
+        if _is_blank_cell(value):
+            continue
+        text = _clean_cell_text(value)
+        if not text:
+            continue
+        populated.append((col, text))
+
+    if len(populated) != 1:
+        return False
+
+    _, only_text = populated[0]
+    return _is_vendor_group_header_text(only_text)
+
+
+def fill_vendor_from_sparse_group_headers(df: pd.DataFrame, schema_name: str) -> pd.DataFrame:
+    if df is None or df.empty or schema_name not in ("MEDICINE_STANDARD", "GOODS_STANDARD"):
         return df
 
-    price_col = "Đơn giá trúng thầu (VND)"
-    amount_col = "Thành tiền (VND)"
-    quantity_col = "Số lượng" if schema_name == "MEDICINE_STANDARD" else "Khối lượng"
-
-    if price_col not in df.columns:
+    if schema_name == "GOODS_STANDARD":
+        detail_cols = [c for c in df.columns if clean_col_str(c) in {"danh mục hàng hóa", "tên hàng hóa", "tên thương mại"}]
+    else:
+        detail_cols = [c for c in df.columns if clean_col_str(c) == "tên thuốc"]
+    if not detail_cols:
         return df
 
-    df = df.copy()
+    vendor_col = "Nhà thầu trúng thầu"
+    working_df = df.copy()
+    if vendor_col not in working_df.columns:
+        working_df[vendor_col] = pd.Series(pd.NA, index=working_df.index, dtype="string")
+    else:
+        working_df[vendor_col] = working_df[vendor_col].astype("string")
 
-    if quantity_col in df.columns:
-        df[quantity_col] = clean_numeric_series(df[quantity_col])
-    if price_col in df.columns:
-        df[price_col] = clean_numeric_series(df[price_col])
-    if amount_col in df.columns:
-        df[amount_col] = clean_numeric_series(df[amount_col])
-    elif quantity_col in df.columns and price_col in df.columns:
-        df[amount_col] = np.nan
+    amount_col = next((c for c in working_df.columns if clean_col_str(c) == "thành tiền (vnd)"), None)
+    candidate_cols = _get_vendor_group_candidate_columns(working_df)
+    if not candidate_cols:
+        return working_df
 
-    if all(col in df.columns for col in [quantity_col, price_col, amount_col]):
-        mask_missing = df[amount_col].isna()
-        mask_has_inputs = (
-            df[quantity_col].notna()
-            & (df[quantity_col] != 0)
-            & df[price_col].notna()
-            & (df[price_col] != 0)
+    normalized_rows = []
+    current_vendor = None
+
+    for idx, (_, row) in enumerate(working_df.iterrows()):
+        current = row.copy()
+        next_row = working_df.iloc[idx + 1] if idx + 1 < len(working_df) else None
+
+        header_info = detect_vendor_group_header_row(
+            current=current,
+            next_row=next_row,
+            candidate_cols=candidate_cols,
+            detail_cols=detail_cols,
+            amount_col=amount_col,
         )
-        df.loc[mask_missing & mask_has_inputs, amount_col] = (
-            df.loc[mask_missing & mask_has_inputs, quantity_col]
-            * df.loc[mask_missing & mask_has_inputs, price_col]
+        if header_info:
+            current_vendor = header_info["vendor_name"]
+            continue
+
+        if is_generic_summary_row(current, amount_col):
+            current_vendor = None
+            if not all(_is_blank_cell(v) for v in current.tolist()):
+                normalized_rows.append(current)
+            continue
+
+        if has_detail_signal_generic(current, detail_cols, amount_col):
+            if current_vendor and _is_blank_cell(current.get(vendor_col)):
+                current[vendor_col] = current_vendor
+        elif not all(_is_blank_cell(v) for v in current.tolist()):
+            current_vendor = None
+
+        if not all(_is_blank_cell(v) for v in current.tolist()):
+            normalized_rows.append(current)
+
+    if not normalized_rows:
+        return working_df
+
+    return pd.DataFrame(normalized_rows, columns=working_df.columns)
+
+
+def detect_sparse_vendor_autocomplete_manual_reason(df: pd.DataFrame, schema_name: str) -> str | None:
+    if df is None or df.empty or schema_name not in ("MEDICINE_STANDARD", "GOODS_STANDARD"):
+        return None
+
+    vendor_col = "Nhà thầu trúng thầu"
+    if vendor_col not in df.columns:
+        return None
+
+    vendor_series = df[vendor_col].astype("string")
+    non_blank_mask = ~vendor_series.fillna("").str.strip().eq("")
+    if not bool(non_blank_mask.any()):
+        return None
+
+    blank_mask = vendor_series.fillna("").str.strip().eq("")
+    if not bool(blank_mask.any()):
+        return None
+
+    if schema_name == "GOODS_STANDARD":
+        detail_cols = [c for c in df.columns if clean_col_str(c) in {"danh mục hàng hóa", "tên hàng hóa", "tên thương mại"}]
+    else:
+        detail_cols = [c for c in df.columns if clean_col_str(c) == "tên thuốc"]
+    if not detail_cols:
+        return None
+
+    amount_col = next((c for c in df.columns if clean_col_str(c) == "thành tiền (vnd)"), None)
+    candidate_cols = _get_vendor_group_candidate_columns(df)
+    if not candidate_cols:
+        return None
+
+    for idx in range(len(df) - 1):
+        current = df.iloc[idx]
+        next_row = df.iloc[idx + 1]
+        header_info = detect_vendor_group_header_row(
+            current=current,
+            next_row=next_row,
+            candidate_cols=candidate_cols,
+            detail_cols=detail_cols,
+            amount_col=amount_col,
+        )
+        if header_info:
+            return (
+                f"Phát hiện pattern autocomplete nhà thầu nhưng file đã có sẵn cột '{vendor_col}' với dữ liệu thật "
+                f"và vẫn còn {int(blank_mask.sum())} dòng trống. Trường hợp này có thể là group header khác "
+                f"(ví dụ Nhóm thuốc), cần kiểm tra thủ công."
+            )
+
+    return None
+
+
+def autofill_group_header_values(df: pd.DataFrame, schema_name: str) -> pd.DataFrame:
+    if df is None or df.empty or schema_name not in ("MEDICINE_STANDARD", "GOODS_STANDARD"):
+        return df
+
+    if schema_name == "GOODS_STANDARD":
+        detail_cols = [c for c in df.columns if clean_col_str(c) in {"danh mục hàng hóa", "tên hàng hóa", "tên thương mại"}]
+        source_cols = [c for c in ("Mã phần/lô", "Tên phần/lô", "Nhà thầu trúng thầu") if c in df.columns]
+    else:
+        detail_cols = [c for c in df.columns if clean_col_str(c) == "tên thuốc"]
+        source_cols = [c for c in ("Mã phần/lô", "Nhà thầu trúng thầu", "Nhóm thuốc") if c in df.columns]
+
+    if not detail_cols or not source_cols:
+        return df
+
+    working_df = df.copy()
+    amount_col = next((c for c in working_df.columns if clean_col_str(c) == "thành tiền (vnd)"), None)
+    stt_col = next((c for c in working_df.columns if clean_col_str(c) == "stt"), None)
+
+    normalized_rows = []
+    current_context = None
+
+    for idx, (_, row) in enumerate(working_df.iterrows()):
+        current = row.copy()
+        next_row = working_df.iloc[idx + 1] if idx + 1 < len(working_df) else None
+        extra_allowed_cols = [stt_col, amount_col]
+        extra_allowed_cols.extend(
+            col for col in working_df.columns
+            if "đơn giá" in clean_col_str(col)
         )
 
-    price_series = df[price_col] if price_col in df.columns else pd.Series([np.nan] * len(df), index=df.index)
+        header_context = _detect_shape_autofill_context(
+            current=current,
+            next_row=next_row,
+            source_cols=source_cols,
+            detail_cols=detail_cols,
+            extra_allowed_cols=extra_allowed_cols,
+            amount_col=amount_col,
+        )
+        if header_context:
+            current_context = header_context["carry_values"]
+            continue
 
-    invalid_mask = price_series.isna() | (price_series <= 0)
+        if is_generic_summary_row(current, amount_col):
+            current_context = None
+            if not all(_is_blank_cell(v) for v in current.tolist()):
+                normalized_rows.append(current)
+            continue
 
-    return df.loc[~invalid_mask].copy()
+        if current_context and has_detail_signal_generic(current, detail_cols, amount_col):
+            for col, value in current_context.items():
+                if _is_blank_cell(current.get(col)) and not _is_blank_cell(value):
+                    current[col] = value
+        elif not all(_is_blank_cell(v) for v in current.tolist()) and not has_detail_signal_generic(current, detail_cols, amount_col):
+            current_context = None
 
-def normalize_data(df: pd.DataFrame, schema_name: str) -> pd.DataFrame:
+        if not all(_is_blank_cell(v) for v in current.tolist()):
+            normalized_rows.append(current)
+
+    if not normalized_rows:
+        return working_df
+    return pd.DataFrame(normalized_rows, columns=working_df.columns)
+
+def normalize_data(df: pd.DataFrame, schema_name: str, tbmt=None, so_qd=None, version=None) -> pd.DataFrame:
     config = SCHEMAS[schema_name]
     target_cols = config["output_columns"]
-    mapping_config = config.get("column_mapping", {})
+    mapping_config = build_schema_mapping_config(config)
     mandatory_cols = config.get("mandatory_columns", [])
     
     if schema_name in ("MEDICINE_STANDARD", "GOODS_STANDARD"):
@@ -1911,8 +2793,35 @@ def normalize_data(df: pd.DataFrame, schema_name: str) -> pd.DataFrame:
     actual_mapping = get_smart_column_mapping(df.columns, mapping_config)
     df = df.rename(columns=actual_mapping)
     df = collapse_duplicate_columns(df)
+    df = shared_drop_header_legend_rows(df)
+    post_map_amount_col = next((c for c in df.columns if clean_col_str(c) == "thành tiền (vnd)"), None)
+    df = drop_summary_rows(df, post_map_amount_col)
+    df = autofill_group_header_values(df, schema_name)
+    sparse_vendor_manual_reason = detect_sparse_vendor_autocomplete_manual_reason(df, schema_name)
+    if sparse_vendor_manual_reason:
+        raise WebWinnerManualReviewRequired(sparse_vendor_manual_reason)
+    df = fill_vendor_from_sparse_group_headers(df, schema_name)
+    post_fill_amount_col = next((c for c in df.columns if clean_col_str(c) == "thành tiền (vnd)"), None)
+    df = drop_summary_rows(df, post_fill_amount_col)
     if schema_name in ("MEDICINE_STANDARD", "GOODS_STANDARD"):
         df = drop_invalid_value_rows(df, schema_name)
+    if df.empty:
+        raise ValueError("File rỗng sau chuẩn hóa")
+    df, vendor_action = apply_vendor_single_winner_fallback(
+        df,
+        tbmt=tbmt,
+        so_qd=so_qd,
+        version=version,
+        cursor=None,
+    )
+    if vendor_action.get("status") == "MANUAL_REQUIRED":
+        raise WebWinnerManualReviewRequired(vendor_action["reason"])
+    if vendor_action.get("status") == "FILLED_FROM_WEB_SINGLE_WINNER":
+        logger.info(
+            f"🩹 [WEB-WINNER-FILL] ETL {tbmt} / {so_qd} / v{version}: "
+            f"điền '{vendor_action.get('winner_name')}' cho {vendor_action.get('blank_count', 0)} dòng thiếu "
+            f"'Nhà thầu trúng thầu'."
+        )
     
     missing = [col for col in mandatory_cols if col not in df.columns]
     if missing:
@@ -1925,7 +2834,7 @@ def normalize_data(df: pd.DataFrame, schema_name: str) -> pd.DataFrame:
     for col in target_cols:
         if col not in df.columns: df[col] = np.nan
             
-    meta_cols = ['Mã TBMT', 'version_code', 'so_qd_sanitized']
+    meta_cols = ['Mã TBMT', 'so_qd_sanitized', 'qd_display', 'version_code']
     ordered_cols = [c for c in meta_cols if c in df.columns] + target_cols
 
     return df[ordered_cols]
@@ -1934,6 +2843,7 @@ def process_pipeline():
     start_time = time.time()
     logger.info(f"🚀 BẮT ĐẦU ETL PIPELINE [DỮ LIỆU NGÀY: {TARGET_DATE}]")
     print("="*60)
+    clear_web_winner_fact_cache()
     
     sync_and_clean_all_metadata()
     cleanup_orphaned_data()
@@ -1982,6 +2892,10 @@ def process_pipeline():
             for row in c.fetchall()
             if row[0] not in ignored_qd_map.get(row[1], set())
         ]
+        prefetch_web_winner_facts(
+            c,
+            [(job["tbmt"], job["so_qd"], job["version"]) for job in active_jobs]
+        )
 
     if not active_jobs:
         logger.info(f"ℹ️ Không có dữ liệu 'READY' trong ngày {TARGET_DATE}.")
@@ -2024,7 +2938,36 @@ def process_pipeline():
                 logger.warning(f"⚠️ ETL bỏ qua {tbmt} / {qd_original}: không tìm thấy unit READY hợp lệ trong manifest.")
                 continue
 
-            df_final, qd_display, cluster_ver, files_to_archive = process_qd_cluster(tbmt, qd_original, units_in_cluster, schema_name)
+            try:
+                df_final, qd_display, cluster_ver, files_to_archive = process_qd_cluster(tbmt, qd_original, units_in_cluster, schema_name)
+            except WebWinnerManualReviewRequired as e:
+                ids = manifest_id_map[(tbmt, qd_original, schema_name)]
+                issue_reason = str(e)
+                mark_manifest_pending_review(ids)
+                save_manifest_issue_records([
+                    {
+                        "ma_tbmt": tbmt,
+                        "so_qd": unit["so_qd"],
+                        "version": unit["version"],
+                        "filename": unit.get("filename"),
+                        "issue_type": "WEB_WINNER_MANUAL_REQUIRED",
+                        "issue_reason": issue_reason,
+                    }
+                    for unit in units_in_cluster
+                ])
+                for unit in units_in_cluster:
+                    flagged_summary.append({
+                        "ma_tbmt": tbmt,
+                        "so_qd": unit["so_qd"],
+                        "version": unit["version"],
+                        "schema_name": schema_name,
+                        "column_gaps": [],
+                        "issue_reason": issue_reason,
+                    })
+                logger.warning(
+                    f"⚠️ [PENDING_ETL_REVIEW] {tbmt} / {qd_original} / {schema_name}: {issue_reason}"
+                )
+                continue
             if df_final is None or df_final.empty:
                 logger.warning(f"⚠️ ETL bỏ qua {tbmt} / {qd_original}: không tạo được dataframe hợp lệ từ cụm QĐ.")
                 continue
@@ -2078,20 +3021,18 @@ def process_pipeline():
                 )
                 continue
             
-            df_final["_dedup_hash"] = generate_row_hash(df_final, schema_name)
-            
-            hash_str = df_final["_dedup_hash"].astype(str)
-            valid_hash_mask = (hash_str.str.len() > 5) & (~hash_str.str.contains("Không có dữ liệu|nan|None", case=False, na=False))
-            
-            df_valid = df_final[valid_hash_mask].drop_duplicates(subset=["_dedup_hash"], keep='last')
-            df_invalid = df_final[~valid_hash_mask]
-            
-            df_final = pd.concat([df_valid, df_invalid], ignore_index=True)
-            df_final = df_final.drop(columns=["_dedup_hash"])
             if '_merge_key' in df_final.columns:
                 df_final = df_final.drop(columns=['_merge_key'])
 
-            success = save_to_db(df_final, schema_name)
+            delete_units = [
+                {
+                    "tbmt": tbmt,
+                    "so_qd": unit["so_qd"],
+                    "version": unit["version"],
+                }
+                for unit in units_in_cluster
+            ]
+            success = save_to_db(df_final, schema_name, delete_units=delete_units)
             
             if success:
                 ids = manifest_id_map[(tbmt, qd_original, schema_name)]

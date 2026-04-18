@@ -173,6 +173,12 @@ def _nullify(val):
     return val
 
 
+def _collapse_whitespace(value):
+    if value is None:
+        return ""
+    return " ".join(str(value).split()).strip()
+
+
 def _version_key(version_value):
     """
     Chuẩn hóa version nghiệp vụ về tuple số để so sánh ổn định.
@@ -201,6 +207,7 @@ def _version_key(version_value):
 class CrawlerDB:
     def __init__(self):
         self._connect()
+        self._ensure_web_winner_facts_schema()
 
     def _connect(self):
         """Tạo hoặc tái kết nối PostgreSQL"""
@@ -215,6 +222,38 @@ class CrawlerDB:
         except Exception:
             pass
         self._connect()
+
+    def _ensure_web_winner_facts_schema(self):
+        try:
+            self._safe_execute("""
+                CREATE TABLE IF NOT EXISTS web_winner_facts (
+                    ma_tbmt TEXT NOT NULL,
+                    so_qd TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    capture_status TEXT NOT NULL,
+                    only_winner_name TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (ma_tbmt, so_qd, version)
+                )
+            """)
+            self._safe_execute("""
+                ALTER TABLE web_winner_facts
+                DROP COLUMN IF EXISTS winner_count,
+                DROP COLUMN IF EXISTS winner_names_json,
+                DROP COLUMN IF EXISTS capture_note,
+                DROP COLUMN IF EXISTS created_at
+            """)
+            self._safe_execute("""
+                DROP INDEX IF EXISTS idx_web_winner_facts_status
+            """)
+            self._safe_execute("""
+                CREATE INDEX idx_web_winner_facts_status
+                ON web_winner_facts (capture_status)
+            """)
+            self.conn.commit()
+        except psycopg2.Error as e:
+            self.conn.rollback()
+            logger.warning(f"⚠️ Không thể đảm bảo schema web_winner_facts: {e}")
 
     def _safe_execute(self, sql, params=None):
         """Wrapper thực thi query có tự reconnect nếu connection bị đứt"""
@@ -296,6 +335,45 @@ class CrawlerDB:
                 logger.warning(f"⚠️ Không tìm thấy file cũ v{old_ver} trên local: {old_path}")
         except Exception as e:
             logger.warning(f"⚠️ Lỗi archive file cũ v{old_ver}: {e}")
+
+    def _archive_existing_unit_versions(self, tbmt, qd_raw, new_ver, archive_dir):
+        new_ver_key = _version_key(new_ver)
+        self._safe_execute("""
+            SELECT version, file_type, file_path
+            FROM packages
+            WHERE ma_tbmt=%s AND so_qd=%s AND is_latest=1
+        """, (tbmt, qd_raw))
+        rows = self.cursor.fetchall() or []
+
+        archived_pairs = set()
+        for row in rows:
+            old_ver = row["version"]
+            file_type = row["file_type"]
+            old_path = row["file_path"]
+            pair_key = (str(old_ver), str(file_type), str(old_path))
+            if pair_key in archived_pairs:
+                continue
+            if _version_key(old_ver) >= new_ver_key:
+                continue
+            archived_pairs.add(pair_key)
+            self._archive_existing_file(tbmt, qd_raw, file_type, old_ver, old_path, archive_dir)
+
+    def _refresh_unit_latest_flags(self, tbmt, qd_raw):
+        self._safe_execute("""
+            SELECT version
+            FROM packages
+            WHERE ma_tbmt=%s AND so_qd=%s
+        """, (tbmt, qd_raw))
+        rows = self.cursor.fetchall() or []
+        if not rows:
+            return
+
+        latest_ver = max((row["version"] for row in rows), key=_version_key)
+        self._safe_execute("""
+            UPDATE packages
+            SET is_latest = CASE WHEN version=%s THEN 1 ELSE 0 END
+            WHERE ma_tbmt=%s AND so_qd=%s
+        """, (latest_ver, tbmt, qd_raw))
 
     def _local_file_md5(self, path_value):
         try:
@@ -453,24 +531,27 @@ class CrawlerDB:
         os.makedirs(archive_dir, exist_ok=True)
 
         self._safe_execute("""
-            SELECT version, file_path FROM packages
-            WHERE ma_tbmt=%s AND so_qd=%s AND file_type=%s
-        """, (tbmt, qd_raw, file_type))
-        existing_rows = self.cursor.fetchall() or []
-        old_row = max(existing_rows, key=lambda row: _version_key(row["version"])) if existing_rows else None
+            SELECT version
+            FROM packages
+            WHERE ma_tbmt=%s AND so_qd=%s
+        """, (tbmt, qd_raw))
+        existing_unit_rows = self.cursor.fetchall() or []
+        latest_unit_ver = max((row["version"] for row in existing_unit_rows), key=_version_key) if existing_unit_rows else None
 
-        if old_row:
-            old_ver = old_row["version"]
-            old_path = old_row["file_path"]
-            old_ver_key = _version_key(old_ver)
-
-            if ver_chk_key > old_ver_key:
-                logger.info(f"🔄 Phát hiện bản mới v{ver_chk} (cũ v{old_ver}). Tiến hành archive bản cũ...")
-                self._archive_existing_file(tbmt, qd_raw, file_type, old_ver, old_path, archive_dir)
+        if latest_unit_ver:
+            latest_unit_ver_key = _version_key(latest_unit_ver)
+            if ver_chk_key > latest_unit_ver_key:
+                logger.info(
+                    f"🔄 Phát hiện bản mới v{ver_chk} (cũ v{latest_unit_ver}). "
+                    f"Tiến hành archive toàn bộ file latest của các version cũ..."
+                )
+                self._archive_existing_unit_versions(tbmt, qd_raw, ver_chk, archive_dir)
                 final_path = os.path.join(latest_dir, new_filename)
-            else:
-                logger.warning(f"⚠️  Bản hiện tại v{ver_chk} <= bản mới nhất v{old_ver}")
+            elif ver_chk_key < latest_unit_ver_key:
+                logger.warning(f"⚠️  Bản hiện tại v{ver_chk} < bản mới nhất của unit v{latest_unit_ver}")
                 final_path = os.path.join(archive_dir, new_filename)
+            else:
+                final_path = os.path.join(latest_dir, new_filename)
         else:
             final_path = os.path.join(latest_dir, new_filename)
 
@@ -485,22 +566,7 @@ class CrawlerDB:
             VALUES (%s, %s, %s, %s, %s, %s, %s, 'DONE', 0)
         """, (tbmt, qd_raw, ver_chk, file_type, final_path, num_cols, self._now_str()))
 
-        self._safe_execute("""
-            UPDATE packages SET is_latest = 0
-            WHERE ma_tbmt=%s AND so_qd=%s AND file_type=%s
-        """, (tbmt, qd_raw, file_type))
-
-        self._safe_execute("""
-            SELECT version FROM packages
-            WHERE ma_tbmt=%s AND so_qd=%s AND file_type=%s
-        """, (tbmt, qd_raw, file_type))
-        latest_versions = self.cursor.fetchall() or []
-        latest_ver = max((row["version"] for row in latest_versions), key=_version_key) if latest_versions else ver_chk
-
-        self._safe_execute("""
-            UPDATE packages SET is_latest = 1
-            WHERE ma_tbmt=%s AND so_qd=%s AND file_type=%s AND version=%s
-        """, (tbmt, qd_raw, file_type, latest_ver))
+        self._refresh_unit_latest_flags(tbmt, qd_raw)
 
         self.conn.commit()
         return "INSERT", final_path
@@ -530,16 +596,22 @@ class CrawlerDB:
             'dia_diem': self._nullify(info_dict.get('Địa điểm')),
             'cach_thuc_tai_ve': self._nullify(info_dict.get('Cách thức tải về')),
         }
+        approval_date = None
+        if val_map['ngay_phe_duyet']:
+            try:
+                approval_date = datetime.strptime(str(val_map['ngay_phe_duyet']).strip(), "%d/%m/%Y").date()
+            except ValueError:
+                approval_date = None
 
         self._safe_execute("""
             INSERT INTO package_metadata (
                 ma_tbmt, so_qd, version, ngay_dang_tai, trang_thai_dang_tai_kq, chu_dau_tu,
                 ten_goi_thau, linh_vuc, hinh_thuc_lcnt, phuong_thuc_lcnt, dau_thau_qua_mang,
-                trong_nuoc_quoc_te, gia_goi_thau, gia_du_toan, ngay_phe_duyet, trang_thai_phe_duyet,
+                trong_nuoc_quoc_te, gia_goi_thau, gia_du_toan, ngay_phe_duyet, ngay_phe_duyet_date, trang_thai_phe_duyet,
                 co_quan_phe_duyet, loai_hop_dong, thoi_gian_thuc_hien, ket_qua_dau_thau,
                 dia_diem, cach_thuc_tai_ve, updated_at
             ) VALUES (
-                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s
+                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s
             )
             ON CONFLICT(ma_tbmt, so_qd, version) DO UPDATE SET 
                 ngay_dang_tai = COALESCE(EXCLUDED.ngay_dang_tai, package_metadata.ngay_dang_tai),
@@ -554,6 +626,7 @@ class CrawlerDB:
                 gia_goi_thau = COALESCE(EXCLUDED.gia_goi_thau, package_metadata.gia_goi_thau),
                 gia_du_toan = COALESCE(EXCLUDED.gia_du_toan, package_metadata.gia_du_toan),
                 ngay_phe_duyet = COALESCE(EXCLUDED.ngay_phe_duyet, package_metadata.ngay_phe_duyet),
+                ngay_phe_duyet_date = COALESCE(EXCLUDED.ngay_phe_duyet_date, package_metadata.ngay_phe_duyet_date),
                 trang_thai_phe_duyet = COALESCE(EXCLUDED.trang_thai_phe_duyet, package_metadata.trang_thai_phe_duyet),
                 co_quan_phe_duyet = COALESCE(EXCLUDED.co_quan_phe_duyet, package_metadata.co_quan_phe_duyet),
                 loai_hop_dong = COALESCE(EXCLUDED.loai_hop_dong, package_metadata.loai_hop_dong),
@@ -567,12 +640,49 @@ class CrawlerDB:
             val_map['ngay_dang_tai'], val_map['trang_thai_dang_tai_kq'], val_map['chu_dau_tu'],
             val_map['ten_goi_thau'], val_map['linh_vuc'], val_map['hinh_thuc_lcnt'],
             val_map['phuong_thuc_lcnt'], val_map['dau_thau_qua_mang'], val_map['trong_nuoc_quoc_te'],
-            val_map['gia_goi_thau'], val_map['gia_du_toan'], val_map['ngay_phe_duyet'],
+            val_map['gia_goi_thau'], val_map['gia_du_toan'], val_map['ngay_phe_duyet'], approval_date,
             val_map['trang_thai_phe_duyet'], val_map['co_quan_phe_duyet'], val_map['loai_hop_dong'],
             val_map['thoi_gian_thuc_hien'], val_map['ket_qua_dau_thau'], val_map['dia_diem'],
             val_map['cach_thuc_tai_ve'], self._now_str()
         ))
         self.conn.commit()
+
+    def save_web_winner_fact(self, tbmt, qd_raw, version, fact_payload, commit=True):
+        if not fact_payload:
+            return False
+
+        tbmt_save = str(tbmt or "").strip() or "UNKNOWN_TBMT"
+        qd_save = str(qd_raw or "").strip() or "UNKNOWN_QD"
+        ver_save = version if version else "00"
+        status = self._nullify(_collapse_whitespace(fact_payload.get("capture_status"))) or "UNKNOWN"
+        only_winner_name = self._nullify(_collapse_whitespace(fact_payload.get("only_winner_name")))
+
+        try:
+            self._safe_execute("""
+                INSERT INTO web_winner_facts (
+                    ma_tbmt, so_qd, version, capture_status, only_winner_name, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (ma_tbmt, so_qd, version) DO UPDATE SET
+                    capture_status = EXCLUDED.capture_status,
+                    only_winner_name = EXCLUDED.only_winner_name,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE web_winner_facts.capture_status IS DISTINCT FROM EXCLUDED.capture_status
+                   OR web_winner_facts.only_winner_name IS DISTINCT FROM EXCLUDED.only_winner_name
+            """, (
+                tbmt_save,
+                qd_save,
+                ver_save,
+                status,
+                only_winner_name,
+            ))
+            if commit:
+                self.conn.commit()
+            return True
+        except psycopg2.Error as e:
+            self.conn.rollback()
+            logger.warning(f"⚠️ Không lưu được web_winner_fact cho {tbmt_save} / {qd_save} / v{ver_save}: {e}")
+            return False
 
 
     # --- LOGS & HELPERS ---
@@ -1069,6 +1179,194 @@ def extract_additional_info():
     except Exception as e:
         logger.error(f"❌ Lỗi lấy thông tin bổ sung: {e}")
     return info
+
+
+def _find_card_by_header(header_text: str):
+    cards = driver.find_elements(
+        By.XPATH,
+        f"//div[contains(@class,'card')][.//div[contains(@class,'card-header') and contains(normalize-space(),'{header_text}')]]"
+    )
+    return cards[0] if cards else None
+
+
+def _card_has_multiple_pages(card) -> bool:
+    try:
+        page_items = card.find_elements(
+            By.XPATH,
+            ".//ul[contains(@class,'ant-pagination')]//li[contains(@class,'ant-pagination-item')]"
+        )
+        numeric_pages = {
+            _collapse_whitespace(item.text)
+            for item in page_items
+            if _collapse_whitespace(item.text).isdigit()
+        }
+        return len(numeric_pages) > 1
+    except Exception:
+        return False
+
+
+def _find_table_column_index(table, candidate_labels):
+    header_cells = table.find_elements(By.XPATH, ".//thead//tr[1]/th")
+    header_labels = []
+    for idx, header_cell in enumerate(header_cells, start=1):
+        header_text = _collapse_whitespace(header_cell.text)
+        if header_text:
+            header_labels.append(header_text)
+        header_clean = header_text.casefold()
+        if any(candidate in header_clean for candidate in candidate_labels):
+            return idx, header_labels
+    return None, header_labels
+
+
+def _result_text_is_awarded(result_text: str) -> bool:
+    text = _collapse_whitespace(result_text).casefold()
+    if not text:
+        return False
+    if text.startswith("trúng thầu"):
+        return True
+    if "không trúng thầu" in text:
+        return False
+    return text == "trúng thầu"
+
+
+def extract_web_winner_fact():
+    fact = {
+        "capture_status": "CARD_NOT_FOUND",
+        "winner_count": 0,
+        "only_winner_name": None,
+        "winner_names": [],
+        "capture_note": None,
+    }
+
+    try:
+        winner_info_card = _find_card_by_header("Thông tin Nhà thầu trúng thầu")
+        if winner_info_card:
+            if _card_has_multiple_pages(winner_info_card):
+                fact["capture_status"] = "PAGINATED_WINNER_CARD"
+                fact["capture_note"] = "source=THONG_TIN_NHA_THAU_TRUNG_THAU"
+                return fact
+
+            table = winner_info_card.find_element(By.XPATH, ".//table")
+            winner_col_index, header_labels = _find_table_column_index(
+                table,
+                ["tên nhà thầu", "nhà thầu"],
+            )
+            if winner_col_index is None:
+                fact["capture_status"] = "NAME_COLUMN_NOT_FOUND"
+                if header_labels:
+                    fact["capture_note"] = (
+                        "source=THONG_TIN_NHA_THAU_TRUNG_THAU | "
+                        f"Header hiện có: {', '.join(header_labels[:8])}"
+                    )
+                return fact
+
+            seen_names = set()
+            winner_names = []
+            rows = table.find_elements(By.XPATH, ".//tbody/tr[td]")
+            for row in rows:
+                cells = row.find_elements(By.XPATH, "./td")
+                if len(cells) < winner_col_index:
+                    continue
+                winner_name = _collapse_whitespace(cells[winner_col_index - 1].text)
+                if not winner_name:
+                    continue
+                dedupe_key = winner_name.casefold()
+                if dedupe_key in seen_names:
+                    continue
+                seen_names.add(dedupe_key)
+                winner_names.append(winner_name)
+
+            fact["winner_names"] = winner_names
+            fact["winner_count"] = len(winner_names)
+            fact["capture_note"] = "source=THONG_TIN_NHA_THAU_TRUNG_THAU"
+
+            if not winner_names:
+                fact["capture_status"] = "NO_WINNER_ROWS"
+                return fact
+
+            if len(winner_names) == 1:
+                fact["capture_status"] = "SINGLE_WINNER"
+                fact["only_winner_name"] = winner_names[0]
+                return fact
+
+            fact["capture_status"] = "MULTI_WINNER"
+            return fact
+
+        bidder_list_card = _find_card_by_header("Danh sách nhà thầu")
+        if not bidder_list_card:
+            return fact
+
+        if _card_has_multiple_pages(bidder_list_card):
+            fact["capture_status"] = "PAGINATED_BIDDER_LIST"
+            fact["capture_note"] = "source=DANH_SACH_NHA_THAU"
+            return fact
+
+        table = bidder_list_card.find_element(By.XPATH, ".//table")
+        winner_col_index, header_labels = _find_table_column_index(
+            table,
+            ["tên nhà thầu", "nhà thầu"],
+        )
+        result_col_index, _ = _find_table_column_index(
+            table,
+            ["kết quả"],
+        )
+
+        if winner_col_index is None:
+            fact["capture_status"] = "NAME_COLUMN_NOT_FOUND"
+            if header_labels:
+                fact["capture_note"] = (
+                    "source=DANH_SACH_NHA_THAU | "
+                    f"Header hiện có: {', '.join(header_labels[:8])}"
+                )
+            return fact
+
+        if result_col_index is None:
+            fact["capture_status"] = "RESULT_COLUMN_NOT_FOUND"
+            fact["capture_note"] = "source=DANH_SACH_NHA_THAU"
+            return fact
+
+        seen_names = set()
+        winner_names = []
+        rows = table.find_elements(By.XPATH, ".//tbody/tr[td]")
+        for row in rows:
+            cells = row.find_elements(By.XPATH, "./td")
+            if len(cells) < max(winner_col_index, result_col_index):
+                continue
+            result_text = _collapse_whitespace(cells[result_col_index - 1].text)
+            if not _result_text_is_awarded(result_text):
+                continue
+            winner_name = _collapse_whitespace(cells[winner_col_index - 1].text)
+            if not winner_name:
+                continue
+            dedupe_key = winner_name.casefold()
+            if dedupe_key in seen_names:
+                continue
+            seen_names.add(dedupe_key)
+            winner_names.append(winner_name)
+
+        fact["winner_names"] = winner_names
+        fact["winner_count"] = len(winner_names)
+        fact["capture_note"] = "source=DANH_SACH_NHA_THAU"
+
+        if not winner_names:
+            fact["capture_status"] = "NO_AWARDED_ROWS"
+            return fact
+
+        if len(winner_names) == 1:
+            fact["capture_status"] = "SINGLE_WINNER"
+            fact["only_winner_name"] = winner_names[0]
+            return fact
+
+        fact["capture_status"] = "MULTI_WINNER"
+        return fact
+
+    except NoSuchElementException:
+        fact["capture_status"] = "TABLE_NOT_FOUND"
+        return fact
+    except Exception as e:
+        fact["capture_status"] = "PARSE_ERROR"
+        fact["capture_note"] = _collapse_whitespace(str(e))[:500]
+        return fact
 
 
 # ================== HỖ TRỢ KHÁC ==================
@@ -1708,119 +2006,143 @@ def download_excel_or_attach_for_current_decision(
 ):
     collection_method = None
     any_file_downloaded = False
+    winner_fact = None
+    winner_fact_saved = False
 
-    if has_legacy_lot_selection_card():
-        ensure_select_lot_with_winner()
-
-    # --- 1. TÌM NÚT TẢI ---
-    xuat_btn = wait_export_excel_button_quick(driver, timeout=1.2)
-    
-    if xuat_btn:
-        collection_method = "trực tiếp"
-        clear_raw_downloads()
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", xuat_btn)
-        wait_until_not_loading(driver, 10)
-        
-        if not safe_click(xuat_btn, wait):
-            raise TempCrawlAbort(ma_tbmt, f"Không thể click nút Xuất Excel ở box {box_index}")
-            
-        new_file = wait_for_new_file(None, timeout=60, exts=[".xlsx", ".xls"])
-    
-    else:
-        collection_method = "gián tiếp"
-        logger.warning(f"⚠️ Không thấy nút Xuất Excel ở box {box_index}, thử file đính kèm")
-        try:
-            file_tag = wait.until(EC.presence_of_element_located((
-                By.XPATH, "//div[contains(@class,'card border--none card-expand')]//tags[contains(@class,'tags-fileAttach')]"
-            )))
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", file_tag)
-            wait_until_not_loading(driver, 10)
-            clear_raw_downloads()
-            
-            if not safe_click(file_tag, wait):
-                raise TempCrawlAbort(ma_tbmt, f"Không thể click file đính kèm ở box {box_index}")
-                
-            logger.info(f"✅ Đã click tải file đính kèm cho box {box_index}")
-            new_file = wait_for_new_file(None, timeout=60, exts=None)
-        except TimeoutException:
-            logger.error(f"❌ Không tìm thấy file đính kèm ở box {box_index}")
-            return False
-
-    # --- 2. XỬ LÝ FILE TẢI VỀ ---
-    if new_file:
-        actual_file = get_actual_file_from_path(new_file)
-        if not actual_file:
-            raise TempCrawlAbort(ma_tbmt, f"Không lấy được file thực tế sau khi tải ở box {box_index}")
-
-        # Logic cũ: Xóa file danh sách nhà thầu
-        if "danh_sach_nha_thau" in os.path.basename(actual_file).lower():
-            try: os.remove(actual_file)
-            except: pass
-            raise TempCrawlAbort(ma_tbmt, f"Tải nhầm file danh sách nhà thầu ở box {box_index}")
-
-        # Tự động detect loại file
-        ext = os.path.splitext(actual_file)[1].lower()
-        detected_type = "excel" if ext in ['.xlsx', '.xls'] else "attachment"
-
-        # GỌI DB TRACKER
-        action, saved_path = tracker.check_and_save(
+    def persist_winner_fact(commit):
+        nonlocal winner_fact_saved
+        if winner_fact_saved or winner_fact is None:
+            return
+        winner_fact_saved = tracker.save_web_winner_fact(
             tbmt=ma_tbmt,
             qd_raw=suffix_qd,
             version=version_code,
-            file_type=detected_type,
-            temp_path=actual_file,
-            target_root_dir=BASE_DIR,
-            num_cols=num_cols
+            fact_payload=winner_fact,
+            commit=commit,
         )
 
-        if action == "SKIPPED":
-            try: os.remove(actual_file)
-            except: pass
-            logger.info(f"⏩ Skipped old version: {ma_tbmt} v{version_code}")
-            return True # Vẫn return True để báo là process thành công (chỉ là không lưu thôi)
-        elif action == "SKIPPED_DUPLICATE":
-            logger.info(f"↪️ Bỏ qua file PDF trùng nghĩa cho {ma_tbmt} / {suffix_qd} / v{version_code}")
-            return True
-        elif action == "NORMALIZED_DUPLICATE":
-            logger.info(f"🔁 Đã chuẩn hóa file PDF trùng nghĩa về 1 record packages cho {ma_tbmt} / {suffix_qd} / v{version_code}")
-            any_file_downloaded = True
-            return any_file_downloaded
-            
-        elif action in ["INSERT", "UPDATE"]:
-            # logger.info(f"✅ [{action}] Saved: {os.path.basename(saved_path)}")
-            logger.info(f"✅ [{action}] Đã lưu file đính kèm")
-            any_file_downloaded = True
-            
-            # LƯU METADATA NGAY LẬP TỨC
-            info_dict = info_snapshot if info_snapshot is not None else extract_additional_info()
+    try:
+        if has_legacy_lot_selection_card():
+            ensure_select_lot_with_winner()
 
-            if ngay_dang_tai_specific:
-                info_dict["Ngày đăng tải"] = ngay_dang_tai_specific
+        winner_fact = extract_web_winner_fact()
 
-            # CẬP NHẬT TRẠNG THÁI RIÊNG
-            if trang_thai_specific:     # Ghi đè vào cả 2 key có thể dùng để map vào DB
-                info_dict["Trạng thái đăng tải KQ"] = trang_thai_specific
-                info_dict["Trạng thái KQLCNT"] = trang_thai_specific
+        # --- 1. TÌM NÚT TẢI ---
+        xuat_btn = wait_export_excel_button_quick(driver, timeout=1.2)
+        
+        if xuat_btn:
+            collection_method = "trực tiếp"
+            clear_raw_downloads()
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", xuat_btn)
+            wait_until_not_loading(driver, 10)
+            
+            if not safe_click(xuat_btn, wait):
+                raise TempCrawlAbort(ma_tbmt, f"Không thể click nút Xuất Excel ở box {box_index}")
                 
-            info_dict.update({
-                "Mã TBMT": ma_tbmt,
-                "Địa điểm": dia_diem,
-                "Cách thức tải về": collection_method,
-                "File Path": saved_path
-            })
-            tracker.save_metadata(ma_tbmt, suffix_qd, version_code, info_dict)
-            
-        else: # ERROR
-            raise TempCrawlAbort(ma_tbmt, f"Hệ thống không lưu được file tải về ở box {box_index}")
-            
-    else:
-        raise TempCrawlAbort(ma_tbmt, f"Timeout tải file ({collection_method}) ở box {box_index}")
+            new_file = wait_for_new_file(None, timeout=60, exts=[".xlsx", ".xls"])
+        
+        else:
+            collection_method = "gián tiếp"
+            logger.warning(f"⚠️ Không thấy nút Xuất Excel ở box {box_index}, thử file đính kèm")
+            try:
+                file_tag = wait.until(EC.presence_of_element_located((
+                    By.XPATH, "//div[contains(@class,'card border--none card-expand')]//tags[contains(@class,'tags-fileAttach')]"
+                )))
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", file_tag)
+                wait_until_not_loading(driver, 10)
+                clear_raw_downloads()
+                
+                if not safe_click(file_tag, wait):
+                    raise TempCrawlAbort(ma_tbmt, f"Không thể click file đính kèm ở box {box_index}")
+                    
+                logger.info(f"✅ Đã click tải file đính kèm cho box {box_index}")
+                new_file = wait_for_new_file(None, timeout=60, exts=None)
+            except TimeoutException:
+                logger.error(f"❌ Không tìm thấy file đính kèm ở box {box_index}")
+                persist_winner_fact(commit=True)
+                return False, winner_fact
 
-    return any_file_downloaded
+        # --- 2. XỬ LÝ FILE TẢI VỀ ---
+        if new_file:
+            actual_file = get_actual_file_from_path(new_file)
+            if not actual_file:
+                raise TempCrawlAbort(ma_tbmt, f"Không lấy được file thực tế sau khi tải ở box {box_index}")
+
+            # Logic cũ: Xóa file danh sách nhà thầu
+            if "danh_sach_nha_thau" in os.path.basename(actual_file).lower():
+                try: os.remove(actual_file)
+                except: pass
+                raise TempCrawlAbort(ma_tbmt, f"Tải nhầm file danh sách nhà thầu ở box {box_index}")
+
+            # Tự động detect loại file
+            ext = os.path.splitext(actual_file)[1].lower()
+            detected_type = "excel" if ext in ['.xlsx', '.xls'] else "attachment"
+
+            # GỌI DB TRACKER
+            action, saved_path = tracker.check_and_save(
+                tbmt=ma_tbmt,
+                qd_raw=suffix_qd,
+                version=version_code,
+                file_type=detected_type,
+                temp_path=actual_file,
+                target_root_dir=BASE_DIR,
+                num_cols=num_cols
+            )
+
+            if action == "SKIPPED":
+                try: os.remove(actual_file)
+                except: pass
+                persist_winner_fact(commit=True)
+                logger.info(f"⏩ Skipped old version: {ma_tbmt} v{version_code}")
+                return True, winner_fact
+            elif action == "SKIPPED_DUPLICATE":
+                persist_winner_fact(commit=True)
+                logger.info(f"↪️ Bỏ qua file PDF trùng nghĩa cho {ma_tbmt} / {suffix_qd} / v{version_code}")
+                return True, winner_fact
+            elif action == "NORMALIZED_DUPLICATE":
+                persist_winner_fact(commit=True)
+                logger.info(f"🔁 Đã chuẩn hóa file PDF trùng nghĩa về 1 record packages cho {ma_tbmt} / {suffix_qd} / v{version_code}")
+                any_file_downloaded = True
+                return any_file_downloaded, winner_fact
+                
+            elif action in ["INSERT", "UPDATE"]:
+                logger.info(f"✅ [{action}] Đã lưu file đính kèm")
+                any_file_downloaded = True
+                
+                # LƯU METADATA NGAY LẬP TỨC
+                info_dict = info_snapshot if info_snapshot is not None else extract_additional_info()
+
+                if ngay_dang_tai_specific:
+                    info_dict["Ngày đăng tải"] = ngay_dang_tai_specific
+
+                # CẬP NHẬT TRẠNG THÁI RIÊNG
+                if trang_thai_specific:
+                    info_dict["Trạng thái đăng tải KQ"] = trang_thai_specific
+                    info_dict["Trạng thái KQLCNT"] = trang_thai_specific
+                    
+                info_dict.update({
+                    "Mã TBMT": ma_tbmt,
+                    "Địa điểm": dia_diem,
+                    "Cách thức tải về": collection_method,
+                    "File Path": saved_path
+                })
+                persist_winner_fact(commit=False)
+                tracker.save_metadata(ma_tbmt, suffix_qd, version_code, info_dict)
+                
+            else:
+                raise TempCrawlAbort(ma_tbmt, f"Hệ thống không lưu được file tải về ở box {box_index}")
+                
+        else:
+            raise TempCrawlAbort(ma_tbmt, f"Timeout tải file ({collection_method}) ở box {box_index}")
+
+        return any_file_downloaded, winner_fact
+    except TempCrawlAbort:
+        persist_winner_fact(commit=True)
+        raise
 
 
 # ========== LOG PDF-ONLY ==========
-def log_pdf_only_if_needed(any_downloaded, any_excel_for_box, ma_tbmt, so_qd, ver_code, dia_diem, dest_qd, info_snapshot=None):
+def log_pdf_only_if_needed(any_downloaded, any_excel_for_box, ma_tbmt, so_qd, ver_code, dia_diem, dest_qd, info_snapshot=None, winner_fact=None):
     """
     Nếu chỉ có PDF -> Ghi metadata vào DB để tracking.
     """
@@ -1835,7 +2157,9 @@ def log_pdf_only_if_needed(any_downloaded, any_excel_for_box, ma_tbmt, so_qd, ve
             "Cách thức tải về": "PDF_ONLY", # Đánh dấu rõ là chỉ có PDF
             "File Path": dest_qd
         })
-        
+
+        if winner_fact is not None:
+            tracker.save_web_winner_fact(ma_tbmt, so_qd, ver_code, winner_fact, commit=False)
         tracker.save_metadata(ma_tbmt, so_qd, ver_code, info_dict)
         logger.info(f"ℹ️ Đã lưu metadata cho gói chỉ có PDF: {ma_tbmt}")
 
@@ -1921,6 +2245,7 @@ def _process_one_qd_flow(ma_tbmt, box_index, dia_diem, qd_text_raw, qd_element_p
     any_dl = False
     any_excel = False
     dest_qd = None
+    winner_fact = None
     safe_ver = version_code if version_code else "00"
 
     # 1. Tải PDF QĐ (nếu có element)
@@ -1937,19 +2262,30 @@ def _process_one_qd_flow(ma_tbmt, box_index, dia_diem, qd_text_raw, qd_element_p
 
     # 2. Tải Excel/Attach
     # suffix_qd dùng cho tên file Excel chính là số QĐ raw
-    if download_excel_or_attach_for_current_decision(
+    excel_downloaded, winner_fact = download_excel_or_attach_for_current_decision(
         num_cols, ma_tbmt, box_index, dia_diem, suffix_qd=qd_text_raw, version_code=safe_ver, 
         ngay_dang_tai_specific=ngay_dang_tai_specific, trang_thai_specific=trang_thai_specific,
         info_snapshot=info_snapshot
-    ):
+    )
+    if excel_downloaded:
         any_dl = True
         any_excel = True
 
-    return any_dl, any_excel, dest_qd
+    return any_dl, any_excel, dest_qd, winner_fact
 
 
-def finalize_one_qd_result(ma_tbmt, box_index, dia_diem, so_qd, ver_code, any_dl, any_excel, dest_qd, info_snapshot=None):
-    log_pdf_only_if_needed(any_dl, any_excel, ma_tbmt, so_qd, ver_code, dia_diem, dest_qd, info_snapshot=info_snapshot)
+def finalize_one_qd_result(ma_tbmt, box_index, dia_diem, so_qd, ver_code, any_dl, any_excel, dest_qd, info_snapshot=None, winner_fact=None):
+    log_pdf_only_if_needed(
+        any_dl,
+        any_excel,
+        ma_tbmt,
+        so_qd,
+        ver_code,
+        dia_diem,
+        dest_qd,
+        info_snapshot=info_snapshot,
+        winner_fact=winner_fact,
+    )
     if not any_excel:
         tracker.log_event(
             tbmt=ma_tbmt,
@@ -2095,7 +2431,7 @@ def handle_quyet_dinh_phe_duyet_all(num_cols, ma_tbmt, box_index, box_name_text,
                         pdf_tag = get_card_pdf_tag()
                         
                         # --- XỬ LÝ DOWNLOAD ---
-                        ok, ok_excel, path = _process_one_qd_flow(
+                        ok, ok_excel, path, winner_fact = _process_one_qd_flow(
                             ma_tbmt, box_index, dia_diem,
                             qd_text_raw=so_qd, 
                             qd_element_pdf=pdf_tag, 
@@ -2115,7 +2451,8 @@ def handle_quyet_dinh_phe_duyet_all(num_cols, ma_tbmt, box_index, box_name_text,
                             any_dl=ok,
                             any_excel=ok_excel,
                             dest_qd=path,
-                            info_snapshot=info_snapshot
+                            info_snapshot=info_snapshot,
+                            winner_fact=winner_fact
                         )
                         
                         if ok: any_downloaded = True
@@ -2194,7 +2531,7 @@ def handle_quyet_dinh_phe_duyet_all(num_cols, ma_tbmt, box_index, box_name_text,
             if not so_qd: so_qd = "UNKNOWN_QD"
             log_duplicate_qd_version(so_qd, ver_code)
 
-            ok, ok_excel, path = _process_one_qd_flow(
+            ok, ok_excel, path, winner_fact = _process_one_qd_flow(
                 ma_tbmt, box_index, dia_diem,
                 qd_text_raw=so_qd, qd_element_pdf=pdf_tag, version_code=ver_code, num_cols=num_cols, 
                 ngay_dang_tai_specific=None, trang_thai_specific=None,
@@ -2210,7 +2547,8 @@ def handle_quyet_dinh_phe_duyet_all(num_cols, ma_tbmt, box_index, box_name_text,
                 any_dl=ok,
                 any_excel=ok_excel,
                 dest_qd=path,
-                info_snapshot=info_snapshot
+                info_snapshot=info_snapshot,
+                winner_fact=winner_fact
             )
             if ok: any_downloaded = True
             if ok_excel: any_excel_for_box = True
