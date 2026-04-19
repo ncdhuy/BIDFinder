@@ -98,28 +98,27 @@
         </div>
     </section>
     <div class="page-container">
-        <header class="app-header">
-            <div class="app-brand">
-                <div class="app-title">
-                    <button class="app-home-trigger" id="app-home-trigger" type="button" aria-label="Quay về landing page">
-                        <img class="app-logo" src="./assets/logo_v9.png" alt="BIDFinder" />
-                    </button>
-                    <span class="app-title-text">Hệ thống quản lý dữ liệu đấu thầu y tế</span>
-                </div>
-            </div>
-
-            <div class="app-header-links">
-                <div class="app-auth-shell is-hidden" id="app-auth-shell">
-                    <button class="app-auth-btn" id="auth-edit-profile-btn" type="button">Hồ sơ</button>
-                    <button class="app-auth-btn app-auth-btn-danger" id="auth-logout-btn" type="button">Đăng xuất</button>
-                </div>
-            </div>
-        </header>
-
         <!-- LAYOUT CHÍNH -->
         <div class="main-layout">
             
             <main class="main-content">
+                <header class="app-header">
+                    <div class="app-brand">
+                        <div class="app-title">
+                            <button class="app-home-trigger" id="app-home-trigger" type="button" aria-label="Quay về landing page">
+                                <img class="app-logo" src="./assets/logo_v9.png" alt="BIDFinder" />
+                            </button>
+                            <span class="app-title-text">Hệ thống quản lý dữ liệu đấu thầu y tế</span>
+                        </div>
+                    </div>
+
+                    <div class="app-header-links">
+                        <div class="app-auth-shell is-hidden" id="app-auth-shell">
+                            <button class="app-auth-btn" id="auth-edit-profile-btn" type="button">Hồ sơ</button>
+                            <button class="app-auth-btn app-auth-btn-danger" id="auth-logout-btn" type="button">Đăng xuất</button>
+                        </div>
+                    </div>
+                </header>
                 
                 <!-- TABS NAVIGATION -->
                 <div class="tabs-container">
@@ -161,15 +160,17 @@
                         </div>
 
                         <div class="workspace-actions">
-                            <button class="btn-meta-simple" id="open-run-history" title="Lịch sử cập nhật dữ liệu" data-title="Lịch sử cập nhật">
+                            <button class="btn-meta-simple" id="open-run-history" aria-label="Lịch sử cập nhật dữ liệu">
                                 <i data-feather="refresh-ccw"></i>
+                                <span class="action-btn-label action-btn-label-stacked">
+                                    <span>Lịch sử</span>
+                                    <span>cập nhật</span>
+                                </span>
                             </button>
-
-                            <div class="tabs-actions">
-                                <button class="action-btn" id="open-filter-panel" title="Tra cứu" data-title="Tra cứu">
-                                    <i data-feather="filter"></i>
-                                </button>
-                            </div>
+                            <button class="action-btn" id="open-filter-panel" aria-label="Tra cứu">
+                                <i data-feather="filter"></i>
+                                <span class="action-btn-label">Tra cứu</span>
+                            </button>
                         </div>
                     </div>
 
@@ -676,8 +677,8 @@
         <div class="history-content">
             <div class="history-header">
                 <h3>
-                    <i data-feather="list"></i>
-                    Lịch sử cập nhật dữ liệu
+                    <i data-feather="refresh-ccw"></i>
+                    Lịch sử cập nhật
                 </h3>
                 <button class="btn-close" id="close-history" aria-label="Đóng">
                     <i data-feather="x"></i>

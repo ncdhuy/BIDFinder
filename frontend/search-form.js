@@ -869,6 +869,7 @@ class CustomSearchForm extends HTMLElement {
                         <!-- Drug Name Pane -->
                         <div class="filter-pane active" id="pane-drug">
                             <h3>Tên thương mại</h3>
+                            <p class="pane-desc"></p>
                             <div class="field">
                                 <div class="token-input-container" id="drug-name-container"><input type="text" placeholder="Nhập tên thuốc..." /></div>
                                 <input type="hidden" id="filter-drug-name" />

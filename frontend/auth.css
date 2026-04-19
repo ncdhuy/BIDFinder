@@ -427,6 +427,23 @@
   transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
 }
 
+.auth-field select.is-placeholder {
+  color: var(--auth-subtle);
+}
+
+.auth-field select option {
+  color: var(--auth-ink);
+  background: #ffffff;
+}
+
+.auth-field select option:hover,
+.auth-field select option:checked,
+.auth-field select option:focus {
+  background: #eef3f6;
+  color: var(--auth-ink);
+  box-shadow: 0 0 0 100vmax #eef3f6 inset;
+}
+
 .auth-field input:focus,
 .auth-field select:focus {
   outline: none;

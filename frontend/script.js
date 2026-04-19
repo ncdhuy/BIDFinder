@@ -279,52 +279,52 @@ const TABLE_CONFIGS = {
 const DEFAULT_COLUMN_WIDTHS = {
     'standard-table': {
         'Mã TBMT': 118,
-        'Chủ đầu tư': 220,
-        'Quyết định phê duyệt': 150,
-        'Ngày phê duyệt': 120,
+        'Chủ đầu tư': 130,
+        'Quyết định phê duyệt': 200,
+        'Ngày phê duyệt': 150,
         'Mã thuốc': 120,
-        'Tên thuốc': 220,
-        'Tên hoạt chất': 200,
-        'Nồng độ, hàm lượng': 170,
-        'Đơn vị tính': 110,
-        'Số lượng': 110,
-        'Đơn giá trúng thầu (VND)': 150,
-        'Thành tiền (VND)': 150,
+        'Tên thuốc': 150,
+        'Tên hoạt chất': 150,
+        'Nồng độ, hàm lượng': 200,
+        'Đơn vị tính': 130,
+        'Số lượng': 120,
+        'Đơn giá trúng thầu (VND)': 220,
+        'Thành tiền (VND)': 180,
         'Đường dùng': 140,
         'Dạng bào chế': 150,
-        'Quy cách': 160,
-        'Nhóm thuốc': 150,
-        'GĐKLH hoặc GPNK': 145,
-        'Cơ sở sản xuất': 180,
+        'Quy cách': 130,
+        'Nhóm thuốc': 130,
+        'GĐKLH hoặc GPNK': 180,
+        'Cơ sở sản xuất': 160,
         'Xuất xứ': 130,
         'Nhà thầu trúng thầu': 210,
-        'Hình thức LCNT': 145,
-        'Địa điểm': 160,
-        'Ngày hết hiệu lực': 128,
-        'Tình trạng hiệu lực': 140
+        'Hình thức LCNT': 150,
+        'Địa điểm': 150,
+        'Ngày hết hiệu lực': 180,
+        'Tình trạng hiệu lực': 180
     },
     'extended-table': {
         'Mã TBMT': 118,
-        'Chủ đầu tư': 220,
-        'Quyết định phê duyệt': 150,
-        'Ngày phê duyệt': 120,
-        'Tên phần/lô': 190,
+        'Chủ đầu tư': 130,
+        'Quyết định phê duyệt': 200,
+        'Ngày phê duyệt': 150,
+        'Tên phần/lô': 160,
         'Danh mục hàng hóa': 210,
         'Tính năng kỹ thuật': 260,
-        'Đơn vị tính': 110,
-        'Khối lượng': 110,
-        'Đơn giá trúng thầu (VND)': 150,
-        'Thành tiền (VND)': 150,
+        'Đơn vị tính': 130,
+        'Khối lượng': 120,
+        'Đơn giá trúng thầu (VND)': 220,
+        'Thành tiền (VND)': 180,
         'Mặt hàng dự thầu': 180,
         'Nhãn hiệu': 145,
         'Ký mã hiệu': 145,
         'Xuất xứ': 130,
         'Hãng sản xuất': 170,
         'Nhà thầu trúng thầu': 210,
-        'Hình thức LCNT': 145,
+        'Hình thức LCNT': 150,
         'Địa điểm': 160,
-        'Ngày hết hiệu lực': 128,
-        'Tình trạng hiệu lực': 140
+        'Ngày hết hiệu lực': 180,
+        'Tình trạng hiệu lực': 180
     }
 };
 
@@ -983,7 +983,7 @@ function syncHeadersWithLocalStorage() {
         thead.innerHTML = '';
         const selectorTh = document.createElement('th');
         selectorTh.className = 'row-selector-header';
-        selectorTh.textContent = '#';
+        selectorTh.textContent = 'STT';
         thead.appendChild(selectorTh);
         
         getVisibleColumnOrder(tableId).forEach((colName, index) => {
@@ -3959,7 +3959,7 @@ function prepareExportData(data, headerOrder, currentOrder) {
 }
 
 function buildExportWorksheet(data, headerOrder, currentOrder) {
-    const cleanHeaderOrder = (headerOrder || currentOrder || []).filter(col => col !== '#');
+    const cleanHeaderOrder = (headerOrder || currentOrder || []).filter(col => col !== 'STT');
     const preparedData = prepareExportData(data, cleanHeaderOrder, currentOrder);
     const ws = XLSX.utils.json_to_sheet(preparedData, {
         header: cleanHeaderOrder,
@@ -4047,11 +4047,8 @@ function initSearchFormEvents() {
 function disableDefaultTooltips() {
     document.querySelectorAll('.action-btn, .btn-meta-simple')
         .forEach(button => {
-            const title = button.getAttribute('title');
-            if (title) {
-                button.setAttribute('data-title', title);
-                button.removeAttribute('title');
-            }
+            button.removeAttribute('title');
+            button.removeAttribute('data-title');
         });
 }
 

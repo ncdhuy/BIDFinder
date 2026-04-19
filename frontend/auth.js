@@ -259,6 +259,11 @@
     return true;
   }
 
+  function syncSelectPlaceholderState(select) {
+    if (!select) return;
+    select.classList.toggle('is-placeholder', !String(select.value || '').trim());
+  }
+
   function populatePositionOptions() {
     const options = Array.isArray(state.config?.position_options)
       ? state.config.position_options
@@ -268,7 +273,7 @@
       if (!select) return;
 
       const currentValue = select.value;
-      select.innerHTML = '<option value="">Chưa chọn</option>';
+      select.innerHTML = '<option value="">Vị trí</option>';
 
       options.forEach((option) => {
         const el = document.createElement('option');
@@ -278,6 +283,7 @@
       });
 
       select.value = currentValue || '';
+      syncSelectPlaceholderState(select);
     });
   }
 
@@ -768,6 +774,11 @@
     els['auth-profile-cancel-btn']?.addEventListener('click', () => closeAuthModal({ clearIntent: false }));
     els['auth-edit-profile-btn']?.addEventListener('click', () => openAuthModal('profile'));
     els['auth-logout-btn']?.addEventListener('click', handleLogout);
+    ['register-position', 'profile-position'].forEach((fieldId) => {
+      els[fieldId]?.addEventListener('change', (event) => {
+        syncSelectPlaceholderState(event.currentTarget);
+      });
+    });
 
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && els['auth-modal']?.classList.contains('show')) {
