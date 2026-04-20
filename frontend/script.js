@@ -73,9 +73,9 @@ function reorderDataByColumns(data, columnOrder) {
 // ========= 3. STORAGE
 const DF1_COLUMNS_ORDER = [
     'Mã TBMT','Chủ đầu tư','Quyết định phê duyệt','Ngày phê duyệt',
-    'Mã thuốc','Tên thuốc','Tên hoạt chất','Nồng độ, hàm lượng',
+    'Tên thuốc','Tên hoạt chất','Nồng độ, hàm lượng',
     'Đơn vị tính','Số lượng','Đơn giá trúng thầu (VND)','Thành tiền (VND)',
-    'Đường dùng','Dạng bào chế','Quy cách','Nhóm thuốc','GĐKLH hoặc GPNK',
+    'Đường dùng','Dạng bào chế','Quy cách','Nhóm thuốc','GĐKLH hoặc GPNK','Mã thuốc',
     'Cơ sở sản xuất','Xuất xứ','Nhà thầu trúng thầu',
     'Hình thức LCNT','Địa điểm','Ngày hết hiệu lực','Tình trạng hiệu lực'
 ];
@@ -1047,7 +1047,7 @@ function createHeaderCell(tableId, colName, index) {
 // FILTERS
 // ============================== 
 
-const MAX_RESULTS_PER_TABLE = 30;
+const MAX_RESULTS_PER_TABLE = 150;
 let currentQueryRequest = {
     scope: 'all',
     filters: {}

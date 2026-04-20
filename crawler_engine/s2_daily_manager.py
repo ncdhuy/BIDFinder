@@ -4975,7 +4975,7 @@ def finalize_and_generate_manifest(batch_limit=None):
                         qd_raw,
                         version,
                         candidate_files_for_status,
-                        winner_fact_cursor=cursor,
+                        winner_fact_cursor=None,
                         validation_scope=VALIDATION_SCOPE_DECISION,
                     )
 
@@ -5060,16 +5060,19 @@ def finalize_and_generate_manifest(batch_limit=None):
                     })
 
                 if todo_count == 0 and blocked_by_anomaly_count == 0 and blocked_by_temp_abort_count == 0:
-                    sync_manual_count, sync_manual_paths, sync_ocr_count, sync_ocr_paths = sync_active_human_tasks_with_ready_manifest(
-                        cursor,
-                        TARGET_DATE,
-                    )
-                    resolved_manual_task_count += sync_manual_count
-                    resolved_ocr_task_count += sync_ocr_count
-                    resolved_manual_cleanup_paths.update(sync_manual_paths)
-                    resolved_ocr_cleanup_paths.update(sync_ocr_paths)
-                    conn.commit()
-                    print_current_manifest_backlog(cursor, TARGET_DATE)
+                    with get_db_connection() as post_conn:
+                        with post_conn.cursor() as post_cursor:
+                            sync_manual_count, sync_manual_paths, sync_ocr_count, sync_ocr_paths = sync_active_human_tasks_with_ready_manifest(
+                                post_cursor,
+                                TARGET_DATE,
+                            )
+                            resolved_manual_task_count += sync_manual_count
+                            resolved_ocr_task_count += sync_ocr_count
+                            resolved_manual_cleanup_paths.update(sync_manual_paths)
+                            resolved_ocr_cleanup_paths.update(sync_ocr_paths)
+                            post_conn.commit()
+                            print_current_manifest_backlog(post_cursor, TARGET_DATE)
+                    logger.info("✅ Finalize summary: tất cả file đã đạt READY.")
                     return print(f"✅ Tất cả file đã đạt READY.")
 
                 if manifest_issues:
@@ -5093,30 +5096,34 @@ def finalize_and_generate_manifest(batch_limit=None):
                         if item["Schema_Type"] == "MANUAL_FIX_REQUIRED"
                     ]
 
-                    manual_cleanup_targets = ready_unit_keys + ocr_unit_keys
-                    if manual_cleanup_targets:
-                        resolved_manual_task_count, resolved_manual_cleanup_paths = cleanup_resolved_human_tasks(
-                            cursor,
-                            task_type="MANUAL",
-                            work_date=TARGET_DATE,
-                            ready_unit_keys=manual_cleanup_targets,
-                        )
-                    ocr_cleanup_targets = ready_unit_keys + manual_unit_keys
-                    if ocr_cleanup_targets:
-                        resolved_ocr_task_count, resolved_ocr_cleanup_paths = cleanup_resolved_human_tasks(
-                            cursor,
-                            task_type="OCR",
-                            work_date=TARGET_DATE,
-                            ready_unit_keys=ocr_cleanup_targets,
-                        )
-                    sync_manual_count, sync_manual_paths, sync_ocr_count, sync_ocr_paths = sync_active_human_tasks_with_ready_manifest(
-                        cursor,
-                        TARGET_DATE,
-                    )
-                    resolved_manual_task_count += sync_manual_count
-                    resolved_ocr_task_count += sync_ocr_count
-                    resolved_manual_cleanup_paths.update(sync_manual_paths)
-                    resolved_ocr_cleanup_paths.update(sync_ocr_paths)
+                    with get_db_connection() as post_conn:
+                        with post_conn.cursor() as post_cursor:
+                            manual_cleanup_targets = ready_unit_keys + ocr_unit_keys
+                            if manual_cleanup_targets:
+                                resolved_manual_task_count, resolved_manual_cleanup_paths = cleanup_resolved_human_tasks(
+                                    post_cursor,
+                                    task_type="MANUAL",
+                                    work_date=TARGET_DATE,
+                                    ready_unit_keys=manual_cleanup_targets,
+                                )
+                            ocr_cleanup_targets = ready_unit_keys + manual_unit_keys
+                            if ocr_cleanup_targets:
+                                resolved_ocr_task_count, resolved_ocr_cleanup_paths = cleanup_resolved_human_tasks(
+                                    post_cursor,
+                                    task_type="OCR",
+                                    work_date=TARGET_DATE,
+                                    ready_unit_keys=ocr_cleanup_targets,
+                                )
+                            sync_manual_count, sync_manual_paths, sync_ocr_count, sync_ocr_paths = sync_active_human_tasks_with_ready_manifest(
+                                post_cursor,
+                                TARGET_DATE,
+                            )
+                            resolved_manual_task_count += sync_manual_count
+                            resolved_ocr_task_count += sync_ocr_count
+                            resolved_manual_cleanup_paths.update(sync_manual_paths)
+                            resolved_ocr_cleanup_paths.update(sync_ocr_paths)
+                            post_conn.commit()
+                            print_current_manifest_backlog(post_cursor, TARGET_DATE)
                     ocr_exported = export_human_tasks("OCR", ocr_human_tasks)
                     manual_exported = export_human_tasks("MANUAL", manual_human_tasks)
 
@@ -5140,7 +5147,19 @@ def finalize_and_generate_manifest(batch_limit=None):
                         print(f"   - Tạm hoãn do TEMP_ABORT: {blocked_by_temp_abort_count} gói")
                     if blocked_by_anomaly_count:
                         print(f"   - Tạm hoãn do Scan Anomalies: {blocked_by_anomaly_count} gói")
-                    print_current_manifest_backlog(cursor, TARGET_DATE)
+                    logger.info(
+                        "✅ Finalize summary: manifest=%s ready=%s ocr=%s manual=%s missing_pdf=%s cancelled=%s resolved_manual=%s resolved_ocr=%s temp_abort=%s anomaly=%s",
+                        len(manifest_data),
+                        ready_count,
+                        ocr_pkg_count,
+                        manual_count,
+                        missing_pdf_source_count,
+                        cancelled_unit_count,
+                        resolved_manual_task_count,
+                        resolved_ocr_task_count,
+                        blocked_by_temp_abort_count,
+                        blocked_by_anomaly_count,
+                    )
                 else:
                     if blocked_by_temp_abort_count or blocked_by_anomaly_count or missing_pdf_source_count or cancelled_unit_count:
                         detail_parts = []
@@ -5155,21 +5174,26 @@ def finalize_and_generate_manifest(batch_limit=None):
                         print(f"🟡 Không tạo manifest vì {' và '.join(detail_parts)} đang bị chặn.")
                     else:
                         print("⚠️ Không tạo được manifest mục nào.")
-                    sync_manual_count, sync_manual_paths, sync_ocr_count, sync_ocr_paths = sync_active_human_tasks_with_ready_manifest(
-                        cursor,
-                        TARGET_DATE,
-                    )
-                    resolved_manual_task_count += sync_manual_count
-                    resolved_ocr_task_count += sync_ocr_count
-                    resolved_manual_cleanup_paths.update(sync_manual_paths)
-                    resolved_ocr_cleanup_paths.update(sync_ocr_paths)
-                    conn.commit()
-                    print_current_manifest_backlog(cursor, TARGET_DATE)
+                    with get_db_connection() as post_conn:
+                        with post_conn.cursor() as post_cursor:
+                            sync_manual_count, sync_manual_paths, sync_ocr_count, sync_ocr_paths = sync_active_human_tasks_with_ready_manifest(
+                                post_cursor,
+                                TARGET_DATE,
+                            )
+                            resolved_manual_task_count += sync_manual_count
+                            resolved_ocr_task_count += sync_ocr_count
+                            resolved_manual_cleanup_paths.update(sync_manual_paths)
+                            resolved_ocr_cleanup_paths.update(sync_ocr_paths)
+                            post_conn.commit()
+                            print_current_manifest_backlog(post_cursor, TARGET_DATE)
+                    logger.info("⚠️ Finalize summary: không tạo được manifest mới.")
 
+    except psycopg2.Error:
+        logger.exception("❌ DB Error finalize")
+    finally:
         manual_cleanup_all = resolved_manual_cleanup_paths
         if manual_cleanup_all:
             deleted_artifacts, failed_cleanup = cleanup_human_workspace_artifacts(manual_cleanup_all)
-            refresh_human_tasks_sheet("MANUAL", TARGET_DATE)
             print(f"🧹 Đã dọn {len(deleted_artifacts)} artifact MANUAL cũ không còn cần thiết.")
             if failed_cleanup:
                 print(f"⚠️ Có {len(failed_cleanup)} artifact MANUAL chưa xóa được.")
@@ -5179,15 +5203,14 @@ def finalize_and_generate_manifest(batch_limit=None):
         ocr_cleanup_all = resolved_ocr_cleanup_paths
         if ocr_cleanup_all:
             deleted_artifacts, failed_cleanup = cleanup_human_workspace_artifacts(ocr_cleanup_all)
-            refresh_human_tasks_sheet("OCR", TARGET_DATE)
             print(f"🧹 Đã dọn {len(deleted_artifacts)} artifact OCR cũ không còn cần thiết.")
             if failed_cleanup:
                 print(f"⚠️ Có {len(failed_cleanup)} artifact OCR chưa xóa được.")
                 for path_value, reason in failed_cleanup[:10]:
                     print(f"   - {path_value} -> {reason}")
 
-    except psycopg2.Error as e:
-        logger.error(f"❌ DB Error finalize: {e}")
+        refresh_human_tasks_sheet("MANUAL", TARGET_DATE)
+        refresh_human_tasks_sheet("OCR", TARGET_DATE)
 
 # ----------------- TASK 3: AUTO - IMPORT KẾT QUẢ TỪ OCR -----------------
 def manage_ocr_workflow():

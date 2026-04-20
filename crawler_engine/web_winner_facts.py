@@ -197,6 +197,7 @@ def apply_vendor_single_winner_fallback(
 
     if len(existing_values) == 1:
         existing_vendor = existing_values[0]
+
         if is_multi_winner_fact(fact):
             return df, {
                 "status": "MANUAL_REQUIRED",
@@ -221,14 +222,14 @@ def apply_vendor_single_winner_fallback(
                     ),
                 }
 
-        df = df.copy()
-        df[vendor_col] = df[vendor_col].astype("string")
-        df.loc[blank_mask, vendor_col] = existing_vendor
         return df, {
-            "status": "FILLED_FROM_EXISTING_VENDOR",
+            "status": "MANUAL_REQUIRED",
             "blank_count": blank_count,
-            "winner_name": existing_vendor,
             "fact": fact,
+            "reason": (
+                f"Cột '{vendor_col}' còn {blank_count} dòng trống. "
+                f"Không auto-fill từ giá trị đã có trong file ('{existing_vendor}')."
+            ),
         }
 
     if is_single_winner_fact(fact):
