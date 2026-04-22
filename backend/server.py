@@ -3,6 +3,10 @@ from contextlib import asynccontextmanager
 from typing import Optional, List, Dict, Any, Literal
 import time
 import copy
+import hashlib
+import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import asyncio
 import asyncpg
@@ -17,17 +21,23 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from auth_utils import (
+    clear_auth_session_cookie,
     ensure_auth_schema as init_auth_schema,
+    extract_session_token,
     get_auth_config_payload,
+    get_authenticated_user,
     login_with_email,
     login_with_google,
     logout_current_session,
     register_with_email,
     require_authenticated_user,
+    set_auth_session_cookie,
     update_user_profile,
 )
 
 load_dotenv()
+
+logger = logging.getLogger("bidfinder.api")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 db_pool: Optional[asyncpg.Pool] = None
@@ -35,14 +45,65 @@ db_pool_lock = asyncio.Lock()
 auth_schema_lock = asyncio.Lock()
 rate_limit_lock = asyncio.Lock()
 rate_limit_buckets: Dict[str, deque] = defaultdict(deque)
+anonymous_full_query_usage_lock = asyncio.Lock()
+anonymous_full_query_usage: Dict[str, Dict[str, int]] = defaultdict(dict)
 auth_schema_ready = False
 cache_lock = asyncio.Lock()
 preview_cache: Dict[str, Dict[str, Any]] = {}
 autocomplete_cache: Dict[str, Dict[str, Any]] = {}
 
-ssl_context = ssl.create_default_context()
-ssl_context.check_hostname = False
-ssl_context.verify_mode = ssl.CERT_NONE
+
+def get_env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def normalize_anonymous_access_level(value: str) -> str:
+    cleaned = str(value or "").strip().lower()
+    if cleaned in {"none", "preview", "full"}:
+        return cleaned
+    return "preview"
+
+
+def build_db_ssl_config() -> ssl.SSLContext | bool:
+    if get_env_flag("DB_SSL_DISABLE", False):
+        return False
+
+    ca_file = os.getenv("DB_SSL_CA_FILE")
+    cert_file = os.getenv("DB_SSL_CERT_FILE")
+    key_file = os.getenv("DB_SSL_KEY_FILE")
+
+    context = ssl.create_default_context(cafile=ca_file or None)
+    if cert_file and key_file:
+        context.load_cert_chain(certfile=cert_file, keyfile=key_file)
+    return context
+
+
+LEGACY_AUTH_REQUIRED_FOR_DATA_ACCESS = get_env_flag("AUTH_REQUIRED_FOR_DATA_ACCESS", False)
+ANONYMOUS_ACCESS_LEVEL = normalize_anonymous_access_level(
+    os.getenv(
+        "ANONYMOUS_ACCESS_LEVEL",
+        "none" if LEGACY_AUTH_REQUIRED_FOR_DATA_ACCESS else "preview",
+    )
+)
+TRUST_PROXY_HEADERS = get_env_flag("TRUST_PROXY_HEADERS", False)
+ANONYMOUS_AUTOCOMPLETE_ENABLED = get_env_flag(
+    "ANONYMOUS_AUTOCOMPLETE_ENABLED",
+    ANONYMOUS_ACCESS_LEVEL in {"preview", "full"},
+)
+ANONYMOUS_METADATA_ENABLED = get_env_flag(
+    "ANONYMOUS_METADATA_ENABLED",
+    ANONYMOUS_ACCESS_LEVEL in {"preview", "full"},
+)
+ANONYMOUS_SINGLE_CHAR_NUMERIC_ONLY = get_env_flag(
+    "ANONYMOUS_SINGLE_CHAR_NUMERIC_ONLY",
+    True,
+)
+AUTH_REQUIRED_FOR_DATA_ACCESS = ANONYMOUS_ACCESS_LEVEL == "none"
+AUTH_REQUIRED_FOR_FULL_QUERY = ANONYMOUS_ACCESS_LEVEL != "full"
+db_ssl_config = build_db_ssl_config()
 
 DEFAULT_ALLOWED_ORIGINS = [
     "https://bidfinder.vn",
@@ -74,7 +135,20 @@ DB_POOL_MAX_SIZE = max(1, int(os.getenv("DB_POOL_MAX_SIZE", "8")))
 PREVIEW_CACHE_TTL_SECONDS = max(1, int(os.getenv("PREVIEW_CACHE_TTL_SECONDS", "15")))
 AUTOCOMPLETE_CACHE_TTL_SECONDS = max(1, int(os.getenv("AUTOCOMPLETE_CACHE_TTL_SECONDS", "20")))
 CACHE_MAX_ENTRIES = max(50, int(os.getenv("CACHE_MAX_ENTRIES", "500")))
-AUTH_REQUIRED_FOR_DATA_ACCESS = os.getenv("AUTH_REQUIRED_FOR_DATA_ACCESS", "false").strip().lower() in {"1", "true", "yes", "on"}
+SERVER_ERROR_MESSAGE = "Hệ thống đang bận hoặc gặp lỗi nội bộ. Vui lòng thử lại sau."
+APP_TIMEZONE_NAME = os.getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh").strip() or "Asia/Ho_Chi_Minh"
+try:
+    APP_TIMEZONE = ZoneInfo(APP_TIMEZONE_NAME)
+except ZoneInfoNotFoundError:
+    APP_TIMEZONE = ZoneInfo("UTC")
+ANONYMOUS_FULL_QUERY_DAILY_LIMIT = max(
+    0,
+    int(os.getenv("ANONYMOUS_FULL_QUERY_DAILY_LIMIT", "10")),
+)
+ANONYMOUS_FULL_QUERY_LIMIT_MESSAGE = (
+    f"Bạn đã dùng hết {ANONYMOUS_FULL_QUERY_DAILY_LIMIT} lượt tra cứu hôm nay. "
+    "Vui lòng đăng nhập để tiếp tục."
+)
 
 
 # =========================
@@ -583,7 +657,7 @@ async def get_db_pool():
         command_timeout=60,
         max_inactive_connection_lifetime=300,
         setup=setup_connection,
-        ssl=ssl_context,
+        ssl=db_ssl_config,
     )
 
 
@@ -633,20 +707,118 @@ def clean_records(records):
 
 
 def get_client_ip(request: Request) -> str:
-    forwarded_for = request.headers.get("x-forwarded-for", "").strip()
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
+    if TRUST_PROXY_HEADERS:
+        forwarded_for = request.headers.get("x-forwarded-for", "").strip()
+        if forwarded_for:
+            return forwarded_for.split(",")[0].strip()
 
-    real_ip = request.headers.get("x-real-ip", "").strip()
-    if real_ip:
-        return real_ip
+        real_ip = request.headers.get("x-real-ip", "").strip()
+        if real_ip:
+            return real_ip
 
     return getattr(request.client, "host", "") or "unknown"
 
 
-async def enforce_rate_limit(request: Request, bucket_name: str, limit: int) -> Optional[JSONResponse]:
+def get_rate_limit_client_key(request: Request) -> str:
     client_ip = get_client_ip(request)
-    cache_key = f"{bucket_name}:{client_ip}"
+    user_agent = request.headers.get("user-agent", "").strip().lower()
+    user_agent_hash = hashlib.sha256(user_agent.encode("utf-8")).hexdigest()[:16] if user_agent else "no-ua"
+    return f"{client_ip}:{user_agent_hash}"
+
+
+def get_usage_day_key() -> str:
+    return datetime.now(APP_TIMEZONE).date().isoformat()
+
+
+def prune_anonymous_full_query_usage(current_day: str) -> None:
+    expired_days = [day_key for day_key in list(anonymous_full_query_usage.keys()) if day_key != current_day]
+    for day_key in expired_days:
+        anonymous_full_query_usage.pop(day_key, None)
+
+
+async def get_anonymous_full_query_usage_snapshot(request: Request) -> Dict[str, int]:
+    if ANONYMOUS_FULL_QUERY_DAILY_LIMIT <= 0:
+        return {"used": 0, "remaining": 0, "limit": 0}
+
+    day_key = get_usage_day_key()
+    client_key = get_rate_limit_client_key(request)
+
+    async with anonymous_full_query_usage_lock:
+        prune_anonymous_full_query_usage(day_key)
+        used = int(anonymous_full_query_usage.get(day_key, {}).get(client_key, 0))
+
+    remaining = max(0, ANONYMOUS_FULL_QUERY_DAILY_LIMIT - used)
+    return {
+        "used": used,
+        "remaining": remaining,
+        "limit": ANONYMOUS_FULL_QUERY_DAILY_LIMIT,
+    }
+
+
+async def consume_anonymous_full_query_usage(request: Request) -> Dict[str, int]:
+    if ANONYMOUS_FULL_QUERY_DAILY_LIMIT <= 0:
+        return {"used": 0, "remaining": 0, "limit": 0}
+
+    day_key = get_usage_day_key()
+    client_key = get_rate_limit_client_key(request)
+
+    async with anonymous_full_query_usage_lock:
+        prune_anonymous_full_query_usage(day_key)
+        day_bucket = anonymous_full_query_usage.setdefault(day_key, {})
+        used = int(day_bucket.get(client_key, 0)) + 1
+        day_bucket[client_key] = used
+
+    remaining = max(0, ANONYMOUS_FULL_QUERY_DAILY_LIMIT - used)
+    return {
+        "used": used,
+        "remaining": remaining,
+        "limit": ANONYMOUS_FULL_QUERY_DAILY_LIMIT,
+    }
+
+
+async def build_anonymous_full_query_quota_payload(
+    request: Optional[Request],
+    *,
+    is_authenticated: bool,
+) -> Dict[str, Any]:
+    enabled = ANONYMOUS_ACCESS_LEVEL == "full" and ANONYMOUS_FULL_QUERY_DAILY_LIMIT > 0
+    payload: Dict[str, Any] = {
+        "anonymous_full_query_daily_limit": ANONYMOUS_FULL_QUERY_DAILY_LIMIT,
+        "anonymous_full_query_daily_used": 0,
+        "anonymous_full_query_daily_remaining": ANONYMOUS_FULL_QUERY_DAILY_LIMIT,
+        "anonymous_full_query_login_required": False,
+        "anonymous_full_query_limit_message": ANONYMOUS_FULL_QUERY_LIMIT_MESSAGE,
+    }
+
+    if not enabled:
+        payload["anonymous_full_query_daily_remaining"] = 0
+        return payload
+
+    if is_authenticated:
+        return payload
+
+    if request is None:
+        return payload
+
+    usage = await get_anonymous_full_query_usage_snapshot(request)
+    payload.update({
+        "anonymous_full_query_daily_used": usage["used"],
+        "anonymous_full_query_daily_remaining": usage["remaining"],
+        "anonymous_full_query_login_required": usage["remaining"] <= 0,
+    })
+    return payload
+
+
+def log_server_exception(context: str, exc: Exception) -> None:
+    logger.exception("%s: %s", context, exc)
+
+
+def internal_error_response(message: str = SERVER_ERROR_MESSAGE) -> JSONResponse:
+    return validation_error_response(message, status_code=500)
+
+
+async def enforce_rate_limit(request: Request, bucket_name: str, limit: int) -> Optional[JSONResponse]:
+    cache_key = f"{bucket_name}:{get_rate_limit_client_key(request)}"
     now = time.time()
     cutoff = now - RATE_LIMIT_WINDOW_SECONDS
 
@@ -1181,11 +1353,24 @@ app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "HEAD"],
     allow_headers=["Content-Type", "Authorization"],
     max_age=600,
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    response.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
+    if request.url.scheme == "https":
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
 
 
 @app.api_route("/health", methods=["GET", "HEAD"])
@@ -1217,17 +1402,90 @@ def validation_error_response(message: str, status_code: int = 400) -> JSONRespo
     )
 
 
-def build_auth_config() -> Dict[str, Any]:
+async def build_auth_success_response(
+    request: Request,
+    *,
+    message: str,
+    user: Dict[str, Any],
+    token: Optional[str] = None,
+) -> JSONResponse:
+    response = JSONResponse(
+        content={
+            "success": True,
+            "message": message,
+            "token": None,
+            "legacy_token": None,
+            "user": user,
+            "auth": await build_auth_config(request, user=user),
+        }
+    )
+    if token:
+        set_auth_session_cookie(response, token, request)
+    return response
+
+
+async def build_auth_config(
+    request: Optional[Request] = None,
+    *,
+    user: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    quota_payload = await build_anonymous_full_query_quota_payload(
+        request,
+        is_authenticated=bool(user),
+    )
+    require_auth_for_full_query = AUTH_REQUIRED_FOR_FULL_QUERY
+    if ANONYMOUS_ACCESS_LEVEL == "full" and not user:
+        require_auth_for_full_query = bool(quota_payload["anonymous_full_query_login_required"])
+
     return {
         **get_auth_config_payload(),
         "require_auth_for_data_access": AUTH_REQUIRED_FOR_DATA_ACCESS,
+        "require_auth_for_full_query": require_auth_for_full_query,
+        "anonymous_access_level": ANONYMOUS_ACCESS_LEVEL,
+        "allow_anonymous_preview": ANONYMOUS_ACCESS_LEVEL in {"preview", "full"},
+        "allow_anonymous_autocomplete": ANONYMOUS_AUTOCOMPLETE_ENABLED,
+        "allow_anonymous_metadata": ANONYMOUS_METADATA_ENABLED,
+        "anonymous_single_char_numeric_only": ANONYMOUS_SINGLE_CHAR_NUMERIC_ONLY,
+        "auth_transport": "cookie",
+        **quota_payload,
     }
 
 
-async def maybe_require_data_access_auth(conn: asyncpg.Connection, request: Request) -> Optional[Dict[str, Any]]:
+async def enforce_data_access_policy(
+    conn: asyncpg.Connection,
+    request: Request,
+    requirement: Literal["preview", "full_query", "autocomplete", "metadata"],
+) -> Optional[Dict[str, Any]]:
+    current_user = await get_authenticated_user(conn, extract_session_token(request) or "")
+
+    if requirement == "full_query":
+        if current_user:
+            return current_user
+        if ANONYMOUS_ACCESS_LEVEL == "full":
+            quota = await build_anonymous_full_query_quota_payload(request, is_authenticated=False)
+            if quota["anonymous_full_query_login_required"]:
+                raise HTTPException(status_code=401, detail=quota["anonymous_full_query_limit_message"])
+            return None
+        return await require_authenticated_user(conn, request)
+
+    if requirement == "preview":
+        if ANONYMOUS_ACCESS_LEVEL in {"preview", "full"}:
+            return current_user
+        return current_user or await require_authenticated_user(conn, request)
+
+    if requirement == "autocomplete":
+        if ANONYMOUS_ACCESS_LEVEL in {"preview", "full"} and ANONYMOUS_AUTOCOMPLETE_ENABLED:
+            return current_user
+        return current_user or await require_authenticated_user(conn, request)
+
+    if requirement == "metadata":
+        if ANONYMOUS_ACCESS_LEVEL in {"preview", "full"} and ANONYMOUS_METADATA_ENABLED:
+            return current_user
+        return current_user or await require_authenticated_user(conn, request)
+
     if not AUTH_REQUIRED_FOR_DATA_ACCESS:
-        return None
-    return await require_authenticated_user(conn, request)
+        return current_user
+    return current_user or await require_authenticated_user(conn, request)
 
 
 @app.get("/api/auth/config")
@@ -1238,7 +1496,7 @@ async def get_auth_config(request: Request):
 
     return {
         "success": True,
-        **build_auth_config(),
+        **await build_auth_config(request),
     }
 
 
@@ -1261,17 +1519,17 @@ async def register_user(request: Request, payload: RegisterRequest):
                 position=payload.position,
             )
 
-        return JSONResponse(content={
-            "success": True,
-            "message": "Tạo tài khoản thành công.",
-            "token": result["token"],
-            "user": result["user"],
-            "auth": build_auth_config(),
-        })
+        return await build_auth_success_response(
+            request,
+            message="Tạo tài khoản thành công.",
+            user=result["user"],
+            token=result["token"],
+        )
     except ValueError as exc:
         return validation_error_response(str(exc))
     except Exception as exc:
-        return validation_error_response(str(exc), status_code=500)
+        log_server_exception("register_user failed", exc)
+        return internal_error_response()
 
 
 @app.post("/api/auth/login")
@@ -1290,17 +1548,17 @@ async def login_user(request: Request, payload: LoginRequest):
                 password=payload.password,
             )
 
-        return JSONResponse(content={
-            "success": True,
-            "message": "Đăng nhập thành công.",
-            "token": result["token"],
-            "user": result["user"],
-            "auth": build_auth_config(),
-        })
+        return await build_auth_success_response(
+            request,
+            message="Đăng nhập thành công.",
+            user=result["user"],
+            token=result["token"],
+        )
     except ValueError as exc:
         return validation_error_response(str(exc), status_code=401)
     except Exception as exc:
-        return validation_error_response(str(exc), status_code=500)
+        log_server_exception("login_user failed", exc)
+        return internal_error_response()
 
 
 @app.post("/api/auth/google")
@@ -1318,17 +1576,17 @@ async def login_user_with_google(request: Request, payload: GoogleLoginRequest):
                 credential=payload.credential,
             )
 
-        return JSONResponse(content={
-            "success": True,
-            "message": "Đăng nhập Google thành công.",
-            "token": result["token"],
-            "user": result["user"],
-            "auth": build_auth_config(),
-        })
+        return await build_auth_success_response(
+            request,
+            message="Đăng nhập Google thành công.",
+            user=result["user"],
+            token=result["token"],
+        )
     except ValueError as exc:
         return validation_error_response(str(exc), status_code=401)
     except Exception as exc:
-        return validation_error_response(str(exc), status_code=500)
+        log_server_exception("login_user_with_google failed", exc)
+        return internal_error_response()
 
 
 @app.get("/api/auth/me")
@@ -1345,12 +1603,13 @@ async def get_current_user(request: Request):
         return JSONResponse(content={
             "success": True,
             "user": user,
-            "auth": build_auth_config(),
+            "auth": await build_auth_config(request, user=user),
         })
     except HTTPException as exc:
         return auth_error_response(exc)
     except Exception as exc:
-        return validation_error_response(str(exc), status_code=500)
+        log_server_exception("get_current_user failed", exc)
+        return internal_error_response()
 
 
 @app.post("/api/auth/logout")
@@ -1365,14 +1624,17 @@ async def logout_user(request: Request):
             await require_authenticated_user(conn, request)
             await logout_current_session(conn, request)
 
-        return JSONResponse(content={
+        response = JSONResponse(content={
             "success": True,
             "message": "Đã đăng xuất.",
         })
+        clear_auth_session_cookie(response, request)
+        return response
     except HTTPException as exc:
         return auth_error_response(exc)
     except Exception as exc:
-        return validation_error_response(str(exc), status_code=500)
+        log_server_exception("logout_user failed", exc)
+        return internal_error_response()
 
 
 @app.patch("/api/auth/profile")
@@ -1397,14 +1659,15 @@ async def patch_profile(request: Request, payload: ProfileUpdateRequest):
             "success": True,
             "message": "Cập nhật hồ sơ thành công.",
             "user": updated_user,
-            "auth": build_auth_config(),
+            "auth": await build_auth_config(request, user=updated_user),
         })
     except HTTPException as exc:
         return auth_error_response(exc)
     except ValueError as exc:
         return validation_error_response(str(exc))
     except Exception as exc:
-        return validation_error_response(str(exc), status_code=500)
+        log_server_exception("patch_profile failed", exc)
+        return internal_error_response()
 
 
 @app.get("/api/filter-config")
@@ -1416,7 +1679,7 @@ async def get_filter_config(request: Request):
     try:
         pool = await ensure_db_pool()
         async with pool.acquire() as conn:
-            await maybe_require_data_access_auth(conn, request)
+            await enforce_data_access_policy(conn, request, "preview")
 
         return {
             "success": True,
@@ -1425,7 +1688,8 @@ async def get_filter_config(request: Request):
     except HTTPException as exc:
         return auth_error_response(exc)
     except Exception as exc:
-        return validation_error_response(str(exc), status_code=500)
+        log_server_exception("get_filter_config failed", exc)
+        return internal_error_response()
 
 
 @app.post("/api/query")
@@ -1442,9 +1706,10 @@ async def query_data(request: Request, payload: QueryRequest):
 
         result = {"success": True}
         count_parts: List[Dict[str, Any]] = []
+        current_user: Optional[Dict[str, Any]] = None
 
         async with pool.acquire() as conn:
-            await maybe_require_data_access_auth(conn, request)
+            current_user = await enforce_data_access_policy(conn, request, "full_query")
 
             if payload.scope in ("all", "medicine"):
                 page = await fetch_result_page(conn, "medicine", filters, sort_rules, limit)
@@ -1462,7 +1727,13 @@ async def query_data(request: Request, payload: QueryRequest):
                     "exact": page["count_exact"],
                 })
 
-        combined_meta = combine_preview_count_meta(count_parts, PREVIEW_BUCKET_LIMIT)
+            if current_user is None and ANONYMOUS_ACCESS_LEVEL == "full" and ANONYMOUS_FULL_QUERY_DAILY_LIMIT > 0:
+                quota = await consume_anonymous_full_query_usage(request)
+                result["anonymous_full_query_daily_used"] = quota["used"]
+                result["anonymous_full_query_daily_remaining"] = quota["remaining"]
+            result["auth"] = await build_auth_config(request, user=current_user)
+
+        combined_meta = combine_count_meta(count_parts)
         result["total_count"] = int(combined_meta["count"])
         result["total_count_exact"] = bool(combined_meta["exact"])
         result["total_count_label"] = combined_meta["label"]
@@ -1473,7 +1744,8 @@ async def query_data(request: Request, payload: QueryRequest):
     except HTTPException as exc:
         return auth_error_response(exc)
     except Exception as e:
-        return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+        log_server_exception("query_data failed", e)
+        return internal_error_response()
 
 
 @app.post("/api/query-preview")
@@ -1489,7 +1761,7 @@ async def preview_query(request: Request, payload: QueryPreviewRequest):
         count_parts: List[Dict[str, Any]] = []
 
         async with pool.acquire() as conn:
-            await maybe_require_data_access_auth(conn, request)
+            await enforce_data_access_policy(conn, request, "preview")
 
             if payload.scope in ("all", "medicine"):
                 preview = await fetch_preview_bucket_cached(conn, "medicine", filters, PREVIEW_BUCKET_LIMIT)
@@ -1516,7 +1788,8 @@ async def preview_query(request: Request, payload: QueryPreviewRequest):
     except HTTPException as exc:
         return auth_error_response(exc)
     except Exception as exc:
-        return validation_error_response(str(exc), status_code=500)
+        log_server_exception("preview_query failed", exc)
+        return internal_error_response()
 
 
 @app.post("/api/autocomplete")
@@ -1563,7 +1836,18 @@ async def autocomplete(request: Request, payload: AutocompleteRequest):
         push(keyword)
 
         async with pool.acquire() as conn:
-            await maybe_require_data_access_auth(conn, request)
+            user = await enforce_data_access_policy(conn, request, "autocomplete")
+
+            if (
+                user is None
+                and len(keyword) == 1
+                and ANONYMOUS_SINGLE_CHAR_NUMERIC_ONLY
+                and not keyword.isdigit()
+            ):
+                return validation_error_response(
+                    "Autocomplete 1 ký tự cho khách chưa đăng nhập chỉ hỗ trợ chữ số. "
+                    "Vui lòng nhập thêm ký tự hoặc đăng nhập để tiếp tục."
+                )
 
             if req.scope in ("all", "medicine"):
                 for item in await fetch_autocomplete_suggestions(conn, req, "medicine"):
@@ -1582,12 +1866,8 @@ async def autocomplete(request: Request, payload: AutocompleteRequest):
     except HTTPException as exc:
         return auth_error_response(exc)
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return JSONResponse(
-            status_code=500,
-            content={"success": False, "error": str(e), "data": []}
-        )
+        log_server_exception("autocomplete failed", e)
+        return JSONResponse(status_code=500, content={"success": False, "error": SERVER_ERROR_MESSAGE, "data": []})
 
 
 @app.get("/api/metadata")
@@ -1599,7 +1879,7 @@ async def get_metadata(request: Request):
     try:
         pool = await ensure_db_pool()
         async with pool.acquire() as conn:
-            await maybe_require_data_access_auth(conn, request)
+            await enforce_data_access_policy(conn, request, "metadata")
 
             rows = await conn.fetch("""
                 SELECT start_time, end_time, duration_seconds, boxes_selected
@@ -1628,4 +1908,5 @@ async def get_metadata(request: Request):
     except HTTPException as exc:
         return auth_error_response(exc)
     except Exception as e:
-        return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+        log_server_exception("get_metadata failed", e)
+        return internal_error_response()

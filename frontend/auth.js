@@ -8,15 +8,42 @@
 
   const STORAGE_KEY = 'bidfinder:auth_token';
   const DATA_ACCESS_KEY = 'bidfinder:require_auth_for_data_access';
+  const TOKEN_STORAGE = window.sessionStorage;
+  const LEGACY_TOKEN_STORAGE = window.localStorage;
   const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  function readStoredToken() {
+    const sessionToken = TOKEN_STORAGE.getItem(STORAGE_KEY) || '';
+    if (sessionToken) return sessionToken;
+
+    const legacyToken = LEGACY_TOKEN_STORAGE.getItem(STORAGE_KEY) || '';
+    if (!legacyToken) return '';
+
+    TOKEN_STORAGE.setItem(STORAGE_KEY, legacyToken);
+    LEGACY_TOKEN_STORAGE.removeItem(STORAGE_KEY);
+    return legacyToken;
+  }
+
   const state = {
-    token: localStorage.getItem(STORAGE_KEY) || '',
+    token: readStoredToken(),
     user: null,
     config: {
       google_enabled: false,
       google_client_id: null,
       position_options: [],
+      position_option_groups: [],
       require_auth_for_data_access: false,
+      require_auth_for_full_query: true,
+      anonymous_access_level: 'full',  // none|preview|full
+      allow_anonymous_preview: true,
+      allow_anonymous_autocomplete: true,
+      allow_anonymous_metadata: true,
+      anonymous_single_char_numeric_only: true,
+      anonymous_full_query_daily_limit: 10,
+      anonymous_full_query_daily_used: 0,
+      anonymous_full_query_daily_remaining: 10,
+      anonymous_full_query_login_required: false,
+      anonymous_full_query_limit_message: 'Bạn đã dùng hết lượt tra cứu hôm nay. Vui lòng đăng nhập để tiếp tục.',
       password_policy_message: 'Mật khẩu phải có ít nhất 9 ký tự, bao gồm ít nhất 1 chữ số và 1 chữ cái in hoa.'
     },
     currentMode: 'register',
@@ -88,24 +115,46 @@
   }
 
   function isAuthenticated() {
-    return Boolean(state.token && state.user);
+    return Boolean(state.user);
   }
 
   function requiresDataAuth() {
     return Boolean(state.config?.require_auth_for_data_access);
   }
 
+  function requiresFullQueryAuth() {
+    return Boolean(state.config?.require_auth_for_full_query);
+  }
+
+  function getFullQueryGateMessage() {
+    if (state.config?.anonymous_full_query_login_required && state.config?.anonymous_full_query_limit_message) {
+      return state.config.anonymous_full_query_limit_message;
+    }
+    return 'Bạn cần đăng nhập để tra cứu dữ liệu.';
+  }
+
   function saveToken(token) {
     state.token = token || '';
     if (state.token) {
-      localStorage.setItem(STORAGE_KEY, state.token);
+      TOKEN_STORAGE.setItem(STORAGE_KEY, state.token);
+      LEGACY_TOKEN_STORAGE.removeItem(STORAGE_KEY);
     } else {
-      localStorage.removeItem(STORAGE_KEY);
+      TOKEN_STORAGE.removeItem(STORAGE_KEY);
+      LEGACY_TOKEN_STORAGE.removeItem(STORAGE_KEY);
     }
   }
 
   function persistAuthConfig() {
     localStorage.setItem(DATA_ACCESS_KEY, requiresDataAuth() ? '1' : '0');
+  }
+
+  function applyAuthConfig(nextConfig, { merge = true } = {}) {
+    if (!nextConfig || typeof nextConfig !== 'object') return;
+    state.config = merge ? { ...state.config, ...nextConfig } : nextConfig;
+    persistAuthConfig();
+    syncPasswordPolicyNote();
+    populatePositionOptions();
+    syncGoogleVisibility();
   }
 
   function getPasswordPolicyMessage() {
@@ -265,6 +314,9 @@
   }
 
   function populatePositionOptions() {
+    const optionGroups = Array.isArray(state.config?.position_option_groups)
+      ? state.config.position_option_groups
+      : [];
     const options = Array.isArray(state.config?.position_options)
       ? state.config.position_options
       : [];
@@ -273,14 +325,38 @@
       if (!select) return;
 
       const currentValue = select.value;
-      select.innerHTML = '<option value="">Vị trí</option>';
+      select.innerHTML = '<option value="" disabled selected hidden>Vị trí</option>';
 
-      options.forEach((option) => {
-        const el = document.createElement('option');
-        el.value = option;
-        el.textContent = option;
-        select.appendChild(el);
-      });
+      if (optionGroups.length) {
+        optionGroups.forEach((group) => {
+          const groupLabel = String(group?.label || '').trim();
+          const groupOptions = Array.isArray(group?.options) ? group.options : [];
+          if (!groupLabel || !groupOptions.length) return;
+
+          const optgroup = document.createElement('optgroup');
+          optgroup.label = groupLabel;
+
+          groupOptions.forEach((option) => {
+            const optionText = String(option || '').trim();
+            if (!optionText) return;
+            const el = document.createElement('option');
+            el.value = optionText;
+            el.textContent = optionText;
+            optgroup.appendChild(el);
+          });
+
+          if (optgroup.children.length) {
+            select.appendChild(optgroup);
+          }
+        });
+      } else {
+        options.forEach((option) => {
+          const el = document.createElement('option');
+          el.value = option;
+          el.textContent = option;
+          select.appendChild(el);
+        });
+      }
 
       select.value = currentValue || '';
       syncSelectPlaceholderState(select);
@@ -437,11 +513,24 @@
 
     const response = await fetch(url, {
       ...options,
-      headers
+      headers,
+      credentials: 'include'
     });
 
     if (response.status === 401 && extra.handleUnauthorized !== false) {
-      clearSession({ openLogin: true, reason: 'expired' });
+      let message = '';
+      try {
+        const payload = await parseResponseBody(response.clone());
+        message = payload?.message || payload?.error || '';
+      } catch (err) {}
+
+      clearSession({
+        openLogin: true,
+        reason: isAuthenticated() ? 'expired' : 'login_required',
+        alertMessage: message || (isAuthenticated()
+          ? 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.'
+          : 'Vui lòng đăng nhập để tiếp tục.')
+      });
     }
 
     return response;
@@ -459,7 +548,8 @@
       : await fetch(getApiUrl(path), {
           method: options.method || 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body || {})
+          body: JSON.stringify(body || {}),
+          credentials: 'include'
         });
 
     const payload = await parseResponseBody(response);
@@ -473,13 +563,10 @@
   }
 
   function applyAuthResult(payload, source) {
-    saveToken(payload.token || '');
+    saveToken(payload.token || payload.legacy_token || '');
     state.user = payload.user || null;
-    state.config = payload.auth || state.config;
-    persistAuthConfig();
+    applyAuthConfig(payload.auth || state.config);
     renderUserState();
-    populatePositionOptions();
-    syncGoogleVisibility();
     closeAuthModal({ clearIntent: false });
 
     const completedIntent = state.pendingIntent;
@@ -493,7 +580,7 @@
     });
   }
 
-  function clearSession({ emitEvent = true, openLogin = false, reason = 'logout' } = {}) {
+  function clearSession({ emitEvent = true, openLogin = false, reason = 'logout', alertMessage = '' } = {}) {
     saveToken('');
     state.user = null;
     renderUserState();
@@ -501,7 +588,7 @@
 
     if (openLogin) {
       openAuthModal('login');
-      setAlert('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.', 'error');
+      setAlert(alertMessage || 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.', 'error');
     }
 
     if (emitEvent) {
@@ -514,10 +601,6 @@
   }
 
   async function restoreSession() {
-    if (!state.token) {
-      return false;
-    }
-
     try {
       const response = await authorizedFetch(getApiUrl('/api/auth/me'), {
         method: 'GET'
@@ -532,11 +615,8 @@
       }
 
       state.user = payload.user;
-      state.config = payload.auth || state.config;
-      persistAuthConfig();
+      applyAuthConfig(payload.auth || state.config);
       renderUserState();
-      populatePositionOptions();
-      syncGoogleVisibility();
       return true;
     } catch (err) {
       clearSession({ emitEvent: false });
@@ -546,11 +626,12 @@
 
   async function loadAuthConfig() {
     try {
-      const response = await fetch(getApiUrl('/api/auth/config'));
+      const response = await fetch(getApiUrl('/api/auth/config'), {
+        credentials: 'include'
+      });
       const payload = await parseResponseBody(response);
       if (response.ok && payload.success) {
-        state.config = payload;
-        persistAuthConfig();
+        applyAuthConfig(payload, { merge: false });
       }
     } catch (err) {}
 
@@ -632,11 +713,9 @@
       });
 
       state.user = payload.user || state.user;
-      state.config = payload.auth || state.config;
-      persistAuthConfig();
+      applyAuthConfig(payload.auth || state.config);
       renderUserState();
       populateProfileForm();
-      syncGoogleVisibility();
       setAlert(payload.message || 'Cập nhật hồ sơ thành công.', 'success');
     } catch (err) {
       setAlert(err.message || 'Không thể cập nhật hồ sơ.', 'error');
@@ -810,8 +889,11 @@
     init,
     isAuthenticated,
     requiresDataAuth,
+    requiresFullQueryAuth,
+    getFullQueryGateMessage,
     getUser: () => state.user,
     getConfig: () => state.config,
+    applyAuthConfig,
     openAuthModal,
     closeAuthModal,
     requestIntent(intent) {

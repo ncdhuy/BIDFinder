@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 import asyncpg
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, Response
 
 try:
     from google.auth.transport.requests import Request as GoogleAuthRequest
@@ -16,13 +16,44 @@ except ImportError:  # pragma: no cover - depends on environment packages
     GoogleAuthRequest = None
     google_id_token = None
 
+POSITION_OPTION_GROUPS = [
+    {
+        "label": "Doanh nghiệp",
+        "options": [
+            "Công ty dược",
+            "Đơn vị tư vấn đấu thầu",
+        ],
+    },
+    {
+        "label": "Cơ sở khám chữa bệnh",
+        "options": [
+            "Khoa Dược",
+            "Phòng Kế hoạch tổng hợp",
+            "Phòng Vật tư thiết bị y tế",
+            "Các phòng chức năng khác",
+            "Khối lâm sàng",
+            "Khối cận lâm sàng",
+        ],
+    },
+    {
+        "label": "Đào tạo và nghiên cứu",
+        "options": [
+            "Giảng viên/Nghiên cứu viên",
+            "Sinh viên/Học viên",
+        ],
+    },
+    {
+        "label": "Cơ quan/tổ chức khác",
+        "options": [
+            "Cơ quan quản lý/bảo hiểm/sở ngành",
+            "Khác",
+        ],
+    },
+]
 POSITION_OPTIONS = [
-    "Khoa Dược",
-    "Phòng Kế hoạch tổng hợp",
-    "Phòng Vật tư thiết bị y tế",
-    "Các phòng chức năng",
-    "Khối lâm sàng",
-    "Khối cận lâm sàng",
+    option
+    for group in POSITION_OPTION_GROUPS
+    for option in group["options"]
 ]
 
 PASSWORD_MIN_LENGTH = max(9, int(os.getenv("AUTH_PASSWORD_MIN_LENGTH", "9")))
@@ -30,6 +61,11 @@ SESSION_TTL_DAYS = max(1, int(os.getenv("AUTH_SESSION_TTL_DAYS", "30")))
 PBKDF2_ITERATIONS = max(120_000, int(os.getenv("AUTH_PBKDF2_ITERATIONS", "240000")))
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PASSWORD_POLICY_MESSAGE = "Mật khẩu phải có ít nhất 9 ký tự, bao gồm ít nhất 1 chữ số và 1 chữ cái in hoa."
+TRUST_PROXY_HEADERS = os.getenv("TRUST_PROXY_HEADERS", "false").strip().lower() in {"1", "true", "yes", "on"}
+AUTH_SESSION_COOKIE_NAME = os.getenv("AUTH_SESSION_COOKIE_NAME", "bidfinder_session")
+AUTH_COOKIE_DOMAIN = os.getenv("AUTH_COOKIE_DOMAIN", "").strip() or None
+AUTH_COOKIE_SECURE_MODE = os.getenv("AUTH_COOKIE_SECURE_MODE", "auto").strip().lower()
+AUTH_COOKIE_SAMESITE_MODE = os.getenv("AUTH_COOKIE_SAMESITE_MODE", "auto").strip().lower()
 
 
 def normalize_text(value: Any) -> str:
@@ -38,6 +74,57 @@ def normalize_text(value: Any) -> str:
 
 def normalize_email(email: Any) -> str:
     return normalize_text(email).lower()
+
+
+def is_local_request(request: Request) -> bool:
+    host = (getattr(request.url, "hostname", "") or "").lower()
+    return host in {"localhost", "127.0.0.1"}
+
+
+def get_request_scheme(request: Request) -> str:
+    if TRUST_PROXY_HEADERS:
+        forwarded_proto = request.headers.get("x-forwarded-proto", "").strip().lower()
+        if forwarded_proto:
+            return forwarded_proto.split(",")[0].strip()
+    return request.url.scheme
+
+
+def resolve_cookie_secure(request: Request) -> bool:
+    if AUTH_COOKIE_SECURE_MODE in {"1", "true", "yes", "on"}:
+        return True
+    if AUTH_COOKIE_SECURE_MODE in {"0", "false", "no", "off"}:
+        return False
+    return not is_local_request(request) and get_request_scheme(request) == "https"
+
+
+def resolve_cookie_samesite(request: Request) -> str:
+    if AUTH_COOKIE_SAMESITE_MODE in {"lax", "strict", "none"}:
+        return AUTH_COOKIE_SAMESITE_MODE
+    return "lax" if is_local_request(request) else "none"
+
+
+def set_auth_session_cookie(response: Response, raw_token: str, request: Request) -> None:
+    response.set_cookie(
+        key=AUTH_SESSION_COOKIE_NAME,
+        value=str(raw_token or ""),
+        max_age=SESSION_TTL_DAYS * 24 * 60 * 60,
+        httponly=True,
+        secure=resolve_cookie_secure(request),
+        samesite=resolve_cookie_samesite(request),
+        domain=AUTH_COOKIE_DOMAIN,
+        path="/",
+    )
+
+
+def clear_auth_session_cookie(response: Response, request: Request) -> None:
+    response.delete_cookie(
+        key=AUTH_SESSION_COOKIE_NAME,
+        domain=AUTH_COOKIE_DOMAIN,
+        path="/",
+        secure=resolve_cookie_secure(request),
+        httponly=True,
+        samesite=resolve_cookie_samesite(request),
+    )
 
 
 def record_get(record: asyncpg.Record, key: str, default: Any = None) -> Any:
@@ -155,6 +242,7 @@ def get_auth_config_payload() -> Dict[str, Any]:
             else "missing_client_id"
         ),
         "position_options": POSITION_OPTIONS,
+        "position_option_groups": POSITION_OPTION_GROUPS,
         "profile_fields": {
             "required_now": ["email", "password", "full_name"],
             "optional_later": ["work_unit", "position"],
@@ -164,13 +252,14 @@ def get_auth_config_payload() -> Dict[str, Any]:
 
 
 def get_client_ip_from_request(request: Request) -> str:
-    forwarded_for = request.headers.get("x-forwarded-for", "").strip()
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
+    if TRUST_PROXY_HEADERS:
+        forwarded_for = request.headers.get("x-forwarded-for", "").strip()
+        if forwarded_for:
+            return forwarded_for.split(",")[0].strip()
 
-    real_ip = request.headers.get("x-real-ip", "").strip()
-    if real_ip:
-        return real_ip
+        real_ip = request.headers.get("x-real-ip", "").strip()
+        if real_ip:
+            return real_ip
 
     return getattr(request.client, "host", "") or "unknown"
 
@@ -506,6 +595,13 @@ def extract_bearer_token(request: Request) -> Optional[str]:
     return token.strip() or None
 
 
+def extract_session_token(request: Request) -> Optional[str]:
+    cookie_token = (request.cookies.get(AUTH_SESSION_COOKIE_NAME) or "").strip()
+    if cookie_token:
+        return cookie_token
+    return extract_bearer_token(request)
+
+
 async def get_authenticated_user(conn: asyncpg.Connection, raw_token: str) -> Optional[Dict[str, Any]]:
     if not raw_token:
         return None
@@ -539,7 +635,7 @@ async def get_authenticated_user(conn: asyncpg.Connection, raw_token: str) -> Op
 
 
 async def require_authenticated_user(conn: asyncpg.Connection, request: Request) -> Dict[str, Any]:
-    raw_token = extract_bearer_token(request)
+    raw_token = extract_session_token(request)
     user = await get_authenticated_user(conn, raw_token or "")
     if user:
         return user
@@ -547,7 +643,7 @@ async def require_authenticated_user(conn: asyncpg.Connection, request: Request)
 
 
 async def logout_current_session(conn: asyncpg.Connection, request: Request) -> None:
-    raw_token = extract_bearer_token(request)
+    raw_token = extract_session_token(request)
     if not raw_token:
         return
     await conn.execute(

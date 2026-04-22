@@ -4766,6 +4766,7 @@ def finalize_and_generate_manifest(batch_limit=None):
                     if row in ready_excel_units
                 }
 
+                cancelled_unit_keys = build_cancelled_unit_key_set(cursor, found_tbmts)
                 cursor.execute("""
                     SELECT p.ma_tbmt, p.so_qd, p.version, array_agg(p.file_path) AS file_paths,
                            COALESCE(r.relation_type, 'INDEPENDENT') AS relation_type,
@@ -4776,7 +4777,6 @@ def finalize_and_generate_manifest(batch_limit=None):
                     WHERE p.ma_tbmt IN %s AND p.is_latest = 1
                     GROUP BY p.ma_tbmt, p.so_qd, p.version, relation_type, qd_original
                 """, (tuple(found_tbmts),))
-                cancelled_unit_keys = build_cancelled_unit_key_set(cursor, found_tbmts)
 
                 db_rows_map = {}
 

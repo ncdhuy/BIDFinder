@@ -1191,7 +1191,9 @@ class CustomSearchForm extends HTMLElement {
                 helpIcon.addEventListener('mouseenter', () => {
                     externalTooltip = document.createElement('div');
                     externalTooltip.className = 'external-tooltip';
-                    externalTooltip.innerHTML = tooltipContent.innerHTML;
+                    Array.from(tooltipContent.childNodes).forEach((child) => {
+                        externalTooltip.appendChild(child.cloneNode(true));
+                    });
 
                     externalTooltip.style.cssText = `
                         position: absolute;
@@ -1351,27 +1353,58 @@ class CustomSearchForm extends HTMLElement {
 
         const options = getOptions();
 
-        host.innerHTML = `
-            <button type="button" class="multi-select-btn is-placeholder" aria-expanded="false">
-                <span class="multi-select-btn-text"></span>
-                <span class="multi-select-caret">▾</span>
-            </button>
-            <div class="multi-select-popover">
-                <div class="multi-select-search"><input type="text" placeholder="Tìm nhanh..."></div>
-                <div class="multi-select-options"></div>
-                <div class="multi-select-footer">
-                    <button type="button" class="multi-select-clear">Xoá chọn</button>
-                    <button type="button" class="multi-select-done">Xong</button>
-                </div>
-            </div>
-        `;
+        host.replaceChildren();
 
-        const btn = host.querySelector('.multi-select-btn');
-        const btnText = host.querySelector('.multi-select-btn-text');
-        const search = host.querySelector('.multi-select-search input');
-        const list = host.querySelector('.multi-select-options');
-        const btnClear = host.querySelector('.multi-select-clear');
-        const btnDone = host.querySelector('.multi-select-done');
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'multi-select-btn is-placeholder';
+        btn.setAttribute('aria-expanded', 'false');
+
+        const btnText = document.createElement('span');
+        btnText.className = 'multi-select-btn-text';
+
+        const btnCaret = document.createElement('span');
+        btnCaret.className = 'multi-select-caret';
+        btnCaret.textContent = '▾';
+
+        btn.appendChild(btnText);
+        btn.appendChild(btnCaret);
+
+        const popover = document.createElement('div');
+        popover.className = 'multi-select-popover';
+
+        const searchWrap = document.createElement('div');
+        searchWrap.className = 'multi-select-search';
+        const search = document.createElement('input');
+        search.type = 'text';
+        search.placeholder = 'Tìm nhanh...';
+        searchWrap.appendChild(search);
+
+        const list = document.createElement('div');
+        list.className = 'multi-select-options';
+
+        const footer = document.createElement('div');
+        footer.className = 'multi-select-footer';
+
+        const btnClear = document.createElement('button');
+        btnClear.type = 'button';
+        btnClear.className = 'multi-select-clear';
+        btnClear.textContent = 'Xoá chọn';
+
+        const btnDone = document.createElement('button');
+        btnDone.type = 'button';
+        btnDone.className = 'multi-select-done';
+        btnDone.textContent = 'Xong';
+
+        footer.appendChild(btnClear);
+        footer.appendChild(btnDone);
+        popover.appendChild(searchWrap);
+        popover.appendChild(list);
+        popover.appendChild(footer);
+        host.appendChild(btn);
+        host.appendChild(popover);
+
+        const listNode = list;
 
         const readSelectedValuesFromSelect = () => Array.from(sel.selectedOptions || [])
             .map(o => (o.value ?? '').trim()).filter(Boolean);
@@ -1379,18 +1412,37 @@ class CustomSearchForm extends HTMLElement {
         const renderList = (query, selectedValuesSet) => {
             const q = (query ?? '').trim().toLowerCase();
             const filtered = options.filter(o => !q || o.label.toLowerCase().includes(q));
+            listNode.replaceChildren();
 
             if (filtered.length === 0) {
-                list.innerHTML = `<div style="padding:10px 12px;color:#93A0B2;font-size:13px;">Không có kết quả</div>`;
+                const empty = document.createElement('div');
+                empty.style.padding = '10px 12px';
+                empty.style.color = '#93A0B2';
+                empty.style.fontSize = '13px';
+                empty.textContent = 'Không có kết quả';
+                listNode.appendChild(empty);
                 return;
             }
 
-            list.innerHTML = filtered.map(o => `
-            <label class="multi-select-option">
-                <input type="checkbox" value="${o.value.replace(/"/g, '&quot;')}" ${selectedValuesSet.has(o.value) ? 'checked' : ''}>
-                <span>${o.label}</span>
-            </label>
-            `).join('');
+            const fragment = document.createDocumentFragment();
+            filtered.forEach((option) => {
+                const label = document.createElement('label');
+                label.className = 'multi-select-option';
+
+                const input = document.createElement('input');
+                input.type = 'checkbox';
+                input.value = option.value;
+                input.checked = selectedValuesSet.has(option.value);
+
+                const span = document.createElement('span');
+                span.textContent = option.label;
+
+                label.appendChild(input);
+                label.appendChild(span);
+                fragment.appendChild(label);
+            });
+
+            listNode.appendChild(fragment);
         };
 
         const refreshFromSelect = () => {
@@ -1723,7 +1775,7 @@ class CustomSearchForm extends HTMLElement {
                 if (btn) btn.classList.add('is-placeholder');
                 if (btnText) btnText.textContent = placeholder;
                 if (search) search.value = '';
-                if (list) list.innerHTML = '';
+                if (list) list.replaceChildren();
             }
 
             this.clearFilterOrder(id);
@@ -2054,23 +2106,47 @@ class CustomSearchForm extends HTMLElement {
             if (!this.filterOrder.includes(id)) this.filterOrder.push(id);
         }
 
+        list.replaceChildren();
+
         if (this.filterOrder.length === 0) {
-            list.innerHTML = `<span class="empty-filters">Chưa có điều kiện lọc nào</span>`;
+            const empty = document.createElement('span');
+            empty.className = 'empty-filters';
+            empty.textContent = 'Chưa có điều kiện lọc nào';
+            list.appendChild(empty);
             return;
         }
 
-        list.innerHTML = this.filterOrder
+        const fragment = document.createDocumentFragment();
+        this.filterOrder
             .filter(id => filterMap.has(id))
-            .map(id => {
+            .forEach((id) => {
             const item = filterMap.get(id);
             markSidebar(item.pane);
-            return `<div class="filter-chip"><strong>${item.label}</strong> ${item.value}<span class="chip-remove" data-clear="${id}">&times;</span></div>`;
-            })
-            .join('');
+
+            const chip = document.createElement('div');
+            chip.className = 'filter-chip';
+
+            const strong = document.createElement('strong');
+            strong.textContent = item.label;
+
+            const textNode = document.createTextNode(` ${item.value}`);
+
+            const remove = document.createElement('span');
+            remove.className = 'chip-remove';
+            remove.dataset.clear = id;
+            remove.textContent = '×';
+
+            chip.appendChild(strong);
+            chip.appendChild(textNode);
+            chip.appendChild(remove);
+            fragment.appendChild(chip);
+            });
+
+        list.appendChild(fragment);
 
         list.querySelectorAll('.chip-remove').forEach(btn => {
             btn.addEventListener('click', (e) => {
-            const id = e.target.getAttribute('data-clear');
+            const id = e.currentTarget?.getAttribute('data-clear');
             const chipMeta = filterMap.get(id);
 
             if (id === 'date') {
@@ -2280,18 +2356,24 @@ class AdvancedFilterManager {
                     let nextIdx = (ops.indexOf(token.text) + 1) % ops.length;
                     token.text = ops[nextIdx];
                     this.renderTokens();
-                    this.syncToHiddenInput({ reason: 'operator-changed' });
+                    this.syncToHiddenInput({ reason: 'operator-changed', triggerPreview: true });
                 });
             } else {
                 el.className = 'token-tag';
                 const displayText = token.text.length > 30 ? token.text.substring(0, 30) + '...' : token.text;
-                
-                el.innerHTML = `
-                    <span class="tag-text">${displayText}</span>
-                    <span class="token-remove">&times;</span>
-                `;
-                
-                el.querySelector('.token-remove').addEventListener('click', () => {
+
+                const textSpan = document.createElement('span');
+                textSpan.className = 'tag-text';
+                textSpan.textContent = displayText;
+
+                const removeSpan = document.createElement('span');
+                removeSpan.className = 'token-remove';
+                removeSpan.textContent = '×';
+
+                el.appendChild(textSpan);
+                el.appendChild(removeSpan);
+
+                removeSpan.addEventListener('click', () => {
                     if (index === 0 && this.tokens.length > 1) {
                         this.tokens.splice(0, 2);
                     } else if (index > 0) {
@@ -2325,7 +2407,7 @@ class AdvancedFilterManager {
         this.currentIndex = -1;
         this.resetDropdownScroll();
 
-        if (query.length < 2) {
+        if (query.length < 1) {
             this.closeDropdown();
             return;
         }
@@ -2339,10 +2421,21 @@ class AdvancedFilterManager {
         if (this.abortController) this.abortController.abort();
         this.abortController = new AbortController();
 
-        if (window.BIDFinderAuth?.requiresDataAuth?.() && !window.BIDFinderAuth.isAuthenticated()) {
-            window.BIDFinderAuth.openAuthModal('login');
-            this.closeDropdown();
-            return;
+        const auth = window.BIDFinderAuth;
+        const config = auth?.getConfig?.() || {};
+        const isAuthenticated = Boolean(auth?.isAuthenticated?.());
+
+        if (!isAuthenticated) {
+            if (config.allow_anonymous_autocomplete === false) {
+                auth?.openAuthModal?.('login');
+                this.closeDropdown();
+                return;
+            }
+
+            if (query.length === 1 && config.anonymous_single_char_numeric_only && !/\d/.test(query)) {
+                this.closeDropdown();
+                return;
+            }
         }
 
         const payload = {
@@ -2446,10 +2539,37 @@ class AdvancedFilterManager {
             const li = document.createElement('li');
             li.dataset.index = index;
             li.dataset.value = item;
+            const value = String(item || '');
 
-            li.innerHTML = regex
-                ? item.replace(regex, '<strong>$1</strong>')
-                : item;
+            if (regex) {
+                const fragments = [];
+                let cursor = 0;
+                regex.lastIndex = 0;
+
+                value.replace(regex, (match, _group, offset) => {
+                    if (offset > cursor) {
+                        fragments.push(document.createTextNode(value.slice(cursor, offset)));
+                    }
+
+                    const strong = document.createElement('strong');
+                    strong.textContent = match;
+                    fragments.push(strong);
+                    cursor = offset + match.length;
+                    return match;
+                });
+
+                if (cursor < value.length) {
+                    fragments.push(document.createTextNode(value.slice(cursor)));
+                }
+
+                if (!fragments.length) {
+                    fragments.push(document.createTextNode(value));
+                }
+
+                li.replaceChildren(...fragments);
+            } else {
+                li.textContent = value;
+            }
 
             li.addEventListener('click', () => {
                 const selectedText = li.dataset.value;

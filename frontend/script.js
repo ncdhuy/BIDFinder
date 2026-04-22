@@ -11,10 +11,27 @@ function getAuthorizedFetch() {
     return window.bidfinderAuthorizedFetch || fetch;
 }
 
-function requireAuthenticatedSession(mode = 'login') {
-    if (!window.BIDFinderAuth) return true;
-    if (!window.BIDFinderAuth.requiresDataAuth?.()) return true;
-    return window.BIDFinderAuth.ensureAuthenticated(mode);
+function requireAuthenticatedSession(mode = 'login', requirement = 'preview') {
+    const auth = window.BIDFinderAuth;
+    if (!auth) return true;
+    if (auth.isAuthenticated?.()) return true;
+
+    const config = auth.getConfig?.() || {};
+
+    if (requirement === 'full_query') {
+        if (!config.require_auth_for_full_query) return true;
+        return auth.ensureAuthenticated(mode);
+    }
+
+    if (requirement === 'metadata') {
+        if (config.allow_anonymous_metadata) {
+            return !config.require_auth_for_data_access || auth.ensureAuthenticated(mode);
+        }
+        return auth.ensureAuthenticated(mode);
+    }
+
+    if (!config.require_auth_for_data_access) return true;
+    return auth.ensureAuthenticated(mode);
 }
 
 // ============================== 
@@ -373,18 +390,18 @@ function renderTableData(data, configKey) {
     const tbody = config.tbody();
     const tableId = configKey === 'df1' ? 'standard-table' : 'extended-table';
     const columnOrder = getVisibleColumnOrder(tableId);
-    
-    tbody.innerHTML = '';
+
+    tbody.replaceChildren();
     resetCellSelection();
 
     if (!data?.length) {
-        tbody.innerHTML = `
-            <tr>
-                <td colspan="${columnOrder.length + 1}" class="table-empty-state">
-                    Chưa có dữ liệu. Vui lòng thực hiện tìm kiếm.
-                </td>
-            </tr>
-        `;
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = columnOrder.length + 1;
+        td.className = 'table-empty-state';
+        td.textContent = 'Chưa có dữ liệu. Vui lòng thực hiện tìm kiếm.';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
         return;
     }
     
@@ -979,8 +996,8 @@ function syncHeadersWithLocalStorage() {
         
         const thead = table.querySelector('thead tr');
         if (!thead) return;
-        
-        thead.innerHTML = '';
+
+        thead.replaceChildren();
         const selectorTh = document.createElement('th');
         selectorTh.className = 'row-selector-header';
         selectorTh.textContent = 'STT';
@@ -1034,7 +1051,10 @@ function createHeaderCell(tableId, colName, index) {
     menuTrigger.setAttribute('aria-label', `Tuy chon cot ${colName}`);
     menuTrigger.setAttribute('aria-haspopup', 'true');
     menuTrigger.setAttribute('aria-expanded', 'false');
-    menuTrigger.innerHTML = '<span aria-hidden="true">▾</span>';
+    const triggerText = document.createElement('span');
+    triggerText.setAttribute('aria-hidden', 'true');
+    triggerText.textContent = '▾';
+    menuTrigger.appendChild(triggerText);
     headerInner.appendChild(menuTrigger);
 
     th.appendChild(headerInner);
@@ -1047,7 +1067,7 @@ function createHeaderCell(tableId, colName, index) {
 // FILTERS
 // ============================== 
 
-const MAX_RESULTS_PER_TABLE = 150;
+const MAX_RESULTS_PER_TABLE = 100;
 let currentQueryRequest = {
     scope: 'all',
     filters: {}
@@ -1085,8 +1105,8 @@ function clearFilterUrlState() {
 }
 
 async function fetchQueryResults(queryRequest, sortRule = activeSortRule, limit = MAX_RESULTS_PER_TABLE) {
-    if (!requireAuthenticatedSession('login')) {
-        throw new Error('Bạn cần đăng nhập để tra cứu dữ liệu.');
+    if (!requireAuthenticatedSession('login', 'full_query')) {
+        throw new Error(window.BIDFinderAuth?.getFullQueryGateMessage?.() || 'Bạn cần đăng nhập để tra cứu dữ liệu.');
     }
 
     const requestBody = {
@@ -1102,22 +1122,23 @@ async function fetchQueryResults(queryRequest, sortRule = activeSortRule, limit 
         body: JSON.stringify(requestBody)
     });
 
-    if (!response.ok) {
+    const payload = await response.json();
+
+    if (!response.ok || payload?.success === false) {
         let message = `HTTP ${response.status}`;
-        try {
-            const errorPayload = await response.json();
-            message = errorPayload?.message || errorPayload?.error || message;
-        } catch (e) {
-            // Ignore non-JSON error payloads.
-        }
+        message = payload?.message || payload?.error || message;
         throw new Error(message);
     }
 
-    return response.json();
+    if (payload?.auth) {
+        window.BIDFinderAuth?.applyAuthConfig?.(payload.auth);
+    }
+
+    return payload;
 }
 
 async function fetchQueryPreview(queryRequest, signal = null) {
-    if (!requireAuthenticatedSession('login')) {
+    if (!requireAuthenticatedSession('login', 'preview')) {
         throw new Error('Bạn cần đăng nhập để tra cứu dữ liệu.');
     }
 
@@ -1246,7 +1267,7 @@ function showLimitWarning({ totalCount, totalCountExact, totalCountLabel, displa
     alert(
         `⚠️ GIỚI HẠN KẾT QUẢ TÌM KIẾM\n\n` +
         `Hệ thống ghi nhận ${summaryText} kết quả phù hợp.\n` +
-        `Hiện tại chỉ ${displayedText} kết quả đầu tiên được hiển thị.\n\n` +
+        `Hiện chỉ hiển thị ${displayedText} kết quả đầu tiên.\n\n` +
         `Để truy xuất đầy đủ, đề nghị:\n` +
         `- Bổ sung từ khóa tìm kiếm\n` +
         `- Thu hẹp khoảng thời gian\n`
@@ -1254,9 +1275,11 @@ function showLimitWarning({ totalCount, totalCountExact, totalCountLabel, displa
 
     const warningDiv = document.getElementById('result-warning');
     if (warningDiv) {
-        warningDiv.innerHTML =
-            `<strong>Giới hạn kết quả tìm kiếm</strong><br>` +
-            `Hệ thống ghi nhận ${summaryText} kết quả phù hợp, hiện chỉ hiển thị ${displayedText} kết quả đầu tiên.`;
+        setInfoBannerMessage(
+            warningDiv,
+            'Giới hạn kết quả tìm kiếm',
+            `Hệ thống ghi nhận ${summaryText} kết quả phù hợp, hiện chỉ hiển thị ${displayedText} kết quả đầu tiên.`
+        );
         warningDiv.style.display = 'block';
     }
 }
@@ -1265,7 +1288,11 @@ function showLimitWarning({ totalCount, totalCountExact, totalCountLabel, displa
 function hideLimitWarning() {
     const warningDiv = document.getElementById('result-warning');
     if (warningDiv) {
-        warningDiv.innerHTML = '<strong>Giới hạn kết quả tìm kiếm</strong><br>Vui lòng thu hẹp điều kiện tìm kiếm.';
+        setInfoBannerMessage(
+            warningDiv,
+            'Giới hạn kết quả tìm kiếm',
+            'Vui lòng thu hẹp điều kiện tìm kiếm.'
+        );
         warningDiv.style.display = 'none';
     }
 }
@@ -1361,13 +1388,19 @@ function updateDuplicateWarning(df1Rows, df2Rows) {
 
     if (duplicateCount <= 0) {
         warningDiv.style.display = 'none';
-        warningDiv.innerHTML = '<strong>Cảnh báo dữ liệu trùng</strong><br>Có dòng trùng trong kết quả hiện tại.';
+        setInfoBannerMessage(
+            warningDiv,
+            'Cảnh báo dữ liệu trùng',
+            'Có dòng trùng trong kết quả hiện tại.'
+        );
         return;
     }
 
-    warningDiv.innerHTML =
-        `<strong>Cảnh báo dữ liệu trùng</strong><br>` +
-        `Có ${duplicateCount.toLocaleString('vi-VN')} dòng trùng trong kết quả hiện tại.`;
+    setInfoBannerMessage(
+        warningDiv,
+        'Cảnh báo dữ liệu trùng',
+        `Có ${duplicateCount.toLocaleString('vi-VN')} dòng trùng trong kết quả hiện tại.`
+    );
     warningDiv.style.display = 'block';
 }
 
@@ -1674,7 +1707,7 @@ function initFilterHelpExternalTooltip() {
 
     const showTooltip = ({ pinned = false } = {}) => {
         if (!externalTooltip) {
-            externalTooltip = createTooltip(helpBtn, contentEl.innerHTML);
+            externalTooltip = createTooltip(helpBtn, contentEl);
             document.body.appendChild(externalTooltip);
         }
 
@@ -1796,10 +1829,26 @@ function injectTooltipStyles() {
     document.head.appendChild(style);
 }
 
-function createTooltip(targetElement, content) {
+function setInfoBannerMessage(target, title, message) {
+    if (!target) return;
+
+    target.replaceChildren();
+
+    const strong = document.createElement('strong');
+    strong.textContent = title;
+    target.appendChild(strong);
+    target.appendChild(document.createElement('br'));
+    target.appendChild(document.createTextNode(message));
+}
+
+function createTooltip(targetElement, contentNode) {
     const tooltip = document.createElement("div");
     tooltip.className = "external-tooltip";
-    tooltip.innerHTML = content;
+    if (contentNode) {
+        Array.from(contentNode.childNodes).forEach((child) => {
+            tooltip.appendChild(child.cloneNode(true));
+        });
+    }
 
     const rect = targetElement.getBoundingClientRect();
     tooltip.style.top = `${rect.bottom + 8}px`;
@@ -1894,6 +1943,18 @@ function renderFeatherIcon(name, className = 'menu-inline-icon') {
         height: 14,
         'stroke-width': 2
     }) || '';
+}
+
+function createFeatherIconElement(name, className = 'menu-inline-icon') {
+    const icon = document.createElement('i');
+    icon.setAttribute('data-feather', name);
+    icon.className = className;
+    return icon;
+}
+
+function finalizeDynamicMarkup(root) {
+    if (!root || !window.feather?.replace) return;
+    window.feather.replace();
 }
 
 function encodeColumnName(columnName) {
@@ -2258,64 +2319,133 @@ function closeColumnMenu() {
     syncFloatingWrapperState();
 }
 
+function createColumnMenuActionButton({
+    action,
+    tableId,
+    columnName,
+    icon,
+    label,
+    isActive = false,
+    isSecondary = false,
+    isDanger = false
+}) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'column-menu-action';
+    if (isActive) button.classList.add('is-active');
+    if (isSecondary) button.classList.add('is-secondary');
+    if (isDanger) button.classList.add('is-danger');
+    button.dataset.action = action;
+    button.dataset.tableId = tableId;
+    button.dataset.columnName = encodeColumnName(columnName);
+    button.appendChild(createFeatherIconElement(icon, 'column-menu-icon'));
+
+    const span = document.createElement('span');
+    span.textContent = label;
+    button.appendChild(span);
+    return button;
+}
+
 function renderColumnMenu(tableId, columnName) {
     const miniFilterValue = miniFilterState[tableId]?.[columnName] || '';
     const sortState = getSortStateForColumn(tableId, columnName);
     const isWrapped = wrappedColumnsState[tableId]?.has(columnName);
     const isPinned = frozenColumnsState[tableId]?.has(columnName);
-    const encodedColumn = encodeColumnName(columnName);
+    const fragment = document.createDocumentFragment();
 
-    return `
-        <div class="column-menu-title">${escapeHtml(columnName)}</div>
-        <div class="column-menu-section">
-            <div class="column-menu-field">
-                <div class="column-menu-input-wrap">
-                    ${renderFeatherIcon('search', 'column-menu-icon')}
-                    <input
-                        class="column-mini-filter-input"
-                        type="text"
-                        value="${escapeHtml(miniFilterValue)}"
-                        data-table-id="${tableId}"
-                        data-column-name="${encodedColumn}"
-                        placeholder=""
-                    >
-                </div>
-            </div>
-            <button class="column-menu-action ${sortState === 'asc' ? 'is-active' : ''}" type="button" data-action="sort-asc" data-table-id="${tableId}" data-column-name="${encodedColumn}">
-                ${renderFeatherIcon('arrow-up', 'column-menu-icon')}
-                <span>Sort ascending</span>
-            </button>
-            <button class="column-menu-action ${sortState === 'desc' ? 'is-active' : ''}" type="button" data-action="sort-desc" data-table-id="${tableId}" data-column-name="${encodedColumn}">
-                ${renderFeatherIcon('arrow-down', 'column-menu-icon')}
-                <span>Sort descending</span>
-            </button>
-            ${sortState ? `
-                <button class="column-menu-action is-secondary" type="button" data-action="clear-sort" data-table-id="${tableId}" data-column-name="${encodedColumn}">
-                    ${renderFeatherIcon('rotate-ccw', 'column-menu-icon')}
-                    <span>Bỏ sắp xếp</span>
-                </button>
-            ` : ''}
-        </div>
-        <hr class="column-menu-divider">
-        <div class="column-menu-section">
-            <button class="column-menu-action" type="button" data-action="autosize" data-table-id="${tableId}" data-column-name="${encodedColumn}">
-                ${renderFeatherIcon('code', 'column-menu-icon')}
-                <span>Autosize</span>
-            </button>
-            <button class="column-menu-action ${isWrapped ? 'is-active' : ''}" type="button" data-action="toggle-wrap" data-table-id="${tableId}" data-column-name="${encodedColumn}">
-                ${renderFeatherIcon('corner-down-right', 'column-menu-icon')}
-                <span>Wrap text</span>
-            </button>
-            <button class="column-menu-action ${isPinned ? 'is-active' : ''}" type="button" data-action="toggle-pin" data-table-id="${tableId}" data-column-name="${encodedColumn}">
-                ${renderFeatherIcon('tag', 'column-menu-icon')}
-                <span>Pin column</span>
-            </button>
-            <button class="column-menu-action is-danger" type="button" data-action="hide-column" data-table-id="${tableId}" data-column-name="${encodedColumn}">
-                ${renderFeatherIcon('eye-off', 'column-menu-icon')}
-                <span>Hide column</span>
-            </button>
-        </div>
-    `;
+    const title = document.createElement('div');
+    title.className = 'column-menu-title';
+    title.textContent = columnName;
+    fragment.appendChild(title);
+
+    const primarySection = document.createElement('div');
+    primarySection.className = 'column-menu-section';
+
+    const field = document.createElement('div');
+    field.className = 'column-menu-field';
+    const inputWrap = document.createElement('div');
+    inputWrap.className = 'column-menu-input-wrap';
+    inputWrap.appendChild(createFeatherIconElement('search', 'column-menu-icon'));
+
+    const input = document.createElement('input');
+    input.className = 'column-mini-filter-input';
+    input.type = 'text';
+    input.value = miniFilterValue;
+    input.dataset.tableId = tableId;
+    input.dataset.columnName = encodeColumnName(columnName);
+    input.placeholder = '';
+    inputWrap.appendChild(input);
+    field.appendChild(inputWrap);
+    primarySection.appendChild(field);
+
+    primarySection.appendChild(createColumnMenuActionButton({
+        action: 'sort-asc',
+        tableId,
+        columnName,
+        icon: 'arrow-up',
+        label: 'Sort ascending',
+        isActive: sortState === 'asc'
+    }));
+    primarySection.appendChild(createColumnMenuActionButton({
+        action: 'sort-desc',
+        tableId,
+        columnName,
+        icon: 'arrow-down',
+        label: 'Sort descending',
+        isActive: sortState === 'desc'
+    }));
+    if (sortState) {
+        primarySection.appendChild(createColumnMenuActionButton({
+            action: 'clear-sort',
+            tableId,
+            columnName,
+            icon: 'rotate-ccw',
+            label: 'Bỏ sắp xếp',
+            isSecondary: true
+        }));
+    }
+    fragment.appendChild(primarySection);
+
+    const divider = document.createElement('hr');
+    divider.className = 'column-menu-divider';
+    fragment.appendChild(divider);
+
+    const secondarySection = document.createElement('div');
+    secondarySection.className = 'column-menu-section';
+    secondarySection.appendChild(createColumnMenuActionButton({
+        action: 'autosize',
+        tableId,
+        columnName,
+        icon: 'code',
+        label: 'Autosize'
+    }));
+    secondarySection.appendChild(createColumnMenuActionButton({
+        action: 'toggle-wrap',
+        tableId,
+        columnName,
+        icon: 'corner-down-right',
+        label: 'Wrap text',
+        isActive: isWrapped
+    }));
+    secondarySection.appendChild(createColumnMenuActionButton({
+        action: 'toggle-pin',
+        tableId,
+        columnName,
+        icon: 'tag',
+        label: 'Pin column',
+        isActive: isPinned
+    }));
+    secondarySection.appendChild(createColumnMenuActionButton({
+        action: 'hide-column',
+        tableId,
+        columnName,
+        icon: 'eye-off',
+        label: 'Hide column',
+        isDanger: true
+    }));
+    fragment.appendChild(secondarySection);
+
+    return fragment;
 }
 
 function rerenderActiveColumnMenu() {
@@ -2329,7 +2459,8 @@ function rerenderActiveColumnMenu() {
     }
 
     activeColumnMenuState.trigger = trigger;
-    menu.innerHTML = renderColumnMenu(tableId, columnName);
+    menu.replaceChildren(renderColumnMenu(tableId, columnName));
+    finalizeDynamicMarkup(menu);
     trigger.classList.add('is-open');
     trigger.setAttribute('aria-expanded', 'true');
     positionFloatingLayer(wrapper, trigger, menu);
@@ -2354,8 +2485,9 @@ function openColumnMenu(tableId, columnName, trigger) {
 
     const menu = document.createElement('div');
     menu.className = 'column-menu-popover';
-    menu.innerHTML = renderColumnMenu(tableId, columnName);
+    menu.replaceChildren(renderColumnMenu(tableId, columnName));
     wrapper.appendChild(menu);
+    finalizeDynamicMarkup(menu);
 
     activeColumnMenuState = { tableId, columnName, wrapper, trigger, menu };
     trigger.classList.add('is-open');
@@ -2376,7 +2508,7 @@ function closeColumnsPopover() {
     activeColumnsPopoverState.button?.setAttribute('aria-expanded', 'false');
     if (activeColumnsPopoverState.popover) {
         activeColumnsPopoverState.popover.hidden = true;
-        activeColumnsPopoverState.popover.innerHTML = '';
+        activeColumnsPopoverState.popover.replaceChildren();
     }
 
     activeColumnsPopoverState = null;
@@ -2385,40 +2517,58 @@ function closeColumnsPopover() {
 
 function renderColumnsPopover(tableId) {
     const config = TABLE_MAP[tableId];
-    if (!config) return '';
+    if (!config) return document.createDocumentFragment();
 
     const hiddenColumns = hiddenColumnsState[tableId] || new Set();
     const visibleCount = getVisibleColumnOrder(tableId).length;
+    const fragment = document.createDocumentFragment();
 
-    return `
-        <div class="table-columns-header">
-            <strong>Show/hide columns</strong>
-            <button class="table-columns-reset" type="button" data-table-id="${tableId}">
-                ${renderFeatherIcon('eye', 'table-columns-icon')}
-                <span>Hiện tất cả</span>
-            </button>
-        </div>
-        <div class="table-columns-list">
-            ${config.columnOrder().map(columnName => {
-                const isVisible = !hiddenColumns.has(columnName);
-                const isLocked = isVisible && visibleCount === 1;
-                return `
-                    <label class="table-columns-option ${isVisible ? '' : 'is-hidden'}">
-                        <input
-                            class="table-columns-checkbox"
-                            type="checkbox"
-                            data-table-id="${tableId}"
-                            data-column-name="${encodeColumnName(columnName)}"
-                            ${isVisible ? 'checked' : ''}
-                            ${isLocked ? 'disabled' : ''}
-                        >
-                        ${renderFeatherIcon(isVisible ? 'eye' : 'eye-off', 'table-columns-icon')}
-                        <span>${escapeHtml(columnName)}</span>
-                    </label>
-                `;
-            }).join('')}
-        </div>
-    `;
+    const header = document.createElement('div');
+    header.className = 'table-columns-header';
+
+    const title = document.createElement('strong');
+    title.textContent = 'Show/hide columns';
+    header.appendChild(title);
+
+    const resetButton = document.createElement('button');
+    resetButton.className = 'table-columns-reset';
+    resetButton.type = 'button';
+    resetButton.dataset.tableId = tableId;
+    resetButton.appendChild(createFeatherIconElement('eye', 'table-columns-icon'));
+    const resetLabel = document.createElement('span');
+    resetLabel.textContent = 'Hiện tất cả';
+    resetButton.appendChild(resetLabel);
+    header.appendChild(resetButton);
+    fragment.appendChild(header);
+
+    const list = document.createElement('div');
+    list.className = 'table-columns-list';
+    config.columnOrder().forEach((columnName) => {
+        const isVisible = !hiddenColumns.has(columnName);
+        const isLocked = isVisible && visibleCount === 1;
+
+        const option = document.createElement('label');
+        option.className = 'table-columns-option';
+        if (!isVisible) option.classList.add('is-hidden');
+
+        const checkbox = document.createElement('input');
+        checkbox.className = 'table-columns-checkbox';
+        checkbox.type = 'checkbox';
+        checkbox.dataset.tableId = tableId;
+        checkbox.dataset.columnName = encodeColumnName(columnName);
+        checkbox.checked = isVisible;
+        checkbox.disabled = isLocked;
+        option.appendChild(checkbox);
+
+        option.appendChild(createFeatherIconElement(isVisible ? 'eye' : 'eye-off', 'table-columns-icon'));
+        const labelText = document.createElement('span');
+        labelText.textContent = columnName;
+        option.appendChild(labelText);
+        list.appendChild(option);
+    });
+    fragment.appendChild(list);
+
+    return fragment;
 }
 
 function openColumnsPopover(button) {
@@ -2439,11 +2589,12 @@ function openColumnsPopover(button) {
         wrapper.appendChild(popover);
     }
 
-    popover.innerHTML = renderColumnsPopover(tableId);
+    popover.replaceChildren(renderColumnsPopover(tableId));
     popover.hidden = false;
     button.setAttribute('aria-expanded', 'true');
     activeColumnsPopoverState = { tableId, wrapper, button, popover };
     syncFloatingWrapperState();
+    finalizeDynamicMarkup(popover);
 
     requestAnimationFrame(() => {
         positionFloatingLayer(wrapper, button, popover);
@@ -2458,8 +2609,9 @@ function rerenderColumnsPopover() {
         return;
     }
 
-    popover.innerHTML = renderColumnsPopover(tableId);
+    popover.replaceChildren(renderColumnsPopover(tableId));
     popover.hidden = false;
+    finalizeDynamicMarkup(popover);
     positionFloatingLayer(wrapper, button, popover);
 }
 
@@ -3195,7 +3347,7 @@ function formatHistoryBoxes(value) {
 }
 
 async function loadMetadata() {
-    if (window.BIDFinderAuth?.requiresDataAuth?.() && !window.BIDFinderAuth?.isAuthenticated()) {
+    if (!requireAuthenticatedSession('login', 'metadata')) {
         metadata = null;
         return;
     }
@@ -3219,7 +3371,7 @@ async function loadMetadata() {
 }
 
 function showHistoryModal() {
-    if (!requireAuthenticatedSession('login')) return;
+    if (!requireAuthenticatedSession('login', 'metadata')) return;
 
     const modal = document.getElementById('history-modal');
     const hasData = metadata?.success && metadata?.history?.length > 0;
@@ -3238,39 +3390,53 @@ function renderHistoryData(history) {
     const sortedHistory = [...history]
         .sort((a, b) => getHistorySortTimestamp(b) - getHistorySortTimestamp(a));
     const latestRun = sortedHistory[0];
-    const historyHTML = sortedHistory
-        .map(run => `
-            <div class="history-item">
-                <div>
-                    <div class="history-datetime">
-                        ${formatHistoryDateTime(run.end_time || run.start_time)}
-                    </div>
-                </div>
-                <div class="history-boxes">
-                    ${formatHistoryBoxes(run.boxes_selected)}
-                </div>
-            </div>
-        `)
-        .join('');
+    const historyList = document.getElementById('history-list');
+    const fragment = document.createDocumentFragment();
+
+    sortedHistory.forEach((run) => {
+        const item = document.createElement('div');
+        item.className = 'history-item';
+
+        const info = document.createElement('div');
+        const dateTime = document.createElement('div');
+        dateTime.className = 'history-datetime';
+        dateTime.textContent = formatHistoryDateTime(run.end_time || run.start_time);
+        info.appendChild(dateTime);
+
+        const boxes = document.createElement('div');
+        boxes.className = 'history-boxes';
+        boxes.textContent = formatHistoryBoxes(run.boxes_selected);
+
+        item.appendChild(info);
+        item.appendChild(boxes);
+        fragment.appendChild(item);
+    });
 
     const latestRunTime = latestRun?.end_time || latestRun?.start_time;
     document.getElementById('modal-last-update').textContent = formatHistoryDateTime(latestRunTime);
     document.getElementById('modal-freshness').textContent = latestRunTime ? formatRelative(latestRunTime) : '--';
     document.getElementById('modal-boxes-total').textContent = formatHistoryBoxes(latestRun?.boxes_selected);
     
-    document.getElementById('history-list').innerHTML = historyHTML;
+    historyList.replaceChildren(fragment);
 }
 
 function renderEmptyHistory() {
     document.getElementById('modal-last-update').textContent = 'Chưa có dữ liệu';
     document.getElementById('modal-freshness').textContent = '--';
     document.getElementById('modal-boxes-total').textContent = '0';
-    document.getElementById('history-list').innerHTML = `
-        <div class="history-empty">
-            <i data-feather="clock"></i>
-            <p>Chưa có lịch sử cập nhật dữ liệu</p>
-        </div>
-    `;
+    const historyList = document.getElementById('history-list');
+    const wrapper = document.createElement('div');
+    wrapper.className = 'history-empty';
+
+    const icon = document.createElement('i');
+    icon.setAttribute('data-feather', 'clock');
+
+    const text = document.createElement('p');
+    text.textContent = 'Chưa có lịch sử cập nhật dữ liệu';
+
+    wrapper.appendChild(icon);
+    wrapper.appendChild(text);
+    historyList.replaceChildren(wrapper);
 }
 
 // ============================== 

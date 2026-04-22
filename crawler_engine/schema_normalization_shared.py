@@ -161,10 +161,36 @@ def drop_header_legend_rows(df: pd.DataFrame) -> pd.DataFrame:
         text = str(value).strip()
         return bool(re.fullmatch(r"\(\d+\)", text))
 
+    def parse_numeric_ordinal(value):
+        if pd.isna(value):
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if re.fullmatch(r"\d+(?:\.0+)?", text):
+            return int(float(text))
+        return None
+
+    def is_sequential_numeric_legend(values) -> bool:
+        numeric_values = [parse_numeric_ordinal(value) for value in values]
+        if any(value is None for value in numeric_values):
+            return False
+        if len(numeric_values) < 3:
+            return False
+        if len(set(numeric_values)) != len(numeric_values):
+            return False
+        return all(
+            current == previous + 1
+            for previous, current in zip(numeric_values, numeric_values[1:])
+        )
+
     mask = []
     for _, row in df.iterrows():
         values = [value for value in row.tolist() if not pd.isna(value) and str(value).strip() != ""]
-        if len(values) >= 3 and all(is_parenthesized_ordinal(value) for value in values):
+        if len(values) >= 3 and (
+            all(is_parenthesized_ordinal(value) for value in values)
+            or is_sequential_numeric_legend(values)
+        ):
             mask.append(False)
         else:
             mask.append(True)

@@ -2,6 +2,8 @@
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://accounts.google.com https://cdn.jsdelivr.net https://cdn.sheetjs.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com data:; connect-src 'self' http://127.0.0.1:8000 https://bidfinder.onrender.com https://accounts.google.com; frame-src https://accounts.google.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self' https://accounts.google.com;">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
     <title>BIDFinder - Hệ thống quản lý dữ liệu đấu thầu y tế</title>
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="auth.css">
@@ -10,9 +12,8 @@
 <body>
     <script>
         const savedBidfinderView = sessionStorage.getItem('bidfinder:view') || 'landing';
-        const hasSavedAuthToken = !!localStorage.getItem('bidfinder:auth_token');
         const requireAuthForDataAccess = localStorage.getItem('bidfinder:require_auth_for_data_access') === '1';
-        if (savedBidfinderView === 'landing' || (requireAuthForDataAccess && !hasSavedAuthToken)) {
+        if (savedBidfinderView === 'landing' || requireAuthForDataAccess) {
             document.body.classList.add('landing-active');
         }
     </script>
@@ -168,7 +169,7 @@
                                 </span>
                             </button>
                             <button class="action-btn" id="open-filter-panel" aria-label="Tra cứu">
-                                <i data-feather="filter"></i>
+                                <i data-feather="search"></i>
                                 <span class="action-btn-label">Tra cứu</span>
                             </button>
                         </div>
@@ -402,6 +403,10 @@
                             <ul class="auth-feature-list" aria-label="Lợi ích khi dùng BIDFinder">
                                 <li class="auth-feature-item">
                                     <span class="auth-feature-icon" aria-hidden="true"></span>
+                                    <span>Miễn phí cho người dùng cá nhân</span>
+                                </li>
+                                <li class="auth-feature-item">
+                                    <span class="auth-feature-icon" aria-hidden="true"></span>
                                     <span>Tăng tốc độ tìm kiếm</span>
                                 </li>
                                 <li class="auth-feature-item">
@@ -476,8 +481,8 @@
 
                                 <label class="auth-field">
                                     <span>Vị trí</span>
-                                    <select id="register-position" name="position">
-                                        <option value="">Chưa chọn</option>
+                                    <select id="register-position" name="position" placeholder="Vị trí">
+                                        <option value="" disabled selected hidden>Vị trí</option>
                                     </select>
                                 </label>
 
@@ -543,7 +548,7 @@
                             <label class="auth-field">
                                 <span>Vị trí</span>
                                 <select id="profile-position" name="position">
-                                    <option value="">Chưa chọn</option>
+                                    <option value="" disabled selected hidden>Vị trí</option>
                                 </select>
                             </label>
 
