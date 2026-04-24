@@ -8,9 +8,11 @@
 
   const STORAGE_KEY = 'bidfinder:auth_token';
   const DATA_ACCESS_KEY = 'bidfinder:require_auth_for_data_access';
+  const AUTH_HINT_KEY = 'bidfinder:auth_hint';
   const TOKEN_STORAGE = window.sessionStorage;
   const LEGACY_TOKEN_STORAGE = window.localStorage;
   const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const PROFILE_SECTIONS = ['profile', 'password'];
 
   function readStoredToken() {
     const sessionToken = TOKEN_STORAGE.getItem(STORAGE_KEY) || '';
@@ -44,10 +46,12 @@
       anonymous_full_query_daily_remaining: 10,
       anonymous_full_query_login_required: false,
       anonymous_full_query_limit_message: 'Bạn đã dùng hết lượt tra cứu hôm nay. Vui lòng đăng nhập để tiếp tục.',
-      password_policy_message: 'Mật khẩu phải có ít nhất 9 ký tự, bao gồm ít nhất 1 chữ số và 1 chữ cái in hoa.'
+      password_policy_message: 'Mật khẩu phải có ít nhất 9 ký tự, bao gồm ít nhất 1 chữ số và 1 chữ cái in hoa.',
+      password_reset_enabled: false
     },
     currentMode: 'register',
     pendingIntent: null,
+    resetPasswordToken: '',
     googleRendered: false,
     googleErrorMessage: '',
     initialized: false
@@ -70,10 +74,21 @@
       'auth-brand-profile-view',
       'auth-register-panel',
       'auth-login-panel',
+      'auth-forgot-password-panel',
+      'auth-reset-password-panel',
       'auth-register-form',
       'auth-login-form',
+      'auth-forgot-password-form',
+      'auth-reset-password-form',
       'auth-profile-form',
+      'auth-change-password-form',
       'auth-profile-cancel-btn',
+      'auth-profile-section-toggle',
+      'auth-password-section-toggle',
+      'auth-profile-section-detail',
+      'auth-password-section-detail',
+      'auth-forgot-password-btn',
+      'auth-back-to-login-btn',
       'google-register-block',
       'google-login-block',
       'google-auth-slot-register',
@@ -94,9 +109,21 @@
       'register-password-note',
       'login-email',
       'login-password',
+      'forgot-password-email',
+      'reset-password-new',
+      'reset-password-confirm',
+      'reset-password-note',
       'profile-full-name',
       'profile-work-unit',
       'profile-position',
+      'change-password-current-field',
+      'change-password-current',
+      'change-password-new',
+      'change-password-confirm',
+      'change-password-note',
+      'auth-password-title',
+      'auth-password-desc',
+      'open-account-nav',
       'open-register-nav',
       'open-login-nav',
       'open-login-hero'
@@ -108,6 +135,8 @@
 
     els.overlay = document.querySelector('#auth-modal .auth-overlay');
     els.modeButtons = Array.from(document.querySelectorAll('[data-auth-mode]'));
+    els.modeSwitch = document.querySelector('.auth-mode-switch');
+    els.guestPanels = Array.from(document.querySelectorAll('.auth-mode-panel'));
   }
 
   function getApiUrl(path) {
@@ -148,6 +177,24 @@
     localStorage.setItem(DATA_ACCESS_KEY, requiresDataAuth() ? '1' : '0');
   }
 
+  function hasOptimisticAuthHint() {
+    try {
+      return window.localStorage.getItem(AUTH_HINT_KEY) === 'authed';
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function setAuthHint(isAuthed) {
+    try {
+      if (isAuthed) {
+        window.localStorage.setItem(AUTH_HINT_KEY, 'authed');
+      } else {
+        window.localStorage.removeItem(AUTH_HINT_KEY);
+      }
+    } catch (err) {}
+  }
+
   function applyAuthConfig(nextConfig, { merge = true } = {}) {
     if (!nextConfig || typeof nextConfig !== 'object') return;
     state.config = merge ? { ...state.config, ...nextConfig } : nextConfig;
@@ -155,6 +202,7 @@
     syncPasswordPolicyNote();
     populatePositionOptions();
     syncGoogleVisibility();
+    syncPasswordResetAvailability();
   }
 
   function getPasswordPolicyMessage() {
@@ -212,9 +260,15 @@
   }
 
   function renderUserState() {
-    const authed = isAuthenticated();
+    const authed = isAuthenticated() || (!state.initialized && (Boolean(state.token) || hasOptimisticAuthHint()));
+
+    document.body.classList.toggle('auth-state-authed', authed);
+    document.body.classList.toggle('auth-state-guest', !authed);
 
     els['app-auth-shell']?.classList.toggle('is-hidden', !authed);
+    if (els['open-account-nav']) {
+      els['open-account-nav'].hidden = !authed;
+    }
     [els['open-register-nav'], els['open-login-nav'], els['open-login-hero']].forEach((el) => {
       if (!el) return;
       el.hidden = authed;
@@ -240,6 +294,7 @@
         els['account-sidebar-position'].textContent = state.user.position || 'Chưa cập nhật';
       }
     }
+
   }
 
   function validateRegisterForm() {
@@ -302,6 +357,92 @@
 
     if (!fullName) {
       showValidationError('Vui lòng nhập họ và tên.', els['profile-full-name']);
+      return false;
+    }
+
+    return true;
+  }
+
+  function isValidPasswordConfirmation(password, confirmPassword) {
+    return String(password || '') === String(confirmPassword || '');
+  }
+
+  function validateForgotPasswordForm() {
+    const email = els['forgot-password-email']?.value?.trim() || '';
+
+    if (!email) {
+      showValidationError('Vui lòng nhập email.', els['forgot-password-email']);
+      return false;
+    }
+
+    if (!isValidEmail(email)) {
+      showValidationError('Email không hợp lệ.', els['forgot-password-email']);
+      return false;
+    }
+
+    return true;
+  }
+
+  function validateResetPasswordForm() {
+    const password = els['reset-password-new']?.value || '';
+    const confirmPassword = els['reset-password-confirm']?.value || '';
+
+    if (!password) {
+      showValidationError('Vui lòng nhập mật khẩu mới.', els['reset-password-new']);
+      return false;
+    }
+
+    if (!isValidRegisterPassword(password)) {
+      showValidationError(getPasswordPolicyMessage(), els['reset-password-new']);
+      return false;
+    }
+
+    if (!confirmPassword) {
+      showValidationError('Vui lòng nhập lại mật khẩu mới.', els['reset-password-confirm']);
+      return false;
+    }
+
+    if (!isValidPasswordConfirmation(password, confirmPassword)) {
+      showValidationError('Mật khẩu nhập lại chưa khớp.', els['reset-password-confirm']);
+      return false;
+    }
+
+    return true;
+  }
+
+  function validateChangePasswordForm() {
+    const hasPassword = Boolean(state.user?.has_password);
+    const currentPassword = els['change-password-current']?.value || '';
+    const newPassword = els['change-password-new']?.value || '';
+    const confirmPassword = els['change-password-confirm']?.value || '';
+
+    if (hasPassword && !currentPassword) {
+      showValidationError('Vui lòng nhập mật khẩu hiện tại.', els['change-password-current']);
+      return false;
+    }
+
+    if (!newPassword) {
+      showValidationError('Vui lòng nhập mật khẩu mới.', els['change-password-new']);
+      return false;
+    }
+
+    if (!isValidRegisterPassword(newPassword)) {
+      showValidationError(getPasswordPolicyMessage(), els['change-password-new']);
+      return false;
+    }
+
+    if (!confirmPassword) {
+      showValidationError('Vui lòng nhập lại mật khẩu mới.', els['change-password-confirm']);
+      return false;
+    }
+
+    if (!isValidPasswordConfirmation(newPassword, confirmPassword)) {
+      showValidationError('Mật khẩu nhập lại chưa khớp.', els['change-password-confirm']);
+      return false;
+    }
+
+    if (hasPassword && currentPassword === newPassword) {
+      showValidationError('Mật khẩu mới cần khác mật khẩu hiện tại.', els['change-password-new']);
       return false;
     }
 
@@ -376,11 +517,110 @@
     if (els['profile-position']) {
       els['profile-position'].value = state.user.position || '';
     }
+
+    syncPasswordSection();
   }
 
   function syncPasswordPolicyNote() {
     if (els['register-password-note']) {
       els['register-password-note'].textContent = getPasswordPolicyMessage();
+    }
+    if (els['reset-password-note']) {
+      els['reset-password-note'].textContent = getPasswordPolicyMessage();
+    }
+    if (els['change-password-note']) {
+      els['change-password-note'].textContent = getPasswordPolicyMessage();
+    }
+  }
+
+  function measurePanelHeight(panel) {
+    if (!panel) return 0;
+
+    const wasHidden = panel.hidden;
+    const previousDisplay = panel.style.display;
+    const previousPosition = panel.style.position;
+    const previousVisibility = panel.style.visibility;
+    const previousPointerEvents = panel.style.pointerEvents;
+    const previousInset = panel.style.inset;
+
+    panel.hidden = false;
+    panel.style.display = 'block';
+    panel.style.position = 'absolute';
+    panel.style.inset = '0 auto auto 0';
+    panel.style.visibility = 'hidden';
+    panel.style.pointerEvents = 'none';
+
+    const height = panel.offsetHeight;
+
+    panel.hidden = wasHidden;
+    panel.style.display = previousDisplay;
+    panel.style.position = previousPosition;
+    panel.style.visibility = previousVisibility;
+    panel.style.pointerEvents = previousPointerEvents;
+    panel.style.inset = previousInset;
+
+    return height;
+  }
+
+  function syncGuestViewHeight() {
+    if (!els['auth-guest-view']) return;
+
+    (els.guestPanels || []).forEach((panel) => {
+      panel.style.minHeight = '';
+    });
+
+    const panelHeights = (els.guestPanels || []).map((panel) => measurePanelHeight(panel)).filter(Boolean);
+    if (!panelHeights.length) return;
+
+    const maxHeight = Math.max(...panelHeights);
+    els['auth-guest-view'].style.minHeight = `${maxHeight}px`;
+    (els.guestPanels || []).forEach((panel) => {
+      panel.style.minHeight = `${maxHeight}px`;
+    });
+  }
+
+  function syncPasswordSection() {
+    const hasPassword = Boolean(state.user?.has_password);
+
+    if (els['change-password-current-field']) {
+      els['change-password-current-field'].hidden = !hasPassword;
+    }
+    if (els['change-password-current']) {
+      els['change-password-current'].required = hasPassword;
+      els['change-password-current'].value = '';
+    }
+    if (els['auth-password-title']) {
+      els['auth-password-title'].textContent = hasPassword ? 'Đổi mật khẩu' : 'Tạo mật khẩu đăng nhập';
+    }
+    if (els['auth-password-desc']) {
+      els['auth-password-desc'].textContent = hasPassword
+        ? 'Bạn có thể cập nhật mật khẩu để bảo vệ tài khoản tốt hơn.'
+        : 'Tài khoản này chưa có mật khẩu email. Bạn có thể tạo mới để đăng nhập bằng email sau này.';
+    }
+
+    els['auth-change-password-form']?.reset();
+  }
+
+  function setActiveProfileSection(section = null) {
+    const nextSection = PROFILE_SECTIONS.includes(section) ? section : null;
+    const isProfileSection = nextSection === 'profile';
+    const isPasswordSection = nextSection === 'password';
+
+    if (els['auth-profile-section-toggle']) {
+      els['auth-profile-section-toggle'].classList.toggle('active', isProfileSection);
+      els['auth-profile-section-toggle'].setAttribute('aria-expanded', String(isProfileSection));
+    }
+    if (els['auth-password-section-toggle']) {
+      els['auth-password-section-toggle'].classList.toggle('active', isPasswordSection);
+      els['auth-password-section-toggle'].setAttribute('aria-expanded', String(isPasswordSection));
+    }
+    if (els['auth-profile-section-detail']) {
+      els['auth-profile-section-detail'].hidden = !isProfileSection;
+      els['auth-profile-section-detail'].classList.toggle('active', isProfileSection);
+    }
+    if (els['auth-password-section-detail']) {
+      els['auth-password-section-detail'].hidden = !isPasswordSection;
+      els['auth-password-section-detail'].classList.toggle('active', isPasswordSection);
     }
   }
 
@@ -393,6 +633,18 @@
     });
   }
 
+  function syncPasswordResetAvailability() {
+    const enabled = Boolean(state.config?.password_reset_enabled);
+
+    if (els['auth-forgot-password-btn']) {
+      els['auth-forgot-password-btn'].hidden = !enabled;
+    }
+
+    if (!enabled && state.currentMode === 'forgot-password') {
+      showGuestMode('login');
+    }
+  }
+
   function resolveGoogleRuntimeError() {
     if (window.location.protocol === 'file:') {
       return 'Đăng nhập Google chỉ hoạt động khi mở app qua địa chỉ http://localhost hoặc domain deploy, không dùng trực tiếp file HTML.';
@@ -402,12 +654,17 @@
   }
 
   function showGuestMode(mode = 'register') {
-    state.currentMode = mode === 'login' ? 'login' : 'register';
+    state.currentMode = ['register', 'login', 'forgot-password', 'reset-password'].includes(mode)
+      ? mode
+      : 'register';
 
     if (els['auth-guest-view']) els['auth-guest-view'].hidden = false;
     if (els['auth-profile-view']) els['auth-profile-view'].hidden = true;
     if (els['auth-brand-guest-view']) els['auth-brand-guest-view'].hidden = false;
     if (els['auth-brand-profile-view']) els['auth-brand-profile-view'].hidden = true;
+    if (els.modeSwitch) {
+      els.modeSwitch.hidden = !['register', 'login'].includes(state.currentMode);
+    }
     if (els['auth-register-panel']) {
       els['auth-register-panel'].hidden = state.currentMode !== 'register';
       els['auth-register-panel'].classList.toggle('active', state.currentMode === 'register');
@@ -416,12 +673,24 @@
       els['auth-login-panel'].hidden = state.currentMode !== 'login';
       els['auth-login-panel'].classList.toggle('active', state.currentMode === 'login');
     }
+    if (els['auth-forgot-password-panel']) {
+      els['auth-forgot-password-panel'].hidden = state.currentMode !== 'forgot-password';
+      els['auth-forgot-password-panel'].classList.toggle('active', state.currentMode === 'forgot-password');
+    }
+    if (els['auth-reset-password-panel']) {
+      els['auth-reset-password-panel'].hidden = state.currentMode !== 'reset-password';
+      els['auth-reset-password-panel'].classList.toggle('active', state.currentMode === 'reset-password');
+    }
     if (els['auth-register-form']) els['auth-register-form'].hidden = state.currentMode !== 'register';
     if (els['auth-login-form']) els['auth-login-form'].hidden = state.currentMode !== 'login';
+    if (els['auth-forgot-password-form']) els['auth-forgot-password-form'].hidden = state.currentMode !== 'forgot-password';
+    if (els['auth-reset-password-form']) els['auth-reset-password-form'].hidden = state.currentMode !== 'reset-password';
 
     els.modeButtons?.forEach((button) => {
       button.classList.toggle('active', button.dataset.authMode === state.currentMode);
     });
+
+    syncGuestViewHeight();
   }
 
   function showProfileMode() {
@@ -436,6 +705,7 @@
     if (els['auth-brand-profile-view']) els['auth-brand-profile-view'].hidden = false;
     renderUserState();
     populateProfileForm();
+    setActiveProfileSection(null);
   }
 
   function focusFirstField() {
@@ -443,6 +713,8 @@
     const focusMap = {
       register: els['register-full-name'],
       login: els['login-email'],
+      'forgot-password': els['forgot-password-email'],
+      'reset-password': els['reset-password-new'],
       profile: els['profile-full-name']
     };
     focusMap[activePanel]?.focus();
@@ -460,6 +732,10 @@
     } else {
       const guestMode = mode === 'profile'
         ? 'login'
+        : mode === 'forgot-password'
+        ? 'forgot-password'
+        : mode === 'reset-password'
+        ? 'reset-password'
         : mode === 'login'
         ? 'login'
         : 'register';
@@ -474,7 +750,10 @@
       window.feather.replace();
     }
 
-    requestAnimationFrame(focusFirstField);
+    requestAnimationFrame(() => {
+      syncGuestViewHeight();
+      focusFirstField();
+    });
   }
 
   function closeAuthModal({ clearIntent = true } = {}) {
@@ -564,6 +843,7 @@
 
   function applyAuthResult(payload, source) {
     saveToken(payload.token || payload.legacy_token || '');
+    setAuthHint(true);
     state.user = payload.user || null;
     applyAuthConfig(payload.auth || state.config);
     renderUserState();
@@ -582,6 +862,7 @@
 
   function clearSession({ emitEvent = true, openLogin = false, reason = 'logout', alertMessage = '' } = {}) {
     saveToken('');
+    setAuthHint(false);
     state.user = null;
     renderUserState();
     populatePositionOptions();
@@ -615,10 +896,12 @@
       }
 
       state.user = payload.user;
+      setAuthHint(true);
       applyAuthConfig(payload.auth || state.config);
       renderUserState();
       return true;
     } catch (err) {
+      setAuthHint(false);
       clearSession({ emitEvent: false });
       return false;
     }
@@ -724,6 +1007,90 @@
     }
   }
 
+  async function handleForgotPasswordSubmit(event) {
+    event.preventDefault();
+    setAlert('');
+
+    if (!validateForgotPasswordForm()) {
+      return;
+    }
+
+    setFormBusy(els['auth-forgot-password-form'], true, 'Đang gửi email...');
+
+    try {
+      const payload = await submitJson('/api/auth/forgot-password', {
+        email: els['forgot-password-email']?.value?.trim() || ''
+      });
+
+      setAlert(payload.message || 'Đã gửi hướng dẫn đặt lại mật khẩu.', 'success');
+      els['auth-forgot-password-form']?.reset();
+    } catch (err) {
+      setAlert(err.message || 'Không thể gửi email đặt lại mật khẩu.', 'error');
+    } finally {
+      setFormBusy(els['auth-forgot-password-form'], false);
+    }
+  }
+
+  async function handleResetPasswordSubmit(event) {
+    event.preventDefault();
+    setAlert('');
+
+    if (!state.resetPasswordToken) {
+      setAlert('Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.', 'error');
+      return;
+    }
+
+    if (!validateResetPasswordForm()) {
+      return;
+    }
+
+    setFormBusy(els['auth-reset-password-form'], true, 'Đang cập nhật...');
+
+    try {
+      const payload = await submitJson('/api/auth/reset-password', {
+        token: state.resetPasswordToken,
+        new_password: els['reset-password-new']?.value || ''
+      });
+
+      applyAuthResult(payload, 'reset-password');
+      clearResetPasswordTokenFromUrl();
+    } catch (err) {
+      setAlert(err.message || 'Không thể đặt lại mật khẩu.', 'error');
+    } finally {
+      setFormBusy(els['auth-reset-password-form'], false);
+    }
+  }
+
+  async function handleChangePasswordSubmit(event) {
+    event.preventDefault();
+    setAlert('');
+
+    if (!validateChangePasswordForm()) {
+      return;
+    }
+
+    setFormBusy(els['auth-change-password-form'], true, 'Đang lưu mật khẩu...');
+
+    try {
+      const payload = await submitJson('/api/auth/change-password', {
+        current_password: els['change-password-current']?.value || '',
+        new_password: els['change-password-new']?.value || ''
+      }, {
+        authenticated: true
+      });
+
+      state.user = payload.user || state.user;
+      applyAuthConfig(payload.auth || state.config);
+      renderUserState();
+      syncPasswordSection();
+      setAlert(payload.message || 'Đổi mật khẩu thành công.', 'success');
+    } catch (err) {
+      setAlert(err.message || 'Không thể đổi mật khẩu.', 'error');
+    } finally {
+      setFormBusy(els['auth-change-password-form'], false);
+    }
+  }
+
   async function handleLogout() {
     try {
       await submitJson('/api/auth/logout', {}, {
@@ -816,13 +1183,35 @@
 
     const tick = () => {
       attempts += 1;
-      if (tryRenderGoogleButtons()) return;
+      if (tryRenderGoogleButtons()) {
+        syncGuestViewHeight();
+        return;
+      }
       if (attempts < 20) {
         window.setTimeout(tick, 400);
       }
     };
 
     tick();
+  }
+
+  function readResetPasswordTokenFromUrl() {
+    try {
+      const url = new URL(window.location.href);
+      return url.searchParams.get('reset_password_token') || '';
+    } catch (err) {
+      return '';
+    }
+  }
+
+  function clearResetPasswordTokenFromUrl() {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('reset_password_token');
+      window.history.replaceState({}, document.title, url.toString());
+    } catch (err) {}
+
+    state.resetPasswordToken = '';
   }
 
   function bindEvents() {
@@ -844,13 +1233,52 @@
     els['open-login-nav']?.addEventListener('click', openLogin);
     els['open-login-hero']?.addEventListener('click', openLogin);
     els['open-register-nav']?.addEventListener('click', openRegister);
+    els['open-account-nav']?.addEventListener('click', () => openAuthModal('profile'));
     els['auth-close-btn']?.addEventListener('click', () => closeAuthModal());
     els.overlay?.addEventListener('click', () => closeAuthModal());
 
     els['auth-register-form']?.addEventListener('submit', handleRegisterSubmit);
     els['auth-login-form']?.addEventListener('submit', handleLoginSubmit);
+    els['auth-forgot-password-form']?.addEventListener('submit', handleForgotPasswordSubmit);
+    els['auth-reset-password-form']?.addEventListener('submit', handleResetPasswordSubmit);
     els['auth-profile-form']?.addEventListener('submit', handleProfileSubmit);
+    els['auth-change-password-form']?.addEventListener('submit', handleChangePasswordSubmit);
     els['auth-profile-cancel-btn']?.addEventListener('click', () => closeAuthModal({ clearIntent: false }));
+    els['auth-profile-section-toggle']?.addEventListener('click', () => {
+      const expanded = els['auth-profile-section-toggle']?.getAttribute('aria-expanded') === 'true';
+      setActiveProfileSection(expanded ? null : 'profile');
+      setAlert('');
+      if (!expanded) {
+        els['profile-full-name']?.focus();
+      }
+    });
+    els['auth-password-section-toggle']?.addEventListener('click', () => {
+      const expanded = els['auth-password-section-toggle']?.getAttribute('aria-expanded') === 'true';
+      setActiveProfileSection(expanded ? null : 'password');
+      setAlert('');
+      if (!expanded) {
+        const targetField = state.user?.has_password ? els['change-password-current'] : els['change-password-new'];
+        targetField?.focus();
+      }
+    });
+    els['auth-forgot-password-btn']?.addEventListener('click', () => {
+      if (!state.config?.password_reset_enabled) {
+        setAlert('Chức năng gửi email đặt lại mật khẩu chưa được cấu hình.', 'error');
+        return;
+      }
+
+      showGuestMode('forgot-password');
+      if (els['forgot-password-email']) {
+        els['forgot-password-email'].value = els['login-email']?.value?.trim() || '';
+      }
+      setAlert('');
+      focusFirstField();
+    });
+    els['auth-back-to-login-btn']?.addEventListener('click', () => {
+      showGuestMode('login');
+      setAlert('');
+      focusFirstField();
+    });
     els['auth-edit-profile-btn']?.addEventListener('click', () => openAuthModal('profile'));
     els['auth-logout-btn']?.addEventListener('click', handleLogout);
     ['register-position', 'profile-position'].forEach((fieldId) => {
@@ -873,9 +1301,16 @@
     bindEvents();
     renderUserState();
     await loadAuthConfig();
+    state.resetPasswordToken = readResetPasswordTokenFromUrl();
+    syncGuestViewHeight();
 
     const restored = await restoreSession();
     state.initialized = true;
+    renderUserState();
+
+    if (state.resetPasswordToken) {
+      openAuthModal('reset-password');
+    }
 
     emit('bidfinder:auth-ready', {
       authenticated: restored,

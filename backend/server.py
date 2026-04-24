@@ -1,5 +1,6 @@
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional, List, Dict, Any, Literal
 import time
 import copy
@@ -20,7 +21,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=True)
+
 from auth_utils import (
+    change_password,
     clear_auth_session_cookie,
     ensure_auth_schema as init_auth_schema,
     extract_session_token,
@@ -29,13 +33,13 @@ from auth_utils import (
     login_with_email,
     login_with_google,
     logout_current_session,
+    request_password_reset,
     register_with_email,
+    reset_password_with_token,
     require_authenticated_user,
     set_auth_session_cookie,
     update_user_profile,
 )
-
-load_dotenv()
 
 logger = logging.getLogger("bidfinder.api")
 
@@ -485,6 +489,20 @@ class ProfileUpdateRequest(BaseModel):
     full_name: Optional[str] = None
     work_unit: Optional[str] = None
     position: Optional[str] = None
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: Optional[str] = None
+    new_password: str
 
 
 # =========================
@@ -1339,6 +1357,13 @@ async def fetch_result_page(
 async def lifespan(app: FastAPI):
     global db_pool
     try:
+        logger.info(
+            "Startup auth config: ANONYMOUS_ACCESS_LEVEL=%s, AUTH_REQUIRED_FOR_DATA_ACCESS=%s, AUTH_REQUIRED_FOR_FULL_QUERY=%s, ANONYMOUS_FULL_QUERY_DAILY_LIMIT=%s",
+            ANONYMOUS_ACCESS_LEVEL,
+            AUTH_REQUIRED_FOR_DATA_ACCESS,
+            AUTH_REQUIRED_FOR_FULL_QUERY,
+            ANONYMOUS_FULL_QUERY_DAILY_LIMIT,
+        )
         db_pool = await get_db_pool()
         await ensure_auth_schema_ready(db_pool)
     except Exception as e:
@@ -1667,6 +1692,90 @@ async def patch_profile(request: Request, payload: ProfileUpdateRequest):
         return validation_error_response(str(exc))
     except Exception as exc:
         log_server_exception("patch_profile failed", exc)
+        return internal_error_response()
+
+
+@app.post("/api/auth/forgot-password")
+async def forgot_password(request: Request, payload: ForgotPasswordRequest):
+    limited = await enforce_rate_limit(request, "auth-forgot-password", AUTH_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            await request_password_reset(conn, request, payload.email)
+
+        return JSONResponse(content={
+            "success": True,
+            "message": "Nếu email tồn tại trong hệ thống, chúng tôi đã gửi hướng dẫn đặt lại mật khẩu.",
+        })
+    except ValueError as exc:
+        return validation_error_response(str(exc))
+    except Exception as exc:
+        log_server_exception("forgot_password failed", exc)
+        return internal_error_response()
+
+
+@app.post("/api/auth/reset-password")
+async def reset_password(request: Request, payload: ResetPasswordRequest):
+    limited = await enforce_rate_limit(request, "auth-reset-password", AUTH_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            result = await reset_password_with_token(
+                conn,
+                request,
+                token=payload.token,
+                new_password=payload.new_password,
+            )
+
+        return await build_auth_success_response(
+            request,
+            message="Đặt lại mật khẩu thành công.",
+            user=result["user"],
+            token=result["token"],
+        )
+    except ValueError as exc:
+        return validation_error_response(str(exc))
+    except Exception as exc:
+        log_server_exception("reset_password failed", exc)
+        return internal_error_response()
+
+
+@app.post("/api/auth/change-password")
+async def patch_password(request: Request, payload: ChangePasswordRequest):
+    limited = await enforce_rate_limit(request, "auth-change-password", AUTH_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            user = await require_authenticated_user(conn, request)
+            updated_user = await change_password(
+                conn,
+                request,
+                user_id=int(user["id"]),
+                current_password=payload.current_password,
+                new_password=payload.new_password,
+            )
+
+        return JSONResponse(content={
+            "success": True,
+            "message": "Đổi mật khẩu thành công.",
+            "user": updated_user,
+            "auth": await build_auth_config(request, user=updated_user),
+        })
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except ValueError as exc:
+        return validation_error_response(str(exc))
+    except Exception as exc:
+        log_server_exception("patch_password failed", exc)
         return internal_error_response()
 
 

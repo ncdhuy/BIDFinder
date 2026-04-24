@@ -3,8 +3,11 @@ import hashlib
 import os
 import re
 import secrets
+import smtplib
 from datetime import datetime, timedelta
+from email.message import EmailMessage
 from typing import Any, Dict, Optional
+from urllib.parse import urlencode
 
 import asyncpg
 from fastapi import HTTPException, Request, Response
@@ -59,6 +62,7 @@ POSITION_OPTIONS = [
 PASSWORD_MIN_LENGTH = max(9, int(os.getenv("AUTH_PASSWORD_MIN_LENGTH", "9")))
 SESSION_TTL_DAYS = max(1, int(os.getenv("AUTH_SESSION_TTL_DAYS", "30")))
 PBKDF2_ITERATIONS = max(120_000, int(os.getenv("AUTH_PBKDF2_ITERATIONS", "240000")))
+PASSWORD_RESET_TTL_MINUTES = max(5, int(os.getenv("AUTH_PASSWORD_RESET_TTL_MINUTES", "30")))
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PASSWORD_POLICY_MESSAGE = "Mật khẩu phải có ít nhất 9 ký tự, bao gồm ít nhất 1 chữ số và 1 chữ cái in hoa."
 TRUST_PROXY_HEADERS = os.getenv("TRUST_PROXY_HEADERS", "false").strip().lower() in {"1", "true", "yes", "on"}
@@ -66,6 +70,16 @@ AUTH_SESSION_COOKIE_NAME = os.getenv("AUTH_SESSION_COOKIE_NAME", "bidfinder_sess
 AUTH_COOKIE_DOMAIN = os.getenv("AUTH_COOKIE_DOMAIN", "").strip() or None
 AUTH_COOKIE_SECURE_MODE = os.getenv("AUTH_COOKIE_SECURE_MODE", "auto").strip().lower()
 AUTH_COOKIE_SAMESITE_MODE = os.getenv("AUTH_COOKIE_SAMESITE_MODE", "auto").strip().lower()
+SMTP_HOST = os.getenv("AUTH_SMTP_HOST", "").strip()
+SMTP_PORT = int(os.getenv("AUTH_SMTP_PORT", "587"))
+SMTP_USERNAME = os.getenv("AUTH_SMTP_USERNAME", "").strip()
+SMTP_PASSWORD = os.getenv("AUTH_SMTP_PASSWORD", "")
+SMTP_FROM_EMAIL = os.getenv("AUTH_SMTP_FROM_EMAIL", SMTP_USERNAME).strip()
+SMTP_FROM_NAME = os.getenv("AUTH_SMTP_FROM_NAME", "BIDFinder").strip() or "BIDFinder"
+SMTP_USE_TLS = os.getenv("AUTH_SMTP_USE_TLS", "true").strip().lower() in {"1", "true", "yes", "on"}
+SMTP_USE_SSL = os.getenv("AUTH_SMTP_USE_SSL", "false").strip().lower() in {"1", "true", "yes", "on"}
+PASSWORD_RESET_BASE_URL = os.getenv("AUTH_PASSWORD_RESET_URL_BASE", "").strip()
+FRONTEND_BASE_URL = os.getenv("APP_FRONTEND_URL", "").strip()
 
 
 def normalize_text(value: Any) -> str:
@@ -248,7 +262,12 @@ def get_auth_config_payload() -> Dict[str, Any]:
             "optional_later": ["work_unit", "position"],
         },
         "password_policy_message": PASSWORD_POLICY_MESSAGE,
+        "password_reset_enabled": is_password_reset_email_enabled(),
     }
+
+
+def is_password_reset_email_enabled() -> bool:
+    return bool(SMTP_HOST and SMTP_PORT and SMTP_FROM_EMAIL)
 
 
 def get_client_ip_from_request(request: Request) -> str:
@@ -342,6 +361,24 @@ async def ensure_auth_schema(conn: asyncpg.Connection) -> None:
     await conn.execute("CREATE INDEX IF NOT EXISTS idx_app_user_sessions_expires_at ON app_user_sessions (expires_at)")
     await conn.execute("DELETE FROM app_user_sessions WHERE expires_at < CURRENT_TIMESTAMP")
 
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_password_reset_tokens (
+            id BIGSERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+            token_hash TEXT NOT NULL UNIQUE,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP NOT NULL,
+            used_at TIMESTAMP,
+            requested_ip TEXT,
+            user_agent TEXT
+        )
+        """
+    )
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_app_password_reset_tokens_user_id ON app_password_reset_tokens (user_id)")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_app_password_reset_tokens_expires_at ON app_password_reset_tokens (expires_at)")
+    await conn.execute("DELETE FROM app_password_reset_tokens WHERE expires_at < CURRENT_TIMESTAMP OR used_at IS NOT NULL")
+
 
 async def create_session_for_user(conn: asyncpg.Connection, user_id: int, request: Request) -> str:
     raw_token = secrets.token_urlsafe(48)
@@ -378,6 +415,21 @@ async def fetch_user_by_google_sub(conn: asyncpg.Connection, google_sub: str) ->
 
 async def fetch_user_by_id(conn: asyncpg.Connection, user_id: int) -> Optional[asyncpg.Record]:
     return await conn.fetchrow("SELECT * FROM app_users WHERE id = $1", user_id)
+
+
+async def delete_password_reset_tokens_for_user(conn: asyncpg.Connection, user_id: int) -> None:
+    await conn.execute("DELETE FROM app_password_reset_tokens WHERE user_id = $1", user_id)
+
+
+async def revoke_user_sessions(conn: asyncpg.Connection, user_id: int, *, except_token_hash: Optional[str] = None) -> None:
+    if except_token_hash:
+        await conn.execute(
+            "DELETE FROM app_user_sessions WHERE user_id = $1 AND token_hash <> $2",
+            user_id,
+            except_token_hash,
+        )
+        return
+    await conn.execute("DELETE FROM app_user_sessions WHERE user_id = $1", user_id)
 
 
 async def register_with_email(
@@ -650,6 +702,185 @@ async def logout_current_session(conn: asyncpg.Connection, request: Request) -> 
         "DELETE FROM app_user_sessions WHERE token_hash = $1",
         build_token_hash(raw_token),
     )
+
+
+def build_password_reset_link(request: Request, raw_token: str) -> str:
+    base_url = (
+        PASSWORD_RESET_BASE_URL
+        or FRONTEND_BASE_URL
+        or request.headers.get("origin", "").strip()
+        or f"{get_request_scheme(request)}://{request.headers.get('host', '').strip()}"
+    ).rstrip("/")
+    if not base_url or "://" not in base_url:
+        raise ValueError("Thiếu cấu hình URL frontend để tạo liên kết đặt lại mật khẩu.")
+    query = urlencode({"reset_password_token": raw_token})
+    return f"{base_url}/?{query}"
+
+
+def _send_password_reset_email_sync(recipient_email: str, recipient_name: str, reset_link: str) -> None:
+    if not is_password_reset_email_enabled():
+        raise ValueError("Chức năng gửi email đặt lại mật khẩu chưa được cấu hình.")
+
+    message = EmailMessage()
+    message["Subject"] = "[BIDFinder] - Thông báo đặt lại mật khẩu"
+    message["From"] = f"{SMTP_FROM_NAME} <{SMTP_FROM_EMAIL}>"
+    message["To"] = recipient_email
+    message.set_content(
+        "\n".join(
+            [
+                f"Xin chào {recipient_name or recipient_email},",
+                "",
+                "Chúng tôi đã nhận được yêu cầu đặt lại mật khẩu cho tài khoản BIDFinder của bạn.",
+                f"Vui lòng mở liên kết sau để tạo mật khẩu mới trong {PASSWORD_RESET_TTL_MINUTES} phút:",
+                reset_link,
+                "",
+               
+            ]
+        )
+    )
+
+    if SMTP_USE_SSL:
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=20) as smtp:
+            if SMTP_USERNAME:
+                smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
+            smtp.send_message(message)
+        return
+
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as smtp:
+        smtp.ehlo()
+        if SMTP_USE_TLS:
+            smtp.starttls()
+            smtp.ehlo()
+        if SMTP_USERNAME:
+            smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
+        smtp.send_message(message)
+
+
+async def request_password_reset(conn: asyncpg.Connection, request: Request, email: Any) -> None:
+    normalized_email = validate_email(email)
+    user = await fetch_user_by_email(conn, normalized_email)
+
+    if not user:
+        return
+
+    await delete_password_reset_tokens_for_user(conn, int(user["id"]))
+
+    raw_token = secrets.token_urlsafe(48)
+    expires_at = datetime.utcnow() + timedelta(minutes=PASSWORD_RESET_TTL_MINUTES)
+    await conn.execute(
+        """
+        INSERT INTO app_password_reset_tokens (user_id, token_hash, expires_at, requested_ip, user_agent)
+        VALUES ($1, $2, $3, $4, $5)
+        """,
+        int(user["id"]),
+        build_token_hash(raw_token),
+        expires_at,
+        get_client_ip_from_request(request),
+        request.headers.get("user-agent", "")[:500],
+    )
+    await asyncio.to_thread(
+        _send_password_reset_email_sync,
+        normalized_email,
+        record_get(user, "full_name") or normalized_email,
+        build_password_reset_link(request, raw_token),
+    )
+
+
+async def reset_password_with_token(
+    conn: asyncpg.Connection,
+    request: Request,
+    *,
+    token: Any,
+    new_password: Any,
+) -> Dict[str, Any]:
+    raw_token = str(token or "").strip()
+    if not raw_token:
+        raise ValueError("Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.")
+
+    password_text = validate_password(new_password)
+    row = await conn.fetchrow(
+        """
+        SELECT
+            t.id,
+            t.user_id,
+            t.expires_at,
+            t.used_at,
+            u.*
+        FROM app_password_reset_tokens t
+        JOIN app_users u ON u.id = t.user_id
+        WHERE t.token_hash = $1
+        """,
+        build_token_hash(raw_token),
+    )
+    if not row or record_get(row, "used_at"):
+        raise ValueError("Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.")
+
+    expires_at = record_get(row, "expires_at")
+    if expires_at and expires_at <= datetime.utcnow():
+        await conn.execute("DELETE FROM app_password_reset_tokens WHERE id = $1", row["id"])
+        raise ValueError("Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.")
+
+    updated_user = await conn.fetchrow(
+        """
+        UPDATE app_users
+        SET
+            password_hash = $2,
+            auth_provider = CASE WHEN google_sub IS NOT NULL THEN 'hybrid' ELSE 'email' END,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+        RETURNING *
+        """,
+        int(row["user_id"]),
+        hash_password(password_text),
+    )
+    await conn.execute(
+        "UPDATE app_password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE id = $1",
+        row["id"],
+    )
+    await revoke_user_sessions(conn, int(row["user_id"]))
+    await delete_password_reset_tokens_for_user(conn, int(row["user_id"]))
+    session_token = await create_session_for_user(conn, int(row["user_id"]), request)
+    return {
+        "token": session_token,
+        "user": serialize_user(updated_user),
+    }
+
+
+async def change_password(
+    conn: asyncpg.Connection,
+    request: Request,
+    *,
+    user_id: int,
+    current_password: Any = None,
+    new_password: Any,
+) -> Dict[str, Any]:
+    user = await fetch_user_by_id(conn, user_id)
+    if not user:
+        raise ValueError("Không tìm thấy người dùng.")
+
+    existing_password_hash = record_get(user, "password_hash")
+    if existing_password_hash and not verify_password(str(current_password or ""), existing_password_hash):
+        raise ValueError("Mật khẩu hiện tại chưa đúng.")
+    if existing_password_hash and verify_password(str(new_password or ""), existing_password_hash):
+        raise ValueError("Mật khẩu mới cần khác mật khẩu hiện tại.")
+
+    updated_user = await conn.fetchrow(
+        """
+        UPDATE app_users
+        SET
+            password_hash = $2,
+            auth_provider = CASE WHEN google_sub IS NOT NULL THEN 'hybrid' ELSE 'email' END,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+        RETURNING *
+        """,
+        user_id,
+        hash_password(validate_password(new_password)),
+    )
+    current_token_hash = build_token_hash(extract_session_token(request) or "")
+    await revoke_user_sessions(conn, user_id, except_token_hash=current_token_hash if current_token_hash else None)
+    await delete_password_reset_tokens_for_user(conn, user_id)
+    return serialize_user(updated_user)
 
 
 async def update_user_profile(

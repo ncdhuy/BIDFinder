@@ -1664,7 +1664,57 @@ def wait_overlay_gone(timeout=15):
     except TimeoutException:
         return False
 
+def dismiss_known_error_modal_once(timeout=2, post_wait=2):
+    """
+    Đóng popup HTML của Ant Design khi web báo lỗi tải file.
+    Popup này không phải browser alert nên cần tự tìm nút OK để bấm.
+    """
+    end = time.time() + timeout
+    modal_xpath = (
+        "//div[contains(@class,'ant-modal-confirm') or contains(@class,'ant-modal-confirm-body-wrapper')]"
+        "[.//span[contains(@class,'ant-modal-confirm-title') and normalize-space()='Lỗi']]"
+        "[.//div[contains(@class,'ant-modal-confirm-content') and contains(normalize-space(),"
+        "'Tải file không thành công')]]"
+    )
+    ok_xpath = (
+        f"{modal_xpath}//button"
+        "[contains(@class,'ant-btn-primary') and .//span[normalize-space()='OK']]"
+    )
+
+    while time.time() < end:
+        try:
+            ok_buttons = driver.find_elements(By.XPATH, ok_xpath)
+            visible_ok = next((btn for btn in ok_buttons if btn.is_displayed()), None)
+            if not visible_ok:
+                time.sleep(0.05)
+                continue
+
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", visible_ok)
+            try:
+                visible_ok.click()
+            except Exception:
+                driver.execute_script("arguments[0].click();", visible_ok)
+
+            WebDriverWait(driver, post_wait).until(
+                lambda d: len(d.find_elements(By.XPATH, modal_xpath)) == 0
+            )
+            wait_overlay_gone(timeout=post_wait)
+            logger.info("✅ Đã đóng popup lỗi tải file.")
+            return True
+        except Exception:
+            time.sleep(0.05)
+            continue
+    return False
+
+
+def clear_blocking_ui(timeout=2):
+    handled_any = False
+    handled_any = handle_connection_alert_once(timeout=timeout, post_wait=timeout) or handled_any
+    handled_any = dismiss_known_error_modal_once(timeout=timeout, post_wait=timeout) or handled_any
+    return handled_any
+
 def wait_dom_settled(timeout=15):
+    clear_blocking_ui(timeout=min(2, timeout))
     # 1) overlay gone
     wait_overlay_gone(timeout=timeout)
     # 2) document ready
@@ -1674,6 +1724,7 @@ def wait_dom_settled(timeout=15):
 
 
 def wait_until_not_loading(driver, timeout=20):
+    clear_blocking_ui(timeout=min(2, timeout))
     ok = wait_overlay_gone(timeout=timeout)
     if not ok:
         logger.warning("⚠️  Cảnh báo: overlay vẫn còn sau thời gian chờ.")
@@ -1716,6 +1767,7 @@ def handle_connection_alert_once(timeout=6, post_wait=3):
 def safe_click(elem, wait, max_retry=3):
     for attempt in range(max_retry):
         try:
+            clear_blocking_ui(timeout=2)
             wait_overlay_gone(timeout=20)
             elem.location_once_scrolled_into_view
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", elem)
@@ -1724,6 +1776,7 @@ def safe_click(elem, wait, max_retry=3):
         except Exception as e:
             logger.error(f"❌ safe_click attempt {attempt+1}/{max_retry} lỗi: {e}")
             try:
+                clear_blocking_ui(timeout=2)
                 wait_overlay_gone(timeout=10)
                 driver.execute_script("arguments[0].click();", elem)
                 return True
@@ -2133,6 +2186,7 @@ def download_excel_or_attach_for_current_decision(
                 raise TempCrawlAbort(ma_tbmt, f"Hệ thống không lưu được file tải về ở box {box_index}")
                 
         else:
+            dismiss_known_error_modal_once(timeout=2, post_wait=2)
             raise TempCrawlAbort(ma_tbmt, f"Timeout tải file ({collection_method}) ở box {box_index}")
 
         return any_file_downloaded, winner_fact
@@ -2215,6 +2269,7 @@ def download_single_qd_pdf(
             else:
                 raise TempCrawlAbort(ma_tbmt, f"Hệ thống không lưu được PDF QĐ: {qd_text_raw}")
         else:
+            dismiss_known_error_modal_once(timeout=2, post_wait=2)
             raise TempCrawlAbort(ma_tbmt, f"Timeout tải PDF QĐ: {qd_text_raw}")
             
     except Exception as e:
@@ -2250,15 +2305,20 @@ def _process_one_qd_flow(ma_tbmt, box_index, dia_diem, qd_text_raw, qd_element_p
 
     # 1. Tải PDF QĐ (nếu có element)
     if qd_element_pdf:
-        ok, path = download_single_qd_pdf(
-            ma_tbmt=ma_tbmt,
-            qd_element=qd_element_pdf,
-            qd_text_raw=qd_text_raw,
-            version_code=safe_ver
-        )
-        if ok:
-            any_dl = True
-            dest_qd = path
+        try:
+            ok, path = download_single_qd_pdf(
+                ma_tbmt=ma_tbmt,
+                qd_element=qd_element_pdf,
+                qd_text_raw=qd_text_raw,
+                version_code=safe_ver
+            )
+            if ok:
+                any_dl = True
+                dest_qd = path
+        except TempCrawlAbort as e:
+            logger.error(
+                f"❌ Lỗi tải PDF ở box {box_index} cho {ma_tbmt} / {qd_text_raw} / v{safe_ver}: {e.reason}"
+            )
 
     # 2. Tải Excel/Attach
     # suffix_qd dùng cho tên file Excel chính là số QĐ raw
@@ -2372,92 +2432,107 @@ def handle_quyet_dinh_phe_duyet_all(num_cols, ma_tbmt, box_index, box_name_text,
                         opts = Select(ver_select).options
                     except: pass
 
-                    loop_range = range(len(opts)) if len(opts) > 1 else [None]
+                    version_entries = []
+                    if len(opts) > 1:
+                        for idx, opt in enumerate(opts):
+                            ver_label = normalize_version_code((opt.text or "").strip())
+                            if not ver_label:
+                                continue
+                            version_entries.append((idx, ver_label))
+                    elif len(opts) == 1:
+                        try:
+                            version_entries.append((None, normalize_version_code((opts[0].text or "").strip()) or "00"))
+                        except Exception:
+                            version_entries.append((None, "00"))
+                    else:
+                        version_entries.append((None, "00"))
                     
-                    for i_ver in loop_range:
-                        ver_code = "00"
-                        
-                        # --- LOGIC ĐỔI VERSION ---
-                        if i_ver is not None:
-                            # Phải find lại select vì DOM có thể đã đổi sau lần loop trước
+                    for i_ver, planned_ver_code in version_entries:
+                        try:
+                            ver_code = planned_ver_code or "00"
+                            
+                            # --- LOGIC ĐỔI VERSION ---
+                            if i_ver is not None:
+                                # Phải find lại select vì DOM có thể đã đổi sau lần loop trước
+                                current_row = qd_table.find_elements(By.XPATH, ".//tbody/tr")[i_row]
+                                ver_select = current_row.find_element(By.CSS_SELECTOR, "select.form-select")
+                                
+                                logger.info(f"👉 Dòng {i_row+1} - Version {ver_code}")
+                                
+                                wait_version_applied(ver_select, i_ver)
+                                wait_dom_settled(timeout=2)
+
+                            elif len(opts) == 1:
+                                ver_code = planned_ver_code or "00"
+
+                            # --- CLICK RADIO ĐỂ LOAD DETAIL ---
+                            # Phải find lại row và radio
                             current_row = qd_table.find_elements(By.XPATH, ".//tbody/tr")[i_row]
-                            ver_select = current_row.find_element(By.CSS_SELECTOR, "select.form-select")
-                            
-                            ver_code = normalize_version_code(Select(ver_select).options[i_ver].text.strip())
-                            logger.info(f"👉 Dòng {i_row+1} - Version {ver_code}")
-                            
-                            wait_version_applied(ver_select, i_ver)
-                            wait_dom_settled(timeout=2)
-
-                        elif len(opts) == 1:
                             try:
-                                ver_code = normalize_version_code(opts[0].text.strip())
-                            except:
-                                ver_code = "00"
+                                radio = current_row.find_element(By.XPATH, ".//input[@type='radio']")
+                                driver.execute_script("arguments[0].click();", radio)
+                                wait_dom_settled(timeout=3) # Đợi card detail load
+                                
+                            except Exception as e:
+                                logger.warning(f"⚠️ Lỗi click radio: {e}")
 
-                        # --- CLICK RADIO ĐỂ LOAD DETAIL ---
-                        # Phải find lại row và radio
-                        current_row = qd_table.find_elements(By.XPATH, ".//tbody/tr")[i_row]
-                        try:
-                            radio = current_row.find_element(By.XPATH, ".//input[@type='radio']")
-                            driver.execute_script("arguments[0].click();", radio)
-                            wait_dom_settled(timeout=3) # Đợi card detail load
+                            info_snapshot = extract_additional_info()
+
+                            # --- LẤY DỮ LIỆU ---
+                            # 1. Số QĐ: Lấy từ Card Detail (chính xác nhất theo version)
+                            so_qd = get_card_value("Số quyết định phê duyệt")
+                            if not so_qd: 
+                                # Fallback: Lấy từ bảng nếu card không có
+                                so_qd = current_row.find_element(By.XPATH, "./td[2]").text.strip()
+                            log_duplicate_qd_version(so_qd, ver_code)
+
+                            # 2. Ngày Đăng Tải: Lấy từ bảng (cột 5)
+                            # Lưu ý: Cần check xem cột này có thay đổi theo version không
+                            try:
+                                ngay_dang_tai_row = current_row.find_element(By.XPATH, "./td[5]").text.strip()
+                            except: ngay_dang_tai_row = None
                             
+                            # 3. Trạng Thái: Lấy từ bảng (cột 6)
+                            try:
+                                trang_thai_row = current_row.find_element(By.XPATH, "./td[6]").text.strip()
+                            except: trang_thai_row = None
+
+                            # 4. PDF Tag: Lấy từ Card Detail
+                            pdf_tag = get_card_pdf_tag()
+                            
+                            # --- XỬ LÝ DOWNLOAD ---
+                            ok, ok_excel, path, winner_fact = _process_one_qd_flow(
+                                ma_tbmt, box_index, dia_diem,
+                                qd_text_raw=so_qd, 
+                                qd_element_pdf=pdf_tag, 
+                                version_code=ver_code, 
+                                num_cols=num_cols,
+                                ngay_dang_tai_specific=ngay_dang_tai_row,
+                                trang_thai_specific=trang_thai_row,
+                                info_snapshot=info_snapshot
+                            )
+                            handled_qd_count += 1
+                            finalize_one_qd_result(
+                                ma_tbmt=ma_tbmt,
+                                box_index=box_index,
+                                dia_diem=dia_diem,
+                                so_qd=so_qd,
+                                ver_code=ver_code,
+                                any_dl=ok,
+                                any_excel=ok_excel,
+                                dest_qd=path,
+                                info_snapshot=info_snapshot,
+                                winner_fact=winner_fact
+                            )
+                            
+                            if ok: any_downloaded = True
+                            if ok_excel: any_excel_for_box = True
+                            if path: last_qd_path = path
                         except Exception as e:
-                            logger.warning(f"⚠️ Lỗi click radio: {e}")
-
-                        info_snapshot = extract_additional_info()
-
-                        # --- LẤY DỮ LIỆU ---
-                        # 1. Số QĐ: Lấy từ Card Detail (chính xác nhất theo version)
-                        so_qd = get_card_value("Số quyết định phê duyệt")
-                        if not so_qd: 
-                            # Fallback: Lấy từ bảng nếu card không có
-                            so_qd = current_row.find_element(By.XPATH, "./td[2]").text.strip()
-                        log_duplicate_qd_version(so_qd, ver_code)
-
-                        # 2. Ngày Đăng Tải: Lấy từ bảng (cột 5)
-                        # Lưu ý: Cần check xem cột này có thay đổi theo version không
-                        try:
-                            ngay_dang_tai_row = current_row.find_element(By.XPATH, "./td[5]").text.strip()
-                        except: ngay_dang_tai_row = None
-                        
-                        # 3. Trạng Thái: Lấy từ bảng (cột 6)
-                        try:
-                            trang_thai_row = current_row.find_element(By.XPATH, "./td[6]").text.strip()
-                        except: trang_thai_row = None
-
-                        # 4. PDF Tag: Lấy từ Card Detail
-                        pdf_tag = get_card_pdf_tag()
-                        
-                        # --- XỬ LÝ DOWNLOAD ---
-                        ok, ok_excel, path, winner_fact = _process_one_qd_flow(
-                            ma_tbmt, box_index, dia_diem,
-                            qd_text_raw=so_qd, 
-                            qd_element_pdf=pdf_tag, 
-                            version_code=ver_code, 
-                            num_cols=num_cols,
-                            ngay_dang_tai_specific=ngay_dang_tai_row,
-                            trang_thai_specific=trang_thai_row,
-                            info_snapshot=info_snapshot
-                        )
-                        handled_qd_count += 1
-                        finalize_one_qd_result(
-                            ma_tbmt=ma_tbmt,
-                            box_index=box_index,
-                            dia_diem=dia_diem,
-                            so_qd=so_qd,
-                            ver_code=ver_code,
-                            any_dl=ok,
-                            any_excel=ok_excel,
-                            dest_qd=path,
-                            info_snapshot=info_snapshot,
-                            winner_fact=winner_fact
-                        )
-                        
-                        if ok: any_downloaded = True
-                        if ok_excel: any_excel_for_box = True
-                        if path: last_qd_path = path
+                            logger.error(
+                                f"❌ Lỗi xử lý dòng {i_row+1} version {ver_code} Case 3: {e}"
+                            )
+                            continue
 
                 except Exception as e:
                     logger.error(f"❌ Lỗi xử lý dòng {i_row+1} Case 3: {e}")

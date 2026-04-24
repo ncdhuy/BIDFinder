@@ -31,6 +31,7 @@ from schema_normalization_shared import (
     drop_invalid_value_rows as shared_drop_invalid_value_rows,
     get_smart_column_mapping as shared_get_smart_column_mapping,
     load_excel_with_detected_header,
+    normalize_header_lookup_key,
 )
 
 logging.basicConfig(
@@ -240,11 +241,18 @@ def log_pending_review_summary(flagged_units: list[dict], context_label: str, li
         cols_display = ", ".join(
             f"{gap['column']}({gap['blank_count']}/{gap['total_rows']})"
             for gap in gaps
-        ) or "N/A"
+        )
+        issue_reason = str(item.get("issue_reason") or "").strip()
+        if cols_display:
+            detail_display = f"column_gaps = [{cols_display}]"
+        elif issue_reason:
+            detail_display = f"issue_reason = {issue_reason}"
+        else:
+            detail_display = "column_gaps = [N/A]"
         logger.warning(
             f"   - TBMT = {item.get('ma_tbmt')} | so_qd = {item.get('so_qd')} | "
             f"version = {item.get('version')} | schema = {item.get('schema_name')} | "
-            f"column_gaps = [{cols_display}]"
+            f"{detail_display}"
         )
 
     remaining = len(flagged_units) - limit
@@ -820,6 +828,8 @@ def _matches_group_target(col_name, target_name) -> bool:
     col_clean = clean_col_str(col_name)
     target_clean = clean_col_str(target_name)
     if col_clean == target_clean:
+        return True
+    if normalize_header_lookup_key(col_name) == normalize_header_lookup_key(target_name):
         return True
     if target_clean == "nhà thầu trúng thầu":
         return is_vendor_group_column_name(col_name)
@@ -2468,8 +2478,13 @@ VENDOR_GROUP_HEADER_IGNORE_PATTERNS = (
     r"^gói\b",
     r"^phần\b",
     r"^lô\b",
-    r"^tổng\b",
-    r"^cộng\b",
+    r"^tổng cộng\b",
+    r"^tổng số\b",
+    r"^cộng gộp\b",
+    r"^cộng dồn\b",
+    r"^cộng lũy kế\b",
+    r"^cộng hòa xã hội chủ nghĩa việt nam\b",
+    r"^độc lập\s*[-–]\s*tự do\s*[-–]\s*hạnh phúc\b",
     r"^ghi chú\b",
     r"^ghi chu\b",
 )
@@ -2479,6 +2494,7 @@ def _is_vendor_group_stt_token(text: str) -> bool:
     if not text:
         return False
     normalized = re.sub(r"\s+", "", str(text)).strip()
+    normalized = re.sub(r"\.0+$", "", normalized)
     return bool(
         re.fullmatch(r"\d+[.)]?", normalized)
         or re.fullmatch(r"[IVXLCDM]+[.)]?", normalized, flags=re.IGNORECASE)
@@ -2668,18 +2684,106 @@ def fill_vendor_from_sparse_group_headers(df: pd.DataFrame, schema_name: str) ->
     return pd.DataFrame(normalized_rows, columns=working_df.columns)
 
 
+def _get_non_blank_vendor_signal_columns(df: pd.DataFrame) -> list[str]:
+    if df is None or df.empty:
+        return []
+
+    signal_cols = []
+    for col in df.columns:
+        if not is_vendor_group_column_name(col):
+            continue
+        series = df[col].astype("string")
+        if bool((~series.fillna("").str.strip().eq("")).any()):
+            signal_cols.append(col)
+    return signal_cols
+
+
+def _format_vendor_autofill_ambiguous_reason(
+    *,
+    vendor_signal_cols: list[str],
+    vendor_col: str,
+    blank_count: int | None = None,
+    source_cols: list[str] | None = None,
+) -> str:
+    signal_cols_preview = ", ".join(vendor_signal_cols[:3]) or vendor_col
+    parts = [
+        "[VENDOR_AUTOFILL_AMBIGUOUS]",
+        f"Phát hiện pattern autocomplete '{vendor_col}' nhưng file đã có sẵn dữ liệu vendor thật ở cột {signal_cols_preview}.",
+    ]
+
+    if blank_count is not None:
+        parts.append(f"Cột '{vendor_col}' hiện còn {int(blank_count)} dòng trống.")
+
+    if source_cols:
+        source_cols_preview = ", ".join(source_cols[:3])
+        parts.append(f"Header nghi ngờ nằm ở cột {source_cols_preview}, không phải cột vendor.")
+
+    parts.append(
+        f"Không auto-fill '{vendor_col}' vì đây có thể là group header khác "
+        f"(ví dụ Nhóm thuốc / nhóm hàng), cần kiểm tra thủ công."
+    )
+    return " ".join(parts)
+
+
+def detect_non_vendor_group_header_manual_reason(df: pd.DataFrame, schema_name: str) -> str | None:
+    if df is None or df.empty or schema_name not in ("MEDICINE_STANDARD", "GOODS_STANDARD"):
+        return None
+
+    settings = get_group_row_engine_settings(df, schema_name)
+    stt_col = settings["stt_col"]
+    detail_cols = list(settings["detail_cols"])
+    amount_col = settings["amount_col"]
+    group_cols = list(settings["existing_group_cols"])
+    auto_create_target = settings["auto_create_target"]
+    vendor_signal_cols = _get_non_blank_vendor_signal_columns(df)
+
+    if auto_create_target != "Nhà thầu trúng thầu" or not stt_col or not detail_cols or not vendor_signal_cols:
+        return None
+
+    for idx in range(len(df) - 1):
+        current = df.iloc[idx]
+        next_row = df.iloc[idx + 1]
+        wrong_group = detect_wrong_column_group_header_generic(
+            current=current,
+            next_row=next_row,
+            stt_col=stt_col,
+            detail_cols=detail_cols,
+            group_cols=group_cols,
+            amount_col=amount_col,
+        )
+        if not wrong_group:
+            continue
+        if any(is_vendor_group_column_name(col) for col in wrong_group["source_cols"]):
+            continue
+
+        blank_count = None
+        if auto_create_target in df.columns:
+            target_series = df[auto_create_target].astype("string")
+            blank_count = int(target_series.fillna("").str.strip().eq("").sum())
+        return _format_vendor_autofill_ambiguous_reason(
+            vendor_signal_cols=vendor_signal_cols,
+            vendor_col=auto_create_target,
+            blank_count=blank_count,
+            source_cols=wrong_group["source_cols"],
+        )
+
+    return None
+
+
 def detect_sparse_vendor_autocomplete_manual_reason(df: pd.DataFrame, schema_name: str) -> str | None:
     if df is None or df.empty or schema_name not in ("MEDICINE_STANDARD", "GOODS_STANDARD"):
         return None
 
     vendor_col = "Nhà thầu trúng thầu"
-    if vendor_col not in df.columns:
+    vendor_signal_cols = _get_non_blank_vendor_signal_columns(df)
+    if not vendor_signal_cols:
         return None
 
-    vendor_series = df[vendor_col].astype("string")
+    if vendor_col in df.columns:
+        vendor_series = df[vendor_col].astype("string")
+    else:
+        vendor_series = pd.Series(pd.NA, index=df.index, dtype="string")
     non_blank_mask = ~vendor_series.fillna("").str.strip().eq("")
-    if not bool(non_blank_mask.any()):
-        return None
 
     blank_mask = vendor_series.fillna("").str.strip().eq("")
     if not bool(blank_mask.any()):
@@ -2708,10 +2812,11 @@ def detect_sparse_vendor_autocomplete_manual_reason(df: pd.DataFrame, schema_nam
             amount_col=amount_col,
         )
         if header_info:
-            return (
-                f"Phát hiện pattern autocomplete nhà thầu nhưng file đã có sẵn cột '{vendor_col}' với dữ liệu thật "
-                f"và vẫn còn {int(blank_mask.sum())} dòng trống. Trường hợp này có thể là group header khác "
-                f"(ví dụ Nhóm thuốc), cần kiểm tra thủ công."
+            return _format_vendor_autofill_ambiguous_reason(
+                vendor_signal_cols=vendor_signal_cols,
+                vendor_col=vendor_col,
+                blank_count=int(blank_mask.sum()),
+                source_cols=header_info.get("source_cols"),
             )
 
     return None
@@ -2784,6 +2889,10 @@ def normalize_data(df: pd.DataFrame, schema_name: str, tbmt=None, so_qd=None, ve
     target_cols = config["output_columns"]
     mapping_config = build_schema_mapping_config(config)
     mandatory_cols = config.get("mandatory_columns", [])
+
+    group_header_manual_reason = detect_non_vendor_group_header_manual_reason(df, schema_name)
+    if group_header_manual_reason:
+        raise WebWinnerManualReviewRequired(group_header_manual_reason)
     
     if schema_name in ("MEDICINE_STANDARD", "GOODS_STANDARD"):
         df = normalize_grouped_rows_generic(df, schema_name)
@@ -2936,6 +3045,28 @@ def process_pipeline():
             
             if not units_in_cluster:
                 logger.warning(f"⚠️ ETL bỏ qua {tbmt} / {qd_original}: không tìm thấy unit READY hợp lệ trong manifest.")
+                continue
+
+            processable_units = [
+                unit for unit in units_in_cluster
+                if unit.get("relation_type") != "CANCELLATION"
+            ]
+            if not processable_units:
+                ids = manifest_id_map[(tbmt, qd_original, schema_name)]
+                try:
+                    c.execute(
+                        "UPDATE daily_manifest SET status='PROCESSED' WHERE id IN %s AND status IS DISTINCT FROM 'PROCESSED'",
+                        (tuple(ids),)
+                    )
+                    conn.commit()
+                except Exception as e:
+                    conn.rollback()
+                    logger.error(
+                        f"⚠️ Không cập nhật được manifest cancellation-only sang PROCESSED cho {tbmt} / {qd_original}: {e}"
+                    )
+                logger.info(
+                    f"ℹ️ ETL bỏ qua {tbmt} / {qd_original}: cụm chỉ gồm QĐ CANCELLATION, không có unit cần tạo dataframe."
+                )
                 continue
 
             try:

@@ -11,6 +11,14 @@
 </head>
 <body>
     <script>
+        try {
+            const optimisticToken = sessionStorage.getItem('bidfinder:auth_token') || localStorage.getItem('bidfinder:auth_token') || '';
+            const optimisticHint = localStorage.getItem('bidfinder:auth_hint') || '';
+            document.body.classList.add(optimisticToken || optimisticHint === 'authed' ? 'auth-state-authed' : 'auth-state-guest');
+        } catch (err) {
+            document.body.classList.add('auth-state-guest');
+        }
+
         const savedBidfinderView = sessionStorage.getItem('bidfinder:view') || 'landing';
         const requireAuthForDataAccess = localStorage.getItem('bidfinder:require_auth_for_data_access') === '1';
         if (savedBidfinderView === 'landing' || requireAuthForDataAccess) {
@@ -29,6 +37,7 @@
                 </a>
 
                 <nav class="bf-nav">
+                    <button class="bf-nav-link" id="open-account-nav" type="button">Tài khoản</button>
                     <button class="bf-nav-link" id="open-register-nav" type="button">Đăng ký</button>
                     <button class="bf-nav-link" id="open-login-nav" type="button">Đăng nhập</button>
                     <a href="#bf-workflow">Liên hệ</a>
@@ -115,8 +124,7 @@
 
                     <div class="app-header-links">
                         <div class="app-auth-shell is-hidden" id="app-auth-shell">
-                            <button class="app-auth-btn" id="auth-edit-profile-btn" type="button">Hồ sơ</button>
-                            <button class="app-auth-btn app-auth-btn-danger" id="auth-logout-btn" type="button">Đăng xuất</button>
+                            <button class="app-auth-btn" id="auth-edit-profile-btn" type="button">Tài khoản</button>
                         </div>
                     </div>
                 </header>
@@ -350,7 +358,7 @@
         <div id="filter-panel" class="side-panel">
             <div class="panel-header">
                 <div class="panel-title-group">
-                    <h3><i data-feather="filter"></i>Tra cứu</h3>
+                    <h3><i data-feather="search"></i>Tra cứu</h3>
                     <button id="filter-help-btn" class="help-icon" type="button" aria-label="Trợ giúp">i</button>
                 </div>
                 <button id="close-filter-panel" class="btn-close" aria-label="Đóng">
@@ -523,40 +531,148 @@
                                     <input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="Mật khẩu" required />
                                 </label>
 
+                                <div class="auth-inline-actions">
+                                    <button class="auth-text-btn" id="auth-forgot-password-btn" type="button">Quên mật khẩu?</button>
+                                </div>
+
                                 <button class="auth-submit-btn" type="submit">Đăng nhập</button>
+                            </form>
+                        </div>
+
+                        <div class="auth-mode-panel" id="auth-forgot-password-panel" data-auth-panel="forgot-password" hidden>
+                            <div class="auth-panel-head">
+                                <h3>Quên mật khẩu</h3>
+                                <p>Nhập email đã đăng ký. Hệ thống sẽ gửi liên kết để bạn tạo mật khẩu mới.</p>
+                            </div>
+
+                            <form id="auth-forgot-password-form" class="auth-form" novalidate>
+                                <label class="auth-field">
+                                    <span>Email</span>
+                                    <input id="forgot-password-email" name="email" type="email" autocomplete="email" placeholder="Email" required />
+                                </label>
+
+                                <div class="auth-inline-actions">
+                                    <button class="auth-text-btn" id="auth-back-to-login-btn" type="button">Quay lại đăng nhập</button>
+                                </div>
+
+                                <button class="auth-submit-btn" type="submit">Gửi email đặt lại mật khẩu</button>
+                            </form>
+                        </div>
+
+                        <div class="auth-mode-panel" id="auth-reset-password-panel" data-auth-panel="reset-password" hidden>
+                            <div class="auth-panel-head">
+                                <h3>Đặt lại mật khẩu</h3>
+                                <p>Nhập mật khẩu mới cho tài khoản của bạn.</p>
+                            </div>
+
+                            <form id="auth-reset-password-form" class="auth-form" novalidate>
+                                <label class="auth-field">
+                                    <span>Mật khẩu mới</span>
+                                    <input id="reset-password-new" name="new_password" type="password" autocomplete="new-password" placeholder="Mật khẩu mới" required />
+                                    <p class="auth-field-note" id="reset-password-note">Mật khẩu phải có ít nhất 9 ký tự, bao gồm ít nhất 1 chữ số và 1 chữ cái in hoa.</p>
+                                </label>
+
+                                <label class="auth-field">
+                                    <span>Nhập lại mật khẩu mới</span>
+                                    <input id="reset-password-confirm" name="confirm_password" type="password" autocomplete="new-password" placeholder="Nhập lại mật khẩu mới" required />
+                                </label>
+
+                                <button class="auth-submit-btn" type="submit">Cập nhật mật khẩu</button>
                             </form>
                         </div>
                     </div>
 
                     <div id="auth-profile-view" hidden>
                         <div class="auth-profile-head">
-                            <p class="auth-profile-kicker">Hồ sơ tài khoản</p>
-                            <h3>Cập nhật thông tin</h3>
+
+                            <h3>Quản lý tài khoản</h3>
+                            
                         </div>
 
-                        <form id="auth-profile-form" class="auth-form" novalidate>
-                            <label class="auth-field">
-                                <span>Họ và tên</span>
-                                <input id="profile-full-name" name="full_name" type="text" autocomplete="name" placeholder="Họ và tên" required />
-                            </label>
+                        <div class="auth-account-sections">
+                            <section class="auth-account-section">
+                                <button
+                                    class="auth-account-toggle"
+                                    id="auth-profile-section-toggle"
+                                    type="button"
+                                    data-account-section="profile"
+                                    aria-expanded="false"
+                                >
+                                    <span class="auth-account-toggle-copy">
+                                        <strong>Cập nhật thông tin</strong>
+                                    </span>
+                                    <span class="auth-account-toggle-icon" aria-hidden="true"></span>
+                                </button>
 
-                            <label class="auth-field">
-                                <span>Đơn vị công tác</span>
-                                <input id="profile-work-unit" name="work_unit" type="text" placeholder="Đơn vị công tác" />
-                            </label>
+                                <div class="auth-account-detail" id="auth-profile-section-detail" hidden>
+                                    <form id="auth-profile-form" class="auth-form" novalidate>
+                                        <label class="auth-field">
+                                            <span>Họ và tên</span>
+                                            <input id="profile-full-name" name="full_name" type="text" autocomplete="name" placeholder="Họ và tên" required />
+                                        </label>
 
-                            <label class="auth-field">
-                                <span>Vị trí</span>
-                                <select id="profile-position" name="position">
-                                    <option value="" disabled selected hidden>Vị trí</option>
-                                </select>
-                            </label>
+                                        <label class="auth-field">
+                                            <span>Đơn vị công tác</span>
+                                            <input id="profile-work-unit" name="work_unit" type="text" placeholder="Đơn vị công tác" />
+                                        </label>
 
-                            <div class="auth-profile-actions">
-                                <button class="auth-secondary-btn" id="auth-profile-cancel-btn" type="button">Đóng</button>
-                                <button class="auth-submit-btn" type="submit">Lưu hồ sơ</button>
-                            </div>
-                        </form>
+                                        <label class="auth-field">
+                                            <span>Vị trí</span>
+                                            <select id="profile-position" name="position">
+                                                <option value="" disabled selected hidden>Vị trí</option>
+                                            </select>
+                                        </label>
+
+                                        <div class="auth-profile-actions">
+                                            <button class="auth-submit-btn" type="submit">Lưu hồ sơ</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </section>
+
+                            <section class="auth-account-section">
+                                <button
+                                    class="auth-account-toggle"
+                                    id="auth-password-section-toggle"
+                                    type="button"
+                                    data-account-section="password"
+                                    aria-expanded="false"
+                                >
+                                    <span class="auth-account-toggle-copy">
+                                        <strong id="auth-password-title">Đổi mật khẩu</strong>
+                                    </span>
+                                    <span class="auth-account-toggle-icon" aria-hidden="true"></span>
+                                </button>
+
+                                <div class="auth-account-detail" id="auth-password-section-detail" hidden>
+                                    <form id="auth-change-password-form" class="auth-form" novalidate>
+                                        <label class="auth-field" id="change-password-current-field">
+                                            <span>Mật khẩu hiện tại</span>
+                                            <input id="change-password-current" name="current_password" type="password" autocomplete="current-password" placeholder="Mật khẩu hiện tại" />
+                                        </label>
+
+                                        <label class="auth-field">
+                                            <span>Mật khẩu mới</span>
+                                            <input id="change-password-new" name="new_password" type="password" autocomplete="new-password" placeholder="Mật khẩu mới" required />
+                                            <p class="auth-field-note" id="change-password-note">Mật khẩu phải có ít nhất 9 ký tự, bao gồm ít nhất 1 chữ số và 1 chữ cái in hoa.</p>
+                                        </label>
+
+                                        <label class="auth-field">
+                                            <span>Nhập lại mật khẩu mới</span>
+                                            <input id="change-password-confirm" name="confirm_password" type="password" autocomplete="new-password" placeholder="Nhập lại mật khẩu mới" required />
+                                        </label>
+
+                                        <div class="auth-profile-actions">
+                                            <button class="auth-submit-btn" type="submit">Lưu mật khẩu</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </section>
+                        </div>
+
+                        <div class="auth-account-footer">
+                            <button class="auth-secondary-btn auth-secondary-btn-danger" id="auth-logout-btn" type="button">Đăng xuất</button>
+                        </div>
                     </div>
                 </section>
             </div>

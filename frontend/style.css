@@ -734,7 +734,9 @@ body.landing-active .page-container {
 .app-header-links {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
+  margin-left: auto;
   flex-shrink: 0;
 }
 /* =========================

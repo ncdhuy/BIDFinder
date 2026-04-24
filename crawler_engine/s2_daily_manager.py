@@ -16,6 +16,7 @@ from web_winner_facts import (
 )
 from s3_etl_pipeline import (
     analyze_review_column_gaps as etl_analyze_review_column_gaps,
+    detect_non_vendor_group_header_manual_reason as etl_detect_non_vendor_group_header_manual_reason,
     normalize_grouped_rows_generic as etl_normalize_grouped_rows_generic,
     drop_summary_rows as etl_drop_summary_rows,
     autofill_group_header_values as etl_autofill_group_header_values,
@@ -2541,6 +2542,10 @@ def prepare_schema_validation_frame(df_check: pd.DataFrame, schema_type: str):
     working_df = df_check.copy()
     structure_issues = []
 
+    group_header_manual_reason = etl_detect_non_vendor_group_header_manual_reason(working_df, schema_type)
+    if group_header_manual_reason:
+        structure_issues.append(group_header_manual_reason)
+
     if schema_type == "MEDICINE_STANDARD":
         working_df, group_conflict = normalize_grouped_rows_generic(working_df, "MEDICINE_STANDARD")
         if group_conflict:
@@ -2655,22 +2660,23 @@ def validate_manifest_schema(
     if working_df.empty:
         return False, f"{schema_type} | {SCHEMA_VALIDATION_TIER_LABELS['STRUCTURE']}: File rỗng sau chuẩn hóa"
 
-    working_df, vendor_action = apply_vendor_single_winner_fallback(
-        working_df,
-        tbmt=tbmt,
-        so_qd=so_qd,
-        version=version,
-        cursor=winner_fact_cursor,
-    )
-
-    if vendor_action.get("status") == "MANUAL_REQUIRED":
-        _add_schema_issue(issues, "MANDATORY", vendor_action.get("reason"))
-    elif vendor_action.get("status") == "FILLED_FROM_WEB_SINGLE_WINNER":
-        logger.info(
-            f"🩹 [WEB-WINNER-FILL] Manifest {tbmt} / {so_qd} / v{version}: "
-            f"điền '{vendor_action.get('winner_name')}' cho {vendor_action.get('blank_count', 0)} dòng thiếu "
-            f"'{'Nhà thầu trúng thầu'}'."
+    if not issues["STRUCTURE"]:
+        working_df, vendor_action = apply_vendor_single_winner_fallback(
+            working_df,
+            tbmt=tbmt,
+            so_qd=so_qd,
+            version=version,
+            cursor=winner_fact_cursor,
         )
+
+        if vendor_action.get("status") == "MANUAL_REQUIRED":
+            _add_schema_issue(issues, "MANDATORY", vendor_action.get("reason"))
+        elif vendor_action.get("status") == "FILLED_FROM_WEB_SINGLE_WINNER":
+            logger.info(
+                f"🩹 [WEB-WINNER-FILL] Manifest {tbmt} / {so_qd} / v{version}: "
+                f"điền '{vendor_action.get('winner_name')}' cho {vendor_action.get('blank_count', 0)} dòng thiếu "
+                f"'{'Nhà thầu trúng thầu'}'."
+            )
 
     norm_cols = set(working_df.columns)
     signature = set(config["signature_columns"])

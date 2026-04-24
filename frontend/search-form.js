@@ -2413,7 +2413,7 @@ class AdvancedFilterManager {
         }
 
         clearTimeout(this.debounceTimer);
-        this.debounceTimer = setTimeout(() => this.fetchData(query), 280);
+        this.debounceTimer = setTimeout(() => this.fetchData(query), 60);
     }
 
 

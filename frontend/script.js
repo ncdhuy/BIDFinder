@@ -1067,7 +1067,7 @@ function createHeaderCell(tableId, colName, index) {
 // FILTERS
 // ============================== 
 
-const MAX_RESULTS_PER_TABLE = 100;
+const MAX_RESULTS_PER_TABLE = 500;
 let currentQueryRequest = {
     scope: 'all',
     filters: {}
