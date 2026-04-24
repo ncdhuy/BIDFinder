@@ -46,6 +46,11 @@
       anonymous_full_query_daily_remaining: 10,
       anonymous_full_query_login_required: false,
       anonymous_full_query_limit_message: 'Bạn đã dùng hết lượt tra cứu hôm nay. Vui lòng đăng nhập để tiếp tục.',
+      full_search_enabled: true,
+      full_search_daily_limit: 3,
+      full_search_daily_used: 0,
+      full_search_daily_remaining: 3,
+      full_search_limit_message: 'Bạn đã dùng hết lượt full search hôm nay. Vui lòng quay lại vào ngày mai.',
       password_policy_message: 'Mật khẩu phải có ít nhất 9 ký tự, bao gồm ít nhất 1 chữ số và 1 chữ cái in hoa.',
       password_reset_enabled: false
     },
@@ -1022,7 +1027,7 @@
         email: els['forgot-password-email']?.value?.trim() || ''
       });
 
-      setAlert(payload.message || 'Đã gửi hướng dẫn đặt lại mật khẩu.', 'success');
+      setAlert(payload.message || 'Đã gửi email hướng dẫn đặt lại mật khẩu.', 'success');
       els['auth-forgot-password-form']?.reset();
     } catch (err) {
       setAlert(err.message || 'Không thể gửi email đặt lại mật khẩu.', 'error');

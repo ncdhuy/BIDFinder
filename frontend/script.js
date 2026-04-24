@@ -262,7 +262,10 @@ let currentQueryMeta = {
     df1HasMore: false,
     df2HasMore: false,
     totalCount: 0,
-    totalCountExact: true
+    totalCountExact: true,
+    totalCountLabel: '0',
+    searchMode: 'standard',
+    appliedTotalLimit: 0
 };
 
 // Configuration object cho từng loại table
@@ -1067,7 +1070,8 @@ function createHeaderCell(tableId, colName, index) {
 // FILTERS
 // ============================== 
 
-const MAX_RESULTS_PER_TABLE = 500;
+const MAX_RESULTS_PER_TABLE = 200;
+const FULL_SEARCH_TOTAL_LIMIT = 1000;
 let currentQueryRequest = {
     scope: 'all',
     filters: {}
@@ -1104,16 +1108,34 @@ function clearFilterUrlState() {
     window.history.replaceState({}, '', url);
 }
 
-async function fetchQueryResults(queryRequest, sortRule = activeSortRule, limit = MAX_RESULTS_PER_TABLE) {
+function getFullSearchQuotaState() {
+    const config = window.BIDFinderAuth?.getConfig?.() || {};
+    return {
+        enabled: config.full_search_enabled !== false,
+        limit: Number(config.full_search_daily_limit || 0),
+        used: Number(config.full_search_daily_used || 0),
+        remaining: Number(config.full_search_daily_remaining || 0),
+        message: config.full_search_limit_message || 'Bạn đã dùng hết lượt full search hôm nay.'
+    };
+}
+
+async function fetchQueryResults(
+    queryRequest,
+    sortRule = activeSortRule,
+    limit = MAX_RESULTS_PER_TABLE,
+    options = {}
+) {
     if (!requireAuthenticatedSession('login', 'full_query')) {
         throw new Error(window.BIDFinderAuth?.getFullQueryGateMessage?.() || 'Bạn cần đăng nhập để tra cứu dữ liệu.');
     }
 
+    const searchMode = options?.searchMode === 'full' ? 'full' : 'standard';
     const requestBody = {
         scope: queryRequest?.scope || 'all',
         filters: queryRequest?.filters || {},
         sort: buildSortPayload(sortRule),
-        limit
+        limit,
+        searchMode
     };
 
     const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/query`, {
@@ -1193,7 +1215,10 @@ function normalizeQueryResult(result) {
         totalCount: Number(result?.total_count || 0),
         totalCountExact: result?.total_count_exact !== false,
         totalCountLabel: result?.total_count_label || String(Number(result?.total_count || 0)),
-        totalCountSummary: result?.total_count_summary || String(Number(result?.total_count || 0))
+        totalCountSummary: result?.total_count_summary || String(Number(result?.total_count || 0)),
+        searchMode: result?.search_mode === 'full' ? 'full' : 'standard',
+        appliedTotalLimit: Number(result?.applied_total_limit || 0),
+        appliedLimitPerScope: Number(result?.applied_limit_per_scope || 0)
     };
 }
 
@@ -1207,13 +1232,18 @@ function handleQuerySuccess(result, options = {}) {
     const totalCountExact = Boolean(normalized.totalCountExact);
     const totalCountLabel = String(normalized.totalCountLabel || totalCount);
     const hasMore = Boolean(normalized.df1.has_more || normalized.df2.has_more);
+    const quota = getFullSearchQuotaState();
 
     if (hasMore) {
         showLimitWarning({
             totalCount,
             totalCountExact,
             totalCountLabel,
-            displayedCount
+            displayedCount,
+            searchMode: normalized.searchMode,
+            fullSearchRemaining: quota.remaining,
+            fullSearchDailyLimit: quota.limit,
+            fullSearchEnabled: quota.enabled
         });
     } else {
         hideLimitWarning();
@@ -1225,7 +1255,10 @@ function handleQuerySuccess(result, options = {}) {
         df1HasMore: Boolean(normalized.df1.has_more),
         df2HasMore: Boolean(normalized.df2.has_more),
         totalCount,
-        totalCountExact
+        totalCountExact,
+        totalCountLabel,
+        searchMode: normalized.searchMode,
+        appliedTotalLimit: normalized.appliedTotalLimit
     };
 
     updateResults(nextDf1, nextDf2, { resetMiniFilters: options.resetMiniFilters !== false });
@@ -1239,7 +1272,12 @@ async function applyFilters(payload) {
     console.log('Applying filters with query request:', currentQueryRequest);
 
     try {
-        const result = await fetchQueryResults(currentQueryRequest, activeSortRule, MAX_RESULTS_PER_TABLE);
+        const result = await fetchQueryResults(
+            currentQueryRequest,
+            activeSortRule,
+            MAX_RESULTS_PER_TABLE,
+            { searchMode: 'standard' }
+        );
 
         if (result.success) {
             handleQuerySuccess(result);
@@ -1257,31 +1295,107 @@ async function applyFilters(payload) {
     }
 }
 
+async function triggerFullSearch() {
+    const quota = getFullSearchQuotaState();
+    if (!quota.enabled || quota.remaining <= 0) {
+        alert(quota.message || 'Bạn đã dùng hết lượt full search hôm nay.');
+        return;
+    }
+
+    const warningDiv = document.getElementById('result-warning');
+    const actionButton = warningDiv?.querySelector('.result-warning-button');
+    if (actionButton) {
+        actionButton.disabled = true;
+        actionButton.textContent = 'Đang tải...';
+    }
+
+    try {
+        const result = await fetchQueryResults(
+            currentQueryRequest,
+            activeSortRule,
+            FULL_SEARCH_TOTAL_LIMIT,
+            { searchMode: 'full' }
+        );
+        if (result.success) {
+            handleQuerySuccess(result, { resetMiniFilters: false });
+            return;
+        }
+        throw new Error(result.error || 'Full search failed');
+    } catch (error) {
+        if (actionButton) {
+            actionButton.disabled = false;
+            actionButton.textContent = 'Full search';
+        }
+        console.error('Full search failed:', error);
+        if (error?.message) {
+            alert(error.message);
+        }
+    }
+}
+
 
 // Helper: Show limit warning
-function showLimitWarning({ totalCount, totalCountExact, totalCountLabel, displayedCount }) {
+function showLimitWarning({
+    totalCount,
+    totalCountExact,
+    totalCountLabel,
+    displayedCount,
+    searchMode = 'standard',
+    fullSearchRemaining = 0,
+    fullSearchDailyLimit = 0,
+    fullSearchEnabled = true
+}) {
     const localizedTotal = Number(totalCount || 0).toLocaleString('vi-VN');
     const summaryText = String(totalCountLabel || (totalCountExact ? localizedTotal : `${localizedTotal}+`));
     const displayedText = Number(displayedCount || 0).toLocaleString('vi-VN');
-
-    alert(
-        `⚠️ GIỚI HẠN KẾT QUẢ TÌM KIẾM\n\n` +
-        `Hệ thống ghi nhận ${summaryText} kết quả phù hợp.\n` +
-        `Hiện chỉ hiển thị ${displayedText} kết quả đầu tiên.\n\n` +
-        `Để truy xuất đầy đủ, đề nghị:\n` +
-        `- Bổ sung từ khóa tìm kiếm\n` +
-        `- Thu hẹp khoảng thời gian\n`
-    );
+    const canOfferFullSearch =
+        searchMode !== 'full'
+        && fullSearchEnabled
+        && Number(fullSearchDailyLimit || 0) > 0
+        && Number(fullSearchRemaining || 0) > 0;
 
     const warningDiv = document.getElementById('result-warning');
-    if (warningDiv) {
-        setInfoBannerMessage(
-            warningDiv,
-            'Giới hạn kết quả tìm kiếm',
-            `Hệ thống ghi nhận ${summaryText} kết quả phù hợp, hiện chỉ hiển thị ${displayedText} kết quả đầu tiên.`
-        );
-        warningDiv.style.display = 'block';
+    if (!warningDiv) {
+        return;
     }
+
+    warningDiv.replaceChildren();
+
+    const title = document.createElement('strong');
+    title.textContent = searchMode === 'full' ? 'Kết quả full search vẫn còn bị giới hạn' : 'Giới hạn kết quả tìm kiếm';
+    warningDiv.appendChild(title);
+    warningDiv.appendChild(document.createElement('br'));
+    warningDiv.appendChild(document.createTextNode(`Hiện đang hiển thị ${displayedText}/${summaryText} dòng.`));
+
+    const detail = document.createElement('div');
+    detail.className = 'result-warning-actions';
+
+    const quota = document.createElement('span');
+    quota.className = 'result-warning-quota';
+    if (canOfferFullSearch) {
+        quota.textContent = `Bạn còn ${Number(fullSearchRemaining).toLocaleString('vi-VN')}/${Number(fullSearchDailyLimit).toLocaleString('vi-VN')} lượt full search hôm nay.`;
+    } else if (searchMode === 'full') {
+        quota.textContent = 'Bạn đang ở chế độ full search. Hãy thu hẹp bộ lọc nếu cần ít nhiễu hơn.';
+    } else if (Number(fullSearchDailyLimit || 0) > 0) {
+        quota.textContent = `Bạn đã dùng hết ${Number(fullSearchDailyLimit).toLocaleString('vi-VN')} lượt full search hôm nay.`;
+    } else {
+        quota.textContent = 'Full search hiện chưa khả dụng.';
+    }
+    detail.appendChild(quota);
+
+    if (canOfferFullSearch) {
+        const actionButton = document.createElement('button');
+        actionButton.type = 'button';
+        actionButton.className = 'result-warning-button';
+        actionButton.textContent = 'Full search';
+        actionButton.addEventListener('click', () => {
+            void triggerFullSearch();
+        });
+        detail.appendChild(actionButton);
+    }
+
+    warningDiv.appendChild(detail);
+    warningDiv.style.display = 'block';
 }
 
 // Helper: Hide limit warning
@@ -1304,7 +1418,10 @@ function resetQueryResultMeta() {
         df1HasMore: false,
         df2HasMore: false,
         totalCount: 0,
-        totalCountExact: true
+        totalCountExact: true,
+        totalCountLabel: '0',
+        searchMode: 'standard',
+        appliedTotalLimit: 0
     };
 }
 
@@ -2205,7 +2322,12 @@ async function applyActiveSortRule({ preserveMiniFilters = true } = {}) {
     }
 
     try {
-        const result = await fetchQueryResults(currentQueryRequest, activeSortRule, MAX_RESULTS_PER_TABLE);
+        const result = await fetchQueryResults(
+            currentQueryRequest,
+            activeSortRule,
+            currentQueryMeta.searchMode === 'full' ? FULL_SEARCH_TOTAL_LIMIT : MAX_RESULTS_PER_TABLE,
+            { searchMode: currentQueryMeta.searchMode }
+        );
         if (result.success) {
             handleQuerySuccess(result, { resetMiniFilters: !preserveMiniFilters });
         } else {

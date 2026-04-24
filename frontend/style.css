@@ -1128,6 +1128,40 @@ body:not(.landing-active) .contact-item {
   line-height: 1.5;
 }
 
+.result-warning-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.result-warning-quota {
+  color: inherit;
+}
+
+.result-warning-button {
+  border: 1px solid rgba(146, 100, 14, 0.24);
+  border-radius: 999px;
+  background: #fff;
+  color: #7a5817;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.result-warning-button:hover:not(:disabled) {
+  background: #ffefc7;
+}
+
+.result-warning-button:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
 .result-warning-duplicate{
   border: 1px solid #fecdd3;
   border-left: 4px solid #e11d48;

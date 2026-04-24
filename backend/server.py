@@ -51,6 +51,8 @@ rate_limit_lock = asyncio.Lock()
 rate_limit_buckets: Dict[str, deque] = defaultdict(deque)
 anonymous_full_query_usage_lock = asyncio.Lock()
 anonymous_full_query_usage: Dict[str, Dict[str, int]] = defaultdict(dict)
+full_search_usage_lock = asyncio.Lock()
+full_search_usage: Dict[str, Dict[str, int]] = defaultdict(dict)
 auth_schema_ready = False
 cache_lock = asyncio.Lock()
 preview_cache: Dict[str, Dict[str, Any]] = {}
@@ -133,7 +135,9 @@ METADATA_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("METADATA_RATE_LIMIT_PER_M
 FILTER_CONFIG_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("FILTER_CONFIG_RATE_LIMIT_PER_MINUTE", "30")))
 AUTH_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("AUTH_RATE_LIMIT_PER_MINUTE", "20")))
 AUTH_CONFIG_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("AUTH_CONFIG_RATE_LIMIT_PER_MINUTE", "60")))
-MAX_QUERY_LIMIT = max(50, int(os.getenv("MAX_QUERY_LIMIT", "200")))
+DEFAULT_QUERY_LIMIT = max(50, int(os.getenv("DEFAULT_QUERY_LIMIT", "200")))
+MAX_QUERY_LIMIT = max(DEFAULT_QUERY_LIMIT, int(os.getenv("MAX_QUERY_LIMIT", "1000")))
+FULL_SEARCH_DAILY_LIMIT = max(0, int(os.getenv("FULL_SEARCH_DAILY_LIMIT", "3")))
 PREVIEW_BUCKET_LIMIT = max(10, int(os.getenv("PREVIEW_BUCKET_LIMIT", "100")))
 DB_POOL_MAX_SIZE = max(1, int(os.getenv("DB_POOL_MAX_SIZE", "8")))
 PREVIEW_CACHE_TTL_SECONDS = max(1, int(os.getenv("PREVIEW_CACHE_TTL_SECONDS", "15")))
@@ -152,6 +156,10 @@ ANONYMOUS_FULL_QUERY_DAILY_LIMIT = max(
 ANONYMOUS_FULL_QUERY_LIMIT_MESSAGE = (
     f"Bạn đã dùng hết {ANONYMOUS_FULL_QUERY_DAILY_LIMIT} lượt tra cứu hôm nay. "
     "Vui lòng đăng nhập để tiếp tục."
+)
+FULL_SEARCH_LIMIT_MESSAGE = (
+    f"Bạn đã dùng hết {FULL_SEARCH_DAILY_LIMIT} lượt full search hôm nay. "
+    "Vui lòng quay lại vào ngày mai."
 )
 
 
@@ -451,7 +459,8 @@ class QueryRequest(BaseModel):
     scope: Literal["all", "medicine", "goods"] = "all"
     filters: Optional[FilterRequest] = None
     sort: Optional[List[SortRule]] = None
-    limit: int = 200
+    limit: int = DEFAULT_QUERY_LIMIT
+    searchMode: Literal["standard", "full"] = "standard"
 
 
 class QueryPreviewRequest(BaseModel):
@@ -721,7 +730,15 @@ def clean_value(val):
 
 
 def clean_records(records):
-    return [{k: clean_value(v) for k, v in dict(r).items()} for r in records]
+    cleaned_records = []
+    for record in records:
+        normalized = {}
+        for key, value in dict(record).items():
+            if key in {"__price_rank", "__recency_bucket"}:
+                continue
+            normalized[key] = clean_value(value)
+        cleaned_records.append(normalized)
+    return cleaned_records
 
 
 def get_client_ip(request: Request) -> str:
@@ -792,6 +809,87 @@ async def consume_anonymous_full_query_usage(request: Request) -> Dict[str, int]
         "remaining": remaining,
         "limit": ANONYMOUS_FULL_QUERY_DAILY_LIMIT,
     }
+
+
+def prune_full_search_usage(current_day: str) -> None:
+    expired_days = [day_key for day_key in list(full_search_usage.keys()) if day_key != current_day]
+    for day_key in expired_days:
+        full_search_usage.pop(day_key, None)
+
+
+def get_full_search_actor_key(request: Request, user: Optional[Dict[str, Any]]) -> str:
+    if user and user.get("id") is not None:
+        return f"user:{int(user['id'])}"
+    return f"client:{get_rate_limit_client_key(request)}"
+
+
+async def get_full_search_usage_snapshot(request: Request, user: Optional[Dict[str, Any]]) -> Dict[str, int]:
+    if FULL_SEARCH_DAILY_LIMIT <= 0:
+        return {"used": 0, "remaining": 0, "limit": 0}
+
+    day_key = get_usage_day_key()
+    actor_key = get_full_search_actor_key(request, user)
+
+    async with full_search_usage_lock:
+        prune_full_search_usage(day_key)
+        used = int(full_search_usage.get(day_key, {}).get(actor_key, 0))
+
+    remaining = max(0, FULL_SEARCH_DAILY_LIMIT - used)
+    return {
+        "used": used,
+        "remaining": remaining,
+        "limit": FULL_SEARCH_DAILY_LIMIT,
+    }
+
+
+async def consume_full_search_usage(request: Request, user: Optional[Dict[str, Any]]) -> Dict[str, int]:
+    if FULL_SEARCH_DAILY_LIMIT <= 0:
+        return {"used": 0, "remaining": 0, "limit": 0}
+
+    day_key = get_usage_day_key()
+    actor_key = get_full_search_actor_key(request, user)
+
+    async with full_search_usage_lock:
+        prune_full_search_usage(day_key)
+        day_bucket = full_search_usage.setdefault(day_key, {})
+        used = int(day_bucket.get(actor_key, 0)) + 1
+        day_bucket[actor_key] = used
+
+    remaining = max(0, FULL_SEARCH_DAILY_LIMIT - used)
+    return {
+        "used": used,
+        "remaining": remaining,
+        "limit": FULL_SEARCH_DAILY_LIMIT,
+    }
+
+
+async def build_full_search_quota_payload(
+    request: Optional[Request],
+    *,
+    user: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "full_search_enabled": True,
+        "full_search_daily_limit": FULL_SEARCH_DAILY_LIMIT,
+        "full_search_daily_used": 0,
+        "full_search_daily_remaining": FULL_SEARCH_DAILY_LIMIT,
+        "full_search_limit_message": FULL_SEARCH_LIMIT_MESSAGE,
+    }
+
+    if FULL_SEARCH_DAILY_LIMIT <= 0:
+        payload["full_search_daily_remaining"] = 0
+        payload["full_search_enabled"] = False
+        return payload
+
+    if request is None:
+        return payload
+
+    usage = await get_full_search_usage_snapshot(request, user)
+    payload.update({
+        "full_search_daily_used": usage["used"],
+        "full_search_daily_remaining": usage["remaining"],
+    })
+    return payload
 
 
 async def build_anonymous_full_query_quota_payload(
@@ -1004,22 +1102,7 @@ def build_scope_filters(scope_name: str, filters: Optional[FilterRequest], param
     return conditions
 
 
-def build_result_query(
-    scope_name: str,
-    filters: Optional[FilterRequest],
-    sort_rules: List[SortRule],
-    limit: int,
-    include_overflow_probe: bool = False,
-):
-    params: List[Any] = []
-    cte, table_name = get_scope_query_parts(scope_name, variant="full")
-
-    query = f"{cte} SELECT * FROM {table_name}"
-    conditions = build_scope_filters(scope_name, filters, params)
-
-    if conditions:
-        query += " WHERE " + " AND ".join(conditions)
-
+def build_sort_order_parts(scope_name: str, sort_rules: List[SortRule]) -> List[str]:
     sort_map = ALLOWED_SORT_DF1 if scope_name == "medicine" else ALLOWED_SORT_DF2
     order_parts = []
     for rule in sort_rules or []:
@@ -1027,13 +1110,128 @@ def build_result_query(
             order_parts.append(f"{sort_map[rule.column]} {'DESC' if rule.order == 'desc' else 'ASC'}")
 
     if order_parts:
-        query += " ORDER BY " + ", ".join(order_parts)
-    else:
-        query += ' ORDER BY "__approval_date" DESC NULLS LAST, "Mã TBMT" ASC'
+        return order_parts
 
+    return ['"__approval_date" DESC NULLS LAST', '"Mã TBMT" ASC']
+
+
+def build_result_query(
+    scope_name: str,
+    filters: Optional[FilterRequest],
+    sort_rules: List[SortRule],
+    limit: int,
+    include_overflow_probe: bool = False,
+    *,
+    diversify_prices: bool = False,
+):
+    params: List[Any] = []
+    cte, table_name = get_scope_query_parts(scope_name, variant="full")
+    conditions = build_scope_filters(scope_name, filters, params)
+    where_clause = ""
+    if conditions:
+        where_clause = " WHERE " + " AND ".join(conditions)
+
+    order_parts = build_sort_order_parts(scope_name, sort_rules)
+    order_clause = ", ".join(order_parts)
     effective_limit = int(limit) + (1 if include_overflow_probe else 0)
-    query += f" LIMIT {effective_limit}"
+
+    if diversify_prices:
+        query = f"""
+        {cte}
+        SELECT *
+        FROM (
+            SELECT
+                ranked_base.*,
+                ROW_NUMBER() OVER (
+                    PARTITION BY ranked_base."__recency_bucket", ranked_base."Đơn giá trúng thầu (VND)"
+                    ORDER BY {order_clause}
+                ) AS "__price_rank"
+            FROM (
+                SELECT
+                    {table_name}.*,
+                    CASE
+                        WHEN "__approval_date" >= (CURRENT_DATE - INTERVAL '12 months') THEN 0
+                        ELSE 1
+                    END AS "__recency_bucket"
+                FROM {table_name}
+                {where_clause}
+            ) ranked_base
+        ) ranked
+        ORDER BY "__recency_bucket" ASC, "__price_rank" ASC, {order_clause}
+        LIMIT {effective_limit}
+        """
+    else:
+        query = f"{cte} SELECT * FROM {table_name}{where_clause} ORDER BY {order_clause} LIMIT {effective_limit}"
+
     return query, params
+
+
+def build_total_count_query(scope_name: str, filters: Optional[FilterRequest]):
+    params: List[Any] = []
+    cte, table_name = get_scope_query_parts(scope_name, variant="full")
+    query = f"{cte} SELECT COUNT(*) AS total_count FROM {table_name}"
+    conditions = build_scope_filters(scope_name, filters, params)
+
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+
+    return query, params
+
+
+async def fetch_scope_total_count(
+    conn: asyncpg.Connection,
+    scope_name: str,
+    filters: Optional[FilterRequest],
+) -> int:
+    query, params = build_total_count_query(scope_name, filters)
+    return int(await conn.fetchval(query, *params) or 0)
+
+
+def allocate_full_search_limits(
+    *,
+    scope: str,
+    total_limit: int,
+    medicine_count: Optional[int] = None,
+    goods_count: Optional[int] = None,
+) -> Dict[str, int]:
+    safe_total_limit = max(1, int(total_limit))
+
+    if scope == "medicine":
+        return {"medicine": safe_total_limit}
+    if scope == "goods":
+        return {"goods": safe_total_limit}
+
+    med_count = max(0, int(medicine_count or 0))
+    goods_count = max(0, int(goods_count or 0))
+    base_split = max(1, safe_total_limit // 2)
+    total_available = med_count + goods_count
+
+    if total_available <= safe_total_limit:
+        return {
+            "medicine": med_count,
+            "goods": goods_count,
+        }
+
+    if med_count <= base_split and goods_count > base_split:
+        med_limit = med_count
+        goods_limit = min(goods_count, safe_total_limit - med_limit)
+        return {
+            "medicine": med_limit,
+            "goods": goods_limit,
+        }
+
+    if goods_count <= base_split and med_count > base_split:
+        goods_limit = goods_count
+        med_limit = min(med_count, safe_total_limit - goods_limit)
+        return {
+            "medicine": med_limit,
+            "goods": goods_limit,
+        }
+
+    return {
+        "medicine": base_split,
+        "goods": safe_total_limit - base_split,
+    }
 
 
 def get_scope_query_parts(scope_name: str, variant: Literal["full", "preview"] = "full"):
@@ -1315,6 +1513,8 @@ async def fetch_result_page(
     filters: Optional[FilterRequest],
     sort_rules: List[SortRule],
     limit: int,
+    *,
+    diversify_prices: bool = False,
 ) -> Dict[str, Any]:
     query, params = build_result_query(
         scope_name=scope_name,
@@ -1322,18 +1522,16 @@ async def fetch_result_page(
         sort_rules=sort_rules,
         limit=limit,
         include_overflow_probe=True,
+        diversify_prices=diversify_prices,
     )
     rows = await conn.fetch(query, *params)
     has_more = len(rows) > limit
     visible_rows = rows[:limit]
 
     if has_more:
-        count_meta = await fetch_preview_bucket_cached(
-            conn,
-            scope_name,
-            filters,
-            max(limit, PREVIEW_BUCKET_LIMIT),
-        )
+        count_query, count_params = build_total_count_query(scope_name, filters)
+        total_count = int(await conn.fetchval(count_query, *count_params) or 0)
+        count_meta = build_count_meta(total_count, exact=True)
     else:
         count_meta = build_count_meta(len(visible_rows), exact=True)
 
@@ -1458,6 +1656,10 @@ async def build_auth_config(
         request,
         is_authenticated=bool(user),
     )
+    full_search_payload = await build_full_search_quota_payload(
+        request,
+        user=user,
+    )
     require_auth_for_full_query = AUTH_REQUIRED_FOR_FULL_QUERY
     if ANONYMOUS_ACCESS_LEVEL == "full" and not user:
         require_auth_for_full_query = bool(quota_payload["anonymous_full_query_login_required"])
@@ -1473,6 +1675,7 @@ async def build_auth_config(
         "anonymous_single_char_numeric_only": ANONYMOUS_SINGLE_CHAR_NUMERIC_ONLY,
         "auth_transport": "cookie",
         **quota_payload,
+        **full_search_payload,
     }
 
 
@@ -1708,7 +1911,7 @@ async def forgot_password(request: Request, payload: ForgotPasswordRequest):
 
         return JSONResponse(content={
             "success": True,
-            "message": "Nếu email tồn tại trong hệ thống, chúng tôi đã gửi hướng dẫn đặt lại mật khẩu.",
+            "message": "Đã gửi email hướng dẫn đặt lại mật khẩu.",
         })
     except ValueError as exc:
         return validation_error_response(str(exc))
@@ -1811,17 +2014,54 @@ async def query_data(request: Request, payload: QueryRequest):
         pool = await ensure_db_pool()
         filters = payload.filters or FilterRequest()
         sort_rules = payload.sort or []
-        limit = max(1, min(payload.limit or 200, MAX_QUERY_LIMIT))
+        search_mode = payload.searchMode if payload.searchMode in {"standard", "full"} else "standard"
+        is_full_search = search_mode == "full"
+        requested_total_limit = max(1, min(int(payload.limit or MAX_QUERY_LIMIT), MAX_QUERY_LIMIT))
 
-        result = {"success": True}
+        if is_full_search:
+            limit = requested_total_limit
+        else:
+            limit = max(1, min(int(payload.limit or DEFAULT_QUERY_LIMIT), DEFAULT_QUERY_LIMIT))
+
+        result = {
+            "success": True,
+            "search_mode": search_mode,
+            "diversify_prices": not is_full_search,
+            "applied_limit_per_scope": limit,
+            "applied_total_limit": limit * 2 if payload.scope == "all" and not is_full_search else limit,
+        }
         count_parts: List[Dict[str, Any]] = []
         current_user: Optional[Dict[str, Any]] = None
 
         async with pool.acquire() as conn:
             current_user = await enforce_data_access_policy(conn, request, "full_query")
 
+            if is_full_search:
+                quota_snapshot = await get_full_search_usage_snapshot(request, current_user)
+                if quota_snapshot["remaining"] <= 0:
+                    raise HTTPException(status_code=429, detail=FULL_SEARCH_LIMIT_MESSAGE)
+
+                allocation = allocate_full_search_limits(
+                    scope=payload.scope,
+                    total_limit=requested_total_limit,
+                    medicine_count=await fetch_scope_total_count(conn, "medicine", filters) if payload.scope in ("all", "medicine") else None,
+                    goods_count=await fetch_scope_total_count(conn, "goods", filters) if payload.scope in ("all", "goods") else None,
+                )
+            else:
+                allocation = {
+                    "medicine": limit,
+                    "goods": limit,
+                }
+
             if payload.scope in ("all", "medicine"):
-                page = await fetch_result_page(conn, "medicine", filters, sort_rules, limit)
+                page = await fetch_result_page(
+                    conn,
+                    "medicine",
+                    filters,
+                    sort_rules,
+                    allocation["medicine"],
+                    diversify_prices=not is_full_search,
+                )
                 result["df1"] = page
                 count_parts.append({
                     "count": page["count"],
@@ -1829,12 +2069,33 @@ async def query_data(request: Request, payload: QueryRequest):
                 })
 
             if payload.scope in ("all", "goods"):
-                page = await fetch_result_page(conn, "goods", filters, sort_rules, limit)
+                page = await fetch_result_page(
+                    conn,
+                    "goods",
+                    filters,
+                    sort_rules,
+                    allocation["goods"],
+                    diversify_prices=not is_full_search,
+                )
                 result["df2"] = page
                 count_parts.append({
                     "count": page["count"],
                     "exact": page["count_exact"],
                 })
+
+            if is_full_search:
+                quota = await consume_full_search_usage(request, current_user)
+                result["full_search_daily_used"] = quota["used"]
+                result["full_search_daily_remaining"] = quota["remaining"]
+                result["applied_limit_per_scope"] = max(
+                    int(allocation.get("medicine", 0)),
+                    int(allocation.get("goods", 0)),
+                )
+                result["applied_total_limit"] = int(allocation.get("medicine", 0)) + int(allocation.get("goods", 0))
+                result["applied_scope_limits"] = {
+                    "medicine": int(allocation.get("medicine", 0)),
+                    "goods": int(allocation.get("goods", 0)),
+                }
 
             if current_user is None and ANONYMOUS_ACCESS_LEVEL == "full" and ANONYMOUS_FULL_QUERY_DAILY_LIMIT > 0:
                 quota = await consume_anonymous_full_query_usage(request)
