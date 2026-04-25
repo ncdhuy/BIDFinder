@@ -1130,6 +1130,7 @@ async function fetchQueryResults(
     }
 
     const searchMode = options?.searchMode === 'full' ? 'full' : 'standard';
+    window.BIDFinderAnalytics?.trackSearchSubmitted?.(queryRequest, { searchMode });
     const requestBody = {
         scope: queryRequest?.scope || 'all',
         filters: queryRequest?.filters || {},
@@ -1156,6 +1157,7 @@ async function fetchQueryResults(
         window.BIDFinderAuth?.applyAuthConfig?.(payload.auth);
     }
 
+    window.BIDFinderAnalytics?.trackSearchCompleted?.(payload);
     return payload;
 }
 
@@ -1185,7 +1187,12 @@ async function fetchQueryPreview(queryRequest, signal = null) {
         throw new Error(message);
     }
 
-    return response.json();
+    const payload = await response.json();
+    window.BIDFinderAnalytics?.track?.('search_preview_completed', {
+        scope: queryRequest?.scope || 'all',
+        total_count: Number(payload?.total || 0)
+    });
+    return payload;
 }
 
 function normalizeQueryResult(result) {
@@ -1286,6 +1293,10 @@ async function applyFilters(payload) {
         }
     } catch (err) {
         console.error('Filter failed:', err);
+        window.BIDFinderAnalytics?.track?.('search_failed', {
+            search_mode: 'standard',
+            error: err?.message || 'unknown'
+        });
         resetQueryResultMeta();
         updateResults([], [], { resetMiniFilters: true });
         hideLimitWarning();
@@ -1297,7 +1308,17 @@ async function applyFilters(payload) {
 
 async function triggerFullSearch() {
     const quota = getFullSearchQuotaState();
+    window.BIDFinderAnalytics?.track?.('full_search_clicked', {
+        quota_remaining: quota.remaining,
+        quota_limit: quota.limit,
+        quota_enabled: quota.enabled
+    });
     if (!quota.enabled || quota.remaining <= 0) {
+        window.BIDFinderAnalytics?.track?.('quota_limit_reached', {
+            feature: 'full_search',
+            quota_remaining: quota.remaining,
+            quota_limit: quota.limit
+        });
         alert(quota.message || 'Bạn đã dùng hết lượt full search hôm nay.');
         return;
     }
@@ -1327,6 +1348,10 @@ async function triggerFullSearch() {
             actionButton.textContent = 'Full search';
         }
         console.error('Full search failed:', error);
+        window.BIDFinderAnalytics?.track?.('search_failed', {
+            search_mode: 'full',
+            error: error?.message || 'unknown'
+        });
         if (error?.message) {
             alert(error.message);
         }
@@ -1702,6 +1727,10 @@ function initLandingShell() {
 
     const enterApp = () => {
         const mustLogin = window.BIDFinderAuth?.requiresDataAuth?.();
+        window.BIDFinderAnalytics?.track?.('enter_app_clicked', {
+            auth_required: Boolean(mustLogin),
+            authenticated: Boolean(window.BIDFinderAuth?.isAuthenticated?.())
+        });
 
         if (mustLogin && !window.BIDFinderAuth?.isAuthenticated()) {
             window.BIDFinderAuth?.requestIntent('enter-app');
@@ -1710,11 +1739,13 @@ function initLandingShell() {
         }
 
         syncLandingView('app');
+        window.BIDFinderAnalytics?.page?.({ view: 'app' });
         initializeAppData();
     };
 
     const goLanding = () => {
         syncLandingView('landing');
+        window.BIDFinderAnalytics?.page?.({ view: 'landing' });
         landingShell.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
@@ -3432,6 +3463,8 @@ function drawChart(key, config, data) {
 // ======== 2. METADATA
 let metadata = null;
 let appDataInitialized = false;
+let historyTimelineChart = null;
+let activeHistoryRangeDays = 30;
 
 function formatDuration(seconds) {
     const m = Math.floor(seconds / 60);
@@ -3468,6 +3501,160 @@ function formatHistoryBoxes(value) {
     return Number(value || 0).toLocaleString('vi-VN');
 }
 
+function getHistoryDayKey(value) {
+    const parsed = value instanceof Date ? new Date(value) : (value ? new Date(value) : null);
+    if (!parsed || Number.isNaN(parsed.getTime())) return null;
+    parsed.setHours(0, 0, 0, 0);
+    const year = parsed.getFullYear();
+    const month = String(parsed.getMonth() + 1).padStart(2, '0');
+    const day = String(parsed.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function buildHistoryTimelineData(timeline, rangeDays = 30) {
+    const countsByDay = new Map();
+    (Array.isArray(timeline) ? timeline : []).forEach((item) => {
+        const dayKey = getHistoryDayKey(item?.date);
+        if (!dayKey) return;
+        countsByDay.set(dayKey, Number(item?.count || 0));
+    });
+
+    const labels = [];
+    const values = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    for (let offset = rangeDays - 1; offset >= 0; offset -= 1) {
+        const date = new Date(today);
+        date.setDate(today.getDate() - offset);
+        const dayKey = getHistoryDayKey(date);
+        labels.push(date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }));
+        values.push(countsByDay.get(dayKey) || 0);
+    }
+
+    return { labels, values };
+}
+
+function destroyHistoryTimelineChart() {
+    if (historyTimelineChart) {
+        historyTimelineChart.destroy();
+        historyTimelineChart = null;
+    }
+}
+
+function updateHistoryRangeButtons() {
+    document.querySelectorAll('[data-history-range]').forEach((btn) => {
+        btn.classList.toggle('active', Number(btn.dataset.historyRange) === activeHistoryRangeDays);
+    });
+}
+
+function renderHistoryTimelineChart(timeline) {
+    const chartCanvas = document.getElementById('history-timeline-chart');
+    const emptyState = document.querySelector('#history-list .history-empty');
+    if (!chartCanvas) return;
+
+    const normalizedTimeline = Array.isArray(timeline) ? timeline.filter((item) => item?.date) : [];
+    if (!normalizedTimeline.length) {
+        destroyHistoryTimelineChart();
+        chartCanvas.hidden = true;
+        if (emptyState) emptyState.hidden = false;
+        return;
+    }
+
+    const { labels, values } = buildHistoryTimelineData(normalizedTimeline, activeHistoryRangeDays);
+    chartCanvas.hidden = false;
+    if (emptyState) emptyState.hidden = true;
+
+    destroyHistoryTimelineChart();
+
+    const ctx = chartCanvas.getContext('2d');
+    if (!ctx) return;
+
+    const gradient = ctx.createLinearGradient(0, 0, 0, chartCanvas.height || 280);
+    gradient.addColorStop(0, 'rgba(18, 116, 149, 0.24)');
+    gradient.addColorStop(1, 'rgba(18, 116, 149, 0.02)');
+
+    historyTimelineChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{
+                label: 'Số gói thầu được phê duyệt',
+                data: values,
+                borderColor: '#127495',
+                backgroundColor: gradient,
+                fill: true,
+                tension: 0.35,
+                cubicInterpolationMode: 'monotone',
+                spanGaps: true,
+                pointRadius: 0,
+                pointHoverRadius: 4,
+                pointHoverBackgroundColor: '#127495',
+                pointHoverBorderColor: '#ffffff',
+                pointHoverBorderWidth: 2,
+                borderWidth: 3
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                mode: 'index',
+                intersect: false
+            },
+            plugins: {
+                legend: {
+                    display: false
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(15, 34, 48, 0.92)',
+                    titleColor: '#ffffff',
+                    bodyColor: '#e8f2f6',
+                    displayColors: false,
+                    padding: 12,
+                    callbacks: {
+                        title(items) {
+                            return items?.[0]?.label || '';
+                        },
+                        label(context) {
+                            return `${Number(context.parsed?.y || 0).toLocaleString('vi-VN')} gói thầu`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: {
+                        display: false
+                    },
+                    ticks: {
+                        color: '#6f8594',
+                        maxRotation: 0,
+                        autoSkip: true,
+                        maxTicksLimit: 8
+                    },
+                    border: {
+                        color: 'rgba(191, 214, 223, 0.8)'
+                    }
+                },
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        color: '#6f8594',
+                        precision: 0
+                    },
+                    grid: {
+                        color: 'rgba(213, 226, 231, 0.78)'
+                    },
+                    border: {
+                        color: 'rgba(191, 214, 223, 0.8)'
+                    }
+                }
+            }
+        }
+    });
+}
+
 async function loadMetadata() {
     if (!requireAuthenticatedSession('login', 'metadata')) {
         metadata = null;
@@ -3496,10 +3683,11 @@ function showHistoryModal() {
     if (!requireAuthenticatedSession('login', 'metadata')) return;
 
     const modal = document.getElementById('history-modal');
-    const hasData = metadata?.success && metadata?.history?.length > 0;
+    const hasData = Array.isArray(metadata?.approval_timeline) && metadata.approval_timeline.length > 0;
+    updateHistoryRangeButtons();
     
     if (hasData) {
-        renderHistoryData(metadata.history);
+        renderHistoryData(metadata.approval_timeline);
     } else {
         renderEmptyHistory();
     }
@@ -3508,57 +3696,12 @@ function showHistoryModal() {
     feather.replace();
 }
 
-function renderHistoryData(history) {
-    const sortedHistory = [...history]
-        .sort((a, b) => getHistorySortTimestamp(b) - getHistorySortTimestamp(a));
-    const latestRun = sortedHistory[0];
-    const historyList = document.getElementById('history-list');
-    const fragment = document.createDocumentFragment();
-
-    sortedHistory.forEach((run) => {
-        const item = document.createElement('div');
-        item.className = 'history-item';
-
-        const info = document.createElement('div');
-        const dateTime = document.createElement('div');
-        dateTime.className = 'history-datetime';
-        dateTime.textContent = formatHistoryDateTime(run.end_time || run.start_time);
-        info.appendChild(dateTime);
-
-        const boxes = document.createElement('div');
-        boxes.className = 'history-boxes';
-        boxes.textContent = formatHistoryBoxes(run.boxes_selected);
-
-        item.appendChild(info);
-        item.appendChild(boxes);
-        fragment.appendChild(item);
-    });
-
-    const latestRunTime = latestRun?.end_time || latestRun?.start_time;
-    document.getElementById('modal-last-update').textContent = formatHistoryDateTime(latestRunTime);
-    document.getElementById('modal-freshness').textContent = latestRunTime ? formatRelative(latestRunTime) : '--';
-    document.getElementById('modal-boxes-total').textContent = formatHistoryBoxes(latestRun?.boxes_selected);
-    
-    historyList.replaceChildren(fragment);
+function renderHistoryData(historyTimeline) {
+    renderHistoryTimelineChart(historyTimeline || []);
 }
 
 function renderEmptyHistory() {
-    document.getElementById('modal-last-update').textContent = 'Chưa có dữ liệu';
-    document.getElementById('modal-freshness').textContent = '--';
-    document.getElementById('modal-boxes-total').textContent = '0';
-    const historyList = document.getElementById('history-list');
-    const wrapper = document.createElement('div');
-    wrapper.className = 'history-empty';
-
-    const icon = document.createElement('i');
-    icon.setAttribute('data-feather', 'clock');
-
-    const text = document.createElement('p');
-    text.textContent = 'Chưa có lịch sử cập nhật dữ liệu';
-
-    wrapper.appendChild(icon);
-    wrapper.appendChild(text);
-    historyList.replaceChildren(wrapper);
+    renderHistoryTimelineChart([]);
 }
 
 // ============================== 
@@ -4090,6 +4233,16 @@ function initModalEvents() {
     document.querySelector('.history-overlay')?.addEventListener('click', () => {
         document.getElementById('history-modal').classList.remove('show');
     });
+
+    document.querySelectorAll('[data-history-range]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const nextRange = Number(btn.dataset.historyRange || 30);
+            if (!Number.isFinite(nextRange) || nextRange <= 0) return;
+            activeHistoryRangeDays = nextRange;
+            updateHistoryRangeButtons();
+            renderHistoryTimelineChart(metadata?.approval_timeline || []);
+        });
+    });
 }
 
 function initTabSwitching() {
@@ -4280,6 +4433,11 @@ function exportTableToExcel(tableId) {
 
     const filename = generateExportFilename(filenameSuffix);
     XLSX.writeFile(wb, filename);
+    window.BIDFinderAnalytics?.track?.('export_clicked', {
+        table_id: tableId,
+        row_count: tableData.length,
+        visible_column_count: headerOrder.length
+    });
     console.log(`✅ Exported ${tableData.length} records from ${tableId} to ${filename}`);
 }
 

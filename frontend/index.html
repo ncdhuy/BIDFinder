@@ -2,7 +2,7 @@
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://accounts.google.com https://cdn.jsdelivr.net https://cdn.sheetjs.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com data:; connect-src 'self' http://127.0.0.1:8000 https://bidfinder.onrender.com https://accounts.google.com; frame-src https://accounts.google.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self' https://accounts.google.com;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://accounts.google.com https://cdn.jsdelivr.net https://cdn.sheetjs.com https://us-assets.i.posthog.com https://eu-assets.i.posthog.com https://app-assets.i.posthog.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com data:; connect-src 'self' http://127.0.0.1:8000 https://bidfinder.onrender.com https://accounts.google.com https://us.i.posthog.com https://eu.i.posthog.com https://app.posthog.com; frame-src https://accounts.google.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self' https://accounts.google.com;">
     <meta name="referrer" content="strict-origin-when-cross-origin">
     <title>BIDFinder - Hệ thống quản lý dữ liệu đấu thầu y tế</title>
     <link rel="stylesheet" href="style.css">
@@ -806,24 +806,24 @@
                 </button>
             </div>
             <div class="history-body">
-                <div class="history-summary">
-                    <div class="summary-item">
-                        <label>Lần cập nhật gần nhất</label>
-                        <div id="modal-last-update" class="summary-value">Đang tải...</div>
+                <div class="history-chart-shell">
+                    <div class="history-chart-toolbar">
+                        <div class="history-chart-copy">
+                            <strong>Số gói thầu được phê duyệt theo ngày</strong>
+                            <span>Xem xu hướng theo khoảng thời gian gần đây.</span>
+                        </div>
+                        <div class="history-range-switch" role="tablist" aria-label="Chọn khoảng thời gian">
+                            <button class="history-range-btn active" type="button" data-history-range="30">30 ngày</button>
+                            <button class="history-range-btn" type="button" data-history-range="90">90 ngày</button>
+                            <button class="history-range-btn" type="button" data-history-range="180">180 ngày</button>
+                        </div>
                     </div>
-                    <div class="summary-item">
-                        <label>Trạng thái</label>
-                        <div id="modal-freshness" class="summary-value">Đang tải...</div>
-                    </div>
-                    <div class="summary-item">
-                        <label>Số gói thầu đã xử lý</label>
-                        <div id="modal-boxes-total" class="summary-value">Đang tải...</div>
-                    </div>
-                </div>
-                <div id="history-list" class="history-list">
-                    <div class="history-empty">
-                        <i data-feather="clock"></i>
-                        <p>Chưa có lịch sử cập nhật</p>
+                    <div id="history-list" class="history-chart-container">
+                        <canvas id="history-timeline-chart" aria-label="Biểu đồ số gói thầu được phê duyệt theo ngày"></canvas>
+                        <div class="history-empty">
+                            <i data-feather="clock"></i>
+                            <p>Chưa có dữ liệu lịch sử phê duyệt</p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -839,6 +839,8 @@
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="analytics-config.js"></script>
+    <script src="analytics.js"></script>
     <script src="auth.js"></script>
     <script src="search-form.js"></script>
     

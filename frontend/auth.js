@@ -853,6 +853,13 @@
     applyAuthConfig(payload.auth || state.config);
     renderUserState();
     closeAuthModal({ clearIntent: false });
+    window.BIDFinderAnalytics?.identify?.(state.user);
+    window.BIDFinderAnalytics?.track?.('auth_success', {
+      source: source || 'unknown',
+      auth_provider: state.user?.auth_provider || source || 'unknown',
+      has_work_unit: Boolean(state.user?.work_unit),
+      has_position: Boolean(state.user?.position)
+    });
 
     const completedIntent = state.pendingIntent;
     state.pendingIntent = null;
@@ -866,6 +873,12 @@
   }
 
   function clearSession({ emitEvent = true, openLogin = false, reason = 'logout', alertMessage = '' } = {}) {
+    if (emitEvent) {
+      window.BIDFinderAnalytics?.track?.('auth_session_cleared', {
+        reason
+      });
+    }
+    window.BIDFinderAnalytics?.reset?.();
     saveToken('');
     setAuthHint(false);
     state.user = null;
@@ -904,6 +917,7 @@
       setAuthHint(true);
       applyAuthConfig(payload.auth || state.config);
       renderUserState();
+      window.BIDFinderAnalytics?.identify?.(state.user);
       return true;
     } catch (err) {
       setAuthHint(false);
@@ -1306,6 +1320,7 @@
     bindEvents();
     renderUserState();
     await loadAuthConfig();
+    window.BIDFinderAnalytics?.init?.();
     state.resetPasswordToken = readResetPasswordTokenFromUrl();
     syncGuestViewHeight();
 

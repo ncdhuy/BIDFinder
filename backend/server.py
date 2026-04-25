@@ -2263,14 +2263,51 @@ async def get_metadata(request: Request):
                 FROM run_sessions
                 WHERE end_time IS NOT NULL
             """)
+            approval_rows = await conn.fetch("""
+                SELECT
+                    approval_date,
+                    COUNT(*)::INT AS package_count
+                FROM (
+                    SELECT DISTINCT
+                        COALESCE(
+                            ngay_phe_duyet_date,
+                            CASE
+                                WHEN ngay_phe_duyet ~ '^\\d{2}/\\d{2}/\\d{4}$' THEN TO_DATE(ngay_phe_duyet, 'DD/MM/YYYY')
+                                ELSE NULL
+                            END
+                        ) AS approval_date,
+                        ma_tbmt,
+                        so_qd,
+                        version
+                    FROM package_metadata
+                ) approvals
+                WHERE approval_date IS NOT NULL
+                  AND approval_date >= CURRENT_DATE - INTERVAL '365 days'
+                GROUP BY approval_date
+                ORDER BY approval_date ASC
+            """)
 
         history = clean_records(rows)
+        approval_timeline = [
+            {
+                "date": row["approval_date"].isoformat() if row["approval_date"] else None,
+                "count": int(row["package_count"] or 0),
+            }
+            for row in approval_rows
+            if row["approval_date"]
+        ]
         if not history:
-            return JSONResponse(content={"success": False, "message": "Chưa có lịch sử cập nhật", "history": []})
+            return JSONResponse(content={
+                "success": False,
+                "message": "Chưa có lịch sử cập nhật",
+                "history": [],
+                "approval_timeline": approval_timeline,
+            })
 
         return JSONResponse(content={
             "success": True,
             "history": history,
+            "approval_timeline": approval_timeline,
             "last_run": history[0],
             "total_runs": int(total_runs or 0)
         })
