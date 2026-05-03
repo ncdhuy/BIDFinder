@@ -144,6 +144,17 @@ PREVIEW_CACHE_TTL_SECONDS = max(1, int(os.getenv("PREVIEW_CACHE_TTL_SECONDS", "1
 AUTOCOMPLETE_CACHE_TTL_SECONDS = max(1, int(os.getenv("AUTOCOMPLETE_CACHE_TTL_SECONDS", "20")))
 CACHE_MAX_ENTRIES = max(50, int(os.getenv("CACHE_MAX_ENTRIES", "500")))
 SERVER_ERROR_MESSAGE = "Hệ thống đang bận hoặc gặp lỗi nội bộ. Vui lòng thử lại sau."
+DRUG_GROUP_UNKNOWN = "UNKNOWN"
+DRUG_GROUP_CANONICAL = ("BDG", "N1", "N2", "N3", "N4", "N5")
+DRUG_GROUP_UI_OPTIONS = [
+    {"value": "BDG", "label": "Biệt dược gốc"},
+    {"value": "N1", "label": "Nhóm 1"},
+    {"value": "N2", "label": "Nhóm 2"},
+    {"value": "N3", "label": "Nhóm 3"},
+    {"value": "N4", "label": "Nhóm 4"},
+    {"value": "N5", "label": "Nhóm 5"},
+    {"value": DRUG_GROUP_UNKNOWN, "label": "Không xác định"},
+]
 APP_TIMEZONE_NAME = os.getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh").strip() or "Asia/Ho_Chi_Minh"
 try:
     APP_TIMEZONE = ZoneInfo(APP_TIMEZONE_NAME)
@@ -189,6 +200,7 @@ WITH df1_full AS (
         m.dang_bao_che AS "Dạng bào chế",
         m.quy_cach AS "Quy cách",
         m.nhom_thuoc AS "Nhóm thuốc",
+        COALESCE(m.nhom_thuoc_filter, ARRAY[]::TEXT[]) AS "__drug_group_filter",
         m.han_dung AS "Hạn dùng",
         m.so_dk_gpnk AS "GĐKLH hoặc GPNK",
         m.co_so_san_xuat AS "Cơ sở sản xuất",
@@ -323,6 +335,7 @@ WITH df1_preview AS (
         m.dang_bao_che AS "Dạng bào chế",
         m.quy_cach AS "Quy cách",
         m.nhom_thuoc AS "Nhóm thuốc",
+        COALESCE(m.nhom_thuoc_filter, ARRAY[]::TEXT[]) AS "__drug_group_filter",
         m.so_dk_gpnk AS "GĐKLH hoặc GPNK",
         m.don_vi_tinh AS "Đơn vị tính",
         m.co_so_san_xuat AS "Cơ sở sản xuất",
@@ -436,7 +449,7 @@ class FilterRequest(BaseModel):
     route: Optional[TokenFilter] = None
     dosageForm: Optional[TokenFilter] = None
     specification: Optional[TokenFilter] = None
-    drugGroup: Optional[TokenFilter] = None
+    drugGroup: Optional[Any] = None
     regNo: Optional[TokenFilter] = None
     unit: Optional[TokenFilter] = None
     manufacturer: Optional[TokenFilter] = None
@@ -589,11 +602,11 @@ FIELD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "autocomplete": True,
     },
     "drugGroup": {
-        "type": "token",
+        "type": "drug_group",
         "medicine_column": '"Nhóm thuốc"',
         "goods_column": None,
         "goods_blob_fallback": '"Search blob"',
-        "autocomplete": True,
+        "options": DRUG_GROUP_UI_OPTIONS,
     },
     "regNo": {
         "type": "token",
@@ -734,7 +747,7 @@ def clean_records(records):
     for record in records:
         normalized = {}
         for key, value in dict(record).items():
-            if key in {"__price_rank", "__recency_bucket"}:
+            if key in {"__price_rank", "__recency_bucket", "__drug_group_filter"}:
                 continue
             normalized[key] = clean_value(value)
         cleaned_records.append(normalized)
@@ -1038,6 +1051,95 @@ def build_token_condition(column: str, token_filter: TokenFilter, params: List[A
     return " AND ".join(clauses) if clauses else None
 
 
+def normalize_drug_group_filter_values(value: Any) -> List[str]:
+    raw_values: List[str] = []
+    if isinstance(value, list):
+        raw_values = value
+    elif isinstance(value, dict) and isinstance(value.get("tokens"), list):
+        raw_values = [item.get("value", "") for item in value["tokens"] if isinstance(item, dict)]
+    elif isinstance(value, TokenFilter):
+        raw_values = [item.value for item in value.tokens]
+
+    normalized: List[str] = []
+    labels = {
+        "BIET DUOC GOC": "BDG",
+        "BIỆT DƯỢC GỐC": "BDG",
+        "NHOM 1": "N1",
+        "NHÓM 1": "N1",
+        "NHOM 2": "N2",
+        "NHÓM 2": "N2",
+        "NHOM 3": "N3",
+        "NHÓM 3": "N3",
+        "NHOM 4": "N4",
+        "NHÓM 4": "N4",
+        "NHOM 5": "N5",
+        "NHÓM 5": "N5",
+        "KHONG XAC DINH": DRUG_GROUP_UNKNOWN,
+        "KHÔNG XÁC ĐỊNH": DRUG_GROUP_UNKNOWN,
+    }
+    allowed = set(DRUG_GROUP_CANONICAL) | {DRUG_GROUP_UNKNOWN}
+
+    for item in raw_values:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        upper = " ".join(text.upper().split())
+        value = labels.get(upper, upper)
+        if value in allowed and value not in normalized:
+            normalized.append(value)
+    return normalized
+
+
+def build_medicine_drug_group_condition(value: Any, params: List[Any]) -> Optional[str]:
+    selected = normalize_drug_group_filter_values(value)
+    canonical = [item for item in selected if item in DRUG_GROUP_CANONICAL]
+    include_unknown = DRUG_GROUP_UNKNOWN in selected
+    clauses = []
+
+    if canonical:
+        p = next_param(params, canonical)
+        clauses.append(f'"__drug_group_filter" && {p}::TEXT[]')
+
+    if include_unknown:
+        p = next_param(params, list(DRUG_GROUP_CANONICAL))
+        clauses.append(f'NOT ("__drug_group_filter" && {p}::TEXT[])')
+
+    if not clauses:
+        return None
+    return "(" + " OR ".join(clauses) + ")"
+
+
+def build_goods_drug_group_condition(blob_col: str, value: Any, params: List[Any]) -> Optional[str]:
+    selected = normalize_drug_group_filter_values(value)
+    canonical = [item for item in selected if item in DRUG_GROUP_CANONICAL]
+    if not canonical:
+        return "FALSE" if DRUG_GROUP_UNKNOWN in selected else None
+
+    pattern_map = {
+        "BDG": ["%BDG%", "%BGD%", "% BD %", "%Biệt dược%", "%Biet duoc%", "%G2%"],
+        "N1": ["%N1%", "%N 1%", "%G1N1%", "%G1 N1%", "%G1 Nhóm 1%"],
+        "N2": ["%N2%", "%N 2%", "%G1N2%", "%G1 N2%", "%G1 Nhóm 2%"],
+        "N3": ["%N3%", "%N 3%", "%G1N3%", "%G1 N3%", "%G1 Nhóm 3%"],
+        "N4": ["%N4%", "%N 4%", "%G1N4%", "%G1 N4%", "%G1 Nhóm 4%"],
+        "N5": ["%N5%", "%N 5%", "%G1N5%", "%G1 N5%", "%G1 Nhóm 5%"],
+    }
+    parts = []
+    for item in canonical:
+        item_parts = []
+        for pattern in pattern_map[item]:
+            p = next_param(params, pattern)
+            item_parts.append(f"{blob_col} ILIKE {p}")
+        if item.startswith("N"):
+            number = item[1]
+            p = next_param(
+                params,
+                rf"(nhóm|nhom)\s*([1-5]\s*[,;/]\s*)*{number}(\s*[,;/]\s*[1-5])*([^0-9]|$)",
+            )
+            item_parts.append(f"{blob_col} ~* {p}")
+        parts.append("(" + " OR ".join(item_parts) + ")")
+    return "(" + " OR ".join(parts) + ")"
+
+
 def get_column_for_scope(field_name: str, scope_name: str) -> Optional[str]:
     conf = FIELD_REGISTRY.get(field_name)
     if not conf:
@@ -1071,7 +1173,16 @@ def build_scope_filters(scope_name: str, filters: Optional[FilterRequest], param
         field_type = conf["type"]
         column = get_column_for_scope(field_name, scope_name)
 
-        if field_type == "token":
+        if field_type == "drug_group":
+            if scope_name == "medicine":
+                cond = build_medicine_drug_group_condition(field_value, params)
+            else:
+                blob_col = get_blob_fallback_for_scope(field_name, scope_name)
+                cond = build_goods_drug_group_condition(blob_col, field_value, params) if blob_col else None
+            if cond:
+                conditions.append(cond)
+
+        elif field_type == "token":
             if column:
                 cond = build_token_condition(column, field_value, params)
                 if cond:
@@ -1412,6 +1523,8 @@ async def fetch_autocomplete_suggestions(conn, req: AutocompleteRequest, scope_n
 
     seen = set()
     results: List[str] = []
+    candidate_limit = max(30, int(req.limit or 10) * 8)
+    blob_candidate_limit = max(60, int(req.limit or 10) * 10)
 
     def push(val: Any):
         text = normalize_ws(val)
@@ -1429,15 +1542,17 @@ async def fetch_autocomplete_suggestions(conn, req: AutocompleteRequest, scope_n
             p = next_param(params, f"%{keyword}%")
             q = f"""
             {cte}
-            SELECT DISTINCT {med_col} AS suggestion
+            SELECT {med_col} AS suggestion
             FROM {table_name}
             WHERE {" AND ".join(conditions + [f"{med_col} IS NOT NULL", f"TRIM({med_col}) <> ''", f"{med_col} ILIKE {p}"])}
-            ORDER BY suggestion
-            LIMIT {max(10, int(req.limit or 10))}
+            LIMIT {candidate_limit}
             """
             rows = await conn.fetch(q, *params)
             for row in rows:
                 push(row["suggestion"])
+                if len(results) >= int(req.limit or 10):
+                    await set_cached_payload(autocomplete_cache, cache_key, results, AUTOCOMPLETE_CACHE_TTL_SECONDS)
+                    return results
 
     if scope_name == "goods":
         goods_col = conf.get("goods_column")
@@ -1448,29 +1563,34 @@ async def fetch_autocomplete_suggestions(conn, req: AutocompleteRequest, scope_n
             p = next_param(params_goods, f"%{keyword}%")
             q = f"""
             {cte}
-            SELECT DISTINCT {goods_col} AS suggestion
+            SELECT {goods_col} AS suggestion
             FROM {table_name}
             WHERE {" AND ".join(conditions + [f"{goods_col} IS NOT NULL", f"TRIM({goods_col}) <> ''", f"{goods_col} ILIKE {p}"])}
-            ORDER BY suggestion
-            LIMIT {max(10, int(req.limit or 10))}
+            LIMIT {candidate_limit}
             """
             rows = await conn.fetch(q, *params_goods)
             for row in rows:
                 push(row["suggestion"])
+                if len(results) >= int(req.limit or 10):
+                    await set_cached_payload(autocomplete_cache, cache_key, results, AUTOCOMPLETE_CACHE_TTL_SECONDS)
+                    return results
 
         if blob_col:
             params_blob = list(params)
             p = next_param(params_blob, f"%{keyword}%")
             q = f"""
             {cte}
-            SELECT DISTINCT {blob_col} AS suggestion
+            SELECT {blob_col} AS suggestion
             FROM {table_name}
             WHERE {" AND ".join(conditions + [f"{blob_col} IS NOT NULL", f"TRIM({blob_col}) <> ''", f"{blob_col} ILIKE {p}"])}
-            LIMIT {max(20, int(req.limit or 10) * 3)}
+            LIMIT {blob_candidate_limit}
             """
             rows = await conn.fetch(q, *params_blob)
             for row in rows:
                 push(extract_goods_snippet(row["suggestion"], keyword))
+                if len(results) >= int(req.limit or 10):
+                    await set_cached_payload(autocomplete_cache, cache_key, results, AUTOCOMPLETE_CACHE_TTL_SECONDS)
+                    return results
 
     await set_cached_payload(autocomplete_cache, cache_key, results, AUTOCOMPLETE_CACHE_TTL_SECONDS)
     return results
@@ -2162,20 +2282,57 @@ async def preview_query(request: Request, payload: QueryPreviewRequest):
         return internal_error_response()
 
 
+@app.get("/api/warmup")
+async def warmup_database(request: Request):
+    limited = await enforce_rate_limit(request, "warmup", METADATA_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    started = time.perf_counter()
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            await enforce_data_access_policy(conn, request, "metadata")
+            query_started = time.perf_counter()
+            await conn.fetchval("SELECT 1")
+
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        query_ms = int((time.perf_counter() - query_started) * 1000)
+        return JSONResponse(content={
+            "success": True,
+            "elapsed_ms": elapsed_ms,
+            "query_ms": query_ms,
+            "suspected_wake": elapsed_ms >= 1000,
+        })
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        log_server_exception("warmup_database failed", exc)
+        return internal_error_response()
+
+
 @app.post("/api/autocomplete")
 async def autocomplete(request: Request, payload: AutocompleteRequest):
+    started = time.perf_counter()
     limited = await enforce_rate_limit(request, "autocomplete", AUTOCOMPLETE_RATE_LIMIT_PER_MINUTE)
     if limited:
         return limited
 
     try:
+        timings: Dict[str, int] = {}
+        pool_started = time.perf_counter()
         pool = await ensure_db_pool()
+        timings["pool_ms"] = int((time.perf_counter() - pool_started) * 1000)
         keyword = (payload.keyword or "").strip()
         if len(keyword) < 1:
             return JSONResponse(content={
                 "success": True,
                 "field": payload.field,
-                "data": []
+                "data": [],
+                "timing_ms": {
+                    "total": int((time.perf_counter() - started) * 1000),
+                    **timings,
+                },
             })
 
         raw_filters = payload.filters or {}
@@ -2205,8 +2362,11 @@ async def autocomplete(request: Request, payload: AutocompleteRequest):
 
         push(keyword)
 
+        db_started = time.perf_counter()
         async with pool.acquire() as conn:
+            auth_started = time.perf_counter()
             user = await enforce_data_access_policy(conn, request, "autocomplete")
+            timings["auth_ms"] = int((time.perf_counter() - auth_started) * 1000)
 
             if (
                 user is None
@@ -2220,17 +2380,26 @@ async def autocomplete(request: Request, payload: AutocompleteRequest):
                 )
 
             if req.scope in ("all", "medicine"):
+                medicine_started = time.perf_counter()
                 for item in await fetch_autocomplete_suggestions(conn, req, "medicine"):
                     push(item)
+                timings["medicine_ms"] = int((time.perf_counter() - medicine_started) * 1000)
 
-            if req.scope in ("all", "goods"):
+            if len(merged) < int(req.limit or 10) and req.scope in ("all", "goods"):
+                goods_started = time.perf_counter()
                 for item in await fetch_autocomplete_suggestions(conn, req, "goods"):
                     push(item)
+                timings["goods_ms"] = int((time.perf_counter() - goods_started) * 1000)
+        timings["db_ms"] = int((time.perf_counter() - db_started) * 1000)
 
         return JSONResponse(content={
             "success": True,
             "field": payload.field,
-            "data": merged[: int(req.limit or 10)]
+            "data": merged[: int(req.limit or 10)],
+            "timing_ms": {
+                "total": int((time.perf_counter() - started) * 1000),
+                **timings,
+            },
         })
 
     except HTTPException as exc:

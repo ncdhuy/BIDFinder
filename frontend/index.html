@@ -151,19 +151,6 @@
                                         <div class="primary-tab-indicator"></div>
                                     </div>
 
-                                    <div class="data-scope-switcher" id="data-view-switcher">
-                                        <div class="data-scope-options">
-                                            <button class="scope-btn active" type="button" data-view="df1-panel" aria-selected="true">
-                                                <span class="scope-text">Thuốc</span>
-                                                <span class="scope-count" id="df1-count-switcher">0</span>
-                                            </button>
-                                            <button class="scope-btn" type="button" data-view="df2-panel" aria-selected="false">
-                                                <span class="scope-text">Hàng hóa</span>
-                                                <span class="scope-count" id="df2-count-switcher">0</span>
-                                            </button>
-                                            <div class="data-scope-slider" aria-hidden="true"></div>
-                                        </div>
-                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -182,19 +169,36 @@
                             </button>
                         </div>
                     </div>
-
-                    <div id="result-warning" class="result-warning" style="display: none;">
-                        <strong>Giới hạn kết quả tìm kiếm</strong><br>
-                        Vui lòng thu hẹp điều kiện tìm kiếm.
-                    </div>
-                    <div id="duplicate-warning" class="result-warning result-warning-duplicate" style="display: none;">
-                        <strong>Cảnh báo dữ liệu trùng</strong><br>
-                        Có dòng trùng trong kết quả hiện tại.
-                    </div>
                 </div>
                 
                 <!-- TAB 1: DATA TABLES -->
                 <div id="data-tab" class="tab-content active">
+                    <div class="result-table-tabs" id="data-view-switcher" role="tablist" aria-label="Chọn bảng kết quả">
+                        <button class="scope-btn result-table-tab active" type="button" data-view="df1-panel" aria-selected="true" role="tab">
+                            <span class="scope-icon" aria-hidden="true">
+                                💊
+                            </span>
+                            <span class="scope-text">Thuốc</span>
+                            <span class="scope-count" id="df1-count-switcher">0</span>
+                        </button>
+                        <button class="scope-btn result-table-tab" type="button" data-view="df2-panel" aria-selected="false" role="tab">
+                            <span class="scope-icon" aria-hidden="true">
+                                📦
+                            </span>
+                            <span class="scope-text">Hàng hóa</span>
+                            <span class="scope-count" id="df2-count-switcher">0</span>
+                        </button>
+                        <div class="workspace-status">
+                            <div id="result-warning" class="result-warning" style="display: none;">
+                                <strong>Giới hạn kết quả tìm kiếm</strong><br>
+                                Vui lòng thu hẹp điều kiện tìm kiếm.
+                            </div>
+                            <div id="duplicate-warning" class="result-warning result-warning-duplicate" style="display: none;">
+                                <strong>Cảnh báo dữ liệu trùng</strong><br>
+                                Có dòng trùng trong kết quả hiện tại.
+                            </div>
+                        </div>
+                    </div>
                     <!-- Bảng DF1 -->
                     <section class="data-section-vertical result-panel active" id="df1-panel">
                         <div class="data-card df1">

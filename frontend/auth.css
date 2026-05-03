@@ -59,23 +59,24 @@ body.auth-state-guest #open-login-nav {
 }
 
 .app-auth-btn {
-  min-height: 40px;
-  padding: 0 14px;
-  border: 1px solid var(--auth-border);
-  border-radius: var(--auth-radius);
-  background: #ffffff;
+  min-height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--auth-ink);
   font-family: inherit;
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
-  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+  transition: color 0.18s ease;
   margin-left: auto;
 }
 
 .app-auth-btn:hover {
-  background: #eef6fa;
-  border-color: #b6d0dc;
+  background: transparent;
+  border-color: transparent;
+  color: #0f5b77;
 }
 
 .app-auth-btn-danger {
@@ -699,7 +700,7 @@ body.auth-state-guest #open-login-nav {
   }
 
   .app-auth-btn {
-    flex: 1 1 0;
+    flex: 0 0 auto;
   }
 
   .auth-dialog {

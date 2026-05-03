@@ -1066,10 +1066,16 @@ class CustomSearchForm extends HTMLElement {
                             <h3>Nhóm thuốc</h3>
                             <p class="pane-desc"></p>
                             <div class="field">
-                                <div class="token-input-container" id="drug-group-container">
-                                <input type="text" placeholder="Nhập nhóm thuốc..." />
-                                </div>
-                                <input type="hidden" id="filter-drug-group" />
+                                <select id="filter-drug-group" multiple>
+                                    <option value="BDG">Biệt dược gốc</option>
+                                    <option value="N1">Nhóm 1</option>
+                                    <option value="N2">Nhóm 2</option>
+                                    <option value="N3">Nhóm 3</option>
+                                    <option value="N4">Nhóm 4</option>
+                                    <option value="N5">Nhóm 5</option>
+                                    <option value="UNKNOWN">Không xác định</option>
+                                </select>
+                                <div class="multi-select" data-for="filter-drug-group"></div>
                             </div>
                         </div>
 
@@ -1154,6 +1160,12 @@ class CustomSearchForm extends HTMLElement {
         this.createMultiSelectFromNative('filter-place', {
             placeholder: '-- Chọn địa điểm --',
             maxLabels: 2
+        });
+
+        this.createMultiSelectFromNative('filter-drug-group', {
+            placeholder: '-- Chọn nhóm thuốc --',
+            maxLabels: 3,
+            showSearch: false
         });
 
         const root = this.shadowRoot;
@@ -1316,7 +1328,7 @@ class CustomSearchForm extends HTMLElement {
         };
 
         selects.forEach((sel) => {
-            if (sel.id === 'filter-selection-method' || sel.id === 'filter-place') return;
+            if (sel.id === 'filter-selection-method' || sel.id === 'filter-place' || sel.id === 'filter-drug-group') return;
             sync(sel);
             sel.addEventListener("change", () => sync(sel));
         });
@@ -1335,7 +1347,7 @@ class CustomSearchForm extends HTMLElement {
         });
     }
 
-    createMultiSelectFromNative(selectId, { placeholder, maxLabels = 2 }) {
+    createMultiSelectFromNative(selectId, { placeholder, maxLabels = 2, showSearch = true }) {
         const root = this.shadowRoot;
         const sel = root.getElementById(selectId);
         const host = root.querySelector(`.multi-select[data-for="${selectId}"]`);
@@ -1373,12 +1385,16 @@ class CustomSearchForm extends HTMLElement {
         const popover = document.createElement('div');
         popover.className = 'multi-select-popover';
 
-        const searchWrap = document.createElement('div');
-        searchWrap.className = 'multi-select-search';
-        const search = document.createElement('input');
-        search.type = 'text';
-        search.placeholder = 'Tìm nhanh...';
-        searchWrap.appendChild(search);
+        let search = null;
+        if (showSearch) {
+            const searchWrap = document.createElement('div');
+            searchWrap.className = 'multi-select-search';
+            search = document.createElement('input');
+            search.type = 'text';
+            search.placeholder = 'Tìm nhanh...';
+            searchWrap.appendChild(search);
+            popover.appendChild(searchWrap);
+        }
 
         const list = document.createElement('div');
         list.className = 'multi-select-options';
@@ -1398,7 +1414,6 @@ class CustomSearchForm extends HTMLElement {
 
         footer.appendChild(btnClear);
         footer.appendChild(btnDone);
-        popover.appendChild(searchWrap);
         popover.appendChild(list);
         popover.appendChild(footer);
         host.appendChild(btn);
@@ -1460,7 +1475,7 @@ class CustomSearchForm extends HTMLElement {
                 btn.classList.remove('is-placeholder');
             }
 
-            if (host.classList.contains('open')) renderList(search.value, selectedSet);
+            if (host.classList.contains('open')) renderList(search?.value || '', selectedSet);
         };
 
         const open = () => {
@@ -1468,7 +1483,7 @@ class CustomSearchForm extends HTMLElement {
             root.querySelectorAll('.multi-select.open').forEach(el => el.classList.remove('open'));
             host.classList.add('open');
             btn.setAttribute('aria-expanded', 'true');
-            renderList(search.value, new Set(readSelectedValuesFromSelect()));
+            renderList(search?.value || '', new Set(readSelectedValuesFromSelect()));
         };
 
         const close = () => {
@@ -1507,10 +1522,12 @@ class CustomSearchForm extends HTMLElement {
         });
 
 
-        search.addEventListener('input', (e) => {
-            e.stopPropagation();
-            renderList(search.value, new Set(readSelectedValuesFromSelect()));
-        });
+        if (search) {
+            search.addEventListener('input', (e) => {
+                e.stopPropagation();
+                renderList(search.value, new Set(readSelectedValuesFromSelect()));
+            });
+        }
 
         list.addEventListener('change', (e) => {
             e.stopPropagation();
@@ -1556,6 +1573,7 @@ class CustomSearchForm extends HTMLElement {
         const applyBtn = root.getElementById('apply-filters-btn');
         const resetBtn = root.getElementById('reset-filters-btn');
         if (!applyBtn || !resetBtn) return;
+        if (applyBtn.dataset.loading === '1') return;
 
         const payload = this.collectFilterPayload();
         const filters = payload?.filters || {};
@@ -1569,6 +1587,26 @@ class CustomSearchForm extends HTMLElement {
         if (!hasAnyValue) {
             this.setPreviewResult({ idle: true });
         }
+    }
+
+    setApplyLoading(isLoading = false) {
+        const root = this.shadowRoot;
+        const applyBtn = root?.getElementById('apply-filters-btn');
+        const resetBtn = root?.getElementById('reset-filters-btn');
+        if (!applyBtn || !resetBtn) return;
+
+        if (isLoading) {
+            applyBtn.dataset.loading = '1';
+            applyBtn.dataset.defaultText = applyBtn.dataset.defaultText || applyBtn.textContent;
+            applyBtn.textContent = 'Đang tra cứu...';
+            applyBtn.disabled = true;
+            resetBtn.disabled = true;
+            return;
+        }
+
+        applyBtn.dataset.loading = '0';
+        applyBtn.textContent = applyBtn.dataset.defaultText || 'Áp dụng bộ lọc';
+        this.updateApplyButtonState();
     }
 
     hasAnyFilterValue(filters = {}) {
@@ -1603,7 +1641,7 @@ class CustomSearchForm extends HTMLElement {
                 bubbles: true,
                 composed: true
             }));
-        }, 280);
+        }, 30);
     }
 
     mountPreviewResult() {
@@ -1661,7 +1699,7 @@ class CustomSearchForm extends HTMLElement {
         }
     }
 
-    setPreviewResult({ idle = false, loading = false, total = null, totalLabel = '', exact = true, error = false } = {}) {
+    setPreviewResult({ idle = false, loading = false, warming = false, total = null, totalLabel = '', exact = true, error = false } = {}) {
         const root = this.shadowRoot;
         const previewEl = root?.getElementById('preview-result');
         if (!previewEl) return;
@@ -1675,7 +1713,9 @@ class CustomSearchForm extends HTMLElement {
         }
 
         if (loading) {
-            previewEl.textContent = 'Đang ước tính...';
+            previewEl.textContent = warming
+                ? 'Đang kết nối dữ liệu, lần đầu có thể mất vài giây...'
+                : 'Đang ước tính...';
             previewEl.classList.add('is-loading');
             return;
         }
@@ -1709,6 +1749,7 @@ class CustomSearchForm extends HTMLElement {
             applyBtn.addEventListener('click', () => {
                 if (applyBtn.disabled) return;
 
+                this.setApplyLoading(true);
                 const payload = this.collectFilterPayload();
                 this.dispatchEvent(new CustomEvent('apply-filters', {
                     detail: payload,
@@ -1739,7 +1780,7 @@ class CustomSearchForm extends HTMLElement {
                 if (manager.input) manager.input.value = '';
                 manager.renderTokens();
                 manager.syncToHiddenInput({ reason: 'reset' });
-                if (manager.closeDropdown) manager.closeDropdown();
+                if (manager.cancelPendingAutocomplete) manager.cancelPendingAutocomplete();
             });
         }
 
@@ -1754,7 +1795,8 @@ class CustomSearchForm extends HTMLElement {
 
         [
             ['filter-selection-method', '-- Chọn hình thức --'],
-            ['filter-place', '-- Chọn địa điểm --']
+            ['filter-place', '-- Chọn địa điểm --'],
+            ['filter-drug-group', '-- Chọn nhóm thuốc --']
         ].forEach(([id, placeholder]) => {
             const sel = root.getElementById(id);
             const host = root.querySelector(`.multi-select[data-for="${id}"]`);
@@ -1839,6 +1881,7 @@ class CustomSearchForm extends HTMLElement {
 
         setMultiValues('filter-selection-method', filters.selectionMethod || []);
         setMultiValues('filter-place', filters.place || []);
+        setMultiValues('filter-drug-group', Array.isArray(filters.drugGroup) ? filters.drugGroup : []);
 
         const validity = root.getElementById('filter-validity');
         if (validity) validity.value = filters.validity || '';
@@ -1875,6 +1918,7 @@ class CustomSearchForm extends HTMLElement {
             'filter-date-to',
             'filter-selection-method',
             'filter-place',
+            'filter-drug-group',
             'filter-validity'
         ];
 
@@ -1918,7 +1962,6 @@ class CustomSearchForm extends HTMLElement {
             { containerId: 'route-container', field: 'route', hiddenId: 'filter-route', label: 'Đường dùng', pane: 'route' },
             { containerId: 'dosage-form-container', field: 'dosageForm', hiddenId: 'filter-dosage-form', label: 'Dạng bào chế', pane: 'dosage' },
             { containerId: 'specification-container', field: 'specification', hiddenId: 'filter-specification', label: 'Quy cách đóng gói', pane: 'spec' },
-            { containerId: 'drug-group-container', field: 'drugGroup', hiddenId: 'filter-drug-group', label: 'Nhóm thuốc', pane: 'group' },
             { containerId: 'reg-no-container', field: 'regNo', hiddenId: 'filter-reg-no', label: 'Số đăng ký', pane: 'reg' },
             { containerId: 'unit-container', field: 'unit', hiddenId: 'filter-unit', label: 'Đơn vị tính', pane: 'unit' },
             { containerId: 'manufacturer-container', field: 'manufacturer', hiddenId: 'filter-manufacturer', label: 'Cơ sở sản xuất', pane: 'manu' },
@@ -1987,12 +2030,14 @@ class CustomSearchForm extends HTMLElement {
 
         const selectionMethod = getSelectedValues('filter-selection-method');
         const place = getSelectedValues('filter-place');
+        const drugGroup = getSelectedValues('filter-drug-group');
         const validity = root.getElementById('filter-validity')?.value?.trim();
         const dateFrom = root.getElementById('filter-date-from')?.value?.trim();
         const dateTo = root.getElementById('filter-date-to')?.value?.trim();
 
         if (selectionMethod.length) filters.selectionMethod = selectionMethod;
         if (place.length) filters.place = place;
+        if (drugGroup.length) filters.drugGroup = drugGroup;
         if (validity) filters.validity = validity;
         if (dateFrom) filters.dateFrom = dateFrom;
         if (dateTo) filters.dateTo = dateTo;
@@ -2076,7 +2121,8 @@ class CustomSearchForm extends HTMLElement {
 
         [
             { id: 'filter-selection-method', label: 'Hình thức LCNT', pane: 'method' },
-            { id: 'filter-place', label: 'Tỉnh/TP', pane: 'place' }
+            { id: 'filter-place', label: 'Tỉnh/TP', pane: 'place' },
+            { id: 'filter-drug-group', label: 'Nhóm thuốc', pane: 'group' }
         ].forEach(f => {
             const values = this.getNonEmptySelectedValues(f.id);
             if (values.length > 0) {
@@ -2164,7 +2210,7 @@ class CustomSearchForm extends HTMLElement {
                 manager.renderTokens();
                 manager.syncToHiddenInput({ reason: 'token-removed' });
                 }
-            } else if (['filter-selection-method', 'filter-place'].includes(id)) {
+            } else if (['filter-selection-method', 'filter-place', 'filter-drug-group'].includes(id)) {
                 const select = root.getElementById(id);
                 if (select) {
                 Array.from(select.options).forEach(o => { o.selected = false; });
@@ -2274,6 +2320,7 @@ class AdvancedFilterManager {
         this.input = this.container.querySelector('input');
         this.debounceTimer = null;
         this.abortController = null;
+        this.requestSeq = 0;
         this.cache = new Map();
         this.currentIndex = -1;
 
@@ -2300,6 +2347,7 @@ class AdvancedFilterManager {
 
             if (e.key === 'Enter') {
                 e.preventDefault();
+                this.cancelPendingAutocomplete();
 
                 if (this.currentIndex >= 0) {
                     const active = this.dropdown.querySelector(`li[data-index="${this.currentIndex}"]`);
@@ -2408,18 +2456,30 @@ class AdvancedFilterManager {
         this.resetDropdownScroll();
 
         if (query.length < 1) {
-            this.closeDropdown();
+            this.cancelPendingAutocomplete();
             return;
         }
 
         clearTimeout(this.debounceTimer);
-        this.debounceTimer = setTimeout(() => this.fetchData(query), 60);
+        this.renderDropdown([query], query);
+        this.debounceTimer = setTimeout(() => this.fetchData(query), 30);
+    }
+
+    cancelPendingAutocomplete() {
+        clearTimeout(this.debounceTimer);
+        this.requestSeq += 1;
+        if (this.abortController) {
+            this.abortController.abort();
+            this.abortController = null;
+        }
+        this.closeDropdown();
     }
 
 
     async fetchData(query) {
         if (this.abortController) this.abortController.abort();
         this.abortController = new AbortController();
+        const requestSeq = ++this.requestSeq;
 
         const auth = window.BIDFinderAuth;
         const config = auth?.getConfig?.() || {};
@@ -2449,6 +2509,7 @@ class AdvancedFilterManager {
 
         const cacheKey = JSON.stringify(payload);
         if (this.cache.has(cacheKey)) {
+            if (requestSeq !== this.requestSeq || this.input.value.trim() !== query) return;
             this.renderDropdown(this.cache.get(cacheKey), query);
             return;
         }
@@ -2488,7 +2549,11 @@ class AdvancedFilterManager {
             }
 
             const suggestions = Array.isArray(result?.data) ? result.data : [];
+            if (result?.timing_ms?.total >= 800) {
+                console.info('Autocomplete timing:', this.fieldName, result.timing_ms);
+            }
             this.cache.set(cacheKey, suggestions);
+            if (requestSeq !== this.requestSeq || this.input.value.trim() !== query) return;
             this.renderDropdown(suggestions, query);
         } catch (err) {
             if (err.name !== 'AbortError') {
@@ -2513,7 +2578,7 @@ class AdvancedFilterManager {
 
         this.input.value = '';
         this.currentIndex = -1;
-        this.closeDropdown();
+        this.cancelPendingAutocomplete();
         requestAnimationFrame(() => {
             this.input?.focus();
         });

@@ -1076,6 +1076,7 @@ let currentQueryRequest = {
     scope: 'all',
     filters: {}
 };
+let currentAppliedPreview = null;
 
 
 // ======== 1. APPLY
@@ -1087,6 +1088,16 @@ function buildQueryRequest(baseRequest = {}, overrides = {}) {
         filters: safeBase.filters && typeof safeBase.filters === 'object' ? { ...safeBase.filters } : {},
         ...overrides
     };
+}
+
+function stableStringify(value) {
+    if (Array.isArray(value)) {
+        return `[${value.map(stableStringify).join(',')}]`;
+    }
+    if (value && typeof value === 'object') {
+        return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`;
+    }
+    return JSON.stringify(value);
 }
 
 function hasActiveQueryFilters(queryRequest) {
@@ -1157,6 +1168,7 @@ async function fetchQueryResults(
         window.BIDFinderAuth?.applyAuthConfig?.(payload.auth);
     }
 
+    markDatabaseWarm();
     window.BIDFinderAnalytics?.trackSearchCompleted?.(payload);
     return payload;
 }
@@ -1188,11 +1200,81 @@ async function fetchQueryPreview(queryRequest, signal = null) {
     }
 
     const payload = await response.json();
+    markDatabaseWarm();
     window.BIDFinderAnalytics?.track?.('search_preview_completed', {
         scope: queryRequest?.scope || 'all',
         total_count: Number(payload?.total || 0)
     });
     return payload;
+}
+
+let dbWarmupPromise = null;
+let dbWarmupReadyUntil = 0;
+const DB_WARM_TTL_MS = 4 * 60 * 1000;
+
+function markDatabaseWarm() {
+    dbWarmupReadyUntil = Date.now() + DB_WARM_TTL_MS;
+}
+
+function isDatabaseRecentlyWarm() {
+    return Date.now() < dbWarmupReadyUntil;
+}
+
+function shouldWarmDatabase() {
+    const auth = window.BIDFinderAuth;
+    if (auth?.requiresDataAuth?.() && !auth?.isAuthenticated?.()) return false;
+    return true;
+}
+
+function warmupDatabase({ force = false } = {}) {
+    if (!shouldWarmDatabase()) return Promise.resolve({ skipped: true });
+    if (isDatabaseRecentlyWarm() && !force) return Promise.resolve({ ready: true });
+    if (dbWarmupPromise && !force) return dbWarmupPromise;
+
+    const startedAt = performance.now();
+    dbWarmupPromise = getAuthorizedFetch()(`${API_BASE_URL}/api/warmup`)
+        .then(async response => {
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok || payload?.success === false) {
+                throw new Error(payload?.message || payload?.error || `HTTP ${response.status}`);
+            }
+            markDatabaseWarm();
+            return {
+                ...payload,
+                client_elapsed_ms: Math.round(performance.now() - startedAt)
+            };
+        })
+        .catch(error => {
+            dbWarmupReadyUntil = 0;
+            throw error;
+        })
+        .finally(() => {
+            dbWarmupPromise = null;
+        });
+
+    return dbWarmupPromise;
+}
+
+async function waitForWarmupWithUi(searchForm, signal = null) {
+    if (isDatabaseRecentlyWarm() || !shouldWarmDatabase()) return;
+
+    try {
+        await warmupDatabase();
+    } catch (error) {
+        console.warn('Database warmup failed:', error);
+    }
+}
+
+function startWakeMessageTimer(searchForm, signal = null) {
+    const shouldShowWakeMessage = shouldWarmDatabase() && !isDatabaseRecentlyWarm();
+    if (!shouldShowWakeMessage) return () => {};
+
+    const timer = window.setTimeout(() => {
+        if (signal?.aborted) return;
+        searchForm?.setPreviewResult?.({ loading: true, warming: true });
+    }, 500);
+
+    return () => window.clearTimeout(timer);
 }
 
 function normalizeQueryResult(result) {
@@ -1288,6 +1370,15 @@ async function applyFilters(payload) {
 
         if (result.success) {
             handleQuerySuccess(result);
+            currentAppliedPreview = {
+                requestKey: stableStringify(currentQueryRequest),
+                payload: {
+                    total: Number(result?.total_count || 0),
+                    totalLabel: String(result?.total_count_label || Number(result?.total_count || 0).toLocaleString('vi-VN')),
+                    exact: result?.total_count_exact !== false
+                }
+            };
+            return result;
         } else {
             throw new Error(result.error || 'Query failed');
         }
@@ -1303,6 +1394,7 @@ async function applyFilters(payload) {
         if (err?.message) {
             alert(err.message);
         }
+        return null;
     }
 }
 
@@ -1439,6 +1531,7 @@ function hideLimitWarning() {
 function resetQueryResultMeta() {
     serverBaseDf1 = [];
     serverBaseDf2 = [];
+    currentAppliedPreview = null;
     currentQueryMeta = {
         df1HasMore: false,
         df2HasMore: false,
@@ -1488,8 +1581,7 @@ function refreshRenderedTables({ resetScroll = true, redrawCharts = true } = {})
     currentDisplayedDf1 = applyMiniFiltersToRows('standard-table', currentFilteredDf1);
     currentDisplayedDf2 = applyMiniFiltersToRows('extended-table', currentFilteredDf2);
 
-    document.getElementById('df1-count-switcher').textContent = currentDisplayedDf1.length;
-    document.getElementById('df2-count-switcher').textContent = currentDisplayedDf2.length;
+    updateScopeSwitcherCounts(currentDisplayedDf1.length, currentDisplayedDf2.length);
     updateDuplicateWarning(currentDisplayedDf1, currentDisplayedDf2);
     requestAnimationFrame(syncScopeSwitcherSlider);
 
@@ -1502,6 +1594,44 @@ function refreshRenderedTables({ resetScroll = true, redrawCharts = true } = {})
 
     if (redrawCharts) {
         drawCharts(currentFilteredDf1, currentFilteredDf2);
+    }
+}
+
+function updateScopeSwitcherCounts(df1Count, df2Count) {
+    const counts = {
+        'df1-panel': Number(df1Count || 0),
+        'df2-panel': Number(df2Count || 0)
+    };
+
+    const df1CountEl = document.getElementById('df1-count-switcher');
+    const df2CountEl = document.getElementById('df2-count-switcher');
+    if (df1CountEl) df1CountEl.textContent = counts['df1-panel'].toLocaleString('vi-VN');
+    if (df2CountEl) df2CountEl.textContent = counts['df2-panel'].toLocaleString('vi-VN');
+
+    document.querySelectorAll('.scope-btn').forEach(button => {
+        const view = button.getAttribute('data-view');
+        const count = counts[view] || 0;
+        button.classList.toggle('has-results', count > 0);
+        button.classList.toggle('is-empty', count <= 0);
+        button.dataset.count = String(count);
+        button.setAttribute('aria-label', `${button.querySelector('.scope-text')?.textContent || ''}: ${count.toLocaleString('vi-VN')} kết quả`);
+    });
+}
+
+function autoSwitchToAvailableResult() {
+    const activeButton = document.querySelector('.scope-btn.active');
+    const activeView = activeButton?.getAttribute('data-view') || 'df1-panel';
+    const shouldFavorDf2 = currentDisplayedDf2.length >= Math.max(20, currentDisplayedDf1.length * 5);
+    const shouldFavorDf1 = currentDisplayedDf1.length >= Math.max(20, currentDisplayedDf2.length * 5);
+
+    if (activeView === 'df1-panel' && currentDisplayedDf1.length === 0 && currentDisplayedDf2.length > 0) {
+        activateResultView('df2-panel', { animate: false });
+    } else if (activeView === 'df2-panel' && currentDisplayedDf2.length === 0 && currentDisplayedDf1.length > 0) {
+        activateResultView('df1-panel', { animate: false });
+    } else if (activeView === 'df1-panel' && currentDisplayedDf1.length > 0 && shouldFavorDf2) {
+        activateResultView('df2-panel', { animate: false });
+    } else if (activeView === 'df2-panel' && currentDisplayedDf2.length > 0 && shouldFavorDf1) {
+        activateResultView('df1-panel', { animate: false });
     }
 }
 
@@ -1518,6 +1648,10 @@ function updateResults(df1, df2, options = {}) {
         resetScroll: options.resetScroll !== false,
         redrawCharts: options.redrawCharts !== false
     });
+
+    if (options.autoSwitchToResults !== false) {
+        autoSwitchToAvailableResult();
+    }
 }
 
 function updateDuplicateWarning(df1Rows, df2Rows) {
@@ -1624,11 +1758,37 @@ function showPanel(panelId) {
         if (typeof searchForm?.activatePane === 'function') {
             searchForm.activatePane('drug', { focus: false });
         }
+        restoreAppliedFilterPreview(searchForm);
 
         requestAnimationFrame(() => {
             focusActiveFilterField();
             setTimeout(() => focusActiveFilterField(), 80);
         });
+    }
+}
+
+function getAppliedPreviewPayload() {
+    if (!hasActiveQueryFilters(currentQueryRequest)) return null;
+    if (currentAppliedPreview?.payload) return currentAppliedPreview.payload;
+
+    return {
+        total: Number(currentQueryMeta.totalCount || 0),
+        totalLabel: String(currentQueryMeta.totalCountLabel || Number(currentQueryMeta.totalCount || 0).toLocaleString('vi-VN')),
+        exact: currentQueryMeta.totalCountExact !== false
+    };
+}
+
+function restoreAppliedFilterPreview(searchForm) {
+    if (!searchForm || typeof searchForm.setPreviewResult !== 'function') return;
+    if (typeof searchForm.collectFilterPayload !== 'function') return;
+
+    const formRequest = buildQueryRequest(searchForm.collectFilterPayload());
+    const appliedRequest = buildQueryRequest(currentQueryRequest);
+    const sameFilters = stableStringify(formRequest) === stableStringify(appliedRequest);
+    const previewPayload = sameFilters ? getAppliedPreviewPayload() : null;
+
+    if (previewPayload) {
+        searchForm.setPreviewResult(previewPayload);
     }
 }
 
@@ -3670,6 +3830,7 @@ async function loadMetadata() {
         
         if (meta.success) {
             metadata = meta;
+            markDatabaseWarm();
             console.log('✅ Load metadata thành công:', metadata);
         } else {
             console.warn('⚠️ API trả về success=false:', meta.message);
@@ -4263,7 +4424,7 @@ function initTabSwitching() {
             document.getElementById(tabId)?.classList.add('active');
 
             if (dataViewSwitcher) {
-                dataViewSwitcher.style.display = tabId === CONFIG.tabs.data ? 'inline-flex' : 'none';
+                dataViewSwitcher.style.display = tabId === CONFIG.tabs.data ? 'flex' : 'none';
             }
 
             syncPrimaryTabIndicator();
@@ -4278,35 +4439,44 @@ function initTabSwitching() {
 
 function initResultViewSwitching() {
     const viewButtons = document.querySelectorAll('.scope-btn');
-    const resultPanels = document.querySelectorAll('.result-panel');
 
     viewButtons.forEach(button => {
         button.addEventListener('click', () => {
             const targetId = button.getAttribute('data-view');
-            const activeButton = document.querySelector('.scope-btn.active');
-            if (activeButton === button) return;
-            const currentPanel = document.querySelector('.result-panel.active');
-            const targetPanel = document.getElementById(targetId);
-
-            viewButtons.forEach(btn => {
-                btn.classList.remove('active');
-                btn.setAttribute('aria-selected', 'false');
-            });
-
-            button.classList.add('active');
-            button.setAttribute('aria-selected', 'true');
-            syncScopeSwitcherSlider();
-
-            if (!targetPanel) return;
-            if (!currentPanel || currentPanel === targetPanel) {
-                resultPanels.forEach(panel => panel.classList.remove('active'));
-                targetPanel.classList.add('active');
-                return;
-            }
-
-            transitionResultPanels(currentPanel, targetPanel, resultPanels);
+            activateResultView(targetId, { animate: false });
         });
     });
+}
+
+function activateResultView(targetId, { animate = true } = {}) {
+    if (!targetId) return;
+
+    const viewButtons = document.querySelectorAll('.scope-btn');
+    const resultPanels = document.querySelectorAll('.result-panel');
+    const button = document.querySelector(`.scope-btn[data-view="${targetId}"]`);
+    const activeButton = document.querySelector('.scope-btn.active');
+    if (!button || activeButton === button) return;
+
+    const currentPanel = document.querySelector('.result-panel.active');
+    const targetPanel = document.getElementById(targetId);
+
+    viewButtons.forEach(btn => {
+        btn.classList.remove('active');
+        btn.setAttribute('aria-selected', 'false');
+    });
+
+    button.classList.add('active');
+    button.setAttribute('aria-selected', 'true');
+    syncScopeSwitcherSlider();
+
+    if (!targetPanel) return;
+    if (!animate || !currentPanel || currentPanel === targetPanel) {
+        resultPanels.forEach(panel => panel.classList.remove('active'));
+        targetPanel.classList.add('active');
+        return;
+    }
+
+    transitionResultPanels(currentPanel, targetPanel, resultPanels);
 }
 
 function transitionResultPanels(currentPanel, targetPanel, allPanels) {
@@ -4349,16 +4519,18 @@ function transitionResultPanels(currentPanel, targetPanel, allPanels) {
 }
 
 function syncScopeSwitcherSlider() {
-    const switcher = document.querySelector('.data-scope-options');
+    const switcher = document.querySelector('.data-scope-options, .result-table-tabs');
     if (!switcher || switcher.offsetParent === null) return;
 
     const slider = switcher.querySelector('.data-scope-slider');
     const activeBtn = switcher.querySelector('.scope-btn.active');
-    if (!slider || !activeBtn) return;
+    if (!activeBtn) return;
 
     switcher.dataset.activeView = activeBtn.getAttribute('data-view') || '';
-    slider.style.width = `${Math.ceil(activeBtn.offsetWidth)}px`;
-    slider.style.transform = `translateX(${Math.round(activeBtn.offsetLeft)}px)`;
+    if (slider) {
+        slider.style.width = `${Math.ceil(activeBtn.offsetWidth)}px`;
+        slider.style.transform = `translateX(${Math.round(activeBtn.offsetLeft)}px)`;
+    }
 }
 
 function syncPrimaryTabIndicator() {
@@ -4448,8 +4620,28 @@ function initSearchFormEvents() {
     let previewAbortController = null;
     
     searchForm.addEventListener('apply-filters', async (e) => {
-        await applyFilters(e.detail);
-        
+        previewRequestId += 1;
+        previewAbortController?.abort();
+        previewAbortController = null;
+
+        const stopWakeMessageTimer = startWakeMessageTimer(searchForm);
+        let appliedResult = null;
+        try {
+            await waitForWarmupWithUi(searchForm);
+            appliedResult = await applyFilters(e.detail);
+        } finally {
+            stopWakeMessageTimer();
+            searchForm.setApplyLoading?.(false);
+        }
+
+        if (appliedResult?.success) {
+            searchForm.setPreviewResult?.({
+                total: Number(appliedResult?.total_count || 0),
+                totalLabel: String(appliedResult?.total_count_label || Number(appliedResult?.total_count || 0).toLocaleString('vi-VN')),
+                exact: appliedResult?.total_count_exact !== false
+            });
+        }
+
         const filterPanel = document.getElementById('filter-panel');
         const overlay = document.getElementById('panel-overlay');
         if (filterPanel) filterPanel.classList.remove('show');
@@ -4468,7 +4660,11 @@ function initSearchFormEvents() {
         const requestId = ++previewRequestId;
         previewAbortController?.abort();
         previewAbortController = new AbortController();
+        const stopWakeMessageTimer = startWakeMessageTimer(searchForm, previewAbortController.signal);
         try {
+            await waitForWarmupWithUi(searchForm, previewAbortController.signal);
+            if (requestId !== previewRequestId || previewAbortController.signal.aborted) return;
+
             const result = await fetchQueryPreview(
                 buildQueryRequest(e.detail),
                 previewAbortController.signal
@@ -4484,6 +4680,8 @@ function initSearchFormEvents() {
             if (err?.name === 'AbortError') return;
             if (requestId !== previewRequestId) return;
             searchForm.setPreviewResult?.({ error: true });
+        } finally {
+            stopWakeMessageTimer();
         }
     });
 }
@@ -4513,6 +4711,9 @@ async function initializeAppData() {
     try {
         appDataInitialized = true;
         // ✅ Không load df1/df2 nữa vì filter từ database
+        warmupDatabase().catch(error => {
+            console.warn('Database warmup failed:', error);
+        });
         await loadMetadata();
         initEmptyCharts();
         clearFilterUrlState();
