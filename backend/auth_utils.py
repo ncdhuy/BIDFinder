@@ -15,9 +15,11 @@ from fastapi import HTTPException, Request, Response
 try:
     from google.auth.transport.requests import Request as GoogleAuthRequest
     from google.oauth2 import id_token as google_id_token
-except ImportError:  # pragma: no cover - depends on environment packages
+    GOOGLE_AUTH_IMPORT_ERROR = ""
+except ImportError as exc:  # pragma: no cover - depends on environment packages
     GoogleAuthRequest = None
     google_id_token = None
+    GOOGLE_AUTH_IMPORT_ERROR = str(exc)
 
 POSITION_OPTION_GROUPS = [
     {
@@ -256,6 +258,7 @@ def get_auth_config_payload() -> Dict[str, Any]:
             if client_ids and not google_library_ready
             else "missing_client_id"
         ),
+        "google_library_error": GOOGLE_AUTH_IMPORT_ERROR if client_ids and not google_library_ready else "",
         "position_options": POSITION_OPTIONS,
         "position_option_groups": POSITION_OPTION_GROUPS,
         "profile_fields": {
