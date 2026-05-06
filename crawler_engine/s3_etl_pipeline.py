@@ -12,6 +12,7 @@ import re
 from dateutil.relativedelta import relativedelta
 import shutil
 from storage_adapter import ensure_local_file, is_r2_key, move_object, build_r2_key
+from drug_group_parser import build_drug_group_filter_array
 from web_winner_facts import (
     WebWinnerManualReviewRequired,
     apply_vendor_single_winner_fallback,
@@ -88,7 +89,8 @@ warnings.filterwarnings(
 # CẤU HÌNH HỆ THỐNG & KẾT NỐI DATABASE
 # =====================================================================
 
-load_dotenv()
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(SCRIPT_DIR, ".env"))
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 ROOT_DATA_DIR = os.getenv("ROOT_DATA_DIR")
@@ -147,6 +149,391 @@ def version_key(version_value):
         numbers.append(0)
 
     return tuple(numbers[:2])
+
+
+def fetch_relation_peer_jobs(cursor, active_jobs: list[dict], ignored_qd_map: dict) -> list[dict]:
+    """Bring cross-day relation peers into today's ETL cluster when their files are available."""
+    seed_schema_map = {}
+    for job in active_jobs:
+        if job.get("relation_type") in ("INDEPENDENT", "CANCELLATION", "TYPO_ERROR"):
+            continue
+        tbmt = job.get("tbmt")
+        qd_original = job.get("qd_original")
+        schema_type = job.get("schema_type")
+        if tbmt and qd_original and schema_type in SCHEMAS:
+            seed_schema_map.setdefault((tbmt, qd_original), set()).add(schema_type)
+
+    if not seed_schema_map:
+        return []
+
+    cursor.execute("""
+        SELECT
+            r.ma_tbmt,
+            r.so_qd_original,
+            r.so_qd,
+            r.version,
+            r.relation_type,
+            p.file_path,
+            pm.ten_goi_thau
+        FROM qd_relations r
+        LEFT JOIN LATERAL (
+            SELECT p2.file_path
+            FROM packages p2
+            WHERE p2.ma_tbmt = r.ma_tbmt
+              AND p2.so_qd = r.so_qd
+              AND p2.version = r.version
+              AND p2.file_type = 'excel'
+              AND COALESCE(p2.status, '') <> 'ARCHIVED'
+            ORDER BY p2.is_latest DESC, p2.crawled_at DESC NULLS LAST, p2.file_path
+            LIMIT 1
+        ) p ON TRUE
+        LEFT JOIN package_metadata pm
+          ON pm.ma_tbmt = r.ma_tbmt
+         AND pm.so_qd = r.so_qd
+         AND pm.version = r.version
+        WHERE (r.ma_tbmt, r.so_qd_original) IN %s
+          AND r.relation_type <> 'TYPO_ERROR'
+    """, (tuple(seed_schema_map.keys()),))
+
+    peer_jobs = []
+    for tbmt, qd_original, so_qd, version, relation_type, file_path, ten_goi_thau in cursor.fetchall():
+        if so_qd in ignored_qd_map.get(tbmt, set()):
+            continue
+        if relation_type != "CANCELLATION" and not file_path:
+            logger.warning(
+                f"⚠️ [RELATION-PEER-MISSING-FILE] {tbmt} / {so_qd} / v{version}: "
+                "không tìm thấy Excel trong packages để đưa vào cluster ETL liên ngày."
+            )
+            continue
+        for schema_type in seed_schema_map.get((tbmt, qd_original), set()):
+            peer_jobs.append({
+                "qd_original": qd_original,
+                "tbmt": tbmt,
+                "schema_type": schema_type,
+                "manifest_id": None,
+                "so_qd": so_qd,
+                "version": version,
+                "full_path": file_path,
+                "relation_type": relation_type,
+                "ten_goi_thau": ten_goi_thau,
+                "relation_peer": True,
+            })
+
+    return peer_jobs
+
+
+def expand_active_jobs_with_relation_peers(cursor, active_jobs: list[dict], ignored_qd_map: dict) -> list[dict]:
+    peer_jobs = fetch_relation_peer_jobs(cursor, active_jobs, ignored_qd_map)
+    if not peer_jobs:
+        return active_jobs
+
+    merged = {}
+    for job in active_jobs + peer_jobs:
+        key = (job["tbmt"], job["so_qd"], job["version"], job["schema_type"])
+        if key not in merged or (merged[key].get("manifest_id") is None and job.get("manifest_id") is not None):
+            merged[key] = job
+
+    added_count = sum(1 for job in merged.values() if job.get("relation_peer") and job.get("manifest_id") is None)
+    if added_count:
+        logger.info(f"🔗 Đã bổ sung {added_count} relation peer liên ngày vào cluster ETL.")
+    return list(merged.values())
+
+
+def ensure_qd_display_columns(cursor):
+    cursor.execute("ALTER TABLE processed_medicines ADD COLUMN IF NOT EXISTS qd_display TEXT")
+    cursor.execute("ALTER TABLE processed_goods ADD COLUMN IF NOT EXISTS qd_display TEXT")
+
+
+RELATION_REPLACEMENT_DELETE_SQL_TEMPLATE = """
+WITH relation_clusters AS (
+    SELECT
+        base.ma_tbmt,
+        base.so_qd_original,
+        base.so_qd AS source_so_qd,
+        base.version AS source_version,
+        rep.so_qd AS replacement_so_qd,
+        rep.version AS replacement_version
+    FROM qd_relations base
+    JOIN qd_relations rep
+      ON rep.ma_tbmt = base.ma_tbmt
+     AND rep.so_qd_original = base.so_qd_original
+     AND rep.relation_type = 'REPLACEMENT'
+    WHERE base.relation_type IN ('BASE', 'ADJUSTMENT')
+),
+rows_to_delete AS (
+    SELECT DISTINCT p.id
+    FROM {table_name} p
+    JOIN relation_clusters rc
+      ON p.ma_tbmt = rc.ma_tbmt
+     AND p.so_qd = rc.source_so_qd
+     AND p.version = rc.source_version
+    WHERE EXISTS (
+        SELECT 1
+        FROM {table_name} target
+        WHERE target.ma_tbmt = rc.ma_tbmt
+          AND target.so_qd = rc.replacement_so_qd
+          AND target.version = rc.replacement_version
+    )
+),
+deleted AS (
+    DELETE FROM {table_name} p
+    USING rows_to_delete d
+    WHERE p.id = d.id
+    RETURNING p.id
+)
+SELECT COUNT(*) FROM deleted;
+"""
+
+
+RELATION_PASS_THROUGH_DELETE_SQL_TEMPLATE = """
+WITH pass_through_units AS (
+    SELECT ma_tbmt, so_qd, version
+    FROM qd_relations
+    WHERE relation_type IN ('CANCELLATION', 'TYPO_ERROR')
+),
+deleted AS (
+    DELETE FROM {table_name} p
+    USING pass_through_units u
+    WHERE p.ma_tbmt = u.ma_tbmt
+      AND p.so_qd = u.so_qd
+      AND p.version = u.version
+    RETURNING p.id
+)
+SELECT COUNT(*) FROM deleted;
+"""
+
+
+RELATION_ADJUSTMENT_DUPLICATE_DELETE_SQL_TEMPLATE = """
+WITH relation_clusters AS (
+    SELECT
+        base.ma_tbmt,
+        base.so_qd_original,
+        base.so_qd AS base_so_qd,
+        base.version AS base_version,
+        rel.so_qd AS target_so_qd,
+        rel.version AS target_version
+    FROM qd_relations base
+    JOIN qd_relations rel
+      ON rel.ma_tbmt = base.ma_tbmt
+     AND rel.so_qd_original = base.so_qd_original
+     AND rel.relation_type = 'ADJUSTMENT'
+    WHERE base.relation_type = 'BASE'
+),
+duplicate_base_rows AS (
+    SELECT DISTINCT b.id
+    FROM {table_name} b
+    JOIN relation_clusters rc
+      ON b.ma_tbmt = rc.ma_tbmt
+     AND b.so_qd = rc.base_so_qd
+     AND b.version = rc.base_version
+    JOIN {table_name} t
+      ON t.ma_tbmt = rc.ma_tbmt
+     AND t.so_qd = rc.target_so_qd
+     AND t.version = rc.target_version
+     AND (
+            (
+                NULLIF(BTRIM(b.ma_phan_lo), '') IS NOT NULL
+                AND NULLIF(BTRIM(t.ma_phan_lo), '') IS NOT NULL
+                AND b.ma_phan_lo = t.ma_phan_lo
+            )
+            OR
+            (
+                (
+                    NULLIF(BTRIM(b.ma_phan_lo), '') IS NULL
+                    OR NULLIF(BTRIM(t.ma_phan_lo), '') IS NULL
+                )
+                AND {fallback_match}
+            )
+        )
+),
+deleted AS (
+    DELETE FROM {table_name} p
+    USING duplicate_base_rows d
+    WHERE p.id = d.id
+    RETURNING p.id
+)
+SELECT COUNT(*) FROM deleted;
+"""
+
+
+QD_DISPLAY_UPDATE_SQL_TEMPLATE = """
+WITH cluster_summary AS (
+    SELECT
+        ma_tbmt,
+        so_qd_original,
+        MAX(so_qd) FILTER (WHERE relation_type = 'BASE') AS base_qd,
+        STRING_AGG(so_qd, '; ' ORDER BY COALESCE(NULLIF(SUBSTRING(so_qd FROM '[0-9]+'), '')::NUMERIC, 0), so_qd)
+            FILTER (WHERE relation_type = 'CANCELLATION') AS cancellation_qds,
+        STRING_AGG(so_qd, ', ' ORDER BY COALESCE(NULLIF(SUBSTRING(so_qd FROM '[0-9]+'), '')::NUMERIC, 0), so_qd)
+            FILTER (WHERE relation_type = 'ADJUSTMENT') AS adj_qds,
+        STRING_AGG(so_qd, ', ' ORDER BY COALESCE(NULLIF(SUBSTRING(so_qd FROM '[0-9]+'), '')::NUMERIC, 0), so_qd)
+            FILTER (WHERE relation_type = 'REPLACEMENT') AS rep_qds
+    FROM qd_relations
+    WHERE relation_type <> 'TYPO_ERROR'
+    GROUP BY ma_tbmt, so_qd_original
+),
+display_map AS (
+    SELECT
+        r.ma_tbmt,
+        r.so_qd,
+        r.version,
+        CASE
+            WHEN COALESCE(cs.rep_qds, '') <> '' THEN
+                CONCAT(
+                    'QĐ gốc: ',
+                    COALESCE(cs.base_qd, r.so_qd_original),
+                    '; QĐ thay thế: ',
+                    cs.rep_qds,
+                    CASE
+                        WHEN COALESCE(cs.cancellation_qds, '') <> '' THEN '; ' || cs.cancellation_qds
+                        ELSE ''
+                    END
+                )
+            WHEN COALESCE(cs.adj_qds, '') <> '' THEN
+                CONCAT(
+                    'QĐ gốc: ',
+                    COALESCE(cs.base_qd, r.so_qd_original),
+                    '; QĐ điều chỉnh: ',
+                    cs.adj_qds,
+                    CASE
+                        WHEN COALESCE(cs.cancellation_qds, '') <> '' THEN '; ' || cs.cancellation_qds
+                        ELSE ''
+                    END
+                )
+            WHEN COALESCE(cs.base_qd, '') <> '' THEN
+                CONCAT(
+                    cs.base_qd,
+                    CASE
+                        WHEN COALESCE(cs.cancellation_qds, '') <> '' THEN '; ' || cs.cancellation_qds
+                        ELSE ''
+                    END
+                )
+            WHEN COALESCE(cs.cancellation_qds, '') <> '' AND r.relation_type <> 'CANCELLATION' THEN
+                CONCAT(r.so_qd, '; ', cs.cancellation_qds)
+            ELSE r.so_qd
+        END AS qd_display
+    FROM qd_relations r
+    JOIN cluster_summary cs
+      ON cs.ma_tbmt = r.ma_tbmt
+     AND cs.so_qd_original = r.so_qd_original
+    WHERE r.relation_type <> 'TYPO_ERROR'
+),
+updated AS (
+    UPDATE {table_name} p
+    SET qd_display = dm.qd_display
+    FROM display_map dm
+    WHERE p.ma_tbmt = dm.ma_tbmt
+      AND p.so_qd = dm.so_qd
+      AND p.version = dm.version
+      AND COALESCE(p.qd_display, '') IS DISTINCT FROM COALESCE(dm.qd_display, '')
+    RETURNING p.id
+)
+SELECT COUNT(*) FROM updated;
+"""
+
+
+QD_DISPLAY_FALLBACK_SQL_TEMPLATE = """
+WITH updated AS (
+    UPDATE {table_name}
+    SET qd_display = so_qd
+    WHERE COALESCE(BTRIM(qd_display), '') = ''
+      AND COALESCE(BTRIM(so_qd), '') <> ''
+    RETURNING id
+)
+SELECT COUNT(*) FROM updated;
+"""
+
+
+ORPHAN_DUPLICATE_FLAGS_DELETE_SQL_TEMPLATE = """
+WITH deleted AS (
+    DELETE FROM processed_duplicate_flags f
+    WHERE f.dataset_scope = %s
+      AND NOT EXISTS (
+          SELECT 1
+          FROM {table_name} p
+          WHERE p.id = f.processed_row_id
+      )
+    RETURNING f.id
+)
+SELECT COUNT(*) FROM deleted;
+"""
+
+
+def run_scalar(cursor, sql: str) -> int:
+    cursor.execute(sql)
+    row = cursor.fetchone()
+    return int(row[0] or 0) if row else 0
+
+
+def run_scalar_params(cursor, sql: str, params: tuple) -> int:
+    cursor.execute(sql, params)
+    row = cursor.fetchone()
+    return int(row[0] or 0) if row else 0
+
+
+def reconcile_processed_relations() -> dict:
+    stats = {}
+    fallback_matches = {
+        "processed_medicines": """
+                LOWER(BTRIM(COALESCE(b.ten_thuoc, ''))) = LOWER(BTRIM(COALESCE(t.ten_thuoc, '')))
+                AND COALESCE(b.so_luong, -1) = COALESCE(t.so_luong, -1)
+                AND COALESCE(b.don_gia_trung_thau, -1) = COALESCE(t.don_gia_trung_thau, -1)
+        """,
+        "processed_goods": """
+                LOWER(BTRIM(COALESCE(b.danh_muc_hang_hoa, ''))) = LOWER(BTRIM(COALESCE(t.danh_muc_hang_hoa, '')))
+                AND COALESCE(b.khoi_luong, -1) = COALESCE(t.khoi_luong, -1)
+                AND COALESCE(b.don_gia_trung_thau, -1) = COALESCE(t.don_gia_trung_thau, -1)
+        """,
+    }
+    dataset_scopes = {
+        "processed_medicines": "medicine",
+        "processed_goods": "goods",
+    }
+
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                ensure_qd_display_columns(cursor)
+                for table_name, fallback_match in fallback_matches.items():
+                    stats[f"{table_name}_pass_through_deleted"] = run_scalar(
+                        cursor,
+                        RELATION_PASS_THROUGH_DELETE_SQL_TEMPLATE.format(table_name=table_name),
+                    )
+                    stats[f"{table_name}_replacement_deleted"] = run_scalar(
+                        cursor,
+                        RELATION_REPLACEMENT_DELETE_SQL_TEMPLATE.format(table_name=table_name),
+                    )
+                    stats[f"{table_name}_adjustment_duplicates_deleted"] = run_scalar(
+                        cursor,
+                        RELATION_ADJUSTMENT_DUPLICATE_DELETE_SQL_TEMPLATE.format(
+                            table_name=table_name,
+                            fallback_match=fallback_match,
+                        ),
+                    )
+                    stats[f"{table_name}_qd_display_updated"] = run_scalar(
+                        cursor,
+                        QD_DISPLAY_UPDATE_SQL_TEMPLATE.format(table_name=table_name),
+                    )
+                    stats[f"{table_name}_qd_display_fallback"] = run_scalar(
+                        cursor,
+                        QD_DISPLAY_FALLBACK_SQL_TEMPLATE.format(table_name=table_name),
+                    )
+                    stats[f"{table_name}_orphan_duplicate_flags_deleted"] = run_scalar_params(
+                        cursor,
+                        ORPHAN_DUPLICATE_FLAGS_DELETE_SQL_TEMPLATE.format(table_name=table_name),
+                        (dataset_scopes[table_name],),
+                    )
+            conn.commit()
+    except Exception as e:
+        logger.error(f"⚠️ Lỗi reconciliation qd_relations sau ETL: {e}")
+        return stats
+
+    changed = {key: value for key, value in stats.items() if value}
+    if changed:
+        logger.info(f"🧹 Reconcile qd_relations hoàn tất: {changed}")
+    else:
+        logger.info("🧹 Reconcile qd_relations hoàn tất: không có thay đổi.")
+    return stats
 
 # =====================================================================
 # TỪ KHÓA MAPPING & DATA CLEANING
@@ -1537,17 +1924,43 @@ def process_qd_cluster(tbmt: str, qd_original: str, units_in_cluster: list, sche
 
     files_to_archive = [] 
 
+    def qd_number_sort_key(qd_value):
+        match = re.search(r"\d+", str(qd_value or ""))
+        return (int(match.group(0)) if match else 0, str(qd_value or ""))
+
+    def ordered_qds(values):
+        ordered = []
+        for qd in sorted(values or [], key=qd_number_sort_key):
+            qd_text = str(qd or "").strip()
+            if qd_text and qd_text not in ordered:
+                ordered.append(qd_text)
+        return ordered
+
+    def join_qds(values, separator=", "):
+        return separator.join(ordered_qds(values))
+
     def build_qd_display(main_qd: str | None, cancellation_qds: list[str] | None = None) -> str:
         ordered = []
         if main_qd:
             ordered.append(str(main_qd).strip())
-        for qd in cancellation_qds or []:
+        for qd in ordered_qds(cancellation_qds):
             qd_text = str(qd or "").strip()
             if qd_text and qd_text not in ordered:
                 ordered.append(qd_text)
         return "; ".join(ordered)
 
-    cancellation_qds = [u["so_qd"] for u in sorted(cancellation_units, key=lambda x: version_key(x["version"]))]
+    def build_relation_qd_display(base_qd: str | None, relation_label: str, relation_qds: list[str],
+                                  cancellation_qds: list[str] | None = None) -> str:
+        parts = [f"QĐ gốc: {str(base_qd or qd_original).strip()}"]
+        relation_text = join_qds(relation_qds)
+        if relation_text:
+            parts.append(f"{relation_label}: {relation_text}")
+        cancellation_text = join_qds(cancellation_qds, separator="; ")
+        if cancellation_text:
+            parts.append(cancellation_text)
+        return "; ".join(parts)
+
+    cancellation_qds = ordered_qds([u["so_qd"] for u in cancellation_units])
 
     # 1. TRƯỜNG HỢP KHÔNG CÓ CẤU HÌNH (INDEPENDENT)
     if indep_units or not base_units:
@@ -1568,7 +1981,7 @@ def process_qd_cluster(tbmt: str, qd_original: str, units_in_cluster: list, sche
                 )
                 df['Mã TBMT'] = tbmt
                 df['so_qd_sanitized'] = u['so_qd']
-                df['qd_display'] = build_qd_display(u['so_qd'])
+                df['qd_display'] = build_qd_display(u['so_qd'], cancellation_qds)
                 df['version_code'] = u['version']
                 max_ver = max(max_ver, u['version'], key=version_key)
                 all_dfs.append(df)
@@ -1600,7 +2013,12 @@ def process_qd_cluster(tbmt: str, qd_original: str, units_in_cluster: list, sche
             logger.error(f"Lỗi đọc file REPLACEMENT {best_rep['file_path']}: {e}")
             return None, None, None, []
 
-        final_qd_display = build_qd_display(best_rep['so_qd'], cancellation_qds)
+        final_qd_display = build_relation_qd_display(
+            base['so_qd'],
+            "QĐ thay thế",
+            [u["so_qd"] for u in rep_units],
+            cancellation_qds,
+        )
         logger.info(f"🔄 [REPLACEMENT] {tbmt}: Đang dùng QĐ {best_rep['so_qd']} thay thế hoàn toàn cho {base['so_qd']}.")
         
         try:
@@ -1648,7 +2066,12 @@ def process_qd_cluster(tbmt: str, qd_original: str, units_in_cluster: list, sche
 
     if enriched_adjs:
         adj_raw_names = [a['unit']['so_qd'] for a in enriched_adjs]
-        final_qd_display = build_qd_display(adj_raw_names[-1], cancellation_qds)
+        final_qd_display = build_relation_qd_display(
+            base['so_qd'],
+            "QĐ điều chỉnh",
+            adj_raw_names,
+            cancellation_qds,
+        )
         last_adj = enriched_adjs[-1]
 
         if (
@@ -2161,6 +2584,11 @@ def save_to_db(df: pd.DataFrame, schema_name: str, delete_units: list[dict] | No
     df_db = df.rename(columns=db_mapping)
     valid_cols = [c for c in df_db.columns if c in db_mapping.values()]
     df_db = df_db[valid_cols]
+
+    if table_name == "processed_medicines":
+        df_db["nhom_thuoc_filter"] = df_db.get("nhom_thuoc", pd.Series([None] * len(df_db))).map(
+            build_drug_group_filter_array
+        )
     
     if df_db.empty:
         return False
@@ -2999,8 +3427,9 @@ def process_pipeline():
                 "ten_goi_thau": row[8],
             }
             for row in c.fetchall()
-            if row[0] not in ignored_qd_map.get(row[1], set())
+            if row[4] not in ignored_qd_map.get(row[1], set())
         ]
+        active_jobs = expand_active_jobs_with_relation_peers(c, active_jobs, ignored_qd_map)
         prefetch_web_winner_facts(
             c,
             [(job["tbmt"], job["so_qd"], job["version"]) for job in active_jobs]
@@ -3008,6 +3437,7 @@ def process_pipeline():
 
     if not active_jobs:
         logger.info(f"ℹ️ Không có dữ liệu 'READY' trong ngày {TARGET_DATE}.")
+        reconcile_processed_relations()
         return
 
     clusters = {}
@@ -3021,7 +3451,8 @@ def process_pipeline():
         if schema_type not in SCHEMAS: continue
         key = (tbmt, qd_original, schema_type)
         clusters[key] = True
-        manifest_id_map.setdefault(key, []).append(m_id)
+        if m_id is not None:
+            manifest_id_map.setdefault(key, []).append(m_id)
         cluster_units_map.setdefault(key, []).append({
             "so_qd": job["so_qd"],
             "version": job["version"],
@@ -3052,13 +3483,14 @@ def process_pipeline():
                 if unit.get("relation_type") != "CANCELLATION"
             ]
             if not processable_units:
-                ids = manifest_id_map[(tbmt, qd_original, schema_name)]
+                ids = manifest_id_map.get((tbmt, qd_original, schema_name), [])
                 try:
-                    c.execute(
-                        "UPDATE daily_manifest SET status='PROCESSED' WHERE id IN %s AND status IS DISTINCT FROM 'PROCESSED'",
-                        (tuple(ids),)
-                    )
-                    conn.commit()
+                    if ids:
+                        c.execute(
+                            "UPDATE daily_manifest SET status='PROCESSED' WHERE id IN %s AND status IS DISTINCT FROM 'PROCESSED'",
+                            (tuple(ids),)
+                        )
+                        conn.commit()
                 except Exception as e:
                     conn.rollback()
                     logger.error(
@@ -3072,9 +3504,10 @@ def process_pipeline():
             try:
                 df_final, qd_display, cluster_ver, files_to_archive = process_qd_cluster(tbmt, qd_original, units_in_cluster, schema_name)
             except WebWinnerManualReviewRequired as e:
-                ids = manifest_id_map[(tbmt, qd_original, schema_name)]
+                ids = manifest_id_map.get((tbmt, qd_original, schema_name), [])
                 issue_reason = str(e)
-                mark_manifest_pending_review(ids)
+                if ids:
+                    mark_manifest_pending_review(ids)
                 save_manifest_issue_records([
                     {
                         "ma_tbmt": tbmt,
@@ -3085,6 +3518,7 @@ def process_pipeline():
                         "issue_reason": issue_reason,
                     }
                     for unit in units_in_cluster
+                    if unit.get("manifest_id") is not None
                 ])
                 for unit in units_in_cluster:
                     flagged_summary.append({
@@ -3118,7 +3552,7 @@ def process_pipeline():
                         for gap in column_gaps
                     )
                 )
-                ids = manifest_id_map[(tbmt, qd_original, schema_name)]
+                ids = manifest_id_map.get((tbmt, qd_original, schema_name), [])
                 delete_processed_units(schema_name, [
                     {
                         "tbmt": tbmt,
@@ -3127,7 +3561,8 @@ def process_pipeline():
                     }
                     for unit in units_in_cluster
                 ])
-                mark_manifest_pending_review(ids)
+                if ids:
+                    mark_manifest_pending_review(ids)
                 save_manifest_issue_records([
                     {
                         "ma_tbmt": tbmt,
@@ -3138,6 +3573,7 @@ def process_pipeline():
                         "issue_reason": issue_reason,
                     }
                     for unit in units_in_cluster
+                    if unit.get("manifest_id") is not None
                 ])
                 for unit in units_in_cluster:
                     flagged_summary.append({
@@ -3166,8 +3602,9 @@ def process_pipeline():
             success = save_to_db(df_final, schema_name, delete_units=delete_units)
             
             if success:
-                ids = manifest_id_map[(tbmt, qd_original, schema_name)]
-                mark_manifest_processed(ids)
+                ids = manifest_id_map.get((tbmt, qd_original, schema_name), [])
+                if ids:
+                    mark_manifest_processed(ids)
                 total_inserted_clusters += 1
             
                 for fpath in files_to_archive:
@@ -3207,6 +3644,7 @@ def process_pipeline():
             else:
                 logger.warning(f"⚠️ ETL không ghi được DB cho {tbmt} / {qd_original} ({schema_name}). Manifest sẽ giữ trạng thái READY.")
 
+    reconcile_processed_relations()
     elapsed_time = round(time.time() - start_time, 2)
     logger.info(f"🎉 HOÀN TẤT ETL: Xử lý thành công {total_inserted_clusters} Cụm QĐ. Tổng thời gian: {elapsed_time}s.")
     log_pending_review_summary(flagged_summary, f"TỔNG KẾT ETL [{TARGET_DATE}]")

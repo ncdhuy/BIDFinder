@@ -2,6 +2,8 @@ SCHEMAS = {
     "MEDICINE_STANDARD": {
         "description": "Gói thầu Thuốc",
         "table_name": "processed_medicines",
+        # Schema line-item: chỉ map các cột phục vụ processed_medicines.
+        # Không đưa thông tin KHLCNT vào đây; join ngược qua package_metadata khi cần.
         "signature_columns": ["Tên thuốc", "Số lượng", "Đơn giá trúng thầu (VND)"],
         
         # CÁC CỘT BẮT BUỘC PHẢI CÓ 
@@ -162,6 +164,8 @@ SCHEMAS = {
     "GOODS_STANDARD": {
         "description": "Gói thầu Hàng hóa",
         "table_name": "processed_goods",
+        # Schema line-item: chỉ map các cột phục vụ processed_goods.
+        # Không đưa thông tin KHLCNT vào đây; join ngược qua package_metadata khi cần.
         "signature_columns": ["Danh mục hàng hóa"],
 
         "mandatory_columns": [

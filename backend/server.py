@@ -21,7 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=True)
+load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=False)
 
 from auth_utils import (
     change_password,
@@ -47,6 +47,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 db_pool: Optional[asyncpg.Pool] = None
 db_pool_lock = asyncio.Lock()
 auth_schema_lock = asyncio.Lock()
+feedback_schema_lock = asyncio.Lock()
 rate_limit_lock = asyncio.Lock()
 rate_limit_buckets: Dict[str, deque] = defaultdict(deque)
 anonymous_full_query_usage_lock = asyncio.Lock()
@@ -54,6 +55,7 @@ anonymous_full_query_usage: Dict[str, Dict[str, int]] = defaultdict(dict)
 full_search_usage_lock = asyncio.Lock()
 full_search_usage: Dict[str, Dict[str, int]] = defaultdict(dict)
 auth_schema_ready = False
+feedback_schema_ready = False
 cache_lock = asyncio.Lock()
 preview_cache: Dict[str, Dict[str, Any]] = {}
 autocomplete_cache: Dict[str, Dict[str, Any]] = {}
@@ -135,6 +137,7 @@ METADATA_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("METADATA_RATE_LIMIT_PER_M
 FILTER_CONFIG_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("FILTER_CONFIG_RATE_LIMIT_PER_MINUTE", "30")))
 AUTH_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("AUTH_RATE_LIMIT_PER_MINUTE", "20")))
 AUTH_CONFIG_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("AUTH_CONFIG_RATE_LIMIT_PER_MINUTE", "60")))
+FEEDBACK_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("FEEDBACK_RATE_LIMIT_PER_MINUTE", "10")))
 DEFAULT_QUERY_LIMIT = max(50, int(os.getenv("DEFAULT_QUERY_LIMIT", "200")))
 MAX_QUERY_LIMIT = max(DEFAULT_QUERY_LIMIT, int(os.getenv("MAX_QUERY_LIMIT", "1000")))
 FULL_SEARCH_DAILY_LIMIT = max(0, int(os.getenv("FULL_SEARCH_DAILY_LIMIT", "3")))
@@ -190,7 +193,7 @@ WITH df1_full AS (
         ) AS "__has_duplicate_warning",
         'medicine' AS "_dataset",
         m.ma_tbmt AS "Mã TBMT",
-        m.so_qd AS "Quyết định phê duyệt",
+        COALESCE(NULLIF(m.qd_display, ''), m.so_qd) AS "Quyết định phê duyệt",
         m.version AS "Version",
         m.ma_thuoc AS "Mã thuốc",
         m.ten_thuoc AS "Tên thuốc",
@@ -260,7 +263,7 @@ WITH df2_full AS (
         ) AS "__has_duplicate_warning",
         'goods' AS "_dataset",
         g.ma_tbmt AS "Mã TBMT",
-        g.so_qd AS "Quyết định phê duyệt",
+        COALESCE(NULLIF(g.qd_display, ''), g.so_qd) AS "Quyết định phê duyệt",
         g.version AS "Version",
         g.ma_phan_lo AS "Mã phần/lô",
         g.ten_phan_lo AS "Tên phần/lô",
@@ -327,7 +330,7 @@ WITH df2_full AS (
 DF1_PREVIEW_CTE = """
 WITH df1_preview AS (
     SELECT
-        m.so_qd AS "Quyết định phê duyệt",
+        COALESCE(NULLIF(m.qd_display, ''), m.so_qd) AS "Quyết định phê duyệt",
         m.ten_thuoc AS "Tên thuốc",
         m.ten_hoat_chat AS "Tên hoạt chất",
         m.nong_do_ham_luong AS "Nồng độ, hàm lượng",
@@ -340,6 +343,7 @@ WITH df1_preview AS (
         m.don_vi_tinh AS "Đơn vị tính",
         m.co_so_san_xuat AS "Cơ sở sản xuất",
         m.xuat_xu AS "Xuất xứ",
+        m.nha_thau_trung_thau AS "Nhà thầu trúng thầu",
         p.chu_dau_tu AS "Chủ đầu tư",
         p.ngay_phe_duyet AS "Ngày phê duyệt",
         COALESCE(
@@ -378,7 +382,8 @@ WITH df1_preview AS (
 DF2_PREVIEW_CTE = """
 WITH df2_preview AS (
     SELECT
-        g.so_qd AS "Quyết định phê duyệt",
+        COALESCE(NULLIF(g.qd_display, ''), g.so_qd) AS "Quyết định phê duyệt",
+        g.nha_thau_trung_thau AS "Nhà thầu trúng thầu",
         g.don_vi_tinh AS "Đơn vị tính",
         g.hang_san_xuat AS "Hãng sản xuất",
         g.xuat_xu AS "Xuất xứ",
@@ -443,6 +448,7 @@ class TokenFilter(BaseModel):
 class FilterRequest(BaseModel):
     investor: Optional[TokenFilter] = None
     approvalDecision: Optional[TokenFilter] = None
+    winner: Optional[TokenFilter] = None
     drugName: Optional[TokenFilter] = None
     activeIngredient: Optional[TokenFilter] = None
     concentration: Optional[TokenFilter] = None
@@ -479,6 +485,15 @@ class QueryRequest(BaseModel):
 class QueryPreviewRequest(BaseModel):
     scope: Literal["all", "medicine", "goods"] = "all"
     filters: Optional[FilterRequest] = None
+
+
+class BulkQueryRequest(BaseModel):
+    scope: Literal["medicine", "goods"]
+    fields: List[str] = Field(default_factory=list)
+    rows: List[Dict[str, Any]] = Field(default_factory=list)
+    priceLimit: int = 3
+    limit: int = DEFAULT_QUERY_LIMIT
+    searchMode: Literal["standard", "full"] = "standard"
 
 
 class AutocompleteRequest(BaseModel):
@@ -527,6 +542,18 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+class FeedbackAnswer(BaseModel):
+    question: str
+    answer: str
+
+
+class FeedbackRequest(BaseModel):
+    answers: List[FeedbackAnswer] = Field(default_factory=list)
+    task: Optional[str] = None
+    note: Optional[str] = None
+    context: Dict[str, Any] = Field(default_factory=dict)
+
+
 # =========================
 # FIELD REGISTRY
 # =========================
@@ -558,6 +585,12 @@ FIELD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "type": "fixed_single",
         "medicine_column": '"Tình trạng hiệu lực"',
         "goods_column": '"Tình trạng hiệu lực"',
+    },
+    "winner": {
+        "type": "token",
+        "medicine_column": '"Nhà thầu trúng thầu"',
+        "goods_column": '"Nhà thầu trúng thầu"',
+        "autocomplete": True,
     },
     "drugName": {
         "type": "token",
@@ -678,6 +711,33 @@ ALLOWED_SORT_DF2 = {
     "manufacturer": '"Hãng sản xuất"',
 }
 
+BULK_SEARCH_FIELDS: Dict[str, Dict[str, str]] = {
+    "medicine": {
+        "drugName": '"Tên thuốc"',
+        "activeIngredient": '"Tên hoạt chất"',
+        "concentration": '"Nồng độ, hàm lượng"',
+        "route": '"Đường dùng"',
+        "dosageForm": '"Dạng bào chế"',
+        "drugGroup": '"Nhóm thuốc"',
+        "unit": '"Đơn vị tính"',
+        "regNo": '"GĐKLH hoặc GPNK"',
+        "specification": '"Quy cách"',
+        "manufacturer": '"Cơ sở sản xuất"',
+        "country": '"Xuất xứ"',
+    },
+    "goods": {
+        "lotName": '"Tên phần/lô"',
+        "goodsName": '"Danh mục hàng hóa"',
+        "technicalSpec": '"Tính năng kỹ thuật"',
+        "bidItem": '"Mặt hàng dự thầu"',
+        "model": '"Ký mã hiệu"',
+        "brand": '"Nhãn hiệu"',
+        "country": '"Xuất xứ"',
+        "manufacturer": '"Hãng sản xuất"',
+        "unit": '"Đơn vị tính"',
+    },
+}
+
 
 # =========================
 # DB HELPERS
@@ -706,6 +766,7 @@ async def ensure_db_pool() -> asyncpg.Pool:
 
     if db_pool is not None:
         await ensure_auth_schema_ready(db_pool)
+        await ensure_feedback_schema_ready(db_pool)
         return db_pool
 
     async with db_pool_lock:
@@ -713,6 +774,7 @@ async def ensure_db_pool() -> asyncpg.Pool:
             db_pool = await get_db_pool()
 
     await ensure_auth_schema_ready(db_pool)
+    await ensure_feedback_schema_ready(db_pool)
     return db_pool
 
 
@@ -730,6 +792,40 @@ async def ensure_auth_schema_ready(pool: asyncpg.Pool) -> None:
             await init_auth_schema(conn)
 
         auth_schema_ready = True
+
+
+async def ensure_feedback_schema_ready(pool: asyncpg.Pool) -> None:
+    global feedback_schema_ready
+
+    if feedback_schema_ready:
+        return
+
+    async with feedback_schema_lock:
+        if feedback_schema_ready:
+            return
+
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app_feedback (
+                    id BIGSERIAL PRIMARY KEY,
+                    user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+                    user_email TEXT,
+                    answers JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    task TEXT,
+                    note TEXT,
+                    page_url TEXT,
+                    filter_context JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    user_agent TEXT,
+                    client_ip TEXT,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_app_feedback_created_at ON app_feedback (created_at DESC)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_app_feedback_user_id ON app_feedback (user_id)")
+
+        feedback_schema_ready = True
 
 
 def clean_value(val):
@@ -1277,6 +1373,61 @@ def build_result_query(
     return query, params
 
 
+def build_bulk_item_query(
+    scope_name: str,
+    selected_fields: List[str],
+    row_values: Dict[str, Any],
+    price_limit: int,
+    row_index: int,
+):
+    params: List[Any] = []
+    cte, table_name = get_scope_query_parts(scope_name, variant="full")
+    field_map = BULK_SEARCH_FIELDS[scope_name]
+    conditions: List[str] = []
+    label_parts: List[str] = []
+
+    for field_name in selected_fields:
+        if field_name not in field_map:
+            continue
+        raw_value = str(row_values.get(field_name) or "").strip()
+        if not raw_value:
+            continue
+
+        label_parts.append(raw_value)
+        if scope_name == "medicine" and field_name == "drugGroup":
+            cond = build_medicine_drug_group_condition([raw_value], params)
+        else:
+            token_filter = TokenFilter(tokens=[TokenFilterItem(value=raw_value)])
+            cond = build_token_condition(field_map[field_name], token_filter, params)
+        if cond:
+            conditions.append(cond)
+
+    if not conditions:
+        return None, []
+
+    where_clause = " WHERE " + " AND ".join(conditions)
+    safe_price_limit = max(1, min(int(price_limit), 10))
+    query = f"""
+    {cte}
+    SELECT *
+    FROM (
+        SELECT
+            ranked_base.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY ranked_base."Đơn giá trúng thầu (VND)"
+                ORDER BY ranked_base."__approval_date" DESC NULLS LAST, ranked_base."Mã TBMT" ASC
+            ) AS "__price_rank"
+        FROM {table_name} ranked_base
+        {where_clause}
+          AND ranked_base."Đơn giá trúng thầu (VND)" IS NOT NULL
+    ) ranked
+    WHERE "__price_rank" = 1
+    ORDER BY "__approval_date" DESC NULLS LAST, "Đơn giá trúng thầu (VND)" ASC, "Mã TBMT" ASC
+    LIMIT {safe_price_limit}
+    """
+    return query, params
+
+
 def build_total_count_query(scope_name: str, filters: Optional[FilterRequest]):
     params: List[Any] = []
     cte, table_name = get_scope_query_parts(scope_name, variant="full")
@@ -1627,6 +1778,26 @@ async def fetch_preview_bucket_cached(
     return preview
 
 
+async def fetch_combined_preview_meta(
+    conn: asyncpg.Connection,
+    filters: Optional[FilterRequest],
+    bucket_limit: int,
+) -> Dict[str, Any]:
+    medicine_preview = await fetch_preview_bucket_cached(conn, "medicine", filters, bucket_limit)
+    if not medicine_preview.get("exact"):
+        return build_count_meta(bucket_limit, exact=False)
+
+    remaining_probe = max(0, int(bucket_limit) - int(medicine_preview.get("count") or 0))
+    goods_bucket_limit = max(1, remaining_probe)
+    goods_preview = await fetch_preview_bucket_cached(conn, "goods", filters, goods_bucket_limit)
+
+    total_count = int(medicine_preview.get("count") or 0) + int(goods_preview.get("count") or 0)
+    if not goods_preview.get("exact") or total_count > bucket_limit:
+        return build_count_meta(bucket_limit, exact=False)
+
+    return build_count_meta(total_count, exact=True)
+
+
 async def fetch_result_page(
     conn: asyncpg.Connection,
     scope_name: str,
@@ -1682,8 +1853,15 @@ async def lifespan(app: FastAPI):
             AUTH_REQUIRED_FOR_FULL_QUERY,
             ANONYMOUS_FULL_QUERY_DAILY_LIMIT,
         )
+        auth_config_payload = get_auth_config_payload()
+        logger.info(
+            "Startup login config: google_status=%s, password_reset_status=%s",
+            auth_config_payload.get("google_status"),
+            auth_config_payload.get("password_reset_status"),
+        )
         db_pool = await get_db_pool()
         await ensure_auth_schema_ready(db_pool)
+        await ensure_feedback_schema_ready(db_pool)
     except Exception as e:
         print(f"Database connection failed: {e}")
     yield
@@ -1743,6 +1921,13 @@ def validation_error_response(message: str, status_code: int = 400) -> JSONRespo
             "message": message,
         },
     )
+
+
+async def get_optional_authenticated_user(conn: asyncpg.Connection, request: Request) -> Optional[Dict[str, Any]]:
+    raw_token = extract_session_token(request)
+    if not raw_token:
+        return None
+    return await get_authenticated_user(conn, raw_token)
 
 
 async def build_auth_success_response(
@@ -2102,6 +2287,75 @@ async def patch_password(request: Request, payload: ChangePasswordRequest):
         return internal_error_response()
 
 
+@app.post("/api/feedback")
+async def create_feedback(request: Request, payload: FeedbackRequest):
+    limited = await enforce_rate_limit(request, "feedback", FEEDBACK_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    answers = [
+        {
+            "question": str(item.question or "").strip()[:500],
+            "answer": str(item.answer or "").strip()[:50],
+        }
+        for item in payload.answers
+        if str(item.question or "").strip()
+    ]
+    task = (payload.task or "").strip()
+    note = (payload.note or "").strip()
+
+    if not answers and not task and not note:
+        return validation_error_response("Vui lòng chọn hoặc nhập ít nhất một nội dung góp ý.")
+
+    context = payload.context if isinstance(payload.context, dict) else {}
+    page_url = str(context.get("url") or "")[:2000]
+    filter_context = context.get("filters") if isinstance(context.get("filters"), dict) else {}
+    user_agent = request.headers.get("user-agent", "")[:500]
+    client_ip = get_client_ip(request)
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            current_user = await get_optional_authenticated_user(conn, request)
+            feedback_id = await conn.fetchval(
+                """
+                INSERT INTO app_feedback (
+                    user_id,
+                    user_email,
+                    answers,
+                    task,
+                    note,
+                    page_url,
+                    filter_context,
+                    user_agent,
+                    client_ip
+                )
+                VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7::jsonb, $8, $9)
+                RETURNING id
+                """,
+                current_user.get("id") if current_user else None,
+                current_user.get("email") if current_user else None,
+                json.dumps(answers, ensure_ascii=False),
+                task[:4000] or None,
+                note[:3000] or None,
+                page_url or None,
+                json.dumps(filter_context, ensure_ascii=False),
+                user_agent,
+                client_ip,
+            )
+
+        return {
+            "success": True,
+            "id": feedback_id,
+            "message": "Cảm ơn bạn đã góp ý. BIDFinder đã ghi nhận phản hồi của bạn.",
+        }
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        log_server_exception("create_feedback failed", exc)
+        return validation_error_response("Không thể lưu góp ý lúc này, vui lòng thử lại sau.", 500)
+
+
 @app.get("/api/filter-config")
 async def get_filter_config(request: Request):
     limited = await enforce_rate_limit(request, "filter-config", FILTER_CONFIG_RATE_LIMIT_PER_MINUTE)
@@ -2238,6 +2492,135 @@ async def query_data(request: Request, payload: QueryRequest):
         return internal_error_response()
 
 
+@app.post("/api/bulk-query")
+async def bulk_query_data(request: Request, payload: BulkQueryRequest):
+    limited = await enforce_rate_limit(request, "bulk-query", QUERY_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    scope_name = payload.scope
+    selected_fields = [field for field in payload.fields if field in BULK_SEARCH_FIELDS[scope_name]]
+    price_limit = max(1, min(int(payload.priceLimit or 3), 10))
+    search_mode = payload.searchMode if payload.searchMode in {"standard", "full"} else "standard"
+    is_full_search = search_mode == "full"
+    requested_total_limit = max(1, min(int(payload.limit or MAX_QUERY_LIMIT), MAX_QUERY_LIMIT))
+    result_limit = requested_total_limit if is_full_search else max(1, min(int(payload.limit or DEFAULT_QUERY_LIMIT), DEFAULT_QUERY_LIMIT))
+    rows = [row for row in payload.rows if isinstance(row, dict)]
+
+    if not selected_fields:
+        return validation_error_response("Vui lòng chọn ít nhất một trường tra cứu.")
+    if not rows:
+        return validation_error_response("Vui lòng nhập ít nhất một dòng tra cứu.")
+
+    try:
+        pool = await ensure_db_pool()
+        result_rows: List[Dict[str, Any]] = []
+        total_matched = 0
+        result_truncated = False
+        current_user: Optional[Dict[str, Any]] = None
+
+        async with pool.acquire() as conn:
+            current_user = await enforce_data_access_policy(conn, request, "full_query")
+            if is_full_search:
+                quota_snapshot = await get_full_search_usage_snapshot(request, current_user)
+                if quota_snapshot["remaining"] <= 0:
+                    raise HTTPException(status_code=429, detail=FULL_SEARCH_LIMIT_MESSAGE)
+
+            for index, row_values in enumerate(rows, start=1):
+                remaining_result_slots = result_limit - len(result_rows)
+                if remaining_result_slots <= 0:
+                    result_truncated = True
+                    break
+
+                query, params = build_bulk_item_query(
+                    scope_name,
+                    selected_fields,
+                    row_values,
+                    price_limit,
+                    index,
+                )
+                if not query:
+                    continue
+
+                records = await conn.fetch(query, *params)
+                cleaned = clean_records(records)
+                if len(cleaned) > remaining_result_slots:
+                    cleaned = cleaned[:remaining_result_slots]
+                    result_truncated = True
+                total_matched += len(cleaned)
+                query_label = " | ".join(
+                    str(row_values.get(field) or "").strip()
+                    for field in selected_fields
+                    if str(row_values.get(field) or "").strip()
+                )
+                for item in cleaned:
+                    item["Tra cứu hàng loạt"] = index
+                    item["Dòng tra cứu"] = query_label
+                    result_rows.append(item)
+
+                if len(result_rows) >= result_limit and index < len(rows):
+                    result_truncated = True
+                    break
+
+            if is_full_search:
+                quota = await consume_full_search_usage(request, current_user)
+
+        result_count_meta = build_count_meta(total_matched, exact=not result_truncated)
+
+        empty_scope = {
+            "data": [],
+            "count": 0,
+            "count_exact": True,
+            "count_label": "0",
+            "count_summary": "0",
+            "displayed": 0,
+            "has_more": False,
+            "approx_total": None,
+        }
+        populated_scope = {
+            "data": result_rows,
+            "count": int(result_count_meta["count"]),
+            "count_exact": bool(result_count_meta["exact"]),
+            "count_label": result_count_meta["label"],
+            "count_summary": result_count_meta["summary"],
+            "displayed": total_matched,
+            "has_more": result_truncated,
+            "approx_total": int(result_count_meta["count"]) if result_truncated else None,
+        }
+        response_payload = {
+            "success": True,
+            "search_mode": "bulk",
+            "bulk": {
+                "scope": scope_name,
+                "search_mode": search_mode,
+                "input_count": len(rows),
+                "matched_count": total_matched,
+                "price_limit": price_limit,
+                "fields": selected_fields,
+                "result_limit": result_limit,
+                "truncated": result_truncated,
+            },
+            "total_count": int(result_count_meta["count"]),
+            "total_count_exact": bool(result_count_meta["exact"]),
+            "total_count_label": result_count_meta["label"],
+            "total_count_summary": result_count_meta["summary"],
+            "applied_total_limit": result_limit,
+            "applied_limit_per_scope": result_limit,
+            "df1": populated_scope if scope_name == "medicine" else empty_scope,
+            "df2": populated_scope if scope_name == "goods" else empty_scope,
+            "auth": await build_auth_config(request, user=current_user),
+        }
+        if is_full_search:
+            response_payload["full_search_daily_used"] = quota["used"]
+            response_payload["full_search_daily_remaining"] = quota["remaining"]
+        return response_payload
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as e:
+        log_server_exception("bulk_query_data failed", e)
+        return internal_error_response()
+
+
 @app.post("/api/query-preview")
 async def preview_query(request: Request, payload: QueryPreviewRequest):
     limited = await enforce_rate_limit(request, "query-preview", PREVIEW_RATE_LIMIT_PER_MINUTE)
@@ -2248,24 +2631,21 @@ async def preview_query(request: Request, payload: QueryPreviewRequest):
         pool = await ensure_db_pool()
         filters = payload.filters or FilterRequest()
         result = {"success": True}
-        count_parts: List[Dict[str, Any]] = []
 
         async with pool.acquire() as conn:
             await enforce_data_access_policy(conn, request, "preview")
 
-            if payload.scope in ("all", "medicine"):
-                preview = await fetch_preview_bucket_cached(conn, "medicine", filters, PREVIEW_BUCKET_LIMIT)
-                result["df1"] = preview
-                result["medicine_estimate"] = preview
-                count_parts.append(preview)
+            if payload.scope == "medicine":
+                total_meta = await fetch_preview_bucket_cached(conn, "medicine", filters, PREVIEW_BUCKET_LIMIT)
+                result["df1"] = total_meta
+                result["medicine_estimate"] = total_meta
+            elif payload.scope == "goods":
+                total_meta = await fetch_preview_bucket_cached(conn, "goods", filters, PREVIEW_BUCKET_LIMIT)
+                result["df2"] = total_meta
+                result["goods_estimate"] = total_meta
+            else:
+                total_meta = await fetch_combined_preview_meta(conn, filters, PREVIEW_BUCKET_LIMIT)
 
-            if payload.scope in ("all", "goods"):
-                preview = await fetch_preview_bucket_cached(conn, "goods", filters, PREVIEW_BUCKET_LIMIT)
-                result["df2"] = preview
-                result["goods_estimate"] = preview
-                count_parts.append(preview)
-
-        total_meta = combine_preview_count_meta(count_parts, PREVIEW_BUCKET_LIMIT)
         result["total"] = int(total_meta["count"])
         result["exact"] = bool(total_meta["exact"])
         result["display"] = total_meta["label"]

@@ -3,7 +3,11 @@ import os
 import time
 import shutil
 import re
+import base64
+import json
+import unicodedata
 from datetime import datetime
+from urllib.parse import urlencode
 import pandas as pd
 import gc
 import hashlib
@@ -72,6 +76,19 @@ options.add_experimental_option("prefs", prefs)
 
 driver = None
 wait = None
+NETWORK_CAPTURE_ENABLED = False
+
+
+def build_chrome_options(enable_performance_logging=False):
+    chrome_options = webdriver.ChromeOptions()
+    chrome_options.add_argument(f"user-data-dir={CHROME_PROFILE_PATH}")
+    chrome_options.add_argument("--disable-logging")
+    chrome_options.add_argument("--log-level=3")
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-logging"])
+    chrome_options.add_experimental_option("prefs", prefs)
+    if enable_performance_logging:
+        chrome_options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
+    return chrome_options
 
 def _get_env_int(name, default=None):
     raw = os.getenv(name)
@@ -103,10 +120,25 @@ KEY_BATCHES = os.getenv("KEY_BATCHES")
 EXC_KEY = os.getenv("EXC_KEY")
 SEARCH_MATCH_MODE = (os.getenv("SEARCH_MATCH_MODE") or "exact").strip()
 SEARCH_MATCH_MODE_MAP = os.getenv("SEARCH_MATCH_MODE_MAP")
+SEARCH_NOTICE_TYPE = os.getenv("SEARCH_NOTICE_TYPE")
+SEARCH_NOTICE_TYPES = os.getenv("SEARCH_NOTICE_TYPES")
 YEAR_FROM = _get_env_int("YEAR_FROM")
 YEAR_TO = _get_env_int("YEAR_TO")
 MAX_PAGES = _get_env_int("MAX_PAGES")
 MAX_TRY = _get_env_int("MAX_TRY", 7)
+UI_BLOCKER_PROBE_TIMEOUT = _get_env_int("UI_BLOCKER_PROBE_TIMEOUT_MS", 150) / 1000
+UI_BLOCKER_POST_WAIT_TIMEOUT = _get_env_int("UI_BLOCKER_POST_WAIT_TIMEOUT_MS", 500) / 1000
+
+DEFAULT_SEARCH_NOTICE_TYPE = "Thông báo mời thầu"
+KHLCNT_SEARCH_NOTICE_TYPE = "Kế hoạch lựa chọn nhà thầu"
+SEARCH_NOTICE_TYPE_LABELS = {
+    "tbmt": DEFAULT_SEARCH_NOTICE_TYPE,
+    "thong-bao-moi-thau": DEFAULT_SEARCH_NOTICE_TYPE,
+    "thông báo mời thầu": DEFAULT_SEARCH_NOTICE_TYPE,
+    "kh-lcnt": KHLCNT_SEARCH_NOTICE_TYPE,
+    "ke-hoach-lua-chon-nha-thau": KHLCNT_SEARCH_NOTICE_TYPE,
+    "kế hoạch lựa chọn nhà thầu": KHLCNT_SEARCH_NOTICE_TYPE,
+}
 
 MATCH_MODE_LABELS = {
     "all-1": "Khớp tất cả từ (Phân biệt dấu)",
@@ -134,6 +166,30 @@ def _parse_keyword_batches(raw_batches, fallback_key):
 
 
 SEARCH_KEYWORDS = _parse_keyword_batches(KEY_BATCHES, KEY)
+
+
+def _resolve_search_notice_type_label(value):
+    label = (value or "").strip()
+    if not label:
+        return DEFAULT_SEARCH_NOTICE_TYPE
+    return SEARCH_NOTICE_TYPE_LABELS.get(label.lower(), label)
+
+
+def _parse_search_notice_types(raw_types, raw_type):
+    raw_value = raw_types if raw_types and str(raw_types).strip() else raw_type
+    if raw_value and str(raw_value).strip():
+        parts = re.split(r"\r?\n|\|\|", str(raw_value))
+        labels = []
+        for part in parts:
+            label = _resolve_search_notice_type_label(part)
+            if label and label not in labels:
+                labels.append(label)
+        if labels:
+            return labels
+    return [DEFAULT_SEARCH_NOTICE_TYPE]
+
+
+SEARCH_NOTICE_TYPE_LIST = _parse_search_notice_types(SEARCH_NOTICE_TYPES, SEARCH_NOTICE_TYPE)
 
 
 def _parse_match_mode_map(raw_value):
@@ -249,6 +305,14 @@ class CrawlerDB:
             self._safe_execute("""
                 CREATE INDEX idx_web_winner_facts_status
                 ON web_winner_facts (capture_status)
+            """)
+            self._safe_execute("""
+                ALTER TABLE package_metadata
+                ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMP
+            """)
+            self._safe_execute("""
+                CREATE INDEX IF NOT EXISTS idx_metadata_last_checked_at
+                ON package_metadata (last_checked_at)
             """)
             self.conn.commit()
         except psycopg2.Error as e:
@@ -609,9 +673,9 @@ class CrawlerDB:
                 ten_goi_thau, linh_vuc, hinh_thuc_lcnt, phuong_thuc_lcnt, dau_thau_qua_mang,
                 trong_nuoc_quoc_te, gia_goi_thau, gia_du_toan, ngay_phe_duyet, ngay_phe_duyet_date, trang_thai_phe_duyet,
                 co_quan_phe_duyet, loai_hop_dong, thoi_gian_thuc_hien, ket_qua_dau_thau,
-                dia_diem, cach_thuc_tai_ve, updated_at
+                dia_diem, cach_thuc_tai_ve, last_checked_at, updated_at
             ) VALUES (
-                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s
+                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s
             )
             ON CONFLICT(ma_tbmt, so_qd, version) DO UPDATE SET 
                 ngay_dang_tai = COALESCE(EXCLUDED.ngay_dang_tai, package_metadata.ngay_dang_tai),
@@ -634,6 +698,7 @@ class CrawlerDB:
                 ket_qua_dau_thau = COALESCE(EXCLUDED.ket_qua_dau_thau, package_metadata.ket_qua_dau_thau),
                 dia_diem = COALESCE(EXCLUDED.dia_diem, package_metadata.dia_diem),
                 cach_thuc_tai_ve = COALESCE(EXCLUDED.cach_thuc_tai_ve, package_metadata.cach_thuc_tai_ve),
+                last_checked_at = EXCLUDED.last_checked_at,
                 updated_at = EXCLUDED.updated_at
         """, (
             tbmt, qd_raw, ver_save,
@@ -643,9 +708,51 @@ class CrawlerDB:
             val_map['gia_goi_thau'], val_map['gia_du_toan'], val_map['ngay_phe_duyet'], approval_date,
             val_map['trang_thai_phe_duyet'], val_map['co_quan_phe_duyet'], val_map['loai_hop_dong'],
             val_map['thoi_gian_thuc_hien'], val_map['ket_qua_dau_thau'], val_map['dia_diem'],
-            val_map['cach_thuc_tai_ve'], self._now_str()
+            val_map['cach_thuc_tai_ve'], self._now_str(), self._now_str()
         ))
         self.conn.commit()
+
+    def save_khlcnt_metadata_for_tbmt(self, tbmt, info_dict):
+        tbmt_save = str(tbmt or "").strip()
+        if not tbmt_save:
+            return 0
+
+        values = {
+            'ma_khlcnt': self._nullify(info_dict.get('Mã KHLCNT')),
+            'ma_khlcnt_full': self._nullify(info_dict.get('Mã KHLCNT đầy đủ')),
+            'khlcnt_version': self._nullify(info_dict.get('Phiên bản KHLCNT')),
+            'ten_khlcnt': self._nullify(info_dict.get('Tên KHLCNT')),
+            'chu_dau_tu': self._nullify(info_dict.get('Chủ đầu tư')),
+            'ten_goi_thau': self._nullify(info_dict.get('Tên gói thầu') or info_dict.get('Tên gói thầu con')),
+            'gia_goi_thau': self._nullify(info_dict.get('Giá gói thầu')),
+            'gia_du_toan': self._nullify(info_dict.get('Giá dự toán') or info_dict.get('Dự toán gói thầu sau KHLCNT')),
+            'phan_loai_goi_thau': self._nullify(info_dict.get('Phân loại gói thầu')),
+            'url_goi_thau_con': self._nullify(info_dict.get('URL gói thầu con')),
+        }
+        self._safe_execute("""
+            UPDATE package_metadata
+            SET
+                ma_khlcnt = COALESCE(NULLIF(ma_khlcnt, ''), %s),
+                ma_khlcnt_full = COALESCE(NULLIF(ma_khlcnt_full, ''), %s),
+                khlcnt_version = COALESCE(NULLIF(khlcnt_version, ''), %s),
+                ten_khlcnt = COALESCE(NULLIF(ten_khlcnt, ''), %s),
+                chu_dau_tu = COALESCE(NULLIF(chu_dau_tu, ''), %s),
+                ten_goi_thau = COALESCE(NULLIF(ten_goi_thau, ''), %s),
+                gia_goi_thau = COALESCE(NULLIF(gia_goi_thau, ''), %s),
+                gia_du_toan = COALESCE(NULLIF(gia_du_toan, ''), %s),
+                phan_loai_goi_thau = COALESCE(NULLIF(phan_loai_goi_thau, ''), %s),
+                url_goi_thau_con = COALESCE(NULLIF(url_goi_thau_con, ''), %s),
+                updated_at = %s
+            WHERE ma_tbmt = %s
+        """, (
+            values['ma_khlcnt'], values['ma_khlcnt_full'], values['khlcnt_version'],
+            values['ten_khlcnt'], values['chu_dau_tu'], values['ten_goi_thau'],
+            values['gia_goi_thau'], values['gia_du_toan'], values['phan_loai_goi_thau'],
+            values['url_goi_thau_con'], self._now_str(), tbmt_save
+        ))
+        updated = self.cursor.rowcount or 0
+        self.conn.commit()
+        return updated
 
     def save_web_winner_fact(self, tbmt, qd_raw, version, fact_payload, commit=True):
         if not fact_payload:
@@ -697,6 +804,27 @@ class CrawlerDB:
         """, (CURRENT_RUN_ID or 0, tbmt, qd_raw, version, action_type, reason, self._now_str()))
         self.conn.commit()
 
+    def log_khlcnt_filtered_skip(self, plan_record, reason):
+        self._safe_execute("""
+            INSERT INTO scan_logs (
+                run_id, ma_tbmt, so_qd, version,
+                ma_khlcnt, ma_khlcnt_full, khlcnt_version,
+                action_type, reason, created_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 'FILTERED_SKIP', %s, %s)
+        """, (
+            CURRENT_RUN_ID or 0,
+            "",
+            "N/A",
+            plan_record.get("Phiên bản KHLCNT") or "N/A",
+            plan_record.get("Mã KHLCNT") or "",
+            plan_record.get("Mã KHLCNT đầy đủ") or "",
+            plan_record.get("Phiên bản KHLCNT") or "",
+            reason,
+            self._now_str(),
+        ))
+        self.conn.commit()
+
     def should_skip_level_1(self, tbmt, skip_days=SKIP_DAYS):
         # 1. Bị chặn từ đầu do blacklist
         self._safe_execute("""
@@ -716,14 +844,26 @@ class CrawlerDB:
         last_abort_row = self.cursor.fetchone() or {}
         last_abort_at = last_abort_row.get("last_abort_at")
 
-        # 3. Xem lần chạy cuối là khi nào
+        # 3. Xem lần check/crawl cuối là khi nào.
+        # last_checked_at là nguồn chuẩn cho việc check version. packages.crawled_at
+        # là fallback cho dữ liệu đã crawl trước khi có last_checked_at hoặc các
+        # unit chỉ có artifact, tránh check lại gói vừa crawl trong skip_days.
         self._safe_execute("""
-            SELECT MAX(crawled_at) as last_date FROM packages 
-            WHERE ma_tbmt=%s AND status='DONE'
-        """, (tbmt,))
+            SELECT MAX(event_at) AS last_date
+            FROM (
+                SELECT last_checked_at AS event_at
+                FROM package_metadata
+                WHERE ma_tbmt=%s AND last_checked_at IS NOT NULL
+                UNION ALL
+                SELECT crawled_at AS event_at
+                FROM packages
+                WHERE ma_tbmt=%s AND crawled_at IS NOT NULL
+            ) recent_events
+        """, (tbmt, tbmt))
         row = self.cursor.fetchone()
         last_date_str = row['last_date'] if row else None
-        if not last_date_str: return False
+        if not last_date_str:
+            return False
         
         try:
             # Sửa ép kiểu timestamp phù hợp datetime (Postgres trả về obj datetime)
@@ -750,6 +890,40 @@ class CrawlerDB:
         if not rows:
             return "00"
         return max((row["version"] for row in rows), key=_version_key)
+
+    def mark_unit_checked(self, tbmt, qd_raw, version, commit=True):
+        tbmt_save = str(tbmt or "").strip() or "UNKNOWN_TBMT"
+        qd_save = str(qd_raw or "").strip() or "UNKNOWN_QD"
+        ver_save = version if version else "00"
+        checked_at = self._now_str()
+        self._safe_execute("""
+            INSERT INTO package_metadata (ma_tbmt, so_qd, version, last_checked_at)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (ma_tbmt, so_qd, version) DO UPDATE SET
+                last_checked_at = EXCLUDED.last_checked_at
+        """, (tbmt_save, qd_save, ver_save, checked_at))
+        if commit:
+            self.conn.commit()
+
+    def should_download_unit(self, tbmt, qd_raw, version):
+        ver_chk = version if version else "00"
+        self._safe_execute("""
+            SELECT version
+            FROM packages
+            WHERE ma_tbmt=%s AND so_qd=%s
+        """, (tbmt, qd_raw))
+        rows = self.cursor.fetchall() or []
+        if not rows:
+            return True, "NEW_QD"
+
+        latest_ver = max((row["version"] for row in rows), key=_version_key)
+        if _version_key(ver_chk) > _version_key(latest_ver):
+            return True, f"NEW_VERSION {latest_ver} -> {ver_chk}"
+        if _version_key(ver_chk) == _version_key(latest_ver):
+            self.mark_unit_checked(tbmt, qd_raw, ver_chk)
+            return False, f"SAME_VERSION v{ver_chk}"
+        self.mark_unit_checked(tbmt, qd_raw, ver_chk)
+        return False, f"OLDER_VERSION v{ver_chk} < v{latest_ver}"
 
     def close(self):
         try:
@@ -820,13 +994,39 @@ def print_temp_abort_summary():
     logger.warning("=" * 60)
 
 
-def init_runtime():
-    global driver, wait, tracker
+def init_tracker():
+    global tracker
     if tracker is None:
         tracker = CrawlerDB()
-    if driver is None:
+
+
+def close_driver_runtime():
+    global driver, wait, NETWORK_CAPTURE_ENABLED
+    if driver is not None:
         try:
-            driver = webdriver.Chrome(options=options)
+            driver.quit()
+        except Exception:
+            pass
+        driver = None
+        wait = None
+    NETWORK_CAPTURE_ENABLED = False
+
+
+def init_runtime(enable_network_capture=False):
+    global driver, wait, NETWORK_CAPTURE_ENABLED
+    init_tracker()
+    if driver is not None and NETWORK_CAPTURE_ENABLED != bool(enable_network_capture):
+        logger.info(
+            "🔄 Restart Chrome để chuyển Network capture: %s -> %s",
+            NETWORK_CAPTURE_ENABLED,
+            bool(enable_network_capture),
+        )
+        close_driver_runtime()
+
+    if driver is None:
+        chrome_options = build_chrome_options(enable_performance_logging=enable_network_capture)
+        try:
+            driver = webdriver.Chrome(options=chrome_options)
         except Exception as first_error:
             if USE_LOCAL_CHROMEDRIVER and CHROMEDRIVER_PATH:
                 try:
@@ -835,7 +1035,7 @@ def init_runtime():
                         "Thử fallback sang CHROMEDRIVER_PATH..."
                     )
                     service = Service(executable_path=CHROMEDRIVER_PATH, log_output=os.devnull)
-                    driver = webdriver.Chrome(service=service, options=options)
+                    driver = webdriver.Chrome(service=service, options=chrome_options)
                 except SessionNotCreatedException as e:
                     logger.error(
                         f"❌ ChromeDriver tại CHROMEDRIVER_PATH không khớp version Chrome: {e.msg}"
@@ -844,17 +1044,18 @@ def init_runtime():
             else:
                 raise
         wait = WebDriverWait(driver, 20)
+        NETWORK_CAPTURE_ENABLED = bool(enable_network_capture)
+        logger.info("🚀 Chrome đã khởi tạo | Network capture: %s", "BẬT" if NETWORK_CAPTURE_ENABLED else "TẮT")
+        if NETWORK_CAPTURE_ENABLED:
+            try:
+                driver.execute_cdp_cmd("Network.enable", {})
+            except Exception:
+                logger.warning("⚠️ Không bật được Chrome DevTools Network; KHLCNT_NO_LINKED_TBMT có thể không lấy được resultDTO.")
 
 
 def shutdown_runtime():
-    global driver, wait, tracker
-    if driver is not None:
-        try:
-            driver.quit()
-        except Exception:
-            pass
-        driver = None
-        wait = None
+    global tracker
+    close_driver_runtime()
     if tracker is not None:
         tracker.close()
         tracker = None
@@ -1708,9 +1909,11 @@ def dismiss_known_error_modal_once(timeout=2, post_wait=2):
 
 
 def clear_blocking_ui(timeout=2):
+    probe_timeout = min(timeout, UI_BLOCKER_PROBE_TIMEOUT)
+    post_wait_timeout = min(timeout, UI_BLOCKER_POST_WAIT_TIMEOUT)
     handled_any = False
-    handled_any = handle_connection_alert_once(timeout=timeout, post_wait=timeout) or handled_any
-    handled_any = dismiss_known_error_modal_once(timeout=timeout, post_wait=timeout) or handled_any
+    handled_any = handle_connection_alert_once(timeout=probe_timeout, post_wait=post_wait_timeout) or handled_any
+    handled_any = dismiss_known_error_modal_once(timeout=probe_timeout, post_wait=post_wait_timeout) or handled_any
     return handled_any
 
 def wait_dom_settled(timeout=15):
@@ -2302,6 +2505,9 @@ def _process_one_qd_flow(ma_tbmt, box_index, dia_diem, qd_text_raw, qd_element_p
     dest_qd = None
     winner_fact = None
     safe_ver = version_code if version_code else "00"
+    should_download, download_reason = tracker.should_download_unit(ma_tbmt, qd_text_raw, safe_ver)
+    if not should_download:
+        return True, False, None, None, download_reason
 
     # 1. Tải PDF QĐ (nếu có element)
     if qd_element_pdf:
@@ -2331,10 +2537,16 @@ def _process_one_qd_flow(ma_tbmt, box_index, dia_diem, qd_text_raw, qd_element_p
         any_dl = True
         any_excel = True
 
-    return any_dl, any_excel, dest_qd, winner_fact
+    return any_dl, any_excel, dest_qd, winner_fact, None
 
 
-def finalize_one_qd_result(ma_tbmt, box_index, dia_diem, so_qd, ver_code, any_dl, any_excel, dest_qd, info_snapshot=None, winner_fact=None):
+def finalize_one_qd_result(ma_tbmt, box_index, dia_diem, so_qd, ver_code, any_dl, any_excel, dest_qd, info_snapshot=None, winner_fact=None, download_skipped_reason=None):
+    if download_skipped_reason:
+        logger.info(
+            f"✅ Đã check version, bỏ qua tải file cho {ma_tbmt} / {so_qd} / v{ver_code}: {download_skipped_reason}"
+        )
+        return
+
     log_pdf_only_if_needed(
         any_dl,
         any_excel,
@@ -2501,7 +2713,7 @@ def handle_quyet_dinh_phe_duyet_all(num_cols, ma_tbmt, box_index, box_name_text,
                             pdf_tag = get_card_pdf_tag()
                             
                             # --- XỬ LÝ DOWNLOAD ---
-                            ok, ok_excel, path, winner_fact = _process_one_qd_flow(
+                            ok, ok_excel, path, winner_fact, download_skipped_reason = _process_one_qd_flow(
                                 ma_tbmt, box_index, dia_diem,
                                 qd_text_raw=so_qd, 
                                 qd_element_pdf=pdf_tag, 
@@ -2522,7 +2734,8 @@ def handle_quyet_dinh_phe_duyet_all(num_cols, ma_tbmt, box_index, box_name_text,
                                 any_excel=ok_excel,
                                 dest_qd=path,
                                 info_snapshot=info_snapshot,
-                                winner_fact=winner_fact
+                                winner_fact=winner_fact,
+                                download_skipped_reason=download_skipped_reason
                             )
                             
                             if ok: any_downloaded = True
@@ -2606,7 +2819,7 @@ def handle_quyet_dinh_phe_duyet_all(num_cols, ma_tbmt, box_index, box_name_text,
             if not so_qd: so_qd = "UNKNOWN_QD"
             log_duplicate_qd_version(so_qd, ver_code)
 
-            ok, ok_excel, path, winner_fact = _process_one_qd_flow(
+            ok, ok_excel, path, winner_fact, download_skipped_reason = _process_one_qd_flow(
                 ma_tbmt, box_index, dia_diem,
                 qd_text_raw=so_qd, qd_element_pdf=pdf_tag, version_code=ver_code, num_cols=num_cols, 
                 ngay_dang_tai_specific=None, trang_thai_specific=None,
@@ -2623,7 +2836,8 @@ def handle_quyet_dinh_phe_duyet_all(num_cols, ma_tbmt, box_index, box_name_text,
                 any_excel=ok_excel,
                 dest_qd=path,
                 info_snapshot=info_snapshot,
-                winner_fact=winner_fact
+                winner_fact=winner_fact,
+                download_skipped_reason=download_skipped_reason
             )
             if ok: any_downloaded = True
             if ok_excel: any_excel_for_box = True
@@ -2767,9 +2981,9 @@ def process_box(box, index):
     if has_any_download and tracker is not None:
         tracker._safe_execute("""
             UPDATE packages
-            SET crawled_at=%s, status='DONE'
+            SET status='DONE'
             WHERE ma_tbmt=%s AND is_latest=1
-        """, (tracker._now_str(), ma_tbmt))
+        """, (ma_tbmt,))
         tracker.conn.commit()
 
     return has_any_download
@@ -2844,7 +3058,81 @@ def resolve_match_mode(search_keyword: str) -> str:
     return SEARCH_MATCH_MODE_BY_KEYWORD.get(keyword_norm, SEARCH_MATCH_MODE)
 
 
-def prepare_search_form(search_keyword: str):
+def xpath_literal(value: str) -> str:
+    if "'" not in value:
+        return f"'{value}'"
+    if '"' not in value:
+        return f'"{value}"'
+    return "concat(" + ', "\"", '.join(f"'{part}'" for part in value.split('"')) + ")"
+
+
+def select_search_notice_type(notice_type: str):
+    label = _resolve_search_notice_type_label(notice_type)
+    if label == DEFAULT_SEARCH_NOTICE_TYPE:
+        return DEFAULT_SEARCH_NOTICE_TYPE
+
+    selected_xpath = (
+        "//div[contains(@class,'width_date_antdv')]"
+        "//div[contains(@class,'ant-select-selection--single')]"
+    )
+    selected = wait_clickable(driver, By.XPATH, selected_xpath, timeout=20)
+    driver.execute_script("arguments[0].click();", selected)
+
+    label_xpath = xpath_literal(label)
+    option_xpaths = [
+        f"//li[contains(@class,'ant-select-dropdown-menu-item') and normalize-space()={label_xpath}]",
+        f"//li[contains(@class,'ant-select-dropdown-menu-item') and contains(normalize-space(), {label_xpath})]",
+    ]
+    last_error = None
+    for option_xpath in option_xpaths:
+        try:
+            option = wait.until(EC.element_to_be_clickable((By.XPATH, option_xpath)))
+            driver.execute_script("arguments[0].click();", option)
+            logger.info(f"📌 Loại thông tin tìm kiếm: {label}")
+            wait_dom_settled(timeout=15)
+            return label
+        except Exception as error:
+            last_error = error
+    raise TimeoutException(f"Không chọn được loại thông tin tìm kiếm: {label}") from last_error
+
+
+def find_search_keyword_input():
+    exact_placeholder = "Nhập số TBMT/Tên gói thầu (ví dụ: IB0123456789 hoặc Thiết bị)"
+    try:
+        return wait.until(
+            EC.presence_of_element_located(
+                (By.XPATH, f"//input[@placeholder={xpath_literal(exact_placeholder)}]")
+            )
+        )
+    except TimeoutException:
+        pass
+
+    keyword_tokens = ["tbmt", "tên gói thầu", "khlcnt", "mã kế hoạch", "tên kế hoạch", "kế hoạch lựa chọn nhà thầu"]
+    excluded_tokens = ["áp dụng cho tất cả", "không chứa", "từ ngày", "đến ngày", "ngày đăng tải"]
+    inputs = driver.find_elements(By.XPATH, "//input[not(@type='hidden') and not(@type='checkbox') and not(@type='radio')]")
+    for item in inputs:
+        try:
+            placeholder = (item.get_attribute("placeholder") or "").strip().lower()
+            if item.is_displayed() and item.is_enabled() and not any(token in placeholder for token in excluded_tokens):
+                if any(token in placeholder for token in keyword_tokens):
+                    logger.info(f"🔎 Dùng ô keyword có placeholder: {placeholder}")
+                    return item
+        except Exception:
+            continue
+    raise TimeoutException("Không tìm thấy ô nhập keyword.")
+
+
+def apply_post_search_filters(active_notice_type: str):
+    if active_notice_type != DEFAULT_SEARCH_NOTICE_TYPE:
+        logger.info(f"ℹ️ Bỏ qua filter Đã đóng thầu/Có nhà thầu trúng thầu cho loại: {active_notice_type}")
+        return
+
+    wait.until(EC.element_to_be_clickable((By.XPATH, "//ul[contains(@class, 'nav-tabs')]//a[contains(text(),'Đã đóng thầu')]"))).click()
+    time.sleep(1)
+    wait.until(EC.element_to_be_clickable((By.XPATH, "//div[contains(@class, 'content__body__option')]//span[contains(normalize-space(),'Có nhà thầu trúng thầu')]"))).click()
+
+
+def prepare_search_form(search_keyword: str, notice_type: str = DEFAULT_SEARCH_NOTICE_TYPE):
     driver.get("https://muasamcong.mpi.gov.vn/web/guest/home")
     try:
         close_button = wait.until(EC.element_to_be_clickable((By.ID, "popup-close")))
@@ -2854,6 +3142,11 @@ def prepare_search_form(search_keyword: str):
         logger.warning("⚠️  Không có hộp thông báo cần đóng hoặc đã tự đóng.")
 
     driver.find_element(By.XPATH, "//button[contains(text(), 'Tìm kiếm nâng cao')]").click()
+    requested_notice_type = _resolve_search_notice_type_label(notice_type)
+    active_notice_type = DEFAULT_SEARCH_NOTICE_TYPE
+    if requested_notice_type != DEFAULT_SEARCH_NOTICE_TYPE:
+        active_notice_type = select_search_notice_type(requested_notice_type)
+
     match_mode = resolve_match_mode(search_keyword)
     select_keyword_match_mode(match_mode)
     logger.info(f"🔎 Chế độ khớp từ khóa: {MATCH_MODE_LABELS[match_mode]} ({match_mode})")
@@ -2864,16 +3157,23 @@ def prepare_search_form(search_keyword: str):
     if EXC_KEY:
         exc_input.send_keys(EXC_KEY)
 
-    keyword_input = wait.until(EC.presence_of_element_located((By.XPATH, "//input[@placeholder='Nhập số TBMT/Tên gói thầu (ví dụ: IB0123456789 hoặc Thiết bị)']")))
+    if active_notice_type == DEFAULT_SEARCH_NOTICE_TYPE:
+        keyword_input = wait.until(EC.presence_of_element_located((By.XPATH, "//input[@placeholder='Nhập số TBMT/Tên gói thầu (ví dụ: IB0123456789 hoặc Thiết bị)']")))
+    else:
+        keyword_input = find_search_keyword_input()
     keyword_input.clear()
     keyword_input.send_keys(search_keyword)
 
-    wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@name='ck-investField' and @value='HH']"))).click()
+    if active_notice_type == DEFAULT_SEARCH_NOTICE_TYPE:
+        wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@name='ck-investField' and @value='HH']"))).click()
+    else:
+        goods_checkbox = wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@name='ck-investField' and @value='HH']")))
+        if not goods_checkbox.is_selected():
+            goods_checkbox.click()
+
     driver.find_element(By.XPATH, "//button[contains(text(), 'Tìm kiếm')]").click()
     time.sleep(1)
-    wait.until(EC.element_to_be_clickable((By.XPATH, "//ul[contains(@class, 'nav-tabs')]//a[contains(text(),'Đã đóng thầu')]"))).click()
-    time.sleep(1)
-    wait.until(EC.element_to_be_clickable((By.XPATH, "//div[contains(@class, 'content__body__option')]//span[contains(normalize-space(),'Có nhà thầu trúng thầu')]"))).click()
+    apply_post_search_filters(active_notice_type)
     time.sleep(2)
 
     select_elem = wait.until(EC.presence_of_element_located((By.XPATH, "//div[contains(text(),'Hiển thị')]/select")))
@@ -2881,6 +3181,7 @@ def prepare_search_form(search_keyword: str):
     select = Select(select_elem)
     select.select_by_value("50")
     time.sleep(2)
+    return active_notice_type
 
 
 def go_to_next_results_page():
@@ -2912,6 +3213,473 @@ def prompt_after_max_pages(search_keyword: str, page: int, batch_limit: int):
         except ValueError:
             pass
         print("⚠️ Giá trị không hợp lệ. Hãy nhập một số trang > 0, 'n' hoặc Enter để thoát.")
+
+
+def is_khlcnt_notice_type(notice_type: str):
+    return _resolve_search_notice_type_label(notice_type) == KHLCNT_SEARCH_NOTICE_TYPE
+
+
+def split_notice_code(raw_code: str):
+    raw = str(raw_code or "").strip()
+    if not raw:
+        return "", ""
+    if "-" not in raw:
+        return raw, ""
+    code, version = raw.split("-", 1)
+    return code.strip(), version.strip()
+
+
+def get_notice_code_full(box):
+    try:
+        code_elem = wait_presence(box, By.CSS_SELECTOR, "p.content__body__left__item__infor__code", timeout=10)
+        return code_elem.text.strip().split(":")[-1].strip()
+    except Exception:
+        return ""
+
+
+def get_box_detail_url(box):
+    try:
+        return box.find_element(
+            By.XPATH,
+            ".//a[.//h5[contains(@class,'content__body__left__item__infor__contract__name')]]",
+        ).get_attribute("href")
+    except Exception:
+        return ""
+
+
+def _normalize_keyword_value(value):
+    return unicodedata.normalize("NFC", str(value or "")).strip().lower()
+
+
+def package_name_contains_search_keyword(package_name, search_keyword):
+    keyword = _normalize_keyword_value(search_keyword)
+    name = _normalize_keyword_value(package_name)
+    return True if not keyword else keyword in name
+
+
+def classify_khlcnt_parent(plan_name):
+    if is_luu_lai_theo_ten_goi_thau(plan_name):
+        return "CHỌN", ""
+    if is_loai_ten_goi_thau(plan_name):
+        return "FILTERED_SKIP", "Tên KHLCNT bị loại theo từ khóa filter"
+    return "CHỌN", ""
+
+
+def classify_khlcnt_child_package(child_name, search_keyword):
+    if is_luu_lai_theo_ten_goi_thau(child_name):
+        return "CHỌN", ""
+    if not package_name_contains_search_keyword(child_name, search_keyword):
+        return "LOẠI", "Không chứa keyword crawl"
+    if is_loai_ten_goi_thau(child_name):
+        return "LOẠI", "Loại theo từ khóa tên gói thầu con"
+    return "CHỌN", ""
+
+
+def extract_tbmt_codes(data):
+    ib_pattern = re.compile(r"\bIB\d{10}\b")
+    found = []
+    seen = set()
+
+    def add_codes(value):
+        for code in ib_pattern.findall(str(value or "")):
+            if code not in seen:
+                seen.add(code)
+                found.append(code)
+
+    def parse_json_string(value):
+        text = str(value or "").strip()
+        if not text or text[0] not in "[{":
+            return None
+        try:
+            return json.loads(text)
+        except Exception:
+            return None
+
+    def walk(value):
+        parsed = parse_json_string(value) if isinstance(value, str) else None
+        if parsed is not None:
+            walk(parsed)
+            return
+        if isinstance(value, dict):
+            result_dto = value.get("resultDTO")
+            if isinstance(result_dto, dict):
+                add_codes(result_dto.get("notifyNo"))
+            add_codes(value.get("notifyNo"))
+            link_notify_info = value.get("linkNotifyInfo")
+            if isinstance(link_notify_info, dict):
+                add_codes(link_notify_info.get("notifyNo"))
+            for child_value in value.values():
+                walk(child_value)
+            return
+        if isinstance(value, list):
+            for item in value:
+                walk(item)
+            return
+        if isinstance(value, str):
+            add_codes(value)
+
+    walk(data)
+    return found
+
+
+def parse_json_body(value):
+    if isinstance(value, (dict, list)):
+        return value
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+    try:
+        decoder = json.JSONDecoder()
+        parsed, _idx = decoder.raw_decode(text)
+        return parsed
+    except Exception:
+        return None
+
+
+def walk_json_objects(data):
+    parsed = parse_json_body(data) if isinstance(data, str) else data
+    if isinstance(parsed, dict):
+        yield parsed
+        for value in parsed.values():
+            yield from walk_json_objects(value)
+    elif isinstance(parsed, list):
+        for item in parsed:
+            yield from walk_json_objects(item)
+
+
+def build_kqlcnt_url(data: dict, base_url: str = "https://muasamcong.mpi.gov.vn/web/guest/contractor-selection") -> str:
+    result = data.get("resultDTO") or {}
+    input_result_id = result.get("id")
+    notify_no = result.get("notifyNo")
+    plan_no = data.get("planNo") or result.get("planNo")
+    process_apply = data.get("processApply") or result.get("processApply")
+    bid_mode = data.get("bidMode") or result.get("bidMode")
+    bid_form = data.get("bidForm") or result.get("bidForm") or ""
+    if not all([input_result_id, notify_no, plan_no, process_apply, bid_mode]):
+        return ""
+    params = {
+        "p_p_id": "egpportalcontractorselectionv2_WAR_egpportalcontractorselectionv2",
+        "p_p_lifecycle": "0",
+        "p_p_state": "normal",
+        "p_p_mode": "view",
+        "_egpportalcontractorselectionv2_WAR_egpportalcontractorselectionv2_render": "detail-v2",
+        "type": "es-notify-contractor",
+        "stepCode": "notify-contractor-step-4-kqlcnt",
+        "id": "",
+        "notifyId": "",
+        "inputResultId": input_result_id,
+        "bidOpenId": "",
+        "processApply": process_apply,
+        "bidMode": bid_mode,
+        "notifyNo": notify_no,
+        "planNo": plan_no,
+        "step": "kqlcnt",
+        "isInternet": "",
+        "bidForm": bid_form,
+    }
+    return f"{base_url}?{urlencode(params)}"
+
+
+def find_kqlcnt_result_payload(data):
+    for obj in walk_json_objects(data):
+        result = obj.get("resultDTO") if isinstance(obj, dict) else None
+        if not isinstance(result, dict):
+            continue
+        notify_codes = extract_tbmt_codes(result.get("notifyNo"))
+        if not notify_codes:
+            continue
+        return {
+            "data": obj,
+            "tbmt_codes": notify_codes,
+            "tbmt_code": notify_codes[0],
+            "so_qd": result.get("decisionNo") or "",
+            "version": result.get("resultVersion") or result.get("notifyVersion") or "",
+            "url_goi_thau_con": build_kqlcnt_url(obj),
+        }
+    return None
+
+
+def clear_performance_logs():
+    try:
+        driver.get_log("performance")
+    except Exception:
+        pass
+
+
+def extract_kqlcnt_result_from_performance_logs():
+    try:
+        entries = driver.get_log("performance")
+    except Exception:
+        return None
+    fallback_payload = None
+    for entry in entries:
+        try:
+            message = json.loads(entry.get("message", "{}")).get("message", {})
+        except Exception:
+            continue
+        if message.get("method") != "Network.responseReceived":
+            continue
+        params = message.get("params", {})
+        response = params.get("response", {})
+        mime_type = str(response.get("mimeType") or "").lower()
+        url = str(response.get("url") or "")
+        if "muasamcong.mpi.gov.vn" not in url and not any(token in mime_type for token in ("json", "text", "javascript", "html")):
+            continue
+        request_id = params.get("requestId")
+        if not request_id:
+            continue
+        try:
+            body_payload = driver.execute_cdp_cmd("Network.getResponseBody", {"requestId": request_id})
+        except Exception:
+            continue
+        body = body_payload.get("body", "")
+        if body_payload.get("base64Encoded"):
+            try:
+                body = base64.b64decode(body).decode("utf-8", errors="ignore")
+            except Exception:
+                continue
+        result_payload = find_kqlcnt_result_payload(body)
+        if not result_payload:
+            continue
+        if result_payload.get("url_goi_thau_con"):
+            return result_payload
+        fallback_payload = fallback_payload or result_payload
+    return fallback_payload
+
+
+def open_url_in_new_tab(url):
+    main_window = driver.current_window_handle
+    current_handles = set(driver.window_handles)
+    driver.execute_script("window.open(arguments[0], '_blank');", url)
+    WebDriverWait(driver, 10).until(lambda d: len(set(d.window_handles) - current_handles) == 1)
+    new_window = list(set(driver.window_handles) - current_handles)[0]
+    driver.switch_to.window(new_window)
+    wait_dom_settled(timeout=20)
+    return main_window
+
+
+def close_current_tab_and_return(main_window):
+    try:
+        driver.close()
+    finally:
+        if main_window in driver.window_handles:
+            driver.switch_to.window(main_window)
+            wait_dom_settled(timeout=15)
+
+
+def click_khlcnt_package_tab():
+    tab_xpath = "//ul[contains(@class,'nav-tabs')]//a[contains(normalize-space(),'Thông tin gói thầu')]"
+    tab = wait_clickable(driver, By.XPATH, tab_xpath, timeout=20)
+    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", tab)
+    driver.execute_script("arguments[0].click();", tab)
+    wait_dom_settled(timeout=15)
+
+
+def get_khlcnt_package_rows():
+    click_khlcnt_package_tab()
+    table_xpath = (
+        "//table[.//th[contains(normalize-space(),'Tên gói thầu')] "
+        "and .//th[contains(normalize-space(),'Số thông báo liên kết')]]"
+    )
+    table = wait_presence(driver, By.XPATH, table_xpath, timeout=20)
+    rows = table.find_elements(By.XPATH, ".//tbody/tr")
+    parsed_rows = []
+    for row_position, row in enumerate(rows, start=1):
+        cells = row.find_elements(By.XPATH, "./td")
+        if len(cells) < 5:
+            continue
+        parsed_rows.append({
+            "STT gói thầu con": cells[0].text.strip(),
+            "Dòng gói thầu con": row_position,
+            "Tên gói thầu con": cells[1].text.strip(),
+            "Dự toán gói thầu sau KHLCNT": cells[2].text.strip(),
+            "Giá gói thầu": cells[3].text.strip(),
+            "Số thông báo liên kết": cells[4].text.strip(),
+        })
+    return parsed_rows
+
+
+def build_khlcnt_plan_record(box, search_keyword, page, index):
+    code_full = get_notice_code_full(box)
+    code, version = split_notice_code(code_full)
+    return {
+        "Keyword crawl": search_keyword,
+        "Trang kết quả": page,
+        "STT KHLCNT": index,
+        "Mã KHLCNT": code,
+        "Mã KHLCNT đầy đủ": code_full,
+        "Phiên bản KHLCNT": version,
+        "Tên KHLCNT": get_ten_goi_thau(box),
+        "Chủ đầu tư": get_chu_dau_tu(box),
+        "URL chi tiết": get_box_detail_url(box),
+    }
+
+
+def build_khlcnt_child_metadata(plan_record, child_row, extra=None):
+    metadata = {
+        "Mã KHLCNT": plan_record.get("Mã KHLCNT", ""),
+        "Mã KHLCNT đầy đủ": plan_record.get("Mã KHLCNT đầy đủ", ""),
+        "Phiên bản KHLCNT": plan_record.get("Phiên bản KHLCNT", ""),
+        "Tên KHLCNT": plan_record.get("Tên KHLCNT", ""),
+        "Chủ đầu tư": plan_record.get("Chủ đầu tư", ""),
+        "Tên gói thầu": child_row.get("Tên gói thầu con", ""),
+        "Tên gói thầu con": child_row.get("Tên gói thầu con", ""),
+        "Dự toán gói thầu sau KHLCNT": child_row.get("Dự toán gói thầu sau KHLCNT", ""),
+        "Giá gói thầu": child_row.get("Giá gói thầu", ""),
+    }
+    if extra:
+        metadata.update({key: value for key, value in extra.items() if value not in (None, "")})
+    return metadata
+
+
+def click_khlcnt_child_name_detail(child_row):
+    row_index = int(child_row.get("Dòng gói thầu con") or 0)
+    if row_index <= 0:
+        raise ValueError("Thiếu Dòng gói thầu con để click detail.")
+    click_khlcnt_package_tab()
+    table_xpath = (
+        "//table[.//th[contains(normalize-space(),'Tên gói thầu')] "
+        "and .//th[contains(normalize-space(),'Số thông báo liên kết')]]"
+    )
+    row_xpath = f"({table_xpath}//tbody/tr)[{row_index}]//td[2]//a"
+    child_link = wait_clickable(driver, By.XPATH, row_xpath, timeout=20)
+    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", child_link)
+    previous_url = driver.current_url
+    clear_performance_logs()
+    driver.execute_script("arguments[0].click();", child_link)
+    wait_dom_settled(timeout=20)
+    return previous_url
+
+
+def return_to_khlcnt_detail(previous_url):
+    try:
+        if driver.current_url != previous_url:
+            driver.get(previous_url)
+            wait_dom_settled(timeout=20)
+    except Exception:
+        pass
+    click_khlcnt_package_tab()
+
+
+def process_khlcnt_no_linked_child(plan_record, child_row, child_index):
+    previous_url = click_khlcnt_child_name_detail(child_row)
+    try:
+        time.sleep(0.5)
+        result_payload = extract_kqlcnt_result_from_performance_logs()
+        tbmt_code = result_payload.get("tbmt_code") if result_payload else ""
+        if not tbmt_code:
+            logger.info("⏸️ [%s] Child chưa có resultDTO/notifyNo, pass: %s", plan_record.get("Mã KHLCNT", ""), child_row.get("Tên gói thầu con", ""))
+            return False
+        kqlcnt_url = result_payload.get("url_goi_thau_con") or ""
+        if not kqlcnt_url:
+            logger.info("[%s] Không build được URL KQLCNT cho %s, pass.", plan_record.get("Mã KHLCNT", ""), tbmt_code)
+            return False
+        metadata = build_khlcnt_child_metadata(plan_record, child_row, {"URL gói thầu con": kqlcnt_url})
+        driver.get(kqlcnt_url)
+        wait_dom_settled(timeout=20)
+        num_cols = get_num_cols_hang_hoa()
+        if num_cols <= 0:
+            logger.info("⏸️ [%s] KQLCNT chưa có card Danh sách thuốc/hàng hóa, pass.", tbmt_code)
+            return False
+        info_snapshot = extract_additional_info()
+        metadata.update(info_snapshot)
+        so_qd = result_payload.get("so_qd") or metadata.get("Số quyết định phê duyệt") or "N/A"
+        version = normalize_version_code(result_payload.get("version") or get_current_ui_version() or "00") or "00"
+        has_download = handle_quyet_dinh_phe_duyet_all(num_cols, tbmt_code, child_index, child_row.get("Tên gói thầu con", ""), None, "")
+        tracker.save_metadata(tbmt_code, so_qd, version, metadata)
+        tracker.save_khlcnt_metadata_for_tbmt(tbmt_code, metadata)
+        logger.info("✅ [%s] Ghi metadata KHLCNT_NO_LINKED_TBMT cho %s / %s / v%s%s", plan_record.get("Mã KHLCNT", ""), tbmt_code, so_qd, version, " + xử lý KQLCNT" if has_download else "")
+        return True
+    except Exception as error:
+        logger.info("⏸️ [%s] Child no-linked đang treo/lỗi tạm, pass: %s | %s", plan_record.get("Mã KHLCNT", ""), child_row.get("Tên gói thầu con", ""), str(error)[:300])
+        return False
+    finally:
+        return_to_khlcnt_detail(previous_url)
+
+
+def process_khlcnt_plan_detail(plan_record, search_keyword):
+    parent_result, parent_reason = classify_khlcnt_parent(plan_record.get("Tên KHLCNT", ""))
+    if parent_result == "FILTERED_SKIP":
+        tracker.log_khlcnt_filtered_skip(plan_record, parent_reason)
+        logger.info("[%s] FILTERED_SKIP KHLCNT: %s", plan_record.get("Mã KHLCNT", ""), parent_reason)
+        return 0
+    detail_url = plan_record.get("URL chi tiết", "")
+    if not detail_url:
+        logger.info("[%s] KHLCNT không có URL chi tiết, pass.", plan_record.get("Mã KHLCNT", ""))
+        return 0
+    saved_count = 0
+    filtered_child_count = 0
+    valid_child_count = 0
+    main_window = open_url_in_new_tab(detail_url)
+    try:
+        try:
+            child_rows = get_khlcnt_package_rows()
+        except Exception as error:
+            logger.info("[%s] Không đọc được bảng gói thầu con, pass: %s", plan_record.get("Mã KHLCNT", ""), str(error)[:300])
+            return 0
+        for child_index, child_row in enumerate(child_rows, start=1):
+            child_result, child_reason = classify_khlcnt_child_package(child_row.get("Tên gói thầu con", ""), search_keyword)
+            if child_result != "CHỌN":
+                filtered_child_count += 1
+                logger.info("⏩ [%s] Loại child: %s | %s", plan_record.get("Mã KHLCNT", ""), child_row.get("Tên gói thầu con", ""), child_reason)
+                continue
+            valid_child_count += 1
+            linked_notice = _collapse_whitespace(child_row.get("Số thông báo liên kết"))
+            if linked_notice:
+                metadata = build_khlcnt_child_metadata(plan_record, child_row)
+                updated_rows = tracker.save_khlcnt_metadata_for_tbmt(linked_notice, metadata)
+                logger.info("✅ [%s] TBMT_LINKED metadata-only: %s | updated metadata rows=%s", plan_record.get("Mã KHLCNT", ""), linked_notice, updated_rows)
+                if updated_rows:
+                    saved_count += 1
+                continue
+            if process_khlcnt_no_linked_child(plan_record, child_row, child_index):
+                saved_count += 1
+        if valid_child_count == 0 and filtered_child_count > 0:
+            tracker.log_khlcnt_filtered_skip(plan_record, "Không có gói thầu con nào hợp lệ sau filter")
+            logger.info("[%s] FILTERED_SKIP vì toàn bộ child không hợp lệ.", plan_record.get("Mã KHLCNT", ""))
+        return saved_count
+    finally:
+        close_current_tab_and_return(main_window)
+
+
+def crawl_khlcnt_current_results(search_keyword: str, start_page: int = 1, page_limit: int | None = None):
+    page = start_page
+    effective_page_limit = page_limit if page_limit is not None else MAX_PAGES
+    pages_processed_in_batch = 0
+    count_processed = 0
+    while True:
+        logger.info(f"\nTrang KHLCNT {page} | Keyword: {search_keyword}")
+        boxes = get_box_elements()
+        total_boxes = len(boxes)
+        logger.info(f"Số KHLCNT trên trang {page}: {total_boxes}")
+        for index, box in enumerate(boxes, start=1):
+            plan_record = build_khlcnt_plan_record(box, search_keyword, page, index)
+            parent_result, parent_reason = classify_khlcnt_parent(plan_record.get("Tên KHLCNT", ""))
+            if parent_result == "FILTERED_SKIP":
+                tracker.log_khlcnt_filtered_skip(plan_record, parent_reason)
+                logger.info("🚩 [%s] Bỏ qua KHLCNT theo filter tên: %s", plan_record.get("Mã KHLCNT", ""), plan_record.get("Tên KHLCNT", ""))
+                continue
+            logger.info("[%s] Đọc KHLCNT %s/%s: %s", plan_record.get("Mã KHLCNT", ""), index, total_boxes, plan_record.get("Tên KHLCNT", ""))
+            try:
+                count_processed += process_khlcnt_plan_detail(plan_record, search_keyword)
+            except Exception as error:
+                logger.info("⏸️ [%s] Lỗi tạm khi đọc KHLCNT, pass: %s", plan_record.get("Mã KHLCNT", ""), str(error)[:300])
+                wait_dom_settled(timeout=15)
+        pages_processed_in_batch += 1
+        if effective_page_limit and pages_processed_in_batch >= effective_page_limit:
+            logger.info(f"Đã đạt số trang tối đa cho lô KHLCNT hiện tại: {effective_page_limit}, tạm dừng keyword '{search_keyword}' tại trang {page}.")
+            return count_processed, True, page
+        try:
+            go_to_next_results_page()
+            page += 1
+        except TimeoutException:
+            logger.info(f"Hết trang KHLCNT cho keyword '{search_keyword}', dừng.")
+            break
+    return count_processed, False, page
 
 
 def crawl_current_results(search_keyword: str, start_page: int = 1, page_limit: int | None = None):
@@ -2995,47 +3763,60 @@ def main():
     if not SEARCH_KEYWORDS:
         raise ValueError("❌ Thiếu KEY hoặc KEY_BATCHES trong file .env")
 
+    init_tracker()
     ABORTED_TBMTS_THIS_RUN.clear()
     TEMP_ABORT_SUMMARY.clear()
     CURRENT_RUN_ID = start_run_history(start_time)
 
     try:
-        for idx, search_keyword in enumerate(SEARCH_KEYWORDS, start=1):
-            logger.info("=" * 60)
-            logger.info(f"Batch {idx}/{len(SEARCH_KEYWORDS)} - Keyword: {search_keyword}")
-            logger.info("=" * 60)
-            prepare_search_form(search_keyword)
-            current_page = 1
-            current_batch_limit = MAX_PAGES
+        total_batches = len(SEARCH_KEYWORDS) * len(SEARCH_NOTICE_TYPE_LIST)
+        batch_idx = 0
+        for notice_type in SEARCH_NOTICE_TYPE_LIST:
+            for search_keyword in SEARCH_KEYWORDS:
+                batch_idx += 1
+                logger.info("=" * 60)
+                logger.info(f"Batch {batch_idx}/{total_batches} - Loại: {notice_type} - Keyword: {search_keyword}")
+                logger.info("=" * 60)
+                init_runtime(enable_network_capture=is_khlcnt_notice_type(notice_type))
+                active_notice_type = prepare_search_form(search_keyword, notice_type=notice_type)
+                current_page = 1
+                current_batch_limit = MAX_PAGES
 
-            while True:
-                processed_count, hit_max_pages, current_page = crawl_current_results(
-                    search_keyword,
-                    start_page=current_page,
-                    page_limit=current_batch_limit,
-                )
-                total_processed += processed_count
+                while True:
+                    if is_khlcnt_notice_type(active_notice_type):
+                        processed_count, hit_max_pages, current_page = crawl_khlcnt_current_results(
+                            search_keyword,
+                            start_page=current_page,
+                            page_limit=current_batch_limit,
+                        )
+                    else:
+                        processed_count, hit_max_pages, current_page = crawl_current_results(
+                            search_keyword,
+                            start_page=current_page,
+                            page_limit=current_batch_limit,
+                        )
+                    total_processed += processed_count
 
-                if not hit_max_pages:
-                    break
+                    if not hit_max_pages:
+                        break
 
-                action, next_batch_limit = prompt_after_max_pages(
-                    search_keyword,
-                    current_page,
-                    current_batch_limit,
-                )
-                if action == "quit":
-                    return
-                if action == "next":
-                    break
+                    action, next_batch_limit = prompt_after_max_pages(
+                        f"{active_notice_type} | {search_keyword}",
+                        current_page,
+                        current_batch_limit,
+                    )
+                    if action == "quit":
+                        return
+                    if action == "next":
+                        break
 
-                try:
-                    go_to_next_results_page()
-                    current_page += 1
-                    current_batch_limit = next_batch_limit
-                except TimeoutException:
-                    logger.info(f"Không còn trang tiếp theo cho keyword '{search_keyword}', chuyển keyword khác.")
-                    break
+                    try:
+                        go_to_next_results_page()
+                        current_page += 1
+                        current_batch_limit = next_batch_limit
+                    except TimeoutException:
+                        logger.info(f"Không còn trang tiếp theo cho loại '{active_notice_type}', keyword '{search_keyword}', chuyển batch khác.")
+                        break
 
 
     finally:
@@ -3053,5 +3834,4 @@ def main():
 
 
 if __name__ == "__main__":
-    init_runtime()
     main()

@@ -58,6 +58,10 @@ body.auth-state-guest #open-login-nav {
   display: none;
 }
 
+.app-header-links .app-auth-btn {
+  margin-left: 0;
+}
+
 .app-auth-btn {
   min-height: auto;
   padding: 0;

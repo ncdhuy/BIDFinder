@@ -5,6 +5,7 @@ crawler_engine/tmp_storage/
 
 # 2. Chặn các file môi trường chứa thông tin bảo mật (DATABASE_URL, API_KEY)
 .env
+backend/.env
 crawler_engine/.env
 
 # 3. Chặn các file rác của Python

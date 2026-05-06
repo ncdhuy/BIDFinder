@@ -23,6 +23,12 @@ function requireAuthenticatedSession(mode = 'login', requirement = 'preview') {
         return auth.ensureAuthenticated(mode);
     }
 
+    if (requirement === 'preview') {
+        if (config.allow_anonymous_preview) return true;
+        if (!config.require_auth_for_data_access) return true;
+        return auth.ensureAuthenticated(mode);
+    }
+
     if (requirement === 'metadata') {
         if (config.allow_anonymous_metadata) {
             return !config.require_auth_for_data_access || auth.ensureAuthenticated(mode);
@@ -89,21 +95,21 @@ function reorderDataByColumns(data, columnOrder) {
 
 // ========= 3. STORAGE
 const DF1_COLUMNS_ORDER = [
+    'Tên hoạt chất','Tên thuốc','Nồng độ, hàm lượng',
+    'Đường dùng','Dạng bào chế','Quy cách','GĐKLH hoặc GPNK','Mã thuốc',
+    'Cơ sở sản xuất','Xuất xứ','Nhóm thuốc',
+    'Đơn vị tính','Số lượng','Đơn giá trúng thầu (VND)','Thành tiền (VND)',    
     'Mã TBMT','Chủ đầu tư','Quyết định phê duyệt','Ngày phê duyệt',
-    'Tên thuốc','Tên hoạt chất','Nồng độ, hàm lượng',
-    'Đơn vị tính','Số lượng','Đơn giá trúng thầu (VND)','Thành tiền (VND)',
-    'Đường dùng','Dạng bào chế','Quy cách','Nhóm thuốc','GĐKLH hoặc GPNK','Mã thuốc',
-    'Cơ sở sản xuất','Xuất xứ','Nhà thầu trúng thầu',
-    'Hình thức LCNT','Địa điểm','Ngày hết hiệu lực','Tình trạng hiệu lực'
+    'Hình thức LCNT','Địa điểm','Ngày hết hiệu lực','Tình trạng hiệu lực','Nhà thầu trúng thầu'
 ];
 
 const DF2_COLUMNS_ORDER = [
-    'Mã TBMT','Chủ đầu tư','Quyết định phê duyệt','Ngày phê duyệt',
     'Tên phần/lô','Danh mục hàng hóa','Tính năng kỹ thuật',
-    'Đơn vị tính','Khối lượng','Đơn giá trúng thầu (VND)','Thành tiền (VND)',
     'Mặt hàng dự thầu','Nhãn hiệu','Ký mã hiệu',
-    'Xuất xứ','Hãng sản xuất','Nhà thầu trúng thầu',
-    'Hình thức LCNT','Địa điểm','Ngày hết hiệu lực','Tình trạng hiệu lực'
+    'Xuất xứ','Hãng sản xuất',
+    'Đơn vị tính','Khối lượng','Đơn giá trúng thầu (VND)','Thành tiền (VND)',
+    'Mã TBMT','Chủ đầu tư','Quyết định phê duyệt','Ngày phê duyệt',
+    'Hình thức LCNT','Địa điểm','Ngày hết hiệu lực','Tình trạng hiệu lực','Nhà thầu trúng thầu'
 ];
 
 let currentColumnOrderDf1 = [...DF1_COLUMNS_ORDER];
@@ -265,6 +271,7 @@ let currentQueryMeta = {
     totalCountExact: true,
     totalCountLabel: '0',
     searchMode: 'standard',
+    bulkSearchMode: 'standard',
     appliedTotalLimit: 0
 };
 
@@ -351,7 +358,7 @@ const DEFAULT_COLUMN_WIDTHS = {
 const DEFAULT_COMPACT_COLUMN_WIDTH = 120;
 const DEFAULT_STANDARD_TEXT_WIDTH = 160;
 const DEFAULT_LONG_TEXT_WIDTH = 220;
-const MAX_REASONABLE_COLUMN_WIDTH = 420;
+const MAX_REASONABLE_COLUMN_WIDTH = 600;
 
 function inferDefaultColumnWidth(tableId, columnName) {
     const explicitWidth = DEFAULT_COLUMN_WIDTHS[tableId]?.[columnName];
@@ -1119,6 +1126,68 @@ function clearFilterUrlState() {
     window.history.replaceState({}, '', url);
 }
 
+function encodeFilterUrlState(queryRequest) {
+    return encodeURIComponent(JSON.stringify(buildQueryRequest(queryRequest)));
+}
+
+function decodeFilterUrlState(rawValue) {
+    if (!rawValue) return null;
+
+    try {
+        return buildQueryRequest(JSON.parse(decodeURIComponent(rawValue)));
+    } catch (error) {
+        try {
+            return buildQueryRequest(JSON.parse(rawValue));
+        } catch (fallbackError) {
+            console.warn('Unable to parse filter URL state:', fallbackError);
+            return null;
+        }
+    }
+}
+
+function readFilterUrlState() {
+    const rawValue = new URL(window.location.href).searchParams.get('q');
+    return decodeFilterUrlState(rawValue);
+}
+
+function setFilterUrlState(queryRequest) {
+    const request = buildQueryRequest(queryRequest);
+    if (!hasActiveQueryFilters(request)) {
+        clearFilterUrlState();
+        return;
+    }
+
+    const url = new URL(window.location.href);
+    url.searchParams.set('q', encodeFilterUrlState(request));
+    window.history.replaceState({ bidfinderFilters: request }, '', url);
+}
+
+async function restoreFilterUrlState({ apply = true } = {}) {
+    const queryRequest = readFilterUrlState();
+    if (!queryRequest || !hasActiveQueryFilters(queryRequest)) return false;
+
+    const searchForm = document.querySelector('custom-search-form');
+    if (typeof searchForm?.setFilterPayload === 'function') {
+        searchForm.setFilterPayload(queryRequest);
+        searchForm.setPreviewResult?.({ loading: true });
+    }
+
+    currentQueryRequest = queryRequest;
+    if (apply) {
+        const result = await applyFilters(queryRequest);
+        if (result?.success) {
+            const total = Number(result?.total_count || 0);
+            searchForm?.setPreviewResult?.({
+                total,
+                totalLabel: String(result?.total_count_label || total.toLocaleString('vi-VN')),
+                exact: result?.total_count_exact !== false
+            });
+        }
+    }
+
+    return true;
+}
+
 function getFullSearchQuotaState() {
     const config = window.BIDFinderAuth?.getConfig?.() || {};
     return {
@@ -1136,6 +1205,8 @@ async function fetchQueryResults(
     limit = MAX_RESULTS_PER_TABLE,
     options = {}
 ) {
+    await window.BIDFinderAuth?.whenReady?.();
+
     if (!requireAuthenticatedSession('login', 'full_query')) {
         throw new Error(window.BIDFinderAuth?.getFullQueryGateMessage?.() || 'Bạn cần đăng nhập để tra cứu dữ liệu.');
     }
@@ -1174,6 +1245,8 @@ async function fetchQueryResults(
 }
 
 async function fetchQueryPreview(queryRequest, signal = null) {
+    await window.BIDFinderAuth?.whenReady?.();
+
     if (!requireAuthenticatedSession('login', 'preview')) {
         throw new Error('Bạn cần đăng nhập để tra cứu dữ liệu.');
     }
@@ -1211,6 +1284,8 @@ async function fetchQueryPreview(queryRequest, signal = null) {
 let dbWarmupPromise = null;
 let dbWarmupReadyUntil = 0;
 const DB_WARM_TTL_MS = 4 * 60 * 1000;
+const LOADING_CONNECTION_MESSAGE_MS = 700;
+const PREVIEW_REQUEST_TIMEOUT_MS = 25000;
 
 function markDatabaseWarm() {
     dbWarmupReadyUntil = Date.now() + DB_WARM_TTL_MS;
@@ -1257,6 +1332,7 @@ function warmupDatabase({ force = false } = {}) {
 
 async function waitForWarmupWithUi(searchForm, signal = null) {
     if (isDatabaseRecentlyWarm() || !shouldWarmDatabase()) return;
+    if (signal?.aborted) return;
 
     try {
         await warmupDatabase();
@@ -1265,14 +1341,11 @@ async function waitForWarmupWithUi(searchForm, signal = null) {
     }
 }
 
-function startWakeMessageTimer(searchForm, signal = null) {
-    const shouldShowWakeMessage = shouldWarmDatabase() && !isDatabaseRecentlyWarm();
-    if (!shouldShowWakeMessage) return () => {};
-
+function startConnectionMessageTimer(searchForm, signal = null) {
     const timer = window.setTimeout(() => {
         if (signal?.aborted) return;
         searchForm?.setPreviewResult?.({ loading: true, warming: true });
-    }, 500);
+    }, LOADING_CONNECTION_MESSAGE_MS);
 
     return () => window.clearTimeout(timer);
 }
@@ -1305,7 +1378,8 @@ function normalizeQueryResult(result) {
         totalCountExact: result?.total_count_exact !== false,
         totalCountLabel: result?.total_count_label || String(Number(result?.total_count || 0)),
         totalCountSummary: result?.total_count_summary || String(Number(result?.total_count || 0)),
-        searchMode: result?.search_mode === 'full' ? 'full' : 'standard',
+        searchMode: result?.search_mode === 'full' ? 'full' : (result?.search_mode === 'bulk' ? 'bulk' : 'standard'),
+        bulkSearchMode: result?.bulk?.search_mode === 'full' ? 'full' : 'standard',
         appliedTotalLimit: Number(result?.applied_total_limit || 0),
         appliedLimitPerScope: Number(result?.applied_limit_per_scope || 0)
     };
@@ -1330,6 +1404,7 @@ function handleQuerySuccess(result, options = {}) {
             totalCountLabel,
             displayedCount,
             searchMode: normalized.searchMode,
+            bulkSearchMode: normalized.bulkSearchMode,
             fullSearchRemaining: quota.remaining,
             fullSearchDailyLimit: quota.limit,
             fullSearchEnabled: quota.enabled
@@ -1347,6 +1422,7 @@ function handleQuerySuccess(result, options = {}) {
         totalCountExact,
         totalCountLabel,
         searchMode: normalized.searchMode,
+        bulkSearchMode: normalized.bulkSearchMode,
         appliedTotalLimit: normalized.appliedTotalLimit
     };
 
@@ -1370,6 +1446,7 @@ async function applyFilters(payload) {
 
         if (result.success) {
             handleQuerySuccess(result);
+            setFilterUrlState(currentQueryRequest);
             currentAppliedPreview = {
                 requestKey: stableStringify(currentQueryRequest),
                 payload: {
@@ -1422,6 +1499,20 @@ async function triggerFullSearch() {
         actionButton.textContent = 'Đang tải...';
     }
 
+    if (currentQueryMeta.searchMode === 'bulk' && lastBulkSearchPayloads?.length) {
+        try {
+            await runBulkSearch({ searchMode: 'full', reuseLastPayloads: true });
+            return;
+        } catch (error) {
+            console.error('Bulk full search failed:', error);
+        } finally {
+            if (actionButton) {
+                actionButton.disabled = false;
+                actionButton.textContent = 'Full search';
+            }
+        }
+    }
+
     try {
         const result = await fetchQueryResults(
             currentQueryRequest,
@@ -1458,6 +1549,7 @@ function showLimitWarning({
     totalCountLabel,
     displayedCount,
     searchMode = 'standard',
+    bulkSearchMode = 'standard',
     fullSearchRemaining = 0,
     fullSearchDailyLimit = 0,
     fullSearchEnabled = true
@@ -1467,6 +1559,7 @@ function showLimitWarning({
     const displayedText = Number(displayedCount || 0).toLocaleString('vi-VN');
     const canOfferFullSearch =
         searchMode !== 'full'
+        && !(searchMode === 'bulk' && bulkSearchMode === 'full')
         && fullSearchEnabled
         && Number(fullSearchDailyLimit || 0) > 0
         && Number(fullSearchRemaining || 0) > 0;
@@ -1479,7 +1572,9 @@ function showLimitWarning({
     warningDiv.replaceChildren();
 
     const title = document.createElement('strong');
-    title.textContent = searchMode === 'full' ? 'Kết quả full search vẫn còn bị giới hạn' : 'Giới hạn kết quả tìm kiếm';
+    title.textContent = searchMode === 'bulk'
+        ? 'Kết quả tra cứu hàng loạt đã đạt giới hạn hiển thị'
+        : (searchMode === 'full' ? 'Kết quả full search vẫn còn bị giới hạn' : 'Giới hạn kết quả tìm kiếm');
     warningDiv.appendChild(title);
     warningDiv.appendChild(document.createElement('br'));
     warningDiv.appendChild(document.createTextNode(`Hiện đang hiển thị ${displayedText}/${summaryText} dòng.`));
@@ -1491,7 +1586,7 @@ function showLimitWarning({
     quota.className = 'result-warning-quota';
     if (canOfferFullSearch) {
         quota.textContent = `Bạn còn ${Number(fullSearchRemaining).toLocaleString('vi-VN')}/${Number(fullSearchDailyLimit).toLocaleString('vi-VN')} lượt full search hôm nay.`;
-    } else if (searchMode === 'full') {
+    } else if (searchMode === 'full' || (searchMode === 'bulk' && bulkSearchMode === 'full')) {
         quota.textContent = 'Bạn đang ở chế độ full search. Hãy thu hẹp bộ lọc nếu cần ít nhiễu hơn.';
     } else if (Number(fullSearchDailyLimit || 0) > 0) {
         quota.textContent = `Bạn đã dùng hết ${Number(fullSearchDailyLimit).toLocaleString('vi-VN')} lượt full search hôm nay.`;
@@ -1539,6 +1634,7 @@ function resetQueryResultMeta() {
         totalCountExact: true,
         totalCountLabel: '0',
         searchMode: 'standard',
+        bulkSearchMode: 'standard',
         appliedTotalLimit: 0
     };
 }
@@ -1980,7 +2076,6 @@ function initLandingShell() {
         metadata = null;
         appDataInitialized = false;
         currentQueryRequest = { scope: 'all', filters: {} };
-        clearFilterUrlState();
         resetQueryResultMeta();
         hideLimitWarning();
         updateResults([], [], { resetMiniFilters: true });
@@ -2301,6 +2396,9 @@ function buildSortPayload(sortRule = activeSortRule) {
 }
 
 function shouldUseClientSideSort() {
+    if (currentQueryMeta.searchMode === 'bulk') {
+        return true;
+    }
     const scope = currentQueryRequest?.scope || 'all';
     if (scope === 'all') {
         return !currentQueryMeta.df1HasMore && !currentQueryMeta.df2HasMore;
@@ -3106,74 +3204,419 @@ function initTableWorkspaceControls() {
 // ======== 1. CHART INSTANCES
 const chartInstances = {
     histogram: null,
-    boxplot: null,
-    timeline: null,
-    method: null
+    timeline: null
 };
+
+let vietnamMapDefinition = null;
+let vietnamMapLoadPromise = null;
+let lastProvinceMapData = [];
 
 const CHART_THEME = {
     primary: '#127495',
-    primaryDark: '#0f5b77',
-    primarySoft: 'rgba(18, 116, 149, 0.18)',
     accent: '#1b866e',
-    accentDark: '#146653',
     accentSoft: 'rgba(27, 134, 110, 0.14)',
     axis: '#5d7280',
     axisStrong: '#1f3448',
     grid: '#dde7ec',
     border: '#d1dde4',
     surface: '#ffffff',
-    methodColors: ['#1b866e', '#247a66', '#2e8e76', '#389b82', '#4da892', '#69b8a5', '#86c7b7', '#a8d9cb']
+    mapNoData: '#fdfefe',
+    mapLow: '#8fc7d2',
+    mapHigh: '#0a516d'
 };
 
-function calculateMean(values) {
-    if (!Array.isArray(values) || values.length === 0) return null;
-    const total = values.reduce((sum, value) => sum + Number(value || 0), 0);
-    return total / values.length;
+const VIETNAM_PROVINCE_NAMES = [
+    'An Giang', 'Bà Rịa - Vũng Tàu', 'Bắc Giang', 'Bắc Kạn', 'Bạc Liêu', 'Bắc Ninh',
+    'Bến Tre', 'Bình Định', 'Bình Dương', 'Bình Phước', 'Bình Thuận', 'Cà Mau',
+    'Cần Thơ', 'Cao Bằng', 'Đà Nẵng', 'Đắk Lắk', 'Đắk Nông', 'Điện Biên',
+    'Đồng Nai', 'Đồng Tháp', 'Gia Lai', 'Hà Giang', 'Hà Nam', 'Hà Nội',
+    'Hà Tĩnh', 'Hải Dương', 'Hải Phòng', 'Hậu Giang', 'Hòa Bình', 'Hưng Yên',
+    'Khánh Hòa', 'Kiên Giang', 'Kon Tum', 'Lai Châu', 'Lâm Đồng', 'Lạng Sơn',
+    'Lào Cai', 'Long An', 'Nam Định', 'Nghệ An', 'Ninh Bình', 'Ninh Thuận',
+    'Phú Thọ', 'Phú Yên', 'Quảng Bình', 'Quảng Nam', 'Quảng Ngãi', 'Quảng Ninh',
+    'Quảng Trị', 'Sóc Trăng', 'Sơn La', 'Tây Ninh', 'Thái Bình', 'Thái Nguyên',
+    'Thanh Hóa', 'Thừa Thiên Huế', 'Tiền Giang', 'TP. Hồ Chí Minh', 'Trà Vinh',
+    'Tuyên Quang', 'Vĩnh Long', 'Vĩnh Phúc', 'Yên Bái', 'Hoàng Sa', 'Trường Sa'
+];
+
+function normalizeVietnameseText(text) {
+    return String(text || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/đ/g, 'd')
+        .replace(/Đ/g, 'D')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
 }
 
-function getValueBounds(values, marginRatio = 0.08) {
-    const numericValues = (values || []).filter(value => Number.isFinite(value));
-    if (!numericValues.length) {
-        return { min: undefined, max: undefined };
+const VIETNAM_PROVINCE_LOOKUP = VIETNAM_PROVINCE_NAMES.map(name => ({
+    name,
+    normalized: normalizeVietnameseText(name)
+}));
+
+const PROVINCE_MAP_ALIASES = new Map([
+    ['tp ho chi minh', 'ho chi minh'],
+    ['thanh pho ho chi minh', 'ho chi minh'],
+    ['thanh pho ho chi minh city', 'ho chi minh'],
+    ['ho chi minh city', 'ho chi minh'],
+    ['hcm', 'ho chi minh'],
+    ['tp hcm', 'ho chi minh'],
+    ['ba ria vung tau', 'ba ria vung tau'],
+    ['thua thien hue', 'thua thien hue'],
+    ['hue', 'thua thien hue'],
+    ['ha tay', 'ha noi'],
+    ['quan dao hoang sa', 'hoang sa'],
+    ['quan dao truong sa', 'truong sa']
+]);
+
+const ADMIN_UNITS_2025 = [
+    { name: 'Thành phố Hà Nội', parts: ['Hà Nội'] },
+    { name: 'Cao Bằng', parts: ['Cao Bằng'] },
+    { name: 'Tuyên Quang', parts: ['Tuyên Quang','Hà Giang'] },
+    { name: 'Điện Biên', parts: ['Điện Biên'] },
+    { name: 'Lai Châu', parts: ['Lai Châu'] },
+    { name: 'Sơn La', parts: ['Sơn La'] },
+    { name: 'Lào Cai', parts: ['Lào Cai', 'Yên Bái'] },
+    { name: 'Thái Nguyên', parts: ['Thái Nguyên', 'Bắc Kạn'] },
+    { name: 'Lạng Sơn', parts: ['Lạng Sơn'] },
+    { name: 'Quảng Ninh', parts: ['Quảng Ninh'] },
+    { name: 'Bắc Ninh', parts: ['Bắc Ninh', 'Bắc Giang'] },
+    { name: 'Phú Thọ', parts: ['Phú Thọ', 'Vĩnh Phúc', 'Hòa Bình'] },
+    { name: 'Thành phố Hải Phòng', parts: ['Hải Phòng', 'Hải Dương'] },
+    { name: 'Hưng Yên', parts: ['Hưng Yên', 'Thái Bình'] },
+    { name: 'Ninh Bình', parts: ['Ninh Bình', 'Hà Nam', 'Nam Định'] },
+    { name: 'Thanh Hóa', parts: ['Thanh Hóa'] },
+    { name: 'Nghệ An', parts: ['Nghệ An'] },
+    { name: 'Hà Tĩnh', parts: ['Hà Tĩnh'] },
+    { name: 'Quảng Trị', parts: ['Quảng Trị', 'Quảng Bình'] },
+    { name: 'Thành phố Huế', parts: ['Thừa Thiên Huế'] },
+    { name: 'Thành phố Đà Nẵng', parts: ['Đà Nẵng', 'Quảng Nam'] },
+    { name: 'Quảng Ngãi', parts: ['Quảng Ngãi', 'Kon Tum'] },
+    { name: 'Gia Lai', parts: ['Gia Lai', 'Bình Định'] },
+    { name: 'Khánh Hòa', parts: ['Khánh Hòa', 'Ninh Thuận'] },
+    { name: 'Đắk Lắk', parts: ['Đắk Lắk', 'Phú Yên'] },
+    { name: 'Lâm Đồng', parts: ['Lâm Đồng', 'Đắk Nông', 'Bình Thuận'] },
+    { name: 'Đồng Nai', parts: ['Đồng Nai', 'Bình Phước'] },
+    { name: 'Thành phố Hồ Chí Minh', parts: ['TP. Hồ Chí Minh', 'Bình Dương', 'Bà Rịa - Vũng Tàu'] },
+    { name: 'Tây Ninh', parts: ['Tây Ninh', 'Long An'] },
+    { name: 'Đồng Tháp', parts: ['Đồng Tháp', 'Tiền Giang'] },
+    { name: 'Vĩnh Long', parts: ['Vĩnh Long', 'Bến Tre', 'Trà Vinh'] },
+    { name: 'An Giang', parts: ['An Giang', 'Kiên Giang'] },
+    { name: 'Thành phố Cần Thơ', parts: ['Cần Thơ', 'Hậu Giang', 'Sóc Trăng'] },
+    { name: 'Cà Mau', parts: ['Cà Mau', 'Bạc Liêu'] }
+];
+
+const ADMIN_2025_BY_LEGACY_KEY = new Map();
+
+ADMIN_UNITS_2025.forEach(unit => {
+    const adminKey = getProvinceMapKey(unit.name);
+    const partNames = unit.parts.join(' + ');
+    ADMIN_2025_BY_LEGACY_KEY.set(adminKey, { key: adminKey, name: unit.name, parts: partNames });
+    unit.parts.forEach(part => {
+        ADMIN_2025_BY_LEGACY_KEY.set(getProvinceMapKey(part), { key: adminKey, name: unit.name, parts: partNames });
+    });
+});
+
+[
+    ['Hoàng Sa', 'Thành phố Đà Nẵng'],
+    ['Trường Sa', 'Khánh Hòa']
+].forEach(([islandName, adminName]) => {
+    const adminUnit = ADMIN_2025_BY_LEGACY_KEY.get(getProvinceMapKey(adminName));
+    if (adminUnit) {
+        ADMIN_2025_BY_LEGACY_KEY.set(getProvinceMapKey(islandName), adminUnit);
     }
+});
 
-    const minValue = Math.min(...numericValues);
-    const maxValue = Math.max(...numericValues);
-    const span = maxValue - minValue;
-    const marginBase = span > 0 ? span : Math.abs(maxValue || minValue || 1);
-    const margin = Math.max(marginBase * marginRatio, 1);
+function getProvinceMapKey(name) {
+    let key = normalizeVietnameseText(name)
+        .replace(/\btp\b/g, ' ')
+        .replace(/\btinh\b/g, ' ')
+        .replace(/\bthanh pho\b/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
 
-    return {
-        min: Math.max(0, minValue - margin),
-        max: maxValue + margin
-    };
+    key = PROVINCE_MAP_ALIASES.get(key) || key;
+    return key;
 }
 
-function wrapChartLabel(text, maxCharsPerLine = 18) {
-    const safeText = String(text || '').replace(/\s+/g, ' ').trim();
-    if (!safeText) return [''];
-    if (safeText.length <= maxCharsPerLine) return [safeText];
+function extractProvinceFromPlace(place) {
+    const rawPlace = String(place || '').replace(/\s+/g, ' ').trim();
+    if (!rawPlace) return 'Không xác định';
 
-    const words = safeText.split(' ');
-    const lines = [];
-    let currentLine = '';
+    const normalizedPlace = ` ${normalizeVietnameseText(rawPlace)} `;
+    const matchedProvince = VIETNAM_PROVINCE_LOOKUP.find(province =>
+        normalizedPlace.includes(` ${province.normalized} `)
+    );
+    if (matchedProvince) return matchedProvince.name;
 
-    words.forEach(word => {
-        const nextLine = currentLine ? `${currentLine} ${word}` : word;
-        if (nextLine.length <= maxCharsPerLine || !currentLine) {
-            currentLine = nextLine;
-            return;
-        }
-        lines.push(currentLine);
-        currentLine = word;
+    const lastSegment = rawPlace
+        .split(',')
+        .map(part => part.trim())
+        .filter(Boolean)
+        .pop();
+
+    return lastSegment || rawPlace || 'Không xác định';
+}
+
+function getProvinceValueEntries(data) {
+    const adminValueMap = new Map();
+
+    data.forEach(r => {
+        const province = extractProvinceFromPlace(r['Địa điểm']);
+        const value = Number(r['Thành tiền (VND)']) || 0;
+        if (value <= 0) return;
+
+        const provinceKey = getProvinceMapKey(province);
+        const adminUnit = ADMIN_2025_BY_LEGACY_KEY.get(provinceKey) || {
+            key: provinceKey,
+            name: province,
+            parts: province
+        };
+        const current = adminValueMap.get(adminUnit.key) || {
+            name: adminUnit.name,
+            parts: adminUnit.parts,
+            value: 0
+        };
+        current.value += value;
+        adminValueMap.set(adminUnit.key, current);
     });
 
-    if (currentLine) {
-        lines.push(currentLine);
+    return adminValueMap;
+}
+
+function interpolateHexColor(startColor, endColor, ratio) {
+    const clampedRatio = Math.max(0, Math.min(1, ratio));
+    const start = startColor.replace('#', '').match(/.{1,2}/g).map(value => parseInt(value, 16));
+    const end = endColor.replace('#', '').match(/.{1,2}/g).map(value => parseInt(value, 16));
+    const mixed = start.map((channel, index) =>
+        Math.round(channel + (end[index] - channel) * clampedRatio)
+    );
+    return `#${mixed.map(value => value.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function getProvinceFill(value, maxValue) {
+    if (!value || !maxValue) return CHART_THEME.mapNoData;
+    const ratio = Math.sqrt(value / maxValue);
+    return interpolateHexColor(CHART_THEME.mapLow, CHART_THEME.mapHigh, ratio);
+}
+
+function getProvinceMergeStatus(provinceName, provinceValue, mapProperties = {}) {
+    const sourceMerge = String(mapProperties.sap_nhap || '').replace(/\s+/g, ' ').trim();
+    if (sourceMerge) {
+        return normalizeVietnameseText(sourceMerge) === 'khong sap nhap'
+            ? 'Không sáp nhập'
+            : `Sáp nhập: ${sourceMerge}`;
     }
 
-    return lines;
+    const parts = String(provinceValue?.parts || '').replace(/\s+/g, ' ').trim();
+    if (!parts || getProvinceMapKey(parts) === getProvinceMapKey(provinceName)) {
+        return 'Không sáp nhập';
+    }
+
+    return `Sáp nhập: ${parts}`;
+}
+
+function createProvinceMapLegend(maxValue) {
+    const legend = document.createElement('div');
+    legend.className = 'province-map-legend';
+    legend.setAttribute('aria-hidden', 'true');
+
+    const title = document.createElement('span');
+    title.className = 'province-map-legend-title';
+    title.textContent = 'Tổng giá trị';
+
+    const scale = document.createElement('span');
+    scale.className = 'province-map-legend-scale';
+    scale.style.setProperty('--map-zero', CHART_THEME.mapNoData);
+    scale.style.setProperty('--map-low', CHART_THEME.mapLow);
+    scale.style.setProperty('--map-high', CHART_THEME.mapHigh);
+
+    const labels = document.createElement('span');
+    labels.className = 'province-map-legend-labels';
+
+    const minLabel = document.createElement('span');
+    minLabel.textContent = '0';
+
+    const maxLabel = document.createElement('span');
+    maxLabel.textContent = formatCurrencyTooltip(maxValue);
+
+    labels.append(minLabel, maxLabel);
+    legend.append(title, scale, labels);
+    return legend;
+}
+
+function getOrCreateProvinceMapTooltip(container) {
+    let tooltip = container.querySelector('.province-map-tooltip');
+    if (tooltip) return tooltip;
+
+    tooltip = document.createElement('div');
+    tooltip.className = 'province-map-tooltip';
+    container.appendChild(tooltip);
+    return tooltip;
+}
+
+function moveProvinceMapTooltip(container, tooltip, event) {
+    const rect = container.getBoundingClientRect();
+    const offset = 14;
+    const tooltipRect = tooltip.getBoundingClientRect();
+    let left = event.clientX - rect.left + offset;
+    let top = event.clientY - rect.top + offset;
+
+    if (left + tooltipRect.width > rect.width - 8) {
+        left = event.clientX - rect.left - tooltipRect.width - offset;
+    }
+    if (top + tooltipRect.height > rect.height - 8) {
+        top = event.clientY - rect.top - tooltipRect.height - offset;
+    }
+
+    tooltip.style.left = `${Math.max(8, left)}px`;
+    tooltip.style.top = `${Math.max(8, top)}px`;
+}
+
+function fitProvinceMapViewBox(svg) {
+    try {
+        const box = svg.getBBox();
+        if (!box.width || !box.height) return;
+
+        const paddingX = box.width * 0.04;
+        const paddingY = box.height * 0.03;
+        svg.setAttribute(
+            'viewBox',
+            `${box.x - paddingX} ${box.y - paddingY} ${box.width + paddingX * 2} ${box.height + paddingY * 2}`
+        );
+    } catch (error) {
+        // Keep the source viewBox if the browser cannot measure the SVG yet.
+    }
+}
+
+function loadVietnamProvinceMap() {
+    if (vietnamMapDefinition?.features?.length) {
+        return Promise.resolve(vietnamMapDefinition);
+    }
+
+    if (!vietnamMapLoadPromise) {
+        vietnamMapLoadPromise = fetch('Vietnam34.map.json', { cache: 'force-cache' })
+            .then(response => {
+                if (!response.ok) throw new Error(`Vietnam34.map.json returned ${response.status}`);
+                return response.json();
+            })
+            .then(payload => {
+                vietnamMapDefinition = {
+                    viewBox: payload.viewBox || '0 0 980 1500',
+                    features: (payload.features || []).map(feature => ({
+                        path: feature.path,
+                        properties: {
+                            ten_tinh: feature.name,
+                            sap_nhap: feature.sap_nhap
+                        }
+                    })).filter(feature => feature.path)
+                };
+                return vietnamMapDefinition;
+            })
+            .catch(error => {
+                console.error('Unable to load Vietnam map data', error);
+                window.BIDFinderVietnamMapLoadFailed = true;
+                throw error;
+            });
+    }
+
+    return vietnamMapLoadPromise;
+}
+
+function renderProvinceValueMap(data = []) {
+    lastProvinceMapData = data;
+    const container = document.getElementById('chart-province-map');
+    if (!container) return;
+
+    if (!vietnamMapDefinition?.features?.length) {
+        showNoDataMessage('chart-province-map', 'Đang tải bản đồ Việt Nam...');
+        loadVietnamProvinceMap()
+            .then(() => renderProvinceValueMap(lastProvinceMapData))
+            .catch(() => showNoDataMessage('chart-province-map', 'Không tải được bản đồ Việt Nam 34 tỉnh/thành.'));
+        return;
+    }
+
+    const valueByProvince = getProvinceValueEntries(data);
+    const values = Array.from(valueByProvince.values()).map(item => item.value);
+    const maxValue = Math.max(...values, 0);
+
+    if (!maxValue) {
+        showNoDataMessage('chart-province-map', 'Không có dữ liệu tỉnh/thành để hiển thị.');
+        return;
+    }
+
+    hideNoDataMessage('chart-province-map');
+    container.replaceChildren();
+    const tooltip = getOrCreateProvinceMapTooltip(container);
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', vietnamMapDefinition.viewBox);
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    svg.setAttribute('aria-hidden', 'true');
+
+    vietnamMapDefinition.features.forEach(({ path: pathData, properties }) => {
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        const provinceName = properties.ten_tinh || properties.name || 'Không xác định';
+        const provinceKey = getProvinceMapKey(provinceName);
+        const provinceValue = valueByProvince.get(provinceKey);
+        const value = provinceValue?.value || 0;
+        const fillColor = getProvinceFill(value, maxValue);
+        const displayName = provinceValue?.name || provinceName;
+        const mergeStatus = getProvinceMergeStatus(provinceName, provinceValue, properties);
+        const valueText = value ? formatCurrencyTooltip(value) : 'Không có dữ liệu';
+
+        path.setAttribute('d', pathData);
+        path.setAttribute('fill', fillColor);
+        path.setAttribute('stroke', '#c2d2da');
+        path.setAttribute('stroke-width', '0.7');
+        path.setAttribute('stroke-linejoin', 'round');
+        path.setAttribute('stroke-linecap', 'round');
+        path.setAttribute('fill-rule', 'evenodd');
+        path.setAttribute('vector-effect', 'non-scaling-stroke');
+        path.dataset.adminKey = provinceKey;
+        path.dataset.province = displayName;
+        path.dataset.mapRegion = displayName;
+        path.dataset.value = String(value);
+        path.dataset.valueText = valueText;
+        path.setAttribute('tabindex', '0');
+        path.setAttribute('aria-label', `${displayName}: ${valueText}`);
+
+        path.addEventListener('mouseenter', (event) => {
+            svg.appendChild(path);
+            path.classList.add('is-active');
+            tooltip.replaceChildren();
+            const nameEl = document.createElement('strong');
+            const valueEl = document.createElement('span');
+            const partsEl = document.createElement('span');
+            nameEl.textContent = displayName;
+            valueEl.textContent = valueText;
+            partsEl.textContent = mergeStatus;
+            tooltip.append(nameEl, valueEl, partsEl);
+            tooltip.classList.add('visible');
+            moveProvinceMapTooltip(container, tooltip, event);
+        });
+        path.addEventListener('mousemove', (event) => {
+            moveProvinceMapTooltip(container, tooltip, event);
+        });
+        path.addEventListener('mouseleave', () => {
+            path.classList.remove('is-active');
+            tooltip.classList.remove('visible');
+        });
+        path.addEventListener('focus', () => {
+            svg.appendChild(path);
+            path.classList.add('is-active');
+        });
+        path.addEventListener('blur', () => {
+            path.classList.remove('is-active');
+        });
+
+        svg.appendChild(path);
+    });
+
+    container.appendChild(svg);
+    container.appendChild(createProvinceMapLegend(maxValue));
+    requestAnimationFrame(() => fitProvinceMapViewBox(svg));
 }
 
 const CHART_CONFIG = {
@@ -3189,11 +3632,11 @@ const CHART_CONFIG = {
                     priceMap[price] = (priceMap[price] || 0) + 1;
                 }
             });
-            
+
             const sorted = Object.entries(priceMap)
                 .map(([price, count]) => ({ price: Number(price), count }))
                 .sort((a, b) => a.price - b.price);
-            
+
             return {
                 labels: sorted.map(x => x.price.toLocaleString('vi-VN')),
                 values: sorted.map(x => x.count)
@@ -3232,95 +3675,6 @@ const CHART_CONFIG = {
             },
             layout: { padding: { top: 10, bottom: 10 } }
         })
-    },
-    
-    boxplot: {
-        canvasId: 'chart-price-boxplot',
-        type: 'boxplot',
-        color: CHART_THEME.primaryDark,
-        getData: (data) => {
-            const prices = data
-                .map(r => Number(r['Đơn giá trúng thầu (VND)']))
-                .filter(p => !isNaN(p) && p > 0);
-            const bounds = getValueBounds(prices);
-            
-            return {
-                labels: ['Giá'],
-                values: [prices],
-                means: [calculateMean(prices)],
-                axisMin: bounds.min,
-                axisMax: bounds.max
-            };
-        },
-        getOptions: (chartData) => ({
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: { mode: 'nearest', axis: 'xy', intersect: false },
-            plugins: {
-                legend: { display: false },
-                tooltip: {
-                    enabled: true,
-                    mode: 'nearest',
-                    intersect: false,
-                    axis: 'xy',
-                    hitRadius: 30,
-                    backgroundColor: CHART_THEME.surface,
-                    titleColor: CHART_THEME.axisStrong,
-                    bodyColor: CHART_THEME.axis,
-                    borderColor: CHART_THEME.border,
-                    borderWidth: 1,
-                    padding: 10,
-                    displayColors: false,
-                    callbacks: {
-                        label: (context) => {
-                            const v = context.parsed;
-                            const meanValue = chartData?.means?.[context.dataIndex];
-                            if (v.min !== undefined) {
-                                return [
-                                    `Max: ${v.max.toLocaleString('vi-VN')}`,
-                                    `Q3: ${v.q3.toLocaleString('vi-VN')}`,
-                                    `Median: ${v.median.toLocaleString('vi-VN')}`,
-                                    ...(typeof meanValue === 'number' ? [`Mean: ${meanValue.toLocaleString('vi-VN', { maximumFractionDigits: 2 })}`] : []),
-                                    `Q1: ${v.q1.toLocaleString('vi-VN')}`,
-                                    `Min: ${v.min.toLocaleString('vi-VN')}`
-                                ];
-                            }
-                            return `${v.toLocaleString('vi-VN')}`;
-                        }
-                    }
-                }
-            },
-            scales: {
-                y: {
-                    beginAtZero: false,
-                    min: chartData?.axisMin,
-                    max: chartData?.axisMax,
-                    grid: { color: CHART_THEME.grid },
-                    ticks: {
-                        callback: (value) => formatCurrencyAxis(value),
-                        font: { size: 12 },
-                        color: CHART_THEME.axis
-                    }
-                },
-                x: {
-                    grid: { display: false },
-                    ticks: { font: { size: 12 }, color: CHART_THEME.axis }
-                }
-            },
-            layout: { padding: { top: 10, bottom: 10 } }
-        }),
-        datasetConfig: {
-            backgroundColor: CHART_THEME.primarySoft,
-            borderColor: CHART_THEME.primary,
-            borderWidth: 2,
-            outlierColor: CHART_THEME.accentDark,
-            outlierBackgroundColor: CHART_THEME.accentDark,
-            outlierBorderColor: CHART_THEME.accentDark,
-            meanColor: CHART_THEME.accent,
-            itemRadius: 0,
-            outlierRadius: 3,
-            medianColor: CHART_THEME.accent
-        }
     },
     
     timeline: {
@@ -3398,74 +3752,6 @@ const CHART_CONFIG = {
             pointHoverRadius: 7,
             pointHitRadius: 20
         }
-    },
-    
-    method: {
-        canvasId: 'chart-selection-method',
-        type: 'bar',
-        colors: CHART_THEME.methodColors,
-        getData: (data) => {
-            const methodMap = {};
-            
-            data.forEach(r => {
-                const method = r['Hình thức LCNT'] || 'Không xác định';
-                const value = Number(r['Thành tiền (VND)']) || 0;
-                if (value > 0) {
-                    methodMap[method] = (methodMap[method] || 0) + value;
-                }
-            });
-            
-            const sorted = Object.entries(methodMap)
-                .sort((a, b) => b[1] - a[1])
-                .slice(0, 8);
-            
-            return {
-                labels: sorted.map(x => wrapChartLabel(x[0], 18)),
-                values: sorted.map(x => x[1]),
-                fullLabels: sorted.map(x => x[0])
-            };
-        },
-        getOptions: (chartData) => ({
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: { mode: 'nearest', axis: 'x', intersect: false },
-            plugins: {
-                legend: { display: false },
-                tooltip: {
-                    backgroundColor: CHART_THEME.surface,
-                    titleColor: CHART_THEME.axisStrong,
-                    bodyColor: CHART_THEME.axis,
-                    borderColor: CHART_THEME.border,
-                    borderWidth: 1,
-                    padding: 10,
-                    displayColors: false,
-                    callbacks: {
-                        title: (items) => chartData?.fullLabels?.[items?.[0]?.dataIndex] || '',
-                        label: (item) => formatCurrencyTooltip(Number(item.raw))
-                    }
-                }
-            },
-            scales: {
-                x: {
-                    grid: { display: false },
-                    ticks: { autoSkip: false, maxRotation: 0, minRotation: 0, font: { size: 11 }, color: CHART_THEME.axis }
-                },
-                y: {
-                    beginAtZero: true,
-                    grid: { color: CHART_THEME.grid },
-                    ticks: {
-                        callback: (value) => formatCurrencyAxis(value),
-                        font: { size: 12 },
-                        color: CHART_THEME.axis
-                    }
-                }
-            },
-            layout: { padding: { top: 10, bottom: 10 } }
-        }),
-        datasetConfig: {
-            borderRadius: 8,
-            borderWidth: 0
-        }
     }
 };
 
@@ -3523,6 +3809,7 @@ function initEmptyCharts() {
             ctx.clearRect(0, 0, canvas.width || canvas.clientWidth || 300, canvas.height || canvas.clientHeight || 150);
         }
     });
+    renderProvinceValueMap([]);
 }
 
 function destroyCharts() {
@@ -3541,6 +3828,7 @@ function drawCharts(df1Data, df2Data) {
     destroyCharts();
     
     if (totalRecords === 0) {
+        showNoDataMessage('chart-province-map', noDataMsg);
         Object.values(CHART_CONFIG).forEach(config => {
             showNoDataMessage(config.canvasId, noDataMsg);
         });
@@ -3548,6 +3836,7 @@ function drawCharts(df1Data, df2Data) {
     }
     
     const allData = [...df1Data, ...df2Data];
+    renderProvinceValueMap(allData);
     
     // Draw each chart
     Object.entries(CHART_CONFIG).forEach(([key, config]) => {
@@ -3592,9 +3881,7 @@ function drawChart(key, config, data) {
     
     const ctx = canvas.getContext('2d');
     const dataset = {
-        label: config.type === 'boxplot' ? 'Phân bố giá' : 
-               config.type === 'line' ? 'Tổng trị giá (VND)' : 
-               'Số lượng bản ghi',
+        label: key === 'histogram' ? 'Số lượng bản ghi' : 'Tổng trị giá (VND)',
         data: chartData.values,
         ...config.datasetConfig
     };
@@ -3603,8 +3890,6 @@ function drawChart(key, config, data) {
     if (config.type === 'bar' && key === 'histogram') {
         dataset.backgroundColor = config.color;
         dataset.borderRadius = 6;
-    } else if (config.type === 'bar' && key === 'method') {
-        dataset.backgroundColor = config.colors;
     } else if (config.type === 'line') {
         dataset.borderColor = config.color;
         dataset.pointBackgroundColor = config.color;
@@ -4406,6 +4691,597 @@ function initModalEvents() {
     });
 }
 
+const BULK_SEARCH_FIELD_LABELS = {
+    medicine: {
+        drugName: 'Tên thuốc',
+        activeIngredient: 'Tên hoạt chất',
+        concentration: 'Nồng độ, hàm lượng',
+        route: 'Đường dùng',
+        dosageForm: 'Dạng bào chế',
+        drugGroup: 'Nhóm thuốc',
+        unit: 'Đơn vị tính',
+        regNo: 'GĐKLH hoặc GPNK',
+        specification: 'Quy cách',
+        manufacturer: 'Cơ sở sản xuất',
+        country: 'Xuất xứ'
+    },
+    goods: {
+        lotName: 'Tên phần/lô',
+        goodsName: 'Danh mục hàng hóa',
+        technicalSpec: 'Tính năng kỹ thuật',
+        bidItem: 'Mặt hàng dự thầu',
+        model: 'Ký mã hiệu',
+        brand: 'Nhãn hiệu',
+        country: 'Xuất xứ',
+        manufacturer: 'Hãng sản xuất',
+        unit: 'Đơn vị tính'
+    }
+};
+
+const BULK_COLUMN_ALIASES = {
+    medicine: {
+        drugName: ['Tên thuốc', 'Tên thương mại', 'Tên hàng hóa', 'Tên mặt hàng', 'Thuốc'],
+        activeIngredient: ['Tên hoạt chất', 'Hoạt chất'],
+        concentration: ['Nồng độ, hàm lượng', 'Nồng độ hoặc hàm lượng', 'Nồng độ hàm lượng', 'Hàm lượng', 'Nồng độ'],
+        route: ['Đường dùng'],
+        dosageForm: ['Dạng bào chế'],
+        drugGroup: ['Nhóm thuốc', 'Nhóm TCKT', 'Nhóm TCKT (nhóm thuốc)', 'Nhóm'],
+        unit: ['Đơn vị tính', 'ĐVT', 'Đơn vị'],
+        regNo: ['GĐKLH hoặc GPNK', 'GĐKLH/GPNK', 'Số đăng ký', 'SĐK', 'GPNK', 'Giấy đăng ký lưu hành'],
+        specification: ['Quy cách', 'Quy cách đóng gói'],
+        manufacturer: ['Cơ sở sản xuất', 'Nhà sản xuất', 'Hãng sản xuất', 'Đơn vị sản xuất'],
+        country: ['Xuất xứ', 'Nước sản xuất', 'Quốc gia sản xuất', 'Quốc gia']
+    },
+    goods: {
+        lotName: ['Tên phần/lô', 'Tên phần', 'Tên lô', 'Phần/lô', 'Tên gói'],
+        goodsName: ['Danh mục hàng hóa', 'Tên hàng hóa', 'Tên hàng hoá', 'Hàng hóa', 'Hàng hoá', 'Tên mặt hàng'],
+        technicalSpec: ['Tính năng kỹ thuật', 'Thông số kỹ thuật', 'Thông số kĩ thuật', 'Mô tả kỹ thuật', 'Mô tả kĩ thuật'],
+        bidItem: ['Mặt hàng dự thầu', 'Tên mặt hàng dự thầu'],
+        brand: ['Nhãn hiệu', 'Thương hiệu'],
+        model: ['Ký mã hiệu', 'Kí mã hiệu', 'Model', 'Mã hiệu', 'Ký hiệu'],
+        country: ['Xuất xứ', 'Nước sản xuất', 'Quốc gia sản xuất', 'Quốc gia'],
+        manufacturer: ['Hãng sản xuất', 'Nhà sản xuất', 'Cơ sở sản xuất', 'Đơn vị sản xuất'],
+        unit: ['Đơn vị tính', 'ĐVT', 'Đơn vị']
+    }
+};
+
+let bulkImportedRows = [];
+let bulkImportedColumns = [];
+let bulkActiveScope = 'medicine';
+let lastBulkSearchPayloads = null;
+let lastBulkSearchWarnings = [];
+
+function normalizeBulkColumnName(value) {
+    return String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/đ/g, 'd')
+        .replace(/Đ/g, 'D')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+}
+
+function getBulkPriceLimit() {
+    const selected = document.querySelector('input[name="bulk-price-limit"]:checked');
+    const value = Number(selected?.value || 3);
+    return [3, 5, 10].includes(value) ? value : 3;
+}
+
+function getSelectedBulkFields(scope) {
+    return Array.from(document.querySelectorAll(`[data-bulk-fields="${scope}"] input[type="checkbox"]:checked`))
+        .map(input => input.value)
+        .filter(Boolean);
+}
+
+function getAllSelectedBulkScopes() {
+    return getSelectedBulkFields(bulkActiveScope).length ? [bulkActiveScope] : [];
+}
+
+function setBulkActiveScope(scope) {
+    if (!['medicine', 'goods'].includes(scope)) return;
+    bulkActiveScope = scope;
+    document.querySelectorAll('[data-bulk-fields]').forEach(panel => {
+        const isActive = panel.dataset.bulkFields === scope;
+        panel.classList.toggle('is-active', isActive);
+        panel.setAttribute('aria-pressed', String(isActive));
+    });
+    setBulkSearchWarnings([]);
+}
+
+function findBulkColumnForField(scope, field, normalizedColumns) {
+    const aliases = [BULK_SEARCH_FIELD_LABELS[scope]?.[field], ...(BULK_COLUMN_ALIASES[scope]?.[field] || [])]
+        .map(normalizeBulkColumnName)
+        .filter(Boolean);
+    const aliasSet = new Set(aliases);
+    const exactMatch = normalizedColumns.find(item => aliasSet.has(item.normalized));
+    if (exactMatch) return exactMatch.name;
+    const looseMatch = normalizedColumns.find(item => aliases.some(alias => alias && item.normalized.includes(alias)));
+    return looseMatch?.name || null;
+}
+
+function buildBulkMappedRows(scope) {
+    const selectedFields = getSelectedBulkFields(scope);
+    const normalizedColumns = bulkImportedColumns.map(name => ({
+        name,
+        normalized: normalizeBulkColumnName(name)
+    }));
+    const fieldColumnMap = {};
+    const availableFields = [];
+    const missingFields = [];
+
+    selectedFields.forEach(field => {
+        const columnName = findBulkColumnForField(scope, field, normalizedColumns);
+        if (columnName) {
+            fieldColumnMap[field] = columnName;
+            availableFields.push(field);
+        } else {
+            missingFields.push(field);
+        }
+    });
+
+    const rows = bulkImportedRows
+        .map(sourceRow => availableFields.reduce((row, field) => {
+            row[field] = String(sourceRow[fieldColumnMap[field]] ?? '').trim();
+            return row;
+        }, {}))
+        .filter(row => Object.values(row).some(value => String(value || '').trim()));
+
+    return { fields: availableFields, rows, missingFields };
+}
+
+function setBulkSearchWarnings(warnings = []) {
+    const container = document.getElementById('bulk-search-warnings');
+    if (!container) return;
+    container.hidden = warnings.length === 0;
+    container.innerHTML = warnings.length
+        ? warnings.map(message => `<div>${escapeHtml(message)}</div>`).join('')
+        : '';
+}
+
+function setBulkSearchStatus(message, type = '') {
+    const status = document.getElementById('bulk-search-status');
+    if (!status) return;
+    status.textContent = message || '';
+    status.classList.toggle('is-success', type === 'success');
+    status.classList.toggle('is-error', type === 'error');
+}
+
+function openBulkSearchModal() {
+    const modal = document.getElementById('bulk-search-modal');
+    if (!modal) return;
+    modal.classList.add('show');
+    modal.setAttribute('aria-hidden', 'false');
+    setBulkSearchStatus('');
+    setBulkSearchWarnings([]);
+    setBulkActiveScope(bulkActiveScope);
+    requestAnimationFrame(() => document.getElementById('bulk-import-excel')?.focus());
+    window.feather?.replace?.();
+}
+
+function closeBulkSearchModal() {
+    const modal = document.getElementById('bulk-search-modal');
+    if (!modal) return;
+    modal.classList.remove('show');
+    modal.setAttribute('aria-hidden', 'true');
+}
+
+function updateBulkImportFileName(text) {
+    const label = document.getElementById('bulk-import-file-name');
+    if (label) label.textContent = text || 'Chưa chọn file';
+}
+
+async function handleBulkExcelFile(file) {
+    if (!file) return;
+    if (!window.XLSX) {
+        setBulkSearchStatus('Không tải được thư viện đọc Excel. Vui lòng thử tải lại trang.', 'error');
+        return;
+    }
+
+    setBulkSearchStatus('Đang đọc file Excel...');
+    setBulkSearchWarnings([]);
+
+    try {
+        const buffer = await file.arrayBuffer();
+        const workbook = window.XLSX.read(buffer, { type: 'array' });
+        const firstSheetName = workbook.SheetNames?.[0];
+        if (!firstSheetName) {
+            throw new Error('File Excel không có sheet dữ liệu.');
+        }
+        const sheet = workbook.Sheets[firstSheetName];
+        const rows = window.XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false });
+        bulkImportedRows = rows;
+        bulkImportedColumns = rows.length ? Object.keys(rows[0]) : [];
+
+        if (!bulkImportedRows.length || !bulkImportedColumns.length) {
+            throw new Error('File Excel chưa có dữ liệu hoặc chưa có dòng tiêu đề cột.');
+        }
+
+        updateBulkImportFileName(`${file.name} (${bulkImportedRows.length} dòng)`);
+        setBulkSearchStatus(`Đã import ${bulkImportedRows.length} dòng từ sheet "${firstSheetName}".`, 'success');
+    } catch (error) {
+        bulkImportedRows = [];
+        bulkImportedColumns = [];
+        updateBulkImportFileName('Chưa chọn file');
+        setBulkSearchStatus(error?.message || 'Không đọc được file Excel.', 'error');
+    }
+}
+
+function buildEmptyBulkScope() {
+    return {
+        data: [],
+        count: 0,
+        count_exact: true,
+        count_label: '0',
+        count_summary: '0',
+        displayed: 0,
+        has_more: false,
+        approx_total: null
+    };
+}
+
+function combineBulkResults(results) {
+    const medicineResult = results.find(item => item.scope === 'medicine')?.result || {};
+    const goodsResult = results.find(item => item.scope === 'goods')?.result || {};
+    const medicineData = medicineResult.df1 || buildEmptyBulkScope();
+    const goodsData = goodsResult.df2 || buildEmptyBulkScope();
+    const displayedTotal = Number(medicineData.data?.length || 0) + Number(goodsData.data?.length || 0);
+    const hasMore = Boolean(medicineData.has_more || goodsData.has_more);
+    const totalCount = Number(medicineData.count || 0) + Number(goodsData.count || 0);
+    const totalCountLabel = hasMore ? `${totalCount}+` : String(totalCount);
+    const totalCountSummary = hasMore ? `hơn ${totalCount}` : String(totalCount);
+    const appliedTotalLimit = results.reduce((sum, item) => sum + Number(item.result?.applied_total_limit || 0), 0)
+        || (hasMore ? displayedTotal : totalCount);
+
+    return {
+        success: true,
+        search_mode: 'bulk',
+        bulk: {
+            scope: results.length === 2 ? 'all' : (results[0]?.scope || 'all'),
+            input_count: Math.max(...results.map(item => Number(item.result?.bulk?.input_count || 0)), 0),
+            matched_count: displayedTotal,
+            price_limit: getBulkPriceLimit(),
+            search_mode: results.some(item => item.result?.bulk?.search_mode === 'full') ? 'full' : 'standard',
+            result_limit: appliedTotalLimit,
+            truncated: hasMore,
+            fields: results.reduce((fields, item) => fields.concat(item.result?.bulk?.fields || []), [])
+        },
+        total_count: totalCount,
+        total_count_exact: !hasMore,
+        total_count_label: totalCountLabel,
+        total_count_summary: totalCountSummary,
+        applied_total_limit: appliedTotalLimit,
+        applied_limit_per_scope: appliedTotalLimit,
+        df1: medicineData,
+        df2: goodsData,
+        auth: goodsResult.auth || medicineResult.auth,
+        full_search_daily_used: goodsResult.full_search_daily_used ?? medicineResult.full_search_daily_used,
+        full_search_daily_remaining: goodsResult.full_search_daily_remaining ?? medicineResult.full_search_daily_remaining
+    };
+}
+
+async function runBulkSearch(options = {}) {
+    const searchMode = options.searchMode === 'full' ? 'full' : 'standard';
+    const reuseLastPayloads = Boolean(options.reuseLastPayloads);
+    await window.BIDFinderAuth?.whenReady?.();
+    if (!requireAuthenticatedSession('login', 'full_query')) return;
+
+    if (!reuseLastPayloads && !bulkImportedRows.length) {
+        setBulkSearchStatus('Bạn import file Excel trước khi tra cứu.', 'error');
+        return;
+    }
+
+    let warnings = [];
+    let payloads = [];
+
+    if (reuseLastPayloads && lastBulkSearchPayloads?.length) {
+        payloads = lastBulkSearchPayloads;
+        warnings = lastBulkSearchWarnings || [];
+    } else {
+        const selectedScopes = getAllSelectedBulkScopes();
+        if (!selectedScopes.length) {
+            setBulkSearchStatus('Bạn chọn ít nhất một trường tra cứu.', 'error');
+            return;
+        }
+
+        payloads = selectedScopes
+            .map(scope => {
+                const mapped = buildBulkMappedRows(scope);
+                mapped.missingFields.forEach(field => {
+                    warnings.push(`Không tìm thấy cột "${BULK_SEARCH_FIELD_LABELS[scope]?.[field] || field}".`);
+                });
+                if (!mapped.fields.length) {
+                    // warnings.push(`Nhóm ${scope === 'medicine' ? 'thuốc' : 'hàng hóa'} chưa có cột nào khớp để tra cứu.`);
+                    return null;
+                }
+                if (!mapped.rows.length) {
+                    // warnings.push(`Nhóm ${scope === 'medicine' ? 'thuốc' : 'hàng hóa'} không có dòng nào có dữ liệu ở các cột đã map.`);
+                    return null;
+                }
+                return { scope, fields: mapped.fields, rows: mapped.rows };
+            })
+            .filter(Boolean);
+    }
+
+    setBulkSearchWarnings(warnings);
+    if (!payloads.length) {
+        setBulkSearchStatus('Chưa có dữ liệu hợp lệ để tra cứu.', 'error');
+        return;
+    }
+
+    const runButton = document.getElementById('run-bulk-search');
+    const defaultText = runButton?.textContent || 'Tra cứu hàng loạt';
+    if (runButton) {
+        runButton.disabled = true;
+        runButton.textContent = searchMode === 'full' ? 'Đang full search...' : 'Đang tra cứu...';
+    }
+    const totalInputRows = payloads.reduce((sum, item) => sum + item.rows.length, 0);
+    setBulkSearchStatus(`${searchMode === 'full' ? 'Đang full search' : 'Đang tra cứu'} ${totalInputRows} dòng...`);
+
+    try {
+        const results = [];
+        const limit = searchMode === 'full' ? FULL_SEARCH_TOTAL_LIMIT : MAX_RESULTS_PER_TABLE;
+        for (const payload of payloads) {
+            const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/bulk-query`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ...payload,
+                    priceLimit: getBulkPriceLimit(),
+                    limit,
+                    searchMode
+                })
+            });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok || result.success === false) {
+                throw new Error(result.message || result.error || 'Tra cứu hàng loạt thất bại.');
+            }
+            results.push({ scope: payload.scope, result });
+        }
+
+        const result = combineBulkResults(results);
+        if (result?.auth) {
+            window.BIDFinderAuth?.applyAuthConfig?.(result.auth);
+        }
+        markDatabaseWarm();
+
+        currentQueryRequest = { scope: result.bulk?.scope || 'all', filters: {} };
+        clearFilterUrlState();
+        lastBulkSearchPayloads = payloads;
+        lastBulkSearchWarnings = warnings;
+        handleQuerySuccess(result);
+        setBulkSearchStatus(`Đã tìm thấy ${Number(result.total_count || 0).toLocaleString('vi-VN')} kết quả.`, 'success');
+        if (!warnings.length && searchMode !== 'full') {
+            closeBulkSearchModal();
+        }
+        window.BIDFinderAnalytics?.track?.('bulk_search_completed', {
+            scope: result.bulk?.scope || 'all',
+            search_mode: searchMode,
+            input_count: totalInputRows,
+            matched_count: Number(result.total_count || 0),
+            price_limit: getBulkPriceLimit()
+        });
+    } catch (error) {
+        console.error('Bulk search failed:', error);
+        setBulkSearchStatus(error?.message || 'Không thể tra cứu hàng loạt lúc này.', 'error');
+    } finally {
+        if (runButton) {
+            runButton.disabled = false;
+            runButton.textContent = defaultText;
+        }
+    }
+}
+
+function initBulkSearchEvents() {
+    document.getElementById('open-bulk-search-modal')?.addEventListener('click', openBulkSearchModal);
+    document.getElementById('close-bulk-search-modal')?.addEventListener('click', closeBulkSearchModal);
+    document.querySelector('#bulk-search-modal .bulk-search-overlay')?.addEventListener('click', closeBulkSearchModal);
+    document.querySelectorAll('[data-bulk-fields]').forEach(panel => {
+        panel.addEventListener('click', () => setBulkActiveScope(panel.dataset.bulkFields));
+        panel.addEventListener('focusin', () => setBulkActiveScope(panel.dataset.bulkFields));
+    });
+    document.querySelectorAll('[data-bulk-fields] input[type="checkbox"]').forEach(input => {
+        input.addEventListener('change', () => setBulkSearchWarnings([]));
+    });
+    document.getElementById('bulk-import-excel')?.addEventListener('click', () => {
+        document.getElementById('bulk-excel-file')?.click();
+    });
+    document.getElementById('bulk-excel-file')?.addEventListener('change', event => {
+        handleBulkExcelFile(event.target.files?.[0]);
+    });
+    document.getElementById('run-bulk-search')?.addEventListener('click', runBulkSearch);
+    setBulkActiveScope(bulkActiveScope);
+}
+
+function getFeedbackContextText() {
+    const user = window.BIDFinderAuth?.getUser?.();
+    const lines = [
+        '',
+        '---',
+        'Ngữ cảnh:',
+        `URL: ${window.location.href}`,
+        `Thời gian: ${new Date().toLocaleString('vi-VN')}`
+    ];
+
+    if (user?.email) {
+        lines.push(`Tài khoản: ${user.email}`);
+    }
+
+    if (hasActiveQueryFilters(currentQueryRequest)) {
+        lines.push(`Filter: ${JSON.stringify(currentQueryRequest)}`);
+    }
+
+    return lines.join('\n');
+}
+
+function getFeedbackContextPayload() {
+    return {
+        url: window.location.href,
+        createdAt: new Date().toISOString(),
+        filters: hasActiveQueryFilters(currentQueryRequest) ? currentQueryRequest : {}
+    };
+}
+
+function collectFeedbackAnswers() {
+    return Array.from(document.querySelectorAll('.feedback-choice-row')).map((row) => {
+        const question = row.dataset.feedbackQuestion || row.querySelector('span')?.textContent?.trim() || '';
+        const answer = row.querySelector('input[type="radio"]:checked')?.value || 'Chưa chọn';
+        return { question, answer };
+    }).filter(item => item.question);
+}
+
+function hasFeedbackContent() {
+    const hasAnswer = collectFeedbackAnswers().some(item => item.answer !== 'Chưa chọn');
+    const hasTask = Boolean(document.getElementById('feedback-task')?.value?.trim());
+    const hasNote = Boolean(document.getElementById('feedback-message')?.value?.trim());
+    return hasAnswer || hasTask || hasNote;
+}
+
+function buildFeedbackMessage() {
+    const answers = collectFeedbackAnswers();
+    const task = document.getElementById('feedback-task')?.value?.trim() || '';
+    const message = document.getElementById('feedback-message')?.value?.trim() || '';
+    const parts = [
+        'Feedback nhanh:',
+        ...answers.map(item => `- ${item.question}: ${item.answer}`),
+        task ? `\nTask muốn làm nhưng app chưa hỗ trợ:\n${task}` : '',
+        message ? `\nGhi chú thêm:\n${message}` : '',
+        getFeedbackContextText()
+    ];
+
+    return parts.filter(Boolean).join('\n');
+}
+
+function buildFeedbackPayload() {
+    return {
+        answers: collectFeedbackAnswers(),
+        task: document.getElementById('feedback-task')?.value?.trim() || '',
+        note: document.getElementById('feedback-message')?.value?.trim() || '',
+        context: getFeedbackContextPayload()
+    };
+}
+
+function setFeedbackStatus(message, type = '') {
+    const status = document.getElementById('feedback-status');
+    if (!status) return;
+
+    status.textContent = message || '';
+    status.classList.toggle('is-success', type === 'success');
+    status.classList.toggle('is-error', type === 'error');
+}
+
+function openFeedbackModal() {
+    const modal = document.getElementById('feedback-modal');
+    const firstChoice = document.querySelector('#feedback-modal input[type="radio"]');
+    if (!modal) return;
+
+    modal.classList.add('show');
+    modal.setAttribute('aria-hidden', 'false');
+    setFeedbackStatus('');
+    requestAnimationFrame(() => firstChoice?.focus());
+    window.feather?.replace?.();
+    window.BIDFinderAnalytics?.track?.('feedback_opened');
+}
+
+function closeFeedbackModal() {
+    const modal = document.getElementById('feedback-modal');
+    if (!modal) return;
+
+    modal.classList.remove('show');
+    modal.setAttribute('aria-hidden', 'true');
+}
+
+async function copyFeedbackText() {
+    if (!hasFeedbackContent()) {
+        setFeedbackStatus('Bạn chọn ít nhất một mục hoặc nhập nội dung góp ý trước nhé.', 'error');
+        return;
+    }
+
+    const text = buildFeedbackMessage();
+
+    try {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+        } else {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.setAttribute('readonly', '');
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            textarea.remove();
+        }
+        setFeedbackStatus('Đã sao chép nội dung góp ý.', 'success');
+        window.BIDFinderAnalytics?.track?.('feedback_copied');
+    } catch (error) {
+        setFeedbackStatus('Không sao chép được. Bạn có thể dùng nút gửi góp ý.', 'error');
+    }
+}
+
+function resetFeedbackForm() {
+    document.querySelectorAll('.feedback-choice-row input[type="radio"]').forEach(input => {
+        input.checked = false;
+    });
+    const task = document.getElementById('feedback-task');
+    const message = document.getElementById('feedback-message');
+    if (task) task.value = '';
+    if (message) message.value = '';
+}
+
+async function sendFeedback() {
+    if (!hasFeedbackContent()) {
+        setFeedbackStatus('Bạn chọn ít nhất một mục hoặc nhập nội dung góp ý trước nhé.', 'error');
+        return;
+    }
+
+    const sendButton = document.getElementById('send-feedback');
+    const defaultText = sendButton?.textContent || 'Gửi góp ý';
+    if (sendButton) {
+        sendButton.disabled = true;
+        sendButton.textContent = 'Đang gửi...';
+    }
+
+    try {
+        const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/feedback`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(buildFeedbackPayload())
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || result.success === false) {
+            throw new Error(result.message || 'Không thể gửi góp ý lúc này.');
+        }
+
+        resetFeedbackForm();
+        setFeedbackStatus(result.message || 'Cảm ơn bạn đã góp ý. BIDFinder đã ghi nhận phản hồi của bạn.', 'success');
+        window.BIDFinderAnalytics?.track?.('feedback_submitted');
+    } catch (error) {
+        console.error('Feedback submit failed:', error);
+        setFeedbackStatus(error?.message || 'Không thể gửi góp ý lúc này. Bạn thử lại sau nhé.', 'error');
+    } finally {
+        if (sendButton) {
+            sendButton.disabled = false;
+            sendButton.textContent = defaultText;
+        }
+    }
+}
+
+function initFeedbackModalEvents() {
+    document.getElementById('open-feedback-modal')?.addEventListener('click', openFeedbackModal);
+    document.getElementById('close-feedback-modal')?.addEventListener('click', closeFeedbackModal);
+    document.querySelector('#feedback-modal .feedback-overlay')?.addEventListener('click', closeFeedbackModal);
+    document.getElementById('copy-feedback')?.addEventListener('click', copyFeedbackText);
+    document.getElementById('send-feedback')?.addEventListener('click', sendFeedback);
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && document.getElementById('feedback-modal')?.classList.contains('show')) {
+            closeFeedbackModal();
+        }
+    });
+}
+
 function initTabSwitching() {
     const tabBtns = document.querySelectorAll('.primary-tab');
     const tabContents = document.querySelectorAll('.tab-content');
@@ -4624,13 +5500,13 @@ function initSearchFormEvents() {
         previewAbortController?.abort();
         previewAbortController = null;
 
-        const stopWakeMessageTimer = startWakeMessageTimer(searchForm);
+        const stopConnectionMessageTimer = startConnectionMessageTimer(searchForm);
         let appliedResult = null;
         try {
             await waitForWarmupWithUi(searchForm);
             appliedResult = await applyFilters(e.detail);
         } finally {
-            stopWakeMessageTimer();
+            stopConnectionMessageTimer();
             searchForm.setApplyLoading?.(false);
         }
 
@@ -4659,15 +5535,21 @@ function initSearchFormEvents() {
     searchForm.addEventListener('preview-filters', async (e) => {
         const requestId = ++previewRequestId;
         previewAbortController?.abort();
-        previewAbortController = new AbortController();
-        const stopWakeMessageTimer = startWakeMessageTimer(searchForm, previewAbortController.signal);
+        const controller = new AbortController();
+        previewAbortController = controller;
+        const stopConnectionMessageTimer = startConnectionMessageTimer(searchForm, controller.signal);
+        let didTimeout = false;
+        const timeoutId = window.setTimeout(() => {
+            didTimeout = true;
+            controller.abort();
+        }, PREVIEW_REQUEST_TIMEOUT_MS);
         try {
-            await waitForWarmupWithUi(searchForm, previewAbortController.signal);
-            if (requestId !== previewRequestId || previewAbortController.signal.aborted) return;
+            await waitForWarmupWithUi(searchForm, controller.signal);
+            if (requestId !== previewRequestId || controller.signal.aborted) return;
 
             const result = await fetchQueryPreview(
                 buildQueryRequest(e.detail),
-                previewAbortController.signal
+                controller.signal
             );
             if (requestId !== previewRequestId) return;
 
@@ -4677,12 +5559,46 @@ function initSearchFormEvents() {
                 exact: Boolean(result?.exact)
             });
         } catch (err) {
-            if (err?.name === 'AbortError') return;
+            const aborted = controller.signal.aborted
+                || err?.name === 'AbortError'
+                || /abort/i.test(String(err?.message || ''));
+            if (aborted && !didTimeout) return;
             if (requestId !== previewRequestId) return;
-            searchForm.setPreviewResult?.({ error: true });
+            console.warn('Query preview failed:', err);
+            if (typeof searchForm.hasVisiblePreviewEstimate === 'function' && searchForm.hasVisiblePreviewEstimate()) {
+                return;
+            }
+            searchForm.setPreviewResult?.({
+                error: true,
+                errorMessage: didTimeout || err?.name === 'TimeoutError'
+                    ? 'Ước tính quá lâu, vui lòng thử lại hoặc thu hẹp điều kiện'
+                    : ''
+            });
         } finally {
-            stopWakeMessageTimer();
+            window.clearTimeout(timeoutId);
+            stopConnectionMessageTimer();
         }
+    });
+}
+
+function initFilterUrlEvents() {
+    window.addEventListener('popstate', () => {
+        const queryRequest = readFilterUrlState();
+        const searchForm = document.querySelector('custom-search-form');
+
+        if (!queryRequest || !hasActiveQueryFilters(queryRequest)) {
+            currentQueryRequest = { scope: 'all', filters: {} };
+            searchForm?.setFilterPayload?.(currentQueryRequest);
+            searchForm?.setPreviewResult?.({ idle: true });
+            resetQueryResultMeta();
+            updateResults([], [], { resetMiniFilters: true });
+            hideLimitWarning();
+            return;
+        }
+
+        restoreFilterUrlState().catch(error => {
+            console.error('Unable to restore filters from URL:', error);
+        });
     });
 }
 
@@ -4716,7 +5632,7 @@ async function initializeAppData() {
         });
         await loadMetadata();
         initEmptyCharts();
-        clearFilterUrlState();
+        await restoreFilterUrlState();
         
         console.log('✅ App initialized - Ready for filtering from database');
         
@@ -4745,9 +5661,12 @@ document.addEventListener('DOMContentLoaded', function() {
     initLandingShell();
     window.BIDFinderAuth?.init();
     initModalEvents();
+    initBulkSearchEvents();
+    initFeedbackModalEvents();
     initTabSwitching();
     initResultViewSwitching();
     initSearchFormEvents();
+    initFilterUrlEvents();
     disableDefaultTooltips();
     initGlobalKeyboardShortcuts();
     initializeAppData();

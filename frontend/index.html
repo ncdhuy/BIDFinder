@@ -123,6 +123,7 @@
                     </div>
 
                     <div class="app-header-links">
+                        <button class="app-auth-btn" id="open-feedback-modal" type="button">Góp ý</button>
                         <div class="app-auth-shell is-hidden" id="app-auth-shell">
                             <button class="app-auth-btn" id="auth-edit-profile-btn" type="button">Tài khoản</button>
                         </div>
@@ -161,6 +162,13 @@
                                 <span class="action-btn-label action-btn-label-stacked">
                                     <span>Lịch sử</span>
                                     <span>cập nhật</span>
+                                </span>
+                            </button>
+                            <button class="btn-meta-simple bulk-search-action-btn" id="open-bulk-search-modal" type="button" aria-label="Tra cứu hàng loạt">
+                                <i data-feather="list"></i>
+                                <span class="action-btn-label action-btn-label-stacked">
+                                    <span>Tra cứu</span>
+                                    <span>hàng loạt</span>
                                 </span>
                             </button>
                             <button class="action-btn" id="open-filter-panel" aria-label="Tra cứu">
@@ -318,36 +326,28 @@
                             </div>
 
                             <div class="charts-card-body">
-                                <div class="charts-grid-4">
-                                    <!-- Chart 1: Price Histogram -->
-                                    <article class="chart-block">
+                                <div class="charts-grid-4 charts-grid-analysis">
+                                    <!-- Chart 1: Value by Province/City -->
+                                    <article class="chart-block chart-block-province">
+                                        <h3>Tổng giá trị trúng thầu theo tỉnh/thành</h3>
+                                        <div class="chart-block-body">
+                                            <div id="chart-province-map" class="vietnam-province-map" role="img" aria-label="Bản đồ tổng giá trị trúng thầu theo tỉnh/thành"></div>
+                                        </div>
+                                    </article>
+
+                                    <!-- Chart 2: Price Histogram -->
+                                    <article class="chart-block chart-block-price">
                                         <h3>Phân bố đơn giá</h3>
                                         <div class="chart-block-body">
                                             <canvas id="chart-price-histogram"></canvas>
                                         </div>
                                     </article>
 
-                                    <!-- Chart 2: Price Boxplot -->
-                                    <article class="chart-block">
-                                        <h3>Boxplot đơn giá</h3>
-                                        <div class="chart-block-body">
-                                            <canvas id="chart-price-boxplot"></canvas>
-                                        </div>
-                                    </article>
-
                                     <!-- Chart 3: Timeline Value -->
-                                    <article class="chart-block">
+                                    <article class="chart-block chart-block-timeline">
                                         <h3>Tổng giá trị trúng thầu theo tháng</h3>
                                         <div class="chart-block-body">
                                             <canvas id="chart-timeline-value"></canvas>
-                                        </div>
-                                    </article>
-
-                                    <!-- Chart 4: Value by Selection Method -->
-                                    <article class="chart-block">
-                                        <h3>Tổng giá trị trúng thầu theo hình thức LCNT</h3>
-                                        <div class="chart-block-body">
-                                            <canvas id="chart-selection-method"></canvas>
                                         </div>
                                     </article>
                                 </div>
@@ -834,12 +834,179 @@
         </div>
     </div>
 
+    <!-- BULK SEARCH MODAL -->
+    <div id="bulk-search-modal" class="bulk-search-modal" aria-hidden="true">
+        <div class="bulk-search-overlay"></div>
+        <div class="bulk-search-dialog" role="dialog" aria-modal="true" aria-labelledby="bulk-search-title">
+            <div class="bulk-search-header">
+                <h3 id="bulk-search-title">
+                    <i data-feather="list"></i>
+                    Tra cứu hàng loạt
+                </h3>
+                <button class="btn-close" id="close-bulk-search-modal" type="button" aria-label="Đóng">
+                    <i data-feather="x"></i>
+                </button>
+            </div>
+            <div class="bulk-search-body">
+                <div class="bulk-price-section">
+                    <span class="bulk-section-title">Tìm kiếm hàng hóa theo các mức giá khác nhau</span>
+                    <div class="bulk-price-options" role="radiogroup" aria-label="Đa dạng giá">
+                        <label><input type="radio" name="bulk-price-limit" value="3" checked> Tối đa 3 giá</label>
+                        <label><input type="radio" name="bulk-price-limit" value="5"> Tối đa 5 giá</label>
+                        <label><input type="radio" name="bulk-price-limit" value="10"> Tối đa 10 giá</label>
+                    </div>
+                </div>
+                <div class="bulk-field-columns">
+                    <div class="bulk-field-panel" data-bulk-fields="medicine">
+                        <span class="bulk-section-title">Thuốc</span>
+                        <div class="bulk-field-options">
+                            <div class="bulk-field-option-column">
+                                <label><input type="checkbox" value="drugName"> Tên thuốc</label>
+                                <label><input type="checkbox" value="activeIngredient" checked> Tên hoạt chất</label>
+                                <label><input type="checkbox" value="concentration" checked> Nồng độ, hàm lượng</label>
+                                <label><input type="checkbox" value="route" checked> Đường dùng</label>
+                                <label><input type="checkbox" value="dosageForm" checked> Dạng bào chế</label>
+                                <label><input type="checkbox" value="drugGroup" checked> Nhóm thuốc</label>
+                            </div>
+                            <div class="bulk-field-option-column">
+                                <label><input type="checkbox" value="unit"> Đơn vị tính</label>
+                                <label><input type="checkbox" value="regNo"> GĐKLH hoặc GPNK</label>
+                                <label><input type="checkbox" value="specification"> Quy cách</label>
+                                <label><input type="checkbox" value="manufacturer"> Cơ sở sản xuất</label>
+                                <label><input type="checkbox" value="country"> Xuất xứ</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bulk-field-panel" data-bulk-fields="goods">
+                        <span class="bulk-section-title">Hàng hóa</span>
+                        <div class="bulk-field-options">
+                            <div class="bulk-field-option-column">
+                                <label><input type="checkbox" value="lotName"> Tên phần/lô</label>
+                                <label><input type="checkbox" value="goodsName" checked> Danh mục hàng hóa</label>
+                                <label><input type="checkbox" value="technicalSpec" checked> Tính năng kỹ thuật</label>
+                                <label><input type="checkbox" value="bidItem"> Mặt hàng dự thầu</label>
+                                <label><input type="checkbox" value="brand"> Nhãn hiệu</label>
+                                <label><input type="checkbox" value="model"> Ký mã hiệu</label>
+                            </div>
+                            <div class="bulk-field-option-column">
+                                <label><input type="checkbox" value="country"> Xuất xứ</label>
+                                <label><input type="checkbox" value="manufacturer"> Hãng sản xuất</label>
+                                <label><input type="checkbox" value="unit"> Đơn vị tính</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="bulk-import-card">
+                    <span class="bulk-section-title">File dữ liệu</span>
+                    <div class="bulk-import-row">
+                        <input id="bulk-excel-file" type="file" accept=".xlsx,.xls,.csv" hidden>
+                        <button class="btn-feedback-secondary" id="bulk-import-excel" type="button">
+                            <i data-feather="upload"></i>
+                            Import Excel
+                        </button>
+                        <span class="bulk-import-file-name" id="bulk-import-file-name">Chưa chọn file</span>
+                    </div>
+                </div>
+                <div class="bulk-search-warnings" id="bulk-search-warnings" hidden></div>
+                <p class="bulk-search-status" id="bulk-search-status" aria-live="polite"></p>
+            </div>
+            <div class="bulk-search-footer">
+                <button class="btn-feedback-primary" id="run-bulk-search" type="button">Tra cứu hàng loạt</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- FEEDBACK MODAL -->
+    <div id="feedback-modal" class="feedback-modal" aria-hidden="true">
+        <div class="feedback-overlay"></div>
+        <div class="feedback-dialog" role="dialog" aria-modal="true" aria-labelledby="feedback-title">
+            <div class="feedback-header">
+                <div>
+                    <h3 id="feedback-title">
+                        <i data-feather="message-square"></i>
+                        Góp ý
+                    </h3>
+                    
+                </div>
+                <button class="btn-close" id="close-feedback-modal" type="button" aria-label="Đóng">
+                    <i data-feather="x"></i>
+                </button>
+            </div>
+            <div class="feedback-body">
+                <div class="feedback-choice-list" aria-label="Nội dung góp ý nhanh">
+                    <div class="feedback-choice-row" data-feedback-question="Thao tác dễ sử dụng">
+                        <span>Thao tác dễ sử dụng</span>
+                        <div class="feedback-choice-options">
+                            <label><input type="radio" name="feedback-usability" value="Có"> Có</label>
+                            <label><input type="radio" name="feedback-usability" value="Không"> Không</label>
+                        </div>
+                    </div>
+                    <div class="feedback-choice-row" data-feedback-question="App trả kết quả nhanh chóng">
+                        <span>App trả kết quả nhanh chóng</span>
+                        <div class="feedback-choice-options">
+                            <label><input type="radio" name="feedback-speed" value="Có"> Có</label>
+                            <label><input type="radio" name="feedback-speed" value="Không"> Không</label>
+                        </div>
+                    </div>
+                    <div class="feedback-choice-row" data-feedback-question="Bộ lọc đúng logic nghiệp vụ">
+                        <span>Bộ lọc đúng logic nghiệp vụ</span>
+                        <div class="feedback-choice-options">
+                            <label><input type="radio" name="feedback-filter-logic" value="Có"> Có</label>
+                            <label><input type="radio" name="feedback-filter-logic" value="Không"> Không</label>
+                        </div>
+                    </div>
+                    <div class="feedback-choice-row" data-feedback-question="Dữ liệu bao phủ được nội dung cần tìm">
+                        <span>Dữ liệu bao phủ được nội dung cần tìm</span>
+                        <div class="feedback-choice-options">
+                            <label><input type="radio" name="feedback-coverage" value="Có"> Có</label>
+                            <label><input type="radio" name="feedback-coverage" value="Không"> Không</label>
+                        </div>
+                    </div>
+                    <div class="feedback-choice-row" data-feedback-question="Dữ liệu đúng, không có sai sót khi tìm kiếm">
+                        <span>Dữ liệu đúng, không có sai sót khi tìm kiếm</span>
+                        <div class="feedback-choice-options">
+                            <label><input type="radio" name="feedback-accuracy" value="Có"> Có</label>
+                            <label><input type="radio" name="feedback-accuracy" value="Không"> Không</label>
+                        </div>
+                    </div>
+                    <div class="feedback-choice-row" data-feedback-question="Không có điểm mù nào khiến người dùng phải quay về tra cứu thủ công">
+                        <span>Không có “điểm mù” nào khiến người dùng phải quay về tra cứu thủ công</span>
+                        <div class="feedback-choice-options">
+                            <label><input type="radio" name="feedback-blindspot" value="Có"> Có</label>
+                            <label><input type="radio" name="feedback-blindspot" value="Không"> Không</label>
+                        </div>
+                    </div>
+                    <div class="feedback-choice-row" data-feedback-question="Hiệu suất tốt hơn cách truyền thống trên mua sắm công">
+                        <span>Hiệu suất tốt hơn cách truyền thống (tra cứu trên mua sắm công)</span>
+                        <div class="feedback-choice-options">
+                            <label><input type="radio" name="feedback-performance" value="Có"> Có</label>
+                            <label><input type="radio" name="feedback-performance" value="Không"> Không</label>
+                        </div>
+                    </div>
+                </div>
+                <label class="feedback-field">
+                    <span>Có chức năng nào rất muốn thực hiện nhưng app chưa hỗ trợ?</span>
+                    <textarea id="feedback-task" rows="4" maxlength="1600" placeholder="Mô tả chức năng hoặc tình huống cụ thể..."></textarea>
+                </label>
+                <label class="feedback-field">
+                    <span>Ghi chú thêm</span>
+                    <textarea id="feedback-message" rows="3" maxlength="1200" placeholder="Bổ sung góp ý,ví dụ mong muốn cải thiện..."></textarea>
+                </label>
+                
+                <p id="feedback-status" class="feedback-status" aria-live="polite"></p>
+            </div>
+            <div class="feedback-footer">
+                <button class="btn-feedback-secondary" id="copy-feedback" type="button">Sao chép</button>
+                <button class="btn-feedback-primary" id="send-feedback" type="button">Gửi góp ý</button>
+            </div>
+        </div>
+    </div>
+
 
     <!-- Chart.js -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
-    <script src="https://unpkg.com/@sgratzl/chartjs-chart-boxplot@4.4.5/build/index.umd.min.js"></script>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
@@ -847,7 +1014,6 @@
     <script src="analytics.js"></script>
     <script src="auth.js"></script>
     <script src="search-form.js"></script>
-    
     <script src="script.js"></script>
     <script>
         feather.replace();

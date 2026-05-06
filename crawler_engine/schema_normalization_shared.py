@@ -140,14 +140,56 @@ def collapse_duplicate_columns(df: pd.DataFrame) -> pd.DataFrame:
     return collapsed
 
 
+def _normalize_numeric_text(value) -> str:
+    if pd.isna(value):
+        return ""
+
+    text = str(value).strip()
+    if text in {"nan", "None", "<NA>", "NaT", "nat", "null", "NULL"}:
+        return ""
+
+    text = text.replace("\u00a0", " ")
+    text = re.sub(r"[^\d,.\-]", "", text)
+    if not text or text in {"-", ".", ",", "-.", "-,"}:
+        return ""
+
+    sign = ""
+    if text.startswith("-"):
+        sign = "-"
+        text = text[1:]
+    text = text.replace("-", "")
+
+    comma_count = text.count(",")
+    dot_count = text.count(".")
+
+    if comma_count and dot_count:
+        decimal_sep = "," if text.rfind(",") > text.rfind(".") else "."
+        thousand_sep = "." if decimal_sep == "," else ","
+        text = text.replace(thousand_sep, "")
+        if decimal_sep == ",":
+            text = text.replace(",", ".", 1).replace(",", "")
+    elif comma_count:
+        parts = text.split(",")
+        if comma_count > 1 and all(len(part) == 3 for part in parts[1:]):
+            text = "".join(parts)
+        elif len(parts[-1]) == 3 and len(parts[0]) <= 3:
+            text = "".join(parts)
+        else:
+            text = text.replace(",", ".", 1).replace(",", "")
+    elif dot_count:
+        parts = text.split(".")
+        if dot_count > 1 and all(len(part) == 3 for part in parts[1:]):
+            text = "".join(parts)
+        elif len(parts[-1]) == 3 and len(parts[0]) <= 3:
+            text = "".join(parts)
+        else:
+            text = text.replace(".", ".", 1).replace(".", "", dot_count - 1)
+
+    return sign + text
+
+
 def clean_numeric_series(series: pd.Series) -> pd.Series:
-    s = series.astype(str).str.strip().replace(
-        ["nan", "None", "<NA>", "NaT", "nat", "null", "NULL"],
-        "",
-    )
-    s = s.str.replace("\u00a0", " ", regex=False)
-    s = s.str.replace(r"[^\d,.\-]", "", regex=True)
-    s = s.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
+    s = series.map(_normalize_numeric_text)
     return pd.to_numeric(s, errors="coerce")
 
 

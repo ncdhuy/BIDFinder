@@ -52,14 +52,17 @@
       full_search_daily_remaining: 3,
       full_search_limit_message: 'Bạn đã dùng hết lượt full search hôm nay. Vui lòng quay lại vào ngày mai.',
       password_policy_message: 'Mật khẩu phải có ít nhất 9 ký tự, bao gồm ít nhất 1 chữ số và 1 chữ cái in hoa.',
-      password_reset_enabled: false
+      password_reset_enabled: false,
+      password_reset_status: 'unknown'
     },
     currentMode: 'register',
     pendingIntent: null,
     resetPasswordToken: '',
     googleRendered: false,
     googleErrorMessage: '',
-    initialized: false
+    initialized: false,
+    configLoaded: false,
+    readyPromise: null
   };
 
   const els = {};
@@ -280,23 +283,24 @@
     });
 
     if (authed) {
+      const user = state.user || {};
       if (els['auth-edit-profile-btn']) {
         els['auth-edit-profile-btn'].textContent = 'Tài khoản';
       }
       if (els['account-sidebar-name']) {
-        els['account-sidebar-name'].textContent = state.user.full_name || 'Người dùng BIDFinder';
+        els['account-sidebar-name'].textContent = user.full_name || 'Người dùng BIDFinder';
       }
       if (els['account-sidebar-email']) {
-        els['account-sidebar-email'].textContent = state.user.email || '';
+        els['account-sidebar-email'].textContent = user.email || '';
       }
       if (els['account-sidebar-provider']) {
-        els['account-sidebar-provider'].textContent = formatAuthProvider(state.user.auth_provider);
+        els['account-sidebar-provider'].textContent = formatAuthProvider(user.auth_provider);
       }
       if (els['account-sidebar-work-unit']) {
-        els['account-sidebar-work-unit'].textContent = state.user.work_unit || 'Chưa cập nhật';
+        els['account-sidebar-work-unit'].textContent = user.work_unit || 'Chưa cập nhật';
       }
       if (els['account-sidebar-position']) {
-        els['account-sidebar-position'].textContent = state.user.position || 'Chưa cập nhật';
+        els['account-sidebar-position'].textContent = user.position || 'Chưa cập nhật';
       }
     }
 
@@ -658,6 +662,20 @@
     return '';
   }
 
+  function getPasswordResetUnavailableMessage() {
+    const status = state.config?.password_reset_status || 'unknown';
+    if (status === 'missing_smtp_host') {
+      return 'Chức năng gửi email đặt lại mật khẩu chưa được cấu hình: thiếu AUTH_SMTP_HOST trên backend.';
+    }
+    if (status === 'missing_smtp_port') {
+      return 'Chức năng gửi email đặt lại mật khẩu chưa được cấu hình: thiếu AUTH_SMTP_PORT trên backend.';
+    }
+    if (status === 'missing_from_email') {
+      return 'Chức năng gửi email đặt lại mật khẩu chưa được cấu hình: thiếu AUTH_SMTP_FROM_EMAIL trên backend.';
+    }
+    return 'Chức năng gửi email đặt lại mật khẩu chưa được cấu hình.';
+  }
+
   function showGuestMode(mode = 'register') {
     state.currentMode = ['register', 'login', 'forgot-password', 'reset-password'].includes(mode)
       ? mode
@@ -936,6 +954,9 @@
         applyAuthConfig(payload, { merge: false });
       }
     } catch (err) {}
+    finally {
+      state.configLoaded = true;
+    }
 
     syncPasswordPolicyNote();
     populatePositionOptions();
@@ -1280,9 +1301,13 @@
         targetField?.focus();
       }
     });
-    els['auth-forgot-password-btn']?.addEventListener('click', () => {
+    els['auth-forgot-password-btn']?.addEventListener('click', async () => {
+      if (!state.configLoaded) {
+        await loadAuthConfig();
+      }
+
       if (!state.config?.password_reset_enabled) {
-        setAlert('Chức năng gửi email đặt lại mật khẩu chưa được cấu hình.', 'error');
+        setAlert(getPasswordResetUnavailableMessage(), 'error');
         return;
       }
 
@@ -1314,34 +1339,60 @@
   }
 
   async function init() {
-    if (state.initialized) return;
-
-    cacheElements();
-    bindEvents();
-    renderUserState();
-    await loadAuthConfig();
-    window.BIDFinderAnalytics?.init?.();
-    state.resetPasswordToken = readResetPasswordTokenFromUrl();
-    syncGuestViewHeight();
-
-    const restored = await restoreSession();
-    state.initialized = true;
-    renderUserState();
-
-    if (state.resetPasswordToken) {
-      openAuthModal('reset-password');
+    if (state.initialized) {
+      return {
+        authenticated: isAuthenticated(),
+        user: state.user,
+        config: state.config
+      };
     }
 
-    emit('bidfinder:auth-ready', {
-      authenticated: restored,
-      user: state.user,
-      config: state.config
-    });
+    if (state.readyPromise) return state.readyPromise;
+
+    state.readyPromise = (async () => {
+      cacheElements();
+      bindEvents();
+      renderUserState();
+      await loadAuthConfig();
+      window.BIDFinderAnalytics?.init?.();
+      state.resetPasswordToken = readResetPasswordTokenFromUrl();
+      syncGuestViewHeight();
+
+      const restored = await restoreSession();
+      state.initialized = true;
+      renderUserState();
+
+      if (state.resetPasswordToken) {
+        openAuthModal('reset-password');
+      }
+
+      const readyDetail = {
+        authenticated: restored,
+        user: state.user,
+        config: state.config
+      };
+      emit('bidfinder:auth-ready', readyDetail);
+      return readyDetail;
+    })();
+
+    return state.readyPromise;
+  }
+
+  function whenReady() {
+    if (state.initialized) {
+      return Promise.resolve({
+        authenticated: isAuthenticated(),
+        user: state.user,
+        config: state.config
+      });
+    }
+    return state.readyPromise || init();
   }
 
   window.bidfinderAuthorizedFetch = authorizedFetch;
   window.BIDFinderAuth = {
     init,
+    whenReady,
     isAuthenticated,
     requiresDataAuth,
     requiresFullQueryAuth,

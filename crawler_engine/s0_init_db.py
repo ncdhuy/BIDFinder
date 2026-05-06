@@ -43,24 +43,35 @@ class DatabaseMigrator:
                     ma_tbmt TEXT,
                     so_qd TEXT,
                     version TEXT,
+                    ma_khlcnt TEXT,
+                    ma_khlcnt_full TEXT,
+                    khlcnt_version TEXT,
                     action_type TEXT,
                     reason TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
 
-            # 3. Bảng Metadata (Chứa thông tin thẻ meta HTML)
+            # 3. Bảng Metadata
+            # Đây là nơi chứa toàn bộ context bổ sung cấp gói thầu, bao gồm cả KHLCNT.
+            # Các thông tin KHLCNT không nên được lặp lại xuống processed_medicines /
+            # processed_goods vì hai bảng đó chỉ nên giữ line-item theo khóa
+            # ma_tbmt + so_qd + version.
             self.cursor.execute("""
                 CREATE TABLE IF NOT EXISTS package_metadata (
                     ma_tbmt TEXT,
                     so_qd TEXT,
                     version TEXT,
+                    ma_khlcnt TEXT,
+                    ma_khlcnt_full TEXT,
+                    khlcnt_version TEXT,
                                 
                     -- Thông tin chung
                     ngay_dang_tai TEXT,
                     trang_thai_dang_tai_kq TEXT,
                     chu_dau_tu TEXT,
                     ten_goi_thau TEXT,
+                    ten_khlcnt TEXT,
                     linh_vuc TEXT,
                     
                     -- Hình thức đấu thầu
@@ -78,6 +89,7 @@ class DatabaseMigrator:
                     ngay_phe_duyet_date DATE,
                     trang_thai_phe_duyet TEXT,
                     co_quan_phe_duyet TEXT,
+                    phan_loai_goi_thau TEXT,
                     
                     -- Hợp đồng & Thực hiện
                     loai_hop_dong TEXT,
@@ -87,6 +99,8 @@ class DatabaseMigrator:
                     -- Khác
                     dia_diem TEXT,
                     cach_thuc_tai_ve TEXT,
+                    last_checked_at TIMESTAMP,
+                    url_goi_thau_con TEXT,
                     updated_at TIMESTAMP,
                     tinh_trang_hieu_luc TEXT,
                     ngay_het_hieu_luc DATE,
@@ -96,7 +110,28 @@ class DatabaseMigrator:
             """)
             self.cursor.execute("""
                 ALTER TABLE package_metadata
-                ADD COLUMN IF NOT EXISTS ngay_phe_duyet_date DATE
+                ADD COLUMN IF NOT EXISTS ngay_phe_duyet_date DATE,
+                ADD COLUMN IF NOT EXISTS ma_khlcnt TEXT,
+                ADD COLUMN IF NOT EXISTS ma_khlcnt_full TEXT,
+                ADD COLUMN IF NOT EXISTS khlcnt_version TEXT,
+                ADD COLUMN IF NOT EXISTS ten_khlcnt TEXT,
+                ADD COLUMN IF NOT EXISTS phan_loai_goi_thau TEXT,
+                ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMP,
+                ADD COLUMN IF NOT EXISTS url_goi_thau_con TEXT
+            """)
+
+            # Legacy cleanup: KHLCNT is metadata/scan context, not package artifact identity.
+            self.cursor.execute("""
+                ALTER TABLE packages
+                DROP COLUMN IF EXISTS ma_khlcnt,
+                DROP COLUMN IF EXISTS ma_khlcnt_full,
+                DROP COLUMN IF EXISTS khlcnt_version
+            """)
+            self.cursor.execute("""
+                ALTER TABLE scan_logs
+                ADD COLUMN IF NOT EXISTS ma_khlcnt TEXT,
+                ADD COLUMN IF NOT EXISTS ma_khlcnt_full TEXT,
+                ADD COLUMN IF NOT EXISTS khlcnt_version TEXT
             """)
 
             # 4. Bảng Run Sessions
@@ -111,6 +146,7 @@ class DatabaseMigrator:
             """)
 
             # 5. Bảng Dữ liệu Đã Xử Lý (Thuốc)
+            # Chỉ lưu line-item đã chuẩn hóa. Không lưu cột KHLCNT ở bảng này.
             self.cursor.execute("""
                 CREATE TABLE IF NOT EXISTS processed_medicines (
                     id SERIAL PRIMARY KEY,
@@ -127,6 +163,7 @@ class DatabaseMigrator:
                     dang_bao_che TEXT,
                     quy_cach TEXT,
                     nhom_thuoc TEXT,
+                    nhom_thuoc_filter TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
                     han_dung TEXT,
                     so_dk_gpnk TEXT,
                     co_so_san_xuat TEXT,
@@ -141,6 +178,7 @@ class DatabaseMigrator:
             """)
 
             # 6. Bảng Dữ liệu Đã Xử Lý (Hàng hóa)
+            # Chỉ lưu line-item đã chuẩn hóa. Không lưu cột KHLCNT ở bảng này.
             self.cursor.execute("""
                 CREATE TABLE IF NOT EXISTS processed_goods (
                     id SERIAL PRIMARY KEY,
@@ -173,11 +211,19 @@ class DatabaseMigrator:
             # 7. Bảng Quản lý Lỗi (Anomalies)
             self.cursor.execute("""
                 ALTER TABLE processed_medicines
-                ADD COLUMN IF NOT EXISTS qd_display TEXT
+                ADD COLUMN IF NOT EXISTS qd_display TEXT,
+                ADD COLUMN IF NOT EXISTS ma_thuoc TEXT,
+                ADD COLUMN IF NOT EXISTS nhom_thuoc_filter TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]
+            """)
+            self.cursor.execute("""
+                UPDATE processed_medicines
+                SET nhom_thuoc_filter = ARRAY[]::TEXT[]
+                WHERE nhom_thuoc_filter IS NULL
             """)
             self.cursor.execute("""
                 ALTER TABLE processed_medicines
-                ADD COLUMN IF NOT EXISTS ma_thuoc TEXT
+                ALTER COLUMN nhom_thuoc_filter SET DEFAULT ARRAY[]::TEXT[],
+                ALTER COLUMN nhom_thuoc_filter SET NOT NULL
             """)
             self.cursor.execute("""
                 DO $$
@@ -194,18 +240,9 @@ class DatabaseMigrator:
             """)
             self.cursor.execute("""
                 ALTER TABLE processed_goods
-                ADD COLUMN IF NOT EXISTS qd_display TEXT
-            """)
-            self.cursor.execute("""
-                ALTER TABLE processed_goods
-                ADD COLUMN IF NOT EXISTS ky_ma_hieu_hash TEXT GENERATED ALWAYS AS (md5(COALESCE(ky_ma_hieu, ''))) STORED
-            """)
-            self.cursor.execute("""
-                ALTER TABLE processed_goods
-                ADD COLUMN IF NOT EXISTS nhan_hieu_hash TEXT GENERATED ALWAYS AS (md5(COALESCE(nhan_hieu, ''))) STORED
-            """)
-            self.cursor.execute("""
-                ALTER TABLE processed_goods
+                ADD COLUMN IF NOT EXISTS qd_display TEXT,
+                ADD COLUMN IF NOT EXISTS ky_ma_hieu_hash TEXT GENERATED ALWAYS AS (md5(COALESCE(ky_ma_hieu, ''))) STORED,
+                ADD COLUMN IF NOT EXISTS nhan_hieu_hash TEXT GENERATED ALWAYS AS (md5(COALESCE(nhan_hieu, ''))) STORED,
                 ADD COLUMN IF NOT EXISTS tinh_nang_ky_thuat_hash TEXT GENERATED ALWAYS AS (md5(COALESCE(tinh_nang_ky_thuat, ''))) STORED
             """)
             self.cursor.execute("""
@@ -256,38 +293,19 @@ class DatabaseMigrator:
                     details TEXT,
                     files_involved TEXT,
                     status TEXT DEFAULT 'PENDING',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                                
-                    CONSTRAINT unique_scan_anomaly UNIQUE(scan_date, ma_tbmt, so_qd, version, issue_type)
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
 
             self.cursor.execute("""
                 ALTER TABLE scan_anomalies
-                ADD COLUMN IF NOT EXISTS so_qd TEXT
-            """)
-            self.cursor.execute("""
-                ALTER TABLE scan_anomalies
+                ADD COLUMN IF NOT EXISTS so_qd TEXT,
                 ADD COLUMN IF NOT EXISTS version TEXT
             """)
 
             self.cursor.execute("""
-                DO $$
-                BEGIN
-                    IF EXISTS (
-                        SELECT 1
-                        FROM information_schema.table_constraints
-                        WHERE table_name = 'scan_anomalies'
-                          AND constraint_name = 'unique_scan_anomaly'
-                    ) THEN
-                        ALTER TABLE scan_anomalies DROP CONSTRAINT unique_scan_anomaly;
-                    END IF;
-                END $$;
-            """)
-            self.cursor.execute("""
-                ALTER TABLE scan_anomalies
-                ADD CONSTRAINT unique_scan_anomaly
-                UNIQUE (scan_date, ma_tbmt, so_qd, version, issue_type)
+                CREATE UNIQUE INDEX IF NOT EXISTS unique_scan_anomaly
+                ON scan_anomalies (scan_date, ma_tbmt, so_qd, version, issue_type)
             """)
 
             # 8. Bảng Manifest (Kiểm duyệt Data)
@@ -374,9 +392,6 @@ class DatabaseMigrator:
                 DROP COLUMN IF EXISTS capture_note,
                 DROP COLUMN IF EXISTS created_at
             """)
-            self.cursor.execute("""
-                DROP INDEX IF EXISTS idx_web_winner_facts_status
-            """)
 
             # 12. Bảng quan hệ QĐ
             self.cursor.execute("""
@@ -409,6 +424,7 @@ class DatabaseMigrator:
                 CREATE INDEX IF NOT EXISTS idx_medicines_duong_dung_trgm ON processed_medicines USING gin (duong_dung gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_medicines_dang_bao_che_trgm ON processed_medicines USING gin (dang_bao_che gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_medicines_nhom_thuoc_trgm ON processed_medicines USING gin (nhom_thuoc gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_medicines_nhom_thuoc_filter ON processed_medicines USING gin (nhom_thuoc_filter);
                 CREATE INDEX IF NOT EXISTS idx_medicines_co_so_san_xuat_trgm ON processed_medicines USING gin (co_so_san_xuat gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_medicines_xuat_xu_trgm ON processed_medicines USING gin (xuat_xu gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_medicines_nha_thau_trung_thau_trgm ON processed_medicines USING gin (nha_thau_trung_thau gin_trgm_ops);
@@ -432,6 +448,7 @@ class DatabaseMigrator:
                 CREATE INDEX IF NOT EXISTS idx_metadata_dia_diem ON package_metadata (dia_diem);
                 CREATE INDEX IF NOT EXISTS idx_metadata_tinh_trang_hieu_luc ON package_metadata (tinh_trang_hieu_luc);
                 CREATE INDEX IF NOT EXISTS idx_metadata_ngay_phe_duyet_date ON package_metadata (ngay_phe_duyet_date);
+                CREATE INDEX IF NOT EXISTS idx_metadata_last_checked_at ON package_metadata (last_checked_at);
                 CREATE INDEX IF NOT EXISTS idx_human_task_queue_lookup ON human_task_queue (work_date, task_type, status);
                 CREATE INDEX IF NOT EXISTS idx_web_winner_facts_status ON web_winner_facts (capture_status);
             """)

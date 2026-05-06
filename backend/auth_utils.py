@@ -244,6 +244,7 @@ def get_auth_config_payload() -> Dict[str, Any]:
     client_ids = get_allowed_google_client_ids()
     google_library_ready = GoogleAuthRequest is not None and google_id_token is not None
     google_enabled = bool(client_ids) and google_library_ready
+    password_reset_status = get_password_reset_email_status()
 
     return {
         "google_enabled": google_enabled,
@@ -263,11 +264,22 @@ def get_auth_config_payload() -> Dict[str, Any]:
         },
         "password_policy_message": PASSWORD_POLICY_MESSAGE,
         "password_reset_enabled": is_password_reset_email_enabled(),
+        "password_reset_status": password_reset_status,
     }
 
 
 def is_password_reset_email_enabled() -> bool:
     return bool(SMTP_HOST and SMTP_PORT and SMTP_FROM_EMAIL)
+
+
+def get_password_reset_email_status() -> str:
+    if not SMTP_HOST:
+        return "missing_smtp_host"
+    if not SMTP_PORT:
+        return "missing_smtp_port"
+    if not SMTP_FROM_EMAIL:
+        return "missing_from_email"
+    return "ready"
 
 
 def get_client_ip_from_request(request: Request) -> str:

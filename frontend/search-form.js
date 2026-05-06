@@ -49,11 +49,14 @@ class CustomSearchForm extends HTMLElement {
                 ========================= */
                 .active-filters-topbar {
                     display: flex;
-                    align-items: center;
-                    gap: 16px;
-                    padding: 12px 18px;
+                    align-items: flex-start;
+                    gap: 12px;
+                    padding: 10px 16px;
                     margin-bottom: 20px;
-                    min-height: 56px;
+                    height: 123px;
+                    min-height: 123px;
+                    max-height: 123px;
+                    overflow: hidden;
                     background: var(--c-surface);
                     border: 1px solid var(--c-border);
                     border-radius: var(--radius-sm);
@@ -66,20 +69,37 @@ class CustomSearchForm extends HTMLElement {
                     font-weight: 700;
                     color: var(--c-sub);
                     white-space: nowrap;
+                    line-height: 1.35;
+                    padding-top: 2px;
                 }
 
                 .active-filters-list {
-                    display: flex;
-                    flex-wrap: wrap;
-                    align-items: center;
-                    gap: 8px;
+                    display: block;
                     flex: 1;
                     min-width: 0;
+                    height: 123px;
+                    max-height: 123px;
+                    overflow-y: auto;
+                    padding: 0 4px 12px 0;
+                    text-align: left;
+                    box-sizing: border-box;
+                }
+
+                .active-filters-list::-webkit-scrollbar {
+                    width: 6px;
+                }
+
+                .active-filters-list::-webkit-scrollbar-thumb {
+                    background: #d5dbe7;
+                    border-radius: var(--radius-sm);
                 }
 
                 .empty-filters {
+                    display: block;
+                    padding-top: 2px;
                     font-size: 13px;
                     color: var(--c-muted);
+                    line-height: 1.35;
                 }
 
                 .filter-chip {
@@ -87,6 +107,7 @@ class CustomSearchForm extends HTMLElement {
                     align-items: flex-start;
                     gap: 6px;
                     max-width: 100%;
+                    margin: 0 6px 6px 0;
                     padding: 5px 8px 5px 10px;
                     border-radius: var(--radius-sm);
                     border: 1px solid rgba(18, 116, 149, 0.20);
@@ -125,7 +146,8 @@ class CustomSearchForm extends HTMLElement {
                 ========================= */
                 .filter-layout {
                     display: flex;
-                    height: 500px;
+                    height: min(58vh, 600px);
+                    min-height: 560px;
                     overflow: hidden;
                     border: 1px solid var(--c-border);
                     border-radius: var(--radius-sm);
@@ -134,11 +156,23 @@ class CustomSearchForm extends HTMLElement {
                 }
 
                 .filter-sidebar {
-                    width: 264px;
-                    padding: 14px 0;
+                    display: grid;
+                    grid-template-columns: repeat(2, minmax(0, 1fr));
+                    align-items: start;
+                    width: 430px;
+                    flex-shrink: 0;
+                    padding: 14px;
+                    gap: 12px;
                     overflow-y: auto;
                     background: linear-gradient(180deg, #f8fcfe 0%, #f2f9fc 100%);
                     border-right: 1px solid #dce8ef;
+                }
+
+                .sidebar-column {
+                    display: flex;
+                    min-width: 0;
+                    flex-direction: column;
+                    gap: 3px;
                 }
 
                 .filter-sidebar::-webkit-scrollbar {
@@ -152,11 +186,11 @@ class CustomSearchForm extends HTMLElement {
 
                 .sidebar-group {
                     display: block;
-                    margin: 22px 0 8px;
-                    padding: 9px 18px 9px 20px;
+                    margin: 0 0 4px;
+                    padding: 9px 12px;
                     background: #e7f1f6;
-                    border-top: 1px solid #dce8ef;
-                    border-bottom: 1px solid #dce8ef;
+                    border: 1px solid #dce8ef;
+                    border-radius: var(--radius-sm);
                     color: #537080;
                     font-size: 11px;
                     font-weight: 800;
@@ -167,23 +201,37 @@ class CustomSearchForm extends HTMLElement {
 
 
                 .sidebar-group:first-child {
-                    margin-top: 4px;
+                    margin-top: 0;
                 }
 
                 .sidebar-item {
                     position: relative;
                     display: flex;
-                    align-items: center;
-                    justify-content: space-between;
-                    min-height: 36px;
+                    flex-direction: column;
+                    align-items: flex-start;
+                    justify-content: center;
+                    gap: 2px;
+                    min-height: 38px;
                     margin: 0;
-                    padding: 8px 18px 8px 20px;
+                    padding: 5px 24px 5px 10px;
                     border-left: 3px solid transparent;
+                    border-radius: var(--radius-sm);
                     color: #374151;
-                    font-size: 13px;
-                    font-weight: 500;
                     cursor: pointer;
                     transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+                }
+
+                .sidebar-item-main {
+                    font-size: 13px;
+                    font-weight: 650;
+                    line-height: 1.2;
+                }
+
+                .sidebar-item-hint {
+                    color: var(--c-muted);
+                    font-size: 11px;
+                    font-weight: 400;
+                    line-height: 1.2;
                 }
 
 
@@ -199,6 +247,10 @@ class CustomSearchForm extends HTMLElement {
                     font-weight: 800;
                 }
 
+                .sidebar-item.active .sidebar-item-hint {
+                    color: rgba(255, 255, 255, 0.78);
+                }
+
                 .sidebar-item.active::after {
                     background: rgba(255, 255, 255, 0.96);
                     box-shadow: none;
@@ -206,10 +258,11 @@ class CustomSearchForm extends HTMLElement {
 
                 .sidebar-item.has-value::after {
                     content: '';
+                    position: absolute;
+                    top: 10px;
+                    right: 10px;
                     width: 7px;
                     height: 7px;
-                    margin-left: 10px;
-                    flex-shrink: 0;
                     border-radius: var(--radius-sm);
                     background: var(--c-primary);
                     box-shadow: 0 0 0 3px rgba(18, 116, 149, 0.14);
@@ -450,6 +503,10 @@ class CustomSearchForm extends HTMLElement {
 
                 .token-operator:hover {
                     background: var(--c-primary-hover);
+                }
+
+                .token-tag .tag-text {
+                    cursor: text;
                 }
 
                 .token-remove {
@@ -751,35 +808,34 @@ class CustomSearchForm extends HTMLElement {
                     .filter-layout {
                         flex-direction: column;
                         height: auto;
-                        min-height: 500px;
+                        min-height: 600px;
                     }
 
                     .filter-sidebar {
-                        display: flex;
+                        display: grid;
+                        grid-template-columns: repeat(2, minmax(190px, 1fr));
                         width: 100%;
                         height: auto;
                         padding: 8px;
                         overflow-x: auto;
-                        white-space: nowrap;
                         border-right: none;
                         border-bottom: 1px solid var(--c-border);
                     }
 
                     .sidebar-group {
-                        display: none;
+                        display: block;
                     }
 
                     .sidebar-item {
-                        flex-shrink: 0;
-                        padding: 8px 16px;
-                        border-left: none;
-                        border-bottom: 3px solid transparent;
+                        padding: 8px 10px;
+                        border-left: 3px solid transparent;
+                        border-bottom: none;
                         border-radius: 6px;
                     }
 
                     .sidebar-item.active {
-                        border-left: none;
-                        border-bottom-color: var(--c-primary);
+                        border-left: 4px solid var(--c-primary-hover);
+                        border-bottom-color: transparent;
                         box-shadow: none;
                         background: var(--c-primary);
                         color: #ffffff;
@@ -822,26 +878,85 @@ class CustomSearchForm extends HTMLElement {
                     <div class="filter-sidebar">
                         
                         
-                        <div class="sidebar-group">📋 Thông tin thầu</div>
-                        <div class="sidebar-item" data-target="pane-investor">Chủ đầu tư</div>
-                        <div class="sidebar-item" data-target="pane-qd">Quyết định phê duyệt</div>
-                        <div class="sidebar-item" data-target="pane-date">Ngày phê duyệt</div>
-                        <div class="sidebar-item" data-target="pane-method">Hình thức LCNT</div>
-                        <div class="sidebar-item" data-target="pane-place">Tỉnh / Thành phố</div>
-                        <div class="sidebar-item" data-target="pane-validity">Tình trạng hiệu lực</div>
+                        <div class="sidebar-column">
+                            <div class="sidebar-group goods-group">💊 Hàng hóa</div>
+                            <div class="sidebar-item goods-filter active" data-target="pane-drug">
+                                <span class="sidebar-item-main">Tên thương mại</span>
+                                <span class="sidebar-item-hint">VD: Efferalgan, kim bướm,...</span>
+                            </div>
+                            <div class="sidebar-item goods-filter" data-target="pane-active-ing">
+                                <span class="sidebar-item-main">Tên hoạt chất</span>
+                                <span class="sidebar-item-hint">VD: Paracetamol</span>
+                            </div>
+                            <div class="sidebar-item goods-filter" data-target="pane-conc">
+                                <span class="sidebar-item-main">Nồng độ, hàm lượng</span>
+                                <span class="sidebar-item-hint">VD: 500mg, 5mg/ml</span>
+                            </div>
+                            <div class="sidebar-item goods-filter" data-target="pane-route">
+                                <span class="sidebar-item-main">Đường dùng</span>
+                                <span class="sidebar-item-hint">VD: Uống, tiêm</span>
+                            </div>
+                            <div class="sidebar-item goods-filter" data-target="pane-dosage">
+                                <span class="sidebar-item-main">Dạng bào chế</span>
+                                <span class="sidebar-item-hint">VD: Viên nén</span>
+                            </div>
+                            <div class="sidebar-item goods-filter" data-target="pane-spec">
+                                <span class="sidebar-item-main">Quy cách đóng gói</span>
+                                <span class="sidebar-item-hint">VD: Hộp 10 vỉ x 10 viên</span>
+                            </div>
+                            <div class="sidebar-item goods-filter" data-target="pane-group">
+                                <span class="sidebar-item-main">Nhóm thuốc</span>
+                                <span class="sidebar-item-hint">VD: Nhóm 1, BDG</span>
+                            </div>
+                            <div class="sidebar-item goods-filter" data-target="pane-reg">
+                                <span class="sidebar-item-main">Số đăng ký</span>
+                                <span class="sidebar-item-hint">VD: VN-12345-67</span>
+                            </div>
+                            <div class="sidebar-item goods-filter" data-target="pane-unit">
+                                <span class="sidebar-item-main">Đơn vị tính</span>
+                                <span class="sidebar-item-hint">VD: Viên, lọ, hộp</span>
+                            </div>
+                            <div class="sidebar-item goods-filter" data-target="pane-manu">
+                                <span class="sidebar-item-main">Cơ sở sản xuất</span>
+                                <span class="sidebar-item-hint">VD: Công ty ABC</span>
+                            </div>
+                            <div class="sidebar-item goods-filter" data-target="pane-country">
+                                <span class="sidebar-item-main">Nước sản xuất</span>
+                                <span class="sidebar-item-hint">VD: Việt Nam, Ấn Độ</span>
+                            </div>
+                        </div>
 
-                        <div class="sidebar-group">💊 Hàng hóa</div>
-                        <div class="sidebar-item active" data-target="pane-drug">Tên thương mại</div>
-                        <div class="sidebar-item" data-target="pane-active-ing">Tên hoạt chất</div>
-                        <div class="sidebar-item" data-target="pane-conc">Nồng độ, hàm lượng</div>
-                        <div class="sidebar-item" data-target="pane-route">Đường dùng</div>
-                        <div class="sidebar-item" data-target="pane-dosage">Dạng bào chế</div>
-                        <div class="sidebar-item" data-target="pane-spec">Quy cách đóng gói</div>
-                        <div class="sidebar-item" data-target="pane-group">Nhóm thuốc</div>
-                        <div class="sidebar-item" data-target="pane-reg">Số đăng ký</div>
-                        <div class="sidebar-item" data-target="pane-unit">Đơn vị tính</div>
-                        <div class="sidebar-item" data-target="pane-manu">Cơ sở sản xuất</div>
-                        <div class="sidebar-item" data-target="pane-country">Nước sản xuất</div>
+                        <div class="sidebar-column">
+                            <div class="sidebar-group tender-group">📋 Thông tin thầu</div>
+                            <div class="sidebar-item tender-filter" data-target="pane-investor">
+                                <span class="sidebar-item-main">Chủ đầu tư</span>
+                                <span class="sidebar-item-hint">VD: Sở Y tế...</span>
+                            </div>
+                            <div class="sidebar-item tender-filter" data-target="pane-winner">
+                                <span class="sidebar-item-main">Nhà thầu trúng thầu</span>
+                                <span class="sidebar-item-hint">VD: Công ty XYZ</span>
+                            </div>
+                            <div class="sidebar-item tender-filter" data-target="pane-qd">
+                                <span class="sidebar-item-main">Quyết định phê duyệt</span>
+                                <span class="sidebar-item-hint">VD: 123/QĐ-SYT</span>
+                            </div>
+                            <div class="sidebar-item tender-filter" data-target="pane-date">
+                                <span class="sidebar-item-main">Ngày phê duyệt</span>
+                                <span class="sidebar-item-hint">VD: 01/01/2026</span>
+                            </div>
+                            <div class="sidebar-item tender-filter" data-target="pane-method">
+                                <span class="sidebar-item-main">Hình thức LCNT</span>
+                                <span class="sidebar-item-hint">VD: Đấu thầu rộng rãi</span>
+                            </div>
+                            <div class="sidebar-item tender-filter" data-target="pane-place">
+                                <span class="sidebar-item-main">Tỉnh / Thành phố</span>
+                                <span class="sidebar-item-hint">VD: Hà Nội</span>
+                            </div>
+                            <div class="sidebar-item tender-filter" data-target="pane-validity">
+                                <span class="sidebar-item-main">Tình trạng hiệu lực</span>
+                                <span class="sidebar-item-hint">VD: Còn hiệu lực</span>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Nội dung Phải -->
@@ -871,7 +986,7 @@ class CustomSearchForm extends HTMLElement {
                             <h3>Tên thương mại</h3>
                             <p class="pane-desc"></p>
                             <div class="field">
-                                <div class="token-input-container" id="drug-name-container"><input type="text" placeholder="Nhập tên thuốc..." /></div>
+                                <div class="token-input-container" id="drug-name-container"><input type="text" placeholder="Nhập tên thuốc hoặc hàng hóa (tên, danh mục, tính năng kỹ thuật...)" /></div>
                                 <input type="hidden" id="filter-drug-name" />
                             </div>
                             <div class="pane-desc">
@@ -881,6 +996,7 @@ class CustomSearchForm extends HTMLElement {
                                 <p>4. Điều chỉnh bằng cách click OR AND NOT để tạo điều kiện</p>
                                 <p><span class="pane-help-prefix">Xem </span><button class="pane-help-link" type="button" data-open-filter-help>Mẹo tìm kiếm</button></p>
                             </div>
+                            
                         </div>
 
                         <!-- Active Ingredient Pane -->
@@ -1018,6 +1134,17 @@ class CustomSearchForm extends HTMLElement {
                             </div>
                         </div>
 
+                        <div class="filter-pane" id="pane-winner">
+                            <h3>Nhà thầu trúng thầu</h3>
+                            <p class="pane-desc"></p>
+                            <div class="field">
+                                <div class="token-input-container" id="winner-container">
+                                <input type="text" placeholder="Nhập nhà thầu trúng thầu..." />
+                                </div>
+                                <input type="hidden" id="filter-winner" />
+                            </div>
+                        </div>
+
                         <div class="filter-pane" id="pane-conc">
                             <h3>Nồng độ, hàm lượng</h3>
                             <p class="pane-desc"></p>
@@ -1144,6 +1271,8 @@ class CustomSearchForm extends HTMLElement {
         this.attachInputListeners();
         this.updateApplyButtonState();
         this.previewDebounceTimer = null;
+        this.previewDebounceMs = 30;
+        this.lastQueuedPreviewKey = '';
         this.setupSelectPlaceholderColors();
         this.setupDateEmptyState();
         this.initAdvancedFilters();
@@ -1517,7 +1646,7 @@ class CustomSearchForm extends HTMLElement {
             refreshFromSelect();
             this.updateApplyButtonState();
             this.renderActiveChips();
-            this.clearPreviewEstimate();
+            this.queuePreviewUpdate();
             this.queueFocusActiveField();
         });
 
@@ -1628,20 +1757,30 @@ class CustomSearchForm extends HTMLElement {
         clearTimeout(this.previewDebounceTimer);
         const payload = this.collectFilterPayload();
         const hasAnyValue = this.hasAnyFilterValue(payload?.filters || {});
+        const previewKey = JSON.stringify(payload || {});
 
         if (!hasAnyValue) {
+            this.lastQueuedPreviewKey = '';
             this.setPreviewResult({ idle: true });
             return;
         }
 
-        this.setPreviewResult({ loading: true });
+        if (previewKey === this.lastQueuedPreviewKey && this.previewDebounceTimer) {
+            return;
+        }
+        this.lastQueuedPreviewKey = previewKey;
+
+        if (!this.hasVisiblePreviewEstimate()) {
+            this.setPreviewResult({ loading: true });
+        }
         this.previewDebounceTimer = setTimeout(() => {
+            this.previewDebounceTimer = null;
             this.dispatchEvent(new CustomEvent('preview-filters', {
                 detail: payload,
                 bubbles: true,
                 composed: true
             }));
-        }, 30);
+        }, this.previewDebounceMs);
     }
 
     mountPreviewResult() {
@@ -1699,7 +1838,7 @@ class CustomSearchForm extends HTMLElement {
         }
     }
 
-    setPreviewResult({ idle = false, loading = false, warming = false, total = null, totalLabel = '', exact = true, error = false } = {}) {
+    setPreviewResult({ idle = false, loading = false, warming = false, total = null, totalLabel = '', exact = true, error = false, errorMessage = '' } = {}) {
         const root = this.shadowRoot;
         const previewEl = root?.getElementById('preview-result');
         if (!previewEl) return;
@@ -1714,14 +1853,14 @@ class CustomSearchForm extends HTMLElement {
 
         if (loading) {
             previewEl.textContent = warming
-                ? 'Đang kết nối dữ liệu, lần đầu có thể mất vài giây...'
+                ? 'Đang kết nối dữ liệu...'
                 : 'Đang ước tính...';
             previewEl.classList.add('is-loading');
             return;
         }
 
         if (error) {
-            previewEl.textContent = 'Không ước tính được số kết quả';
+            previewEl.textContent = errorMessage || 'Không ước tính được số kết quả';
             previewEl.classList.add('is-error');
             return;
         }
@@ -1868,7 +2007,30 @@ class CustomSearchForm extends HTMLElement {
             });
         }
 
-        const setMultiValues = (id, values = []) => {
+        const syncMultiSelectButton = (id, placeholder, maxLabels = 2) => {
+            const host = root.querySelector(`.multi-select[data-for="${id}"]`);
+            const button = host?.querySelector('.multi-select-btn');
+            const buttonText = host?.querySelector('.multi-select-btn-text');
+            const select = root.getElementById(id);
+            if (!button || !buttonText || !select) return;
+
+            const selectedValues = Array.from(select.selectedOptions || [])
+                .map(option => String(option.value || '').trim())
+                .filter(Boolean);
+
+            if (!selectedValues.length) {
+                buttonText.textContent = placeholder;
+                button.classList.add('is-placeholder');
+            } else if (selectedValues.length <= maxLabels) {
+                buttonText.textContent = selectedValues.join(', ');
+                button.classList.remove('is-placeholder');
+            } else {
+                buttonText.textContent = `Đã chọn ${selectedValues.length}`;
+                button.classList.remove('is-placeholder');
+            }
+        };
+
+        const setMultiValues = (id, values = [], placeholder = '', maxLabels = 2) => {
             const select = root.getElementById(id);
             if (!select) return;
 
@@ -1877,11 +2039,12 @@ class CustomSearchForm extends HTMLElement {
                 option.selected = selected.has(String(option.value || '').trim());
             });
             select.dispatchEvent(new Event('change', { bubbles: true }));
+            syncMultiSelectButton(id, placeholder, maxLabels);
         };
 
-        setMultiValues('filter-selection-method', filters.selectionMethod || []);
-        setMultiValues('filter-place', filters.place || []);
-        setMultiValues('filter-drug-group', Array.isArray(filters.drugGroup) ? filters.drugGroup : []);
+        setMultiValues('filter-selection-method', filters.selectionMethod || [], '-- Chọn hình thức --', 2);
+        setMultiValues('filter-place', filters.place || [], '-- Chọn địa điểm --', 2);
+        setMultiValues('filter-drug-group', Array.isArray(filters.drugGroup) ? filters.drugGroup : [], '-- Chọn nhóm thuốc --', 3);
 
         const validity = root.getElementById('filter-validity');
         if (validity) validity.value = filters.validity || '';
@@ -1956,6 +2119,7 @@ class CustomSearchForm extends HTMLElement {
         return [
             { containerId: 'investor-container', field: 'investor', hiddenId: 'filter-investor', label: 'Chủ đầu tư', pane: 'investor' },
             { containerId: 'approval-decision-container', field: 'approvalDecision', hiddenId: 'filter-approval-decision', label: 'QĐ phê duyệt', pane: 'qd' },
+            { containerId: 'winner-container', field: 'winner', hiddenId: 'filter-winner', label: 'Nhà thầu trúng thầu', pane: 'winner' },
             { containerId: 'drug-name-container', field: 'drugName', hiddenId: 'filter-drug-name', label: 'Thuốc / hàng hóa', pane: 'drug' },
             { containerId: 'active-ingredient-container', field: 'activeIngredient', hiddenId: 'filter-active-ingredient', label: 'Hoạt chất', pane: 'active-ing' },
             { containerId: 'concentration-container', field: 'concentration', hiddenId: 'filter-concentration', label: 'Nồng độ, hàm lượng', pane: 'conc' },
@@ -1994,7 +2158,7 @@ class CustomSearchForm extends HTMLElement {
                 else this.clearFilterOrder(config.hiddenId);
                 this.updateApplyButtonState();
                 this.renderActiveChips();
-                if (meta.triggerPreview) {
+                if (meta.triggerPreview || meta.reason === 'token-removed') {
                     this.queuePreviewUpdate();
                 } else {
                     this.clearPreviewEstimate();
@@ -2229,9 +2393,6 @@ class CustomSearchForm extends HTMLElement {
             this.filterOrder = this.filterOrder.filter(x => x !== id);
             this.updateApplyButtonState();
             this.renderActiveChips();
-            if (chipMeta?.pane) {
-                this.activatePane(chipMeta.pane, { focus: false });
-            }
             this.queueFocusActiveField();
             });
         });
@@ -2266,6 +2427,11 @@ class CustomSearchForm extends HTMLElement {
         this.filterOrder = this.filterOrder.filter(x => x !== id);
     }
 
+    hasVisiblePreviewEstimate() {
+        const previewEl = this.shadowRoot?.getElementById('preview-result');
+        return /^Có\s+.+\s+kết quả/.test(String(previewEl?.textContent || '').trim());
+    }
+
     getNonEmptySelectedValues(selectId) {
         const sel = this.shadowRoot.getElementById(selectId);
         if (!sel) return [];
@@ -2283,6 +2449,7 @@ class CustomSearchForm extends HTMLElement {
 
         const tokenizedFields = [
             'filter-investor',
+            'filter-winner',
             'filter-drug-name',
             'filter-active-ingredient'
         ];
@@ -2341,7 +2508,7 @@ class AdvancedFilterManager {
         this.input.addEventListener('input', () => this.onInput());
         this.input.addEventListener('focus', () => this.onInput());
         
-        // Xử lý phím (Backspace để xóa tag, Mũi tên để chọn dropdown)
+        // Xử lý phím (Backspace để sửa lại tag cuối, Mũi tên để chọn dropdown)
         this.input.addEventListener('keydown', e => {
             const raw = String(this.input.value || '').trim();
 
@@ -2369,12 +2536,8 @@ class AdvancedFilterManager {
             }
 
             if (e.key === 'Backspace' && !this.input.value) {
-                if (this.tokens.length > 0) {
-                    this.tokens.splice(-2);
-                    this.renderTokens();
-                    this.syncToHiddenInput({ reason: 'token-removed' });
-                    requestAnimationFrame(() => this.input?.focus());
-                }
+                e.preventDefault();
+                this.moveValueTokenToInputForEditing(this.findLastValueTokenIndex());
                 return;
             }
 
@@ -2413,6 +2576,10 @@ class AdvancedFilterManager {
                 const textSpan = document.createElement('span');
                 textSpan.className = 'tag-text';
                 textSpan.textContent = displayText;
+                textSpan.title = token.text;
+                textSpan.addEventListener('click', () => {
+                    this.moveValueTokenToInputForEditing(index);
+                });
 
                 const removeSpan = document.createElement('span');
                 removeSpan.className = 'token-remove';
@@ -2447,6 +2614,35 @@ class AdvancedFilterManager {
             this.hiddenInput.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
         }
         this.onStateChange(normalized, { reason, triggerPreview });
+    }
+
+    findLastValueTokenIndex() {
+        for (let i = this.tokens.length - 1; i >= 0; i -= 1) {
+            if (this.tokens[i]?.type === 'value') return i;
+        }
+        return -1;
+    }
+
+    moveValueTokenToInputForEditing(index) {
+        if (index < 0 || this.tokens[index]?.type !== 'value') return;
+
+        const value = String(this.tokens[index].text || '');
+        if (index === 0 && this.tokens.length > 1) {
+            this.tokens.splice(0, 2);
+        } else if (index > 0) {
+            this.tokens.splice(index - 1, 2);
+        } else {
+            this.tokens = [];
+        }
+
+        this.input.value = value;
+        this.renderTokens();
+        this.syncToHiddenInput({ reason: 'token-editing' });
+        this.onInput();
+        requestAnimationFrame(() => {
+            this.input?.focus();
+            this.input?.setSelectionRange?.(value.length, value.length);
+        });
     }
 
 

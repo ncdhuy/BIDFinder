@@ -1061,13 +1061,18 @@ def parse_unit_from_filename(filename):
 
     tbmt_match = re.search(r"(IB\d{10})", core_name, flags=re.IGNORECASE)
     version_match = re.search(r"_v(\d{2})_", core_name, flags=re.IGNORECASE)
+    qd_phrase_match = re.search(r"_((?:quyết\s*định|quyet\s*dinh)\s*số\s*\d+)[ _-]*(?:qđ|qd)-([^_]+)", core_name, flags=re.IGNORECASE)
     qd_match = re.search(r"_(\d+)_QĐ-([^_]+)", core_name, flags=re.IGNORECASE)
     plain_qd_match = re.search(r"_v\d{2}_(\d+)(?:_|$)", core_name, flags=re.IGNORECASE)
 
     tbmt = tbmt_match.group(1).upper() if tbmt_match else (base_name.split("_")[0] if "_" in base_name else "UNKNOWN_TBMT")
     version = version_match.group(1) if version_match else "00"
 
-    if qd_match:
+    if qd_phrase_match:
+        qd_number_text = re.sub(r"\s+", " ", qd_phrase_match.group(1).strip())
+        qd_suffix = qd_phrase_match.group(2).strip()
+        so_qd = f"{qd_number_text}/QĐ-{qd_suffix}"
+    elif qd_match:
         qd_number = qd_match.group(1).strip()
         qd_suffix = qd_match.group(2).strip()
         so_qd = f"{qd_number}/QĐ-{qd_suffix}"
@@ -1105,6 +1110,7 @@ def resolve_qd_from_candidates(filename, tbmt, version, qd_guess, qd_candidates)
     if not qd_number:
         qd_number_patterns = [
             r"_v\d{2}_(\d+)(?:_|$)",
+            r"(?:^|_)(?:quyết\s*định|quyet\s*dinh)\s*số\s*(\d+)[ _-]*(?:qđ|qd)",
             r"(?:^|_)(?:qđ|qd)[ _-]*(?:số[ _-]*)?(\d+)",
             r"(?:^|_)(\d+)(?:_|$)",
         ]
@@ -4562,10 +4568,10 @@ def scan_anomalies():
                         active_qd_map.setdefault(db_tbmt, set()).add(db_qd)
 
                     tbmt_qd_map = {
-                        tbmt: {
+                        tbmt: ({
                             qd for qd in qds
-                            if qd == "UNKNOWN" or qd in active_qd_map.get(tbmt, set())
-                        }
+                            if qd != "UNKNOWN" and qd in active_qd_map.get(tbmt, set())
+                        } or ({"UNKNOWN"} if not active_qd_map.get(tbmt, set()) and "UNKNOWN" in qds else set()))
                         for tbmt, qds in tbmt_qd_map.items()
                     }
                     tbmt_qd_map = {tbmt: qds for tbmt, qds in tbmt_qd_map.items() if qds}
