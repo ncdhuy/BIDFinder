@@ -846,6 +846,7 @@ def _send_password_reset_email_resend_sync(recipient_email: str, subject: str, t
         headers={
             "Authorization": f"Bearer {RESEND_API_KEY}",
             "Content-Type": "application/json",
+            "User-Agent": "BIDFinder/1.0 (password-reset)",
         },
     )
 
@@ -857,10 +858,22 @@ def _send_password_reset_email_resend_sync(recipient_email: str, subject: str, t
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
         logger.exception("Password reset Resend API failed status=%s body=%s", exc.code, body[:500])
-        raise ValueError(f"Không gửi được email đặt lại mật khẩu qua Resend (HTTP {exc.code}). Vui lòng kiểm tra RESEND_API_KEY và RESEND_FROM_EMAIL.") from exc
+        detail = extract_resend_error_message(body)
+        suffix = f": {detail}" if detail else "."
+        raise ValueError(f"Không gửi được email đặt lại mật khẩu qua Resend (HTTP {exc.code}){suffix}") from exc
     except urllib.error.URLError as exc:
         logger.exception("Password reset Resend API connection failed")
         raise ValueError("Không kết nối được Resend API từ backend. Vui lòng kiểm tra network trên Render.") from exc
+
+
+def extract_resend_error_message(body: str) -> str:
+    try:
+        payload = json.loads(body or "{}")
+    except json.JSONDecodeError:
+        return " ".join(str(body or "").split())[:240]
+
+    message = payload.get("message") or payload.get("error") or payload.get("name") or ""
+    return " ".join(str(message or "").split())[:240]
 
 
 async def request_password_reset(conn: asyncpg.Connection, request: Request, email: Any) -> None:
