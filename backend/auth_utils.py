@@ -5,6 +5,9 @@ import os
 import re
 import secrets
 import smtplib
+import json
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 from typing import Any, Dict, Optional
@@ -83,6 +86,9 @@ SMTP_FROM_EMAIL = os.getenv("AUTH_SMTP_FROM_EMAIL", SMTP_USERNAME).strip()
 SMTP_FROM_NAME = os.getenv("AUTH_SMTP_FROM_NAME", "BIDFinder").strip() or "BIDFinder"
 SMTP_USE_TLS = os.getenv("AUTH_SMTP_USE_TLS", "true").strip().lower() in {"1", "true", "yes", "on"}
 SMTP_USE_SSL = os.getenv("AUTH_SMTP_USE_SSL", "false").strip().lower() in {"1", "true", "yes", "on"}
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
+RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "").strip()
+RESEND_FROM_NAME = os.getenv("RESEND_FROM_NAME", SMTP_FROM_NAME).strip() or SMTP_FROM_NAME
 PASSWORD_RESET_BASE_URL = os.getenv("AUTH_PASSWORD_RESET_URL_BASE", "").strip()
 FRONTEND_BASE_URL = os.getenv("APP_FRONTEND_URL", "").strip()
 
@@ -272,14 +278,42 @@ def get_auth_config_payload() -> Dict[str, Any]:
         "password_policy_message": PASSWORD_POLICY_MESSAGE,
         "password_reset_enabled": is_password_reset_email_enabled(),
         "password_reset_status": password_reset_status,
+        "password_reset_transport": get_password_reset_transport(),
     }
 
 
 def is_password_reset_email_enabled() -> bool:
-    return bool(SMTP_HOST and SMTP_PORT and SMTP_FROM_EMAIL)
+    return is_resend_email_enabled() or bool(SMTP_HOST and SMTP_PORT and SMTP_FROM_EMAIL)
+
+
+def is_resend_email_enabled() -> bool:
+    return bool(RESEND_API_KEY and get_password_reset_from_email())
+
+
+def get_password_reset_from_email() -> str:
+    return RESEND_FROM_EMAIL or SMTP_FROM_EMAIL
+
+
+def get_password_reset_from_header() -> str:
+    from_email = get_password_reset_from_email()
+    if not from_email:
+        return ""
+    return f"{RESEND_FROM_NAME} <{from_email}>"
+
+
+def get_password_reset_transport() -> str:
+    if is_resend_email_enabled():
+        return "resend"
+    if SMTP_HOST and SMTP_PORT and SMTP_FROM_EMAIL:
+        return "smtp"
+    return "none"
 
 
 def get_password_reset_email_status() -> str:
+    if is_resend_email_enabled():
+        return "ready"
+    if RESEND_API_KEY and not get_password_reset_from_email():
+        return "missing_from_email"
     if not SMTP_HOST:
         return "missing_smtp_host"
     if not SMTP_PORT:
@@ -740,23 +774,28 @@ def _send_password_reset_email_sync(recipient_email: str, recipient_name: str, r
     if not is_password_reset_email_enabled():
         raise ValueError("Chức năng gửi email đặt lại mật khẩu chưa được cấu hình.")
 
+    subject = "[BIDFinder] - Thông báo đặt lại mật khẩu"
+    text = "\n".join(
+        [
+            f"Xin chào {recipient_name or recipient_email},",
+            "",
+            "Chúng tôi đã nhận được yêu cầu đặt lại mật khẩu cho tài khoản BIDFinder của bạn.",
+            f"Vui lòng mở liên kết sau để tạo mật khẩu mới trong {PASSWORD_RESET_TTL_MINUTES} phút:",
+            reset_link,
+            "",
+
+        ]
+    )
+
+    if is_resend_email_enabled():
+        _send_password_reset_email_resend_sync(recipient_email, subject, text)
+        return
+
     message = EmailMessage()
-    message["Subject"] = "[BIDFinder] - Thông báo đặt lại mật khẩu"
+    message["Subject"] = subject
     message["From"] = f"{SMTP_FROM_NAME} <{SMTP_FROM_EMAIL}>"
     message["To"] = recipient_email
-    message.set_content(
-        "\n".join(
-            [
-                f"Xin chào {recipient_name or recipient_email},",
-                "",
-                "Chúng tôi đã nhận được yêu cầu đặt lại mật khẩu cho tài khoản BIDFinder của bạn.",
-                f"Vui lòng mở liên kết sau để tạo mật khẩu mới trong {PASSWORD_RESET_TTL_MINUTES} phút:",
-                reset_link,
-                "",
-               
-            ]
-        )
-    )
+    message.set_content(text)
 
     try:
         if SMTP_USE_SSL:
@@ -790,6 +829,38 @@ def _send_password_reset_email_sync(recipient_email: str, recipient_name: str, r
         error_name = exc.__class__.__name__
         logger.exception("Password reset SMTP delivery failed for host=%s port=%s tls=%s ssl=%s error_type=%s", SMTP_HOST, SMTP_PORT, SMTP_USE_TLS, SMTP_USE_SSL, error_name)
         raise ValueError(f"Không gửi được email đặt lại mật khẩu qua SMTP ({error_name}). Vui lòng kiểm tra Render logs để xem chi tiết.") from exc
+
+
+def _send_password_reset_email_resend_sync(recipient_email: str, subject: str, text: str) -> None:
+    payload = {
+        "from": get_password_reset_from_header(),
+        "to": [recipient_email],
+        "subject": subject,
+        "text": text,
+    }
+    data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=data,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            if response.status >= 400:
+                body = response.read().decode("utf-8", errors="replace")
+                raise ValueError(f"Resend trả lỗi HTTP {response.status}: {body[:300]}")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        logger.exception("Password reset Resend API failed status=%s body=%s", exc.code, body[:500])
+        raise ValueError(f"Không gửi được email đặt lại mật khẩu qua Resend (HTTP {exc.code}). Vui lòng kiểm tra RESEND_API_KEY và RESEND_FROM_EMAIL.") from exc
+    except urllib.error.URLError as exc:
+        logger.exception("Password reset Resend API connection failed")
+        raise ValueError("Không kết nối được Resend API từ backend. Vui lòng kiểm tra network trên Render.") from exc
 
 
 async def request_password_reset(conn: asyncpg.Connection, request: Request, email: Any) -> None:
