@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import logging
 import os
 import re
 import secrets
@@ -20,6 +21,8 @@ except ImportError as exc:  # pragma: no cover - depends on environment packages
     GoogleAuthRequest = None
     google_id_token = None
     GOOGLE_AUTH_IMPORT_ERROR = str(exc)
+
+logger = logging.getLogger("bidfinder.auth")
 
 POSITION_OPTION_GROUPS = [
     {
@@ -754,21 +757,28 @@ def _send_password_reset_email_sync(recipient_email: str, recipient_name: str, r
         )
     )
 
-    if SMTP_USE_SSL:
-        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=20) as smtp:
+    try:
+        if SMTP_USE_SSL:
+            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=20) as smtp:
+                if SMTP_USERNAME:
+                    smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
+                smtp.send_message(message)
+            return
+
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as smtp:
+            smtp.ehlo()
+            if SMTP_USE_TLS:
+                smtp.starttls()
+                smtp.ehlo()
             if SMTP_USERNAME:
                 smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
             smtp.send_message(message)
-        return
-
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as smtp:
-        smtp.ehlo()
-        if SMTP_USE_TLS:
-            smtp.starttls()
-            smtp.ehlo()
-        if SMTP_USERNAME:
-            smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
-        smtp.send_message(message)
+    except smtplib.SMTPAuthenticationError as exc:
+        logger.exception("Password reset SMTP authentication failed for host=%s username=%s", SMTP_HOST, SMTP_USERNAME)
+        raise ValueError("Không xác thực được email gửi đặt lại mật khẩu. Vui lòng kiểm tra AUTH_SMTP_USERNAME và AUTH_SMTP_PASSWORD.") from exc
+    except (smtplib.SMTPException, OSError) as exc:
+        logger.exception("Password reset SMTP delivery failed for host=%s port=%s tls=%s ssl=%s", SMTP_HOST, SMTP_PORT, SMTP_USE_TLS, SMTP_USE_SSL)
+        raise ValueError("Không gửi được email đặt lại mật khẩu. Vui lòng kiểm tra cấu hình SMTP/TLS trên backend.") from exc
 
 
 async def request_password_reset(conn: asyncpg.Connection, request: Request, email: Any) -> None:
@@ -793,12 +803,16 @@ async def request_password_reset(conn: asyncpg.Connection, request: Request, ema
         get_client_ip_from_request(request),
         request.headers.get("user-agent", "")[:500],
     )
-    await asyncio.to_thread(
-        _send_password_reset_email_sync,
-        normalized_email,
-        record_get(user, "full_name") or normalized_email,
-        build_password_reset_link(request, raw_token),
-    )
+    try:
+        await asyncio.to_thread(
+            _send_password_reset_email_sync,
+            normalized_email,
+            record_get(user, "full_name") or normalized_email,
+            build_password_reset_link(request, raw_token),
+        )
+    except ValueError:
+        await delete_password_reset_tokens_for_user(conn, int(user["id"]))
+        raise
 
 
 async def reset_password_with_token(

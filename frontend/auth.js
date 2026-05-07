@@ -13,6 +13,7 @@
   const LEGACY_TOKEN_STORAGE = window.localStorage;
   const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   const PROFILE_SECTIONS = ['profile', 'password'];
+  const SESSION_VERIFY_INTERVAL_MS = 5 * 60 * 1000;
 
   function readStoredToken() {
     const sessionToken = TOKEN_STORAGE.getItem(STORAGE_KEY) || '';
@@ -62,7 +63,9 @@
     googleErrorMessage: '',
     initialized: false,
     configLoaded: false,
-    readyPromise: null
+    readyPromise: null,
+    lastSessionVerifyAt: 0,
+    sessionVerifyPromise: null
   };
 
   const els = {};
@@ -268,7 +271,8 @@
   }
 
   function renderUserState() {
-    const authed = isAuthenticated() || (!state.initialized && (Boolean(state.token) || hasOptimisticAuthHint()));
+    const optimisticAuthed = !state.initialized && (Boolean(state.token) || hasOptimisticAuthHint());
+    const authed = isAuthenticated() || optimisticAuthed;
 
     document.body.classList.toggle('auth-state-authed', authed);
     document.body.classList.toggle('auth-state-guest', !authed);
@@ -282,7 +286,7 @@
       el.hidden = authed;
     });
 
-    if (authed) {
+    if (isAuthenticated()) {
       const user = state.user || {};
       if (els['auth-edit-profile-btn']) {
         els['auth-edit-profile-btn'].textContent = 'Tài khoản';
@@ -304,6 +308,11 @@
       }
     }
 
+  }
+
+  function markAuthInitialized() {
+    state.initialized = true;
+    renderUserState();
   }
 
   function validateRegisterForm() {
@@ -918,6 +927,8 @@
   }
 
   async function restoreSession() {
+    state.lastSessionVerifyAt = Date.now();
+
     try {
       const response = await authorizedFetch(getApiUrl('/api/auth/me'), {
         method: 'GET'
@@ -928,6 +939,7 @@
       const payload = await parseResponseBody(response);
       if (!response.ok || payload.success === false || !payload.user) {
         clearSession({ emitEvent: false });
+        markAuthInitialized();
         return false;
       }
 
@@ -940,8 +952,24 @@
     } catch (err) {
       setAuthHint(false);
       clearSession({ emitEvent: false });
+      markAuthInitialized();
       return false;
     }
+  }
+
+  async function verifySessionIfNeeded({ force = false } = {}) {
+    if (!state.initialized || !isAuthenticated()) return true;
+    if (state.sessionVerifyPromise) return state.sessionVerifyPromise;
+
+    const elapsed = Date.now() - Number(state.lastSessionVerifyAt || 0);
+    if (!force && elapsed < SESSION_VERIFY_INTERVAL_MS) return true;
+
+    state.sessionVerifyPromise = restoreSession()
+      .finally(() => {
+        state.sessionVerifyPromise = null;
+      });
+
+    return state.sessionVerifyPromise;
   }
 
   async function loadAuthConfig() {
@@ -1336,6 +1364,16 @@
         closeAuthModal();
       }
     });
+
+    window.addEventListener('focus', () => {
+      verifySessionIfNeeded().catch(() => {});
+    });
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        verifySessionIfNeeded().catch(() => {});
+      }
+    });
   }
 
   async function init() {
@@ -1359,8 +1397,7 @@
       syncGuestViewHeight();
 
       const restored = await restoreSession();
-      state.initialized = true;
-      renderUserState();
+      markAuthInitialized();
 
       if (state.resetPasswordToken) {
         openAuthModal('reset-password');
@@ -1393,6 +1430,7 @@
   window.BIDFinderAuth = {
     init,
     whenReady,
+    verifySession: () => verifySessionIfNeeded({ force: true }),
     isAuthenticated,
     requiresDataAuth,
     requiresFullQueryAuth,
