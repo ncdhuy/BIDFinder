@@ -254,6 +254,7 @@ def get_auth_config_payload() -> Dict[str, Any]:
     return {
         "google_enabled": google_enabled,
         "google_client_id": client_ids[0] if google_enabled else None,
+        "google_configured_client_ids": client_ids,
         "google_status": (
             "ready"
             if google_enabled
@@ -776,9 +777,19 @@ def _send_password_reset_email_sync(recipient_email: str, recipient_name: str, r
     except smtplib.SMTPAuthenticationError as exc:
         logger.exception("Password reset SMTP authentication failed for host=%s username=%s", SMTP_HOST, SMTP_USERNAME)
         raise ValueError("Không xác thực được email gửi đặt lại mật khẩu. Vui lòng kiểm tra AUTH_SMTP_USERNAME và AUTH_SMTP_PASSWORD.") from exc
+    except smtplib.SMTPConnectError as exc:
+        logger.exception("Password reset SMTP connection rejected for host=%s port=%s", SMTP_HOST, SMTP_PORT)
+        raise ValueError(f"Không kết nối được SMTP ({SMTP_HOST}:{SMTP_PORT}). Máy chủ SMTP từ chối kết nối.") from exc
+    except smtplib.SMTPNotSupportedError as exc:
+        logger.exception("Password reset SMTP TLS not supported for host=%s port=%s tls=%s ssl=%s", SMTP_HOST, SMTP_PORT, SMTP_USE_TLS, SMTP_USE_SSL)
+        raise ValueError("SMTP không hỗ trợ chế độ TLS hiện tại. Vui lòng kiểm tra AUTH_SMTP_USE_TLS/AUTH_SMTP_USE_SSL.") from exc
+    except TimeoutError as exc:
+        logger.exception("Password reset SMTP timeout for host=%s port=%s tls=%s ssl=%s", SMTP_HOST, SMTP_PORT, SMTP_USE_TLS, SMTP_USE_SSL)
+        raise ValueError(f"Kết nối SMTP tới {SMTP_HOST}:{SMTP_PORT} bị timeout. Vui lòng kiểm tra outbound SMTP/network của Render.") from exc
     except (smtplib.SMTPException, OSError) as exc:
-        logger.exception("Password reset SMTP delivery failed for host=%s port=%s tls=%s ssl=%s", SMTP_HOST, SMTP_PORT, SMTP_USE_TLS, SMTP_USE_SSL)
-        raise ValueError("Không gửi được email đặt lại mật khẩu. Vui lòng kiểm tra cấu hình SMTP/TLS trên backend.") from exc
+        error_name = exc.__class__.__name__
+        logger.exception("Password reset SMTP delivery failed for host=%s port=%s tls=%s ssl=%s error_type=%s", SMTP_HOST, SMTP_PORT, SMTP_USE_TLS, SMTP_USE_SSL, error_name)
+        raise ValueError(f"Không gửi được email đặt lại mật khẩu qua SMTP ({error_name}). Vui lòng kiểm tra Render logs để xem chi tiết.") from exc
 
 
 async def request_password_reset(conn: asyncpg.Connection, request: Request, email: Any) -> None:

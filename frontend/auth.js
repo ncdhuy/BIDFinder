@@ -1217,6 +1217,10 @@
       client_id: clientId,
       callback: handleGoogleCredential
     });
+    console.info('BIDFinder Google Sign-In runtime config', {
+      origin: window.location.origin,
+      client_id: clientId
+    });
 
     slots.forEach((slot) => {
       slot.innerHTML = '';
