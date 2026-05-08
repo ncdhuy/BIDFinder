@@ -27,7 +27,6 @@ class DatabaseMigrator:
                     version TEXT DEFAULT '00',
                     file_type TEXT,
                     file_path TEXT,
-                    num_cols INTEGER,
                     crawled_at TIMESTAMP,
                     status TEXT,
                     is_latest INTEGER DEFAULT 1,
@@ -125,7 +124,8 @@ class DatabaseMigrator:
                 ALTER TABLE packages
                 DROP COLUMN IF EXISTS ma_khlcnt,
                 DROP COLUMN IF EXISTS ma_khlcnt_full,
-                DROP COLUMN IF EXISTS khlcnt_version
+                DROP COLUMN IF EXISTS khlcnt_version,
+                DROP COLUMN IF EXISTS num_cols
             """)
             self.cursor.execute("""
                 ALTER TABLE scan_logs

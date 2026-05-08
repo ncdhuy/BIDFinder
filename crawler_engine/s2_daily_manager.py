@@ -1328,8 +1328,8 @@ def upsert_manual_file_to_packages(tbmt, qd_raw, version, full_path, file_type):
                 """, (full_path, tbmt, qd_raw, version, file_type))
             else:
                 cursor.execute("""
-                    INSERT INTO packages (ma_tbmt, so_qd, version, file_path, file_type, is_latest, status, crawled_at, num_cols)
-                    VALUES (%s, %s, %s, %s, %s, 1, 'DONE', CURRENT_TIMESTAMP, 0)
+                    INSERT INTO packages (ma_tbmt, so_qd, version, file_path, file_type, is_latest, status, crawled_at)
+                    VALUES (%s, %s, %s, %s, %s, 1, 'DONE', CURRENT_TIMESTAMP)
                 """, (tbmt, qd_raw, version, full_path, file_type))
 
             conn.commit()

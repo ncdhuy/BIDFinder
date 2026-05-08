@@ -28,21 +28,29 @@
   color: #fff;
 }
 
-body.auth-state-authed #open-account-nav {
+body.auth-state-authed #open-account-nav,
+body.auth-state-authed #open-feedback-nav,
+body.auth-state-authed #open-feedback-modal {
   display: inline-flex;
 }
 
 body.auth-state-authed #open-register-nav,
-body.auth-state-authed #open-login-nav {
+body.auth-state-authed #open-login-nav,
+body.auth-state-authed #open-register-app,
+body.auth-state-authed #open-login-app {
   display: none;
 }
 
-body.auth-state-guest #open-account-nav {
+body.auth-state-guest #open-account-nav,
+body.auth-state-guest #open-feedback-nav,
+body.auth-state-guest #open-feedback-modal {
   display: none;
 }
 
 body.auth-state-guest #open-register-nav,
-body.auth-state-guest #open-login-nav {
+body.auth-state-guest #open-login-nav,
+body.auth-state-guest #open-register-app,
+body.auth-state-guest #open-login-app {
   display: inline-flex;
 }
 
@@ -50,8 +58,8 @@ body.auth-state-guest #open-login-nav {
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
-  margin-left: auto;
+  gap: inherit;
+  margin-left: 0;
 }
 
 .app-auth-shell.is-hidden {

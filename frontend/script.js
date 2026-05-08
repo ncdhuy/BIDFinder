@@ -5076,6 +5076,11 @@ function initBulkSearchEvents() {
     document.getElementById('open-bulk-search-modal')?.addEventListener('click', openBulkSearchModal);
     document.getElementById('close-bulk-search-modal')?.addEventListener('click', closeBulkSearchModal);
     document.querySelector('#bulk-search-modal .bulk-search-overlay')?.addEventListener('click', closeBulkSearchModal);
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && document.getElementById('bulk-search-modal')?.classList.contains('show')) {
+            closeBulkSearchModal();
+        }
+    });
     document.querySelectorAll('[data-bulk-fields]').forEach(panel => {
         panel.addEventListener('click', () => setBulkActiveScope(panel.dataset.bulkFields));
         panel.addEventListener('focusin', () => setBulkActiveScope(panel.dataset.bulkFields));
@@ -5270,6 +5275,7 @@ async function sendFeedback() {
 
 function initFeedbackModalEvents() {
     document.getElementById('open-feedback-modal')?.addEventListener('click', openFeedbackModal);
+    document.getElementById('open-feedback-nav')?.addEventListener('click', openFeedbackModal);
     document.getElementById('close-feedback-modal')?.addEventListener('click', closeFeedbackModal);
     document.querySelector('#feedback-modal .feedback-overlay')?.addEventListener('click', closeFeedbackModal);
     document.getElementById('copy-feedback')?.addEventListener('click', copyFeedbackText);
@@ -5691,4 +5697,6 @@ window.addEventListener('resize', () => {
     syncScopeSwitcherSlider();
     rerenderActiveColumnMenu();
     rerenderColumnsPopover();
+    Object.values(chartInstances || {}).forEach(chart => chart?.resize?.());
+    historyTimelineChart?.resize?.();
 });

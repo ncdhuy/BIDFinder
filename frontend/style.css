@@ -1811,13 +1811,19 @@ body:not(.landing-active) .contact-item {
 /* ========== MODALS ========== */
 .history-modal, .readme-modal, .feedback-modal, .bulk-search-modal { display: none; position: fixed; inset: 0; z-index: 10000; font-family: 'Inter', sans-serif; }
 .history-modal.show, .readme-modal.show, .feedback-modal.show, .bulk-search-modal.show { display: block; }
+.history-modal.show {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
 .history-overlay, .readme-overlay, .feedback-overlay, .bulk-search-overlay { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(4px); }
 .history-content, .readme-content {
     position: relative;
     width: 90%;
     max-width: 800px;
     max-height: 80vh;
-    margin: 10vh auto;
+    margin: 0 auto;
     background: white;
     border-radius: 10px;
     box-shadow: var(--shadow-lg);
@@ -2466,26 +2472,22 @@ body:not(.landing-active) .contact-item {
 
   width: min(98vw, 1180px);
   max-width: none;
-  height: min(92.5vh, 920px);                  /* cho phép co theo nội dung */
-  max-height: none;   /* dùng max-height thay vì height */
+  height: auto;
+  max-height: 94vh;
 
   border-radius: 10px;
 }
 
 /* Cho body tự scroll khi thiếu chỗ */
 #filter-panel .panel-body{
-  overflow: auto;     /* quan trọng: không dùng hidden */
-  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  overflow: hidden;
+  padding: 12px;
   min-height: 0;      /* quan trọng trong flex layout để scroll hoạt động đúng */
 }
 
-
-/* nếu vẫn thiếu (màn hình thấp), mới cho scroll dọc */
-@media (max-height: 980px){
-  #filter-panel .panel-body{
-    overflow-y: auto;
-  }
-}
 
 .panel-header {
     display: flex;
@@ -2525,6 +2527,7 @@ body:not(.landing-active) .contact-item {
     display: block; /* Trả về block chuẩn */
     width: 100%;
     height: 100%;
+    min-height: 0;
 }
 
 
@@ -4313,6 +4316,187 @@ body {
 
   .result-warning {
     max-width: 100%;
+  }
+}
+
+/* =========================
+   VERTICAL SPACE COMPACTION
+   ========================= */
+.bf-header {
+  padding-top: 0;
+}
+
+.bf-landing {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 16px;
+}
+
+.bf-header-inner {
+  gap: 12px;
+}
+
+.bf-brand {
+  gap: 10px;
+}
+
+.bf-brand-logo {
+  width: clamp(56px, 4.6vw, 84px);
+  height: clamp(56px, 4.6vw, 84px);
+}
+
+.bf-brand-copy strong {
+  font-size: 0.95rem;
+}
+
+.bf-brand-copy span {
+  font-size: 0.82rem;
+}
+
+.bf-btn {
+  height: 40px;
+  padding: 0 16px;
+  font-size: 0.9rem;
+}
+
+.bf-btn-lg {
+  height: 44px;
+  padding: 0 18px;
+  font-size: 0.95rem;
+}
+
+.bf-main {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-top: 2px;
+}
+
+.bf-hero {
+  flex: 1 1 auto;
+  min-height: 0;
+  align-items: center;
+}
+
+.bf-hero-visual {
+  min-height: clamp(520px, calc(100vh - 116px), 680px);
+}
+
+.bf-dashboard-shell {
+  min-height: clamp(460px, calc(100vh - 142px), 610px);
+}
+
+.bf-dashboard-image {
+  min-height: clamp(380px, calc(100vh - 230px), 540px);
+}
+
+.page-container {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  gap: 4px;
+}
+
+.app-header {
+  min-height: 48px;
+  padding: 4px 10px 2px;
+  gap: 10px;
+}
+
+.app-title {
+  gap: 10px;
+}
+
+.app-logo {
+  height: clamp(30px, 2.4vw, 38px);
+}
+
+.app-title-text {
+  min-height: clamp(30px, 2.4vw, 38px);
+  font-size: clamp(18px, 1.35vw, 22px);
+}
+
+.app-header-links {
+  gap: clamp(14px, 1.8vw, 28px);
+}
+
+.history-header,
+.panel-header,
+.bulk-search-header,
+.feedback-header {
+  min-height: 48px;
+  padding: 10px 16px;
+  gap: 12px;
+  border-bottom: 1px solid var(--color-border);
+  background: #f8fcfe;
+}
+
+.history-header h3,
+.panel-header h3,
+.bulk-search-header h3,
+.feedback-header h3 {
+  font-size: 16px;
+  line-height: 1.2;
+  color: var(--color-primary-dark);
+  font-weight: 700;
+}
+
+.history-header svg,
+.panel-header svg,
+.bulk-search-header svg,
+.feedback-header svg {
+  color: var(--color-primary);
+}
+
+.feedback-header p {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.history-header .btn-close,
+.panel-header .btn-close,
+.bulk-search-header .btn-close,
+.feedback-header .btn-close {
+  width: 32px;
+  height: 32px;
+}
+
+@media (max-height: 760px) {
+  .bf-brand-logo {
+    width: 52px;
+    height: 52px;
+  }
+
+  .bf-btn {
+    height: 38px;
+    padding: 0 14px;
+  }
+
+  .page-container {
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+
+  .app-header {
+    min-height: 42px;
+    padding: 2px 8px 0;
+  }
+
+  .app-logo {
+    height: 26px;
+  }
+
+  .app-title-text {
+    min-height: 26px;
+    font-size: 17px;
+  }
+
+  .history-header,
+  .panel-header,
+  .bulk-search-header,
+  .feedback-header {
+    min-height: 42px;
+    padding: 8px 14px;
   }
 }
 

@@ -135,8 +135,11 @@
       'auth-password-title',
       'auth-password-desc',
       'open-account-nav',
+      'open-feedback-nav',
       'open-register-nav',
       'open-login-nav',
+      'open-register-app',
+      'open-login-app',
       'open-login-hero'
     ];
 
@@ -281,7 +284,7 @@
     if (els['open-account-nav']) {
       els['open-account-nav'].hidden = !authed;
     }
-    [els['open-register-nav'], els['open-login-nav'], els['open-login-hero']].forEach((el) => {
+    [els['open-register-nav'], els['open-login-nav'], els['open-register-app'], els['open-login-app'], els['open-login-hero']].forEach((el) => {
       if (!el) return;
       el.hidden = authed;
     });
@@ -1303,8 +1306,10 @@
     };
 
     els['open-login-nav']?.addEventListener('click', openLogin);
+    els['open-login-app']?.addEventListener('click', openLogin);
     els['open-login-hero']?.addEventListener('click', openLogin);
     els['open-register-nav']?.addEventListener('click', openRegister);
+    els['open-register-app']?.addEventListener('click', openRegister);
     els['open-account-nav']?.addEventListener('click', () => openAuthModal('profile'));
     els['auth-close-btn']?.addEventListener('click', () => closeAuthModal());
     els.overlay?.addEventListener('click', () => closeAuthModal());
