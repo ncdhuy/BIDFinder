@@ -107,6 +107,7 @@ if not LOCAL_TEMP_ROOT:
 SQLALCHEMY_URL = DATABASE_URL.replace("postgres://", "postgresql://")
 
 TARGET_DATE = None
+TARGET_SCHEMA_SCOPE = "all"
 
 def get_db_connection():
     """Dùng cho các thao tác Execute/Delete thuần túy (nhanh, nhẹ)"""
@@ -548,7 +549,7 @@ def is_vendor_group_column_name(col_name) -> bool:
     col_clean = clean_col_str(col_name)
     if "nhà thầu" not in col_clean:
         return False
-    if col_clean.startswith("stt") or col_clean.startswith("số thứ tự"):
+    if col_clean.startswith("stt") or col_clean.startswith("số tt") or col_clean.startswith("số thứ tự"):
         return False
     if col_clean.startswith("mã"):
         return False
@@ -984,6 +985,7 @@ def detect_single_value_goods_group_header(
 SUMMARY_ROW_PREFIXES = (
     "tổng",
     "tổng cộng",
+    "tổng thành tiền",
     "cộng tổng",
     "thành tiền",
     "số tiền bằng chữ",
@@ -1000,6 +1002,7 @@ SUMMARY_ROW_EXACT_LABELS = (
 SUMMARY_ROW_SUFFIX_LABELS = (
     "cộng tổng",
     "tổng cộng",
+    "tổng thành tiền",
     "tổng giá",
     "tổng tiền",
     "tổng số",
@@ -1783,9 +1786,12 @@ def normalize_grouped_rows_generic(df: pd.DataFrame, schema_type: str):
                 if auto_create_target not in group_cols:
                     group_cols.append(auto_create_target)
             if auto_create_target:
+                carry_text = wrong_group["text"]
+                if auto_create_target == "Nhà thầu trúng thầu":
+                    carry_text = _strip_vendor_group_prefix(carry_text)
                 current_context = {
                     "root": wrong_group["root"],
-                    "carry_values": {auto_create_target: wrong_group["text"]},
+                    "carry_values": {auto_create_target: carry_text},
                     "source_cols": wrong_group["source_cols"],
                 }
                 continue
@@ -2935,6 +2941,9 @@ def _strip_vendor_group_prefix(text: str) -> str:
     cleaned = re.sub(r"^\d+\s+", "", cleaned)
     cleaned = re.sub(r"^[IVXLCDM]+\s*[.)]\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"^[IVXLCDM]+\s+", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^tên\s+nhà\s+thầu\s*:\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*[-–]\s*mã\s+định\s+danh\s*:.*$", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*[-–]\s*ma\s+dinh\s+danh\s*:.*$", "", cleaned, flags=re.IGNORECASE)
     return cleaned.strip(" .:-")
 
 
@@ -2949,6 +2958,26 @@ def _is_vendor_group_header_text(text: str) -> bool:
     if any(re.search(pattern, lowered) for pattern in VENDOR_GROUP_HEADER_IGNORE_PATTERNS):
         return False
     return True
+
+
+def _looks_like_vendor_name_text(text: str) -> bool:
+    lowered = clean_col_str(_strip_vendor_group_prefix(text))
+    if not lowered:
+        return False
+    vendor_tokens = (
+        "công ty",
+        "ctcp",
+        "tnhh",
+        "dược",
+        "pharma",
+        "liên danh",
+        "doanh nghiệp",
+        "hợp danh",
+        "chi nhánh",
+        "xí nghiệp",
+        "trung tâm",
+    )
+    return any(token in lowered for token in vendor_tokens)
 
 
 def _get_vendor_group_candidate_columns(df: pd.DataFrame, max_scan_cols: int = 7) -> list[str]:
@@ -2970,6 +2999,25 @@ def _get_vendor_group_candidate_columns(df: pd.DataFrame, max_scan_cols: int = 7
     return candidate_cols
 
 
+def _has_line_item_signal_outside_vendor_header_candidates(
+    row: pd.Series,
+    candidate_cols: list[str],
+    amount_col=None,
+) -> bool:
+    candidate_set = set(candidate_cols or [])
+    for col, value in row.items():
+        if _is_blank_cell(value):
+            continue
+        col_clean = clean_col_str(col)
+        if amount_col and col_clean == clean_col_str(amount_col):
+            return True
+        if any(token in col_clean for token in ("số lượng", "khối lượng", "đơn giá", "thành tiền")):
+            return True
+        if col not in candidate_set:
+            return True
+    return False
+
+
 def detect_vendor_group_header_row(
     current: pd.Series,
     next_row: pd.Series | None,
@@ -2981,7 +3029,7 @@ def detect_vendor_group_header_row(
         return None
     if is_generic_summary_row(current, amount_col):
         return None
-    if has_detail_signal_generic(current, detail_cols, amount_col):
+    if _has_line_item_signal_outside_vendor_header_candidates(current, candidate_cols, amount_col):
         return None
     if not has_detail_signal_generic(next_row, detail_cols, amount_col):
         return None
@@ -3007,7 +3055,11 @@ def detect_vendor_group_header_row(
     if len(populated) == 2 and len(stt_cells) != 1:
         return None
 
-    vendor_text = _strip_vendor_group_prefix(text_cells[0][1])
+    text_col, raw_vendor_text = text_cells[0]
+    if text_col in set(detail_cols or []) and not _looks_like_vendor_name_text(raw_vendor_text):
+        return None
+
+    vendor_text = _strip_vendor_group_prefix(raw_vendor_text)
     if not _is_vendor_group_header_text(vendor_text):
         return None
 
@@ -3153,6 +3205,53 @@ def _format_vendor_autofill_ambiguous_reason(
     return " ".join(parts)
 
 
+def _wrong_group_matches_adjacent_vendor_signal(
+    wrong_group: dict,
+    current: pd.Series,
+    next_row: pd.Series,
+    vendor_signal_cols: list[str],
+) -> bool:
+    if not wrong_group or current is None or next_row is None:
+        return False
+
+    header_text = _clean_cell_text(wrong_group.get("text"))
+    if not header_text:
+        return False
+    if any(clean_col_str(col) in {"stt", "tt"} for col in wrong_group.get("source_cols") or []):
+        return False
+
+    def comparable_vendor_key(value) -> str:
+        text = _strip_vendor_group_prefix(value)
+        text = re.sub(r"\s*[-–]\s*mã\s+định\s+danh\s*:.*$", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*[-–]\s*ma\s+dinh\s+danh\s*:.*$", "", text, flags=re.IGNORECASE)
+        key = clean_col_str(text)
+        key = re.sub(r"\bcổ\s+phần\b", "cp", key)
+        key = re.sub(r"\bco\s+phan\b", "cp", key)
+        return re.sub(r"\s+", " ", key).strip()
+
+    header_key = comparable_vendor_key(header_text)
+    if not header_key:
+        return False
+
+    for col in vendor_signal_cols:
+        value_keys = {
+            comparable_vendor_key(next_row.get(col)),
+            comparable_vendor_key(current.get(col)),
+        }
+        if any(
+            value_key
+            and (
+                header_key == value_key
+                or header_key in value_key
+                or value_key in header_key
+            )
+            for value_key in value_keys
+        ):
+            return True
+
+    return False
+
+
 def detect_non_vendor_group_header_manual_reason(df: pd.DataFrame, schema_name: str) -> str | None:
     if df is None or df.empty or schema_name not in ("MEDICINE_STANDARD", "GOODS_STANDARD"):
         return None
@@ -3182,6 +3281,13 @@ def detect_non_vendor_group_header_manual_reason(df: pd.DataFrame, schema_name: 
         if not wrong_group:
             continue
         if any(is_vendor_group_column_name(col) for col in wrong_group["source_cols"]):
+            continue
+        if _wrong_group_matches_adjacent_vendor_signal(
+            wrong_group,
+            current,
+            next_row,
+            vendor_signal_cols,
+        ):
             continue
 
         blank_count = None
@@ -3378,7 +3484,7 @@ def normalize_data(df: pd.DataFrame, schema_name: str, tbmt=None, so_qd=None, ve
 
 def process_pipeline():
     start_time = time.time()
-    logger.info(f"🚀 BẮT ĐẦU ETL PIPELINE [DỮ LIỆU NGÀY: {TARGET_DATE}]")
+    logger.info(f"🚀 BẮT ĐẦU ETL PIPELINE [DỮ LIỆU NGÀY: {TARGET_DATE}; SCOPE: {TARGET_SCHEMA_SCOPE}]")
     print("="*60)
     clear_web_winner_fact_cache()
     
@@ -3429,7 +3535,15 @@ def process_pipeline():
             for row in c.fetchall()
             if row[4] not in ignored_qd_map.get(row[1], set())
         ]
+        if TARGET_SCHEMA_SCOPE == "medicine":
+            active_jobs = [job for job in active_jobs if job["schema_type"] == "MEDICINE_STANDARD"]
+        elif TARGET_SCHEMA_SCOPE == "goods":
+            active_jobs = [job for job in active_jobs if job["schema_type"] == "GOODS_STANDARD"]
         active_jobs = expand_active_jobs_with_relation_peers(c, active_jobs, ignored_qd_map)
+        if TARGET_SCHEMA_SCOPE == "medicine":
+            active_jobs = [job for job in active_jobs if job["schema_type"] == "MEDICINE_STANDARD"]
+        elif TARGET_SCHEMA_SCOPE == "goods":
+            active_jobs = [job for job in active_jobs if job["schema_type"] == "GOODS_STANDARD"]
         prefetch_web_winner_facts(
             c,
             [(job["tbmt"], job["so_qd"], job["version"]) for job in active_jobs]
@@ -3665,7 +3779,14 @@ if __name__ == "__main__":
         help="Chế độ chạy: 'etl' để xử lý dữ liệu mới, 'audit-retro' để rà dữ liệu đã PROCESSED."
     )
     parser.add_argument('-d', '--date', type=str, help="Ngày cần chạy ETL/audit (Định dạng YYYYMMDD).")
+    parser.add_argument(
+        '--schema',
+        choices=['all', 'medicine', 'goods'],
+        default='all',
+        help="Phạm vi schema khi chạy ETL: all, medicine hoặc goods."
+    )
     args = parser.parse_args()
+    TARGET_SCHEMA_SCOPE = args.schema
 
     default_date = datetime.now().strftime("%Y%m%d")
 

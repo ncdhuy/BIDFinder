@@ -74,7 +74,7 @@ body.auth-state-guest #open-login-app {
   min-height: auto;
   padding: 0;
   border: 0;
-  border-radius: 0;
+  border-radius: 10px;
   background: transparent;
   color: var(--auth-ink);
   font-family: inherit;
@@ -112,7 +112,7 @@ body.auth-state-guest #open-login-app {
 .auth-modal.show {
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: clamp(12px, 2.6dvh, 24px);
 }
 
 .auth-overlay {
@@ -125,7 +125,7 @@ body.auth-state-guest #open-login-app {
 .auth-dialog {
   position: relative;
   z-index: 1;
-  width: min(1180px, calc(100vw - 48px));
+  width: min(clamp(760px, 70vw, 980px), calc(100vw - 32px));
   margin: 0;
   border-radius: var(--auth-shell-radius);
   overflow: hidden;
@@ -144,12 +144,14 @@ body.auth-state-guest #open-login-app {
 
 .auth-grid {
   display: grid;
-  grid-template-columns: minmax(380px, 1.04fr) minmax(420px, 0.96fr);
-  min-height: 680px;
+  grid-template-columns: minmax(300px, 0.86fr) minmax(360px, 1fr);
+  height: auto;
+  min-height: min(520px, calc(100dvh - 32px));
 }
 
 .auth-brand-panel {
-  padding: 48px 40px;
+  padding: clamp(28px, 4.2dvh, 48px) clamp(28px, 3vw, 40px);
+  overflow: hidden;
   color: #eef7ff;
   background:
     radial-gradient(circle at top left, rgba(101, 168, 255, 0.26), transparent 34%),
@@ -298,7 +300,8 @@ body.auth-state-guest #open-login-app {
 }
 
 .auth-content-panel {
-  padding: 40px 36px 36px;
+  padding: clamp(20px, 3dvh, 32px) clamp(22px, 2.4vw, 30px);
+  overflow: visible;
   background: linear-gradient(180deg, #ffffff 0%, #f6fbfd 100%);
 }
 
@@ -357,7 +360,7 @@ body.auth-state-guest #open-login-app {
 
 .auth-mode-panel {
   display: none;
-  margin-top: 22px;
+  margin-top: 16px;
 }
 
 .auth-mode-panel.active {
@@ -365,13 +368,13 @@ body.auth-state-guest #open-login-app {
 }
 
 .auth-panel-head {
-  margin-bottom: 18px;
+  margin-bottom: 12px;
 }
 
 .auth-panel-head h3 {
   margin: 0;
   color: var(--auth-ink);
-  font-size: 1.55rem;
+  font-size: clamp(1.24rem, 1.7vw, 1.48rem);
   line-height: 1.15;
   letter-spacing: -0.02em;
 }
@@ -387,7 +390,7 @@ body.auth-state-guest #open-login-app {
 }
 
 .auth-google-block {
-  margin-top: 4px;
+  margin-top: 0;
 }
 
 .auth-google-block[hidden] {
@@ -402,7 +405,7 @@ body.auth-state-guest #open-login-app {
   display: flex;
   justify-content: center;
   align-items: center;
-  min-height: 44px;
+  min-height: 38px;
 }
 
 .google-auth-slot > div {
@@ -415,7 +418,7 @@ body.auth-state-guest #open-login-app {
   display: flex;
   align-items: center;
   gap: 14px;
-  margin: 22px 0 20px;
+  margin: 12px 0;
   color: #7690a0;
   font-size: 12px;
   font-weight: 700;
@@ -433,7 +436,7 @@ body.auth-state-guest #open-login-app {
 
 .auth-form {
   display: grid;
-  gap: 16px;
+  gap: 10px;
 }
 
 .auth-inline-actions {
@@ -444,26 +447,26 @@ body.auth-state-guest #open-login-app {
 
 .auth-field {
   display: grid;
-  gap: 8px;
+  gap: 5px;
 }
 
 .auth-field span {
   color: var(--auth-ink);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
 }
 
 .auth-field input,
 .auth-field select {
   width: 100%;
-  min-height: 46px;
-  padding: 0 14px;
+  min-height: 38px;
+  padding: 0 12px;
   border: 1px solid var(--auth-border);
   border-radius: var(--auth-radius);
   background: #ffffff;
   color: var(--auth-ink);
   font-family: inherit;
-  font-size: 14px;
+  font-size: 13px;
   transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
 }
 
@@ -492,10 +495,10 @@ body.auth-state-guest #open-login-app {
 }
 
 .auth-field-note {
-  margin: 4px 0 0;
+  margin: 1px 0 0;
   color: var(--auth-subtle);
-  font-size: 12px;
-  line-height: 1.6;
+  font-size: 11px;
+  line-height: 1.32;
 }
 
 .auth-text-btn {
@@ -516,11 +519,11 @@ body.auth-state-guest #open-login-app {
 
 .auth-submit-btn,
 .auth-secondary-btn {
-  min-height: 48px;
+  min-height: 40px;
   border: 0;
   border-radius: var(--auth-radius);
   font-family: inherit;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 800;
   cursor: pointer;
   transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
@@ -680,10 +683,151 @@ body.auth-state-guest #open-login-app {
   padding-top: 18px;
 }
 
-@media (max-width: 960px) {
+.auth-modal.is-profile.show {
+  padding: 18px;
+}
+
+.auth-modal.is-profile .auth-dialog {
+  width: min(clamp(880px, 62vw, 1080px), calc(100vw - 36px));
+  height: clamp(490px, 58dvh, 620px);
+  max-height: calc(100dvh - 36px);
+  border-radius: 16px;
+}
+
+.auth-modal.is-profile .auth-grid {
+  grid-template-columns: minmax(380px, 1fr) minmax(340px, 0.82fr);
+  height: 100%;
+  min-height: 100%;
+}
+
+.auth-modal.is-profile .auth-brand-panel {
+  padding: 30px 28px;
+}
+
+.auth-modal.is-profile .auth-content-panel {
+  padding: 24px 24px 20px;
+}
+
+.auth-modal.is-profile .auth-brand-kicker {
+  margin: 0 0 8px;
+  font-size: 0.74rem;
+}
+
+.auth-modal.is-profile .auth-account-name {
+  font-size: 1.45rem;
+  line-height: 1.12;
+}
+
+.auth-modal.is-profile .auth-account-card {
+  margin-top: 18px;
+  padding: 16px;
+  gap: 12px;
+}
+
+.auth-modal.is-profile .auth-account-row {
+  gap: 2px;
+}
+
+.auth-modal.is-profile .auth-account-row span {
+  font-size: 0.72rem;
+}
+
+.auth-modal.is-profile .auth-account-row strong {
+  font-size: 0.86rem;
+  line-height: 1.35;
+}
+
+.auth-modal.is-profile #auth-profile-view:not([hidden]) {
+  min-height: 0;
+  height: 100%;
+}
+
+.auth-modal.is-profile .auth-profile-head {
+  margin-bottom: 12px;
+}
+
+.auth-modal.is-profile .auth-profile-head h3 {
+  font-size: 1.28rem;
+}
+
+.auth-modal.is-profile .auth-account-sections {
+  gap: 10px;
+}
+
+.auth-modal.is-profile .auth-account-section {
+  border-radius: 10px;
+}
+
+.auth-modal.is-profile .auth-account-toggle {
+  min-height: 38px;
+  padding: 9px 12px;
+}
+
+.auth-modal.is-profile .auth-account-toggle-copy {
+  gap: 2px;
+}
+
+.auth-modal.is-profile .auth-account-toggle-copy strong {
+  font-size: 0.9rem;
+}
+
+.auth-modal.is-profile .auth-account-detail {
+  padding: 10px 12px 12px;
+}
+
+.auth-modal.is-profile .auth-form {
+  gap: 8px;
+}
+
+.auth-modal.is-profile .auth-field {
+  gap: 5px;
+}
+
+.auth-modal.is-profile .auth-field span {
+  font-size: 12px;
+}
+
+.auth-modal.is-profile .auth-field input,
+.auth-modal.is-profile .auth-field select {
+  min-height: 34px;
+  padding: 0 11px;
+  font-size: 13px;
+}
+
+.auth-modal.is-profile .auth-field-note {
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.auth-modal.is-profile .auth-submit-btn,
+.auth-modal.is-profile .auth-secondary-btn {
+  min-height: 36px;
+  font-size: 13px;
+}
+
+.auth-modal.is-profile .auth-profile-actions {
+  gap: 8px;
+}
+
+.auth-modal.is-profile .auth-account-footer {
+  padding-top: 12px;
+}
+
+.auth-modal.is-profile .auth-close {
+  top: 12px;
+  right: 12px;
+}
+
+@media (max-width: 860px) {
   .auth-dialog {
-    width: min(720px, calc(100vw - 24px));
+    width: min(560px, calc(100vw - 24px));
     max-height: calc(100vh - 24px);
+  }
+
+  .auth-modal.is-profile .auth-dialog {
+    width: min(720px, calc(100vw - 24px));
+    height: auto;
   }
 
   .auth-grid {
@@ -691,9 +835,291 @@ body.auth-state-guest #open-login-app {
     min-height: auto;
   }
 
+  .auth-brand-panel {
+    display: none;
+  }
+
+  .auth-modal.is-profile .auth-grid {
+    grid-template-columns: 1fr;
+    height: auto;
+    min-height: auto;
+  }
+
   .auth-brand-panel,
   .auth-content-panel {
-    padding: 28px 24px;
+    padding: 20px 22px;
+  }
+}
+
+@media (max-height: 760px) and (min-width: 861px) {
+  .auth-modal.show {
+    padding: 12px;
+  }
+
+  .auth-dialog {
+    width: min(1120px, calc(100vw - 24px));
+    max-height: calc(100dvh - 24px);
+  }
+
+  .auth-grid {
+    grid-template-columns: minmax(330px, 0.86fr) minmax(520px, 1.14fr);
+    min-height: 0;
+  }
+
+  .auth-brand-panel {
+    padding: 26px 28px;
+  }
+
+  .auth-content-panel {
+    padding: 18px 24px;
+    overflow: visible;
+  }
+
+  .auth-brand-logo {
+    width: 60px;
+    height: 60px;
+  }
+
+  .auth-brand-kicker {
+    margin: 12px 0 8px;
+  }
+
+  .auth-brand-panel h2 {
+    font-size: clamp(1.85rem, 2.4vw, 2.15rem);
+    line-height: 1.08;
+  }
+
+  .auth-brand-desc {
+    margin-top: 12px;
+    font-size: 0.92rem;
+    line-height: 1.5;
+  }
+
+  .auth-brand-card {
+    margin-top: 16px;
+    padding: 14px 16px;
+  }
+
+  .auth-feature-list {
+    gap: 8px;
+  }
+
+  .auth-feature-item {
+    column-gap: 10px;
+    line-height: 1.35;
+  }
+
+  .auth-mode-switch {
+    padding: 3px;
+  }
+
+  .auth-mode-btn {
+    min-height: 36px;
+    padding: 0 14px;
+  }
+
+  .auth-mode-panel {
+    margin-top: 10px;
+    min-height: 0 !important;
+  }
+
+  #auth-guest-view {
+    min-height: 0 !important;
+  }
+
+  .auth-panel-head {
+    margin-bottom: 10px;
+  }
+
+  .auth-panel-head h3 {
+    font-size: 1.28rem;
+  }
+
+  .auth-google-block {
+    margin-top: 0;
+  }
+
+  .google-auth-slot {
+    min-height: 36px;
+  }
+
+  .auth-divider {
+    margin: 9px 0;
+  }
+
+  .auth-form {
+    gap: 8px 10px;
+  }
+
+  .auth-field {
+    gap: 5px;
+  }
+
+  .auth-field span {
+    font-size: 12px;
+  }
+
+  .auth-field input,
+  .auth-field select {
+    min-height: 34px;
+    padding: 0 11px;
+    font-size: 13px;
+  }
+
+  .auth-field-note {
+    margin-top: 2px;
+    font-size: 11px;
+    line-height: 1.3;
+  }
+
+  .auth-submit-btn,
+  .auth-secondary-btn {
+    min-height: 36px;
+    font-size: 13px;
+  }
+
+  #auth-register-form {
+    grid-template-columns: 1fr;
+  }
+
+  #auth-login-form,
+  #auth-forgot-password-form,
+  #auth-reset-password-form {
+    max-width: 420px;
+  }
+}
+
+@media (max-height: 640px) and (min-width: 861px) {
+  .auth-modal.show {
+    padding: 10px;
+  }
+
+  .auth-dialog {
+    width: min(920px, calc(100vw - 20px));
+    max-height: calc(100dvh - 20px);
+  }
+
+  .auth-grid {
+    grid-template-columns: minmax(300px, 0.82fr) minmax(360px, 1fr);
+    height: auto;
+    min-height: 0;
+  }
+
+  .auth-brand-panel {
+    padding: 24px 26px;
+  }
+
+  .auth-content-panel {
+    padding: 16px 22px 16px;
+    overflow: visible;
+  }
+
+  .auth-brand-logo {
+    width: 58px;
+    height: 58px;
+  }
+
+  .auth-brand-kicker {
+    margin: 12px 0 8px;
+  }
+
+  .auth-brand-panel h2 {
+    font-size: 2rem;
+  }
+
+  .auth-brand-desc {
+    margin-top: 12px;
+    font-size: 0.92rem;
+    line-height: 1.55;
+  }
+
+  .auth-brand-card {
+    margin-top: 16px;
+    padding: 14px 16px;
+  }
+
+  .auth-feature-list {
+    gap: 8px;
+  }
+
+  .auth-feature-item {
+    line-height: 1.35;
+  }
+
+  .auth-mode-panel {
+    margin-top: 10px;
+    min-height: 0 !important;
+  }
+
+  #auth-guest-view {
+    min-height: 0 !important;
+  }
+
+  .auth-panel-head {
+    margin-bottom: 10px;
+  }
+
+  .auth-panel-head h3 {
+    font-size: 1.34rem;
+  }
+
+  .auth-form {
+    gap: 8px 10px;
+  }
+
+  .auth-field {
+    gap: 5px;
+  }
+
+  .auth-field input,
+  .auth-field select {
+    min-height: 34px;
+  }
+
+  .auth-field-note {
+    margin-top: 2px;
+    line-height: 1.35;
+  }
+
+  .auth-submit-btn,
+  .auth-secondary-btn {
+    min-height: 36px;
+  }
+
+  .auth-divider {
+    margin: 9px 0;
+  }
+
+  .auth-mode-btn {
+    min-height: 36px;
+    padding: 0 14px;
+  }
+
+  .google-auth-slot {
+    min-height: 38px;
+  }
+
+  #auth-register-form {
+    grid-template-columns: 1fr;
+  }
+
+  #auth-register-form .auth-field-note {
+    max-width: 100%;
+  }
+
+  #auth-login-form,
+  #auth-forgot-password-form,
+  #auth-reset-password-form {
+    max-width: 420px;
+  }
+
+  .auth-modal.is-profile .auth-dialog {
+    width: min(920px, calc(100vw - 20px));
+    height: min(500px, calc(100dvh - 20px));
+  }
+
+  .auth-modal.is-profile .auth-grid {
+    grid-template-columns: minmax(390px, 1fr) minmax(340px, 0.82fr);
   }
 }
 
@@ -720,9 +1146,8 @@ body.auth-state-guest #open-login-app {
     max-height: calc(100vh - 16px);
   }
 
-  .auth-brand-panel,
   .auth-content-panel {
-    padding: 24px 18px;
+    padding: 18px 16px;
   }
 
   .auth-mode-switch {

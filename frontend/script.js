@@ -267,6 +267,12 @@ let serverBaseDf2 = [];
 let currentQueryMeta = {
     df1HasMore: false,
     df2HasMore: false,
+    df1Displayed: 0,
+    df1Total: 0,
+    df1TotalLabel: '0',
+    df2Displayed: 0,
+    df2Total: 0,
+    df2TotalLabel: '0',
     totalCount: 0,
     totalCountExact: true,
     totalCountLabel: '0',
@@ -1123,26 +1129,43 @@ function hasActiveQueryFilters(queryRequest) {
 function clearFilterUrlState() {
     const url = new URL(window.location.href);
     url.searchParams.delete('q');
+    url.searchParams.delete('bq');
     window.history.replaceState({}, '', url);
 }
 
-function encodeFilterUrlState(queryRequest) {
-    return encodeURIComponent(JSON.stringify(buildQueryRequest(queryRequest)));
+function clearLegacyBulkUrlState() {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has('bq')) return;
+    url.searchParams.delete('bq');
+    window.history.replaceState({}, '', url);
 }
 
-function decodeFilterUrlState(rawValue) {
+function encodeUrlState(payload) {
+    return encodeURIComponent(JSON.stringify(payload));
+}
+
+function decodeUrlState(rawValue) {
     if (!rawValue) return null;
 
     try {
-        return buildQueryRequest(JSON.parse(decodeURIComponent(rawValue)));
+        return JSON.parse(decodeURIComponent(rawValue));
     } catch (error) {
         try {
-            return buildQueryRequest(JSON.parse(rawValue));
+            return JSON.parse(rawValue);
         } catch (fallbackError) {
-            console.warn('Unable to parse filter URL state:', fallbackError);
+            console.warn('Unable to parse URL state:', fallbackError);
             return null;
         }
     }
+}
+
+function encodeFilterUrlState(queryRequest) {
+    return encodeUrlState(buildQueryRequest(queryRequest));
+}
+
+function decodeFilterUrlState(rawValue) {
+    const decoded = decodeUrlState(rawValue);
+    return decoded ? buildQueryRequest(decoded) : null;
 }
 
 function readFilterUrlState() {
@@ -1159,6 +1182,7 @@ function setFilterUrlState(queryRequest) {
 
     const url = new URL(window.location.href);
     url.searchParams.set('q', encodeFilterUrlState(request));
+    url.searchParams.delete('bq');
     window.history.replaceState({ bidfinderFilters: request }, '', url);
 }
 
@@ -1391,36 +1415,22 @@ function handleQuerySuccess(result, options = {}) {
     const nextDf2 = normalized.df2.data || [];
 
     const totalCount = Number(normalized.totalCount || 0);
-    const displayedCount = nextDf1.length + nextDf2.length;
-    const totalCountExact = Boolean(normalized.totalCountExact);
-    const totalCountLabel = String(normalized.totalCountLabel || totalCount);
-    const hasMore = Boolean(normalized.df1.has_more || normalized.df2.has_more);
-    const quota = getFullSearchQuotaState();
-
-    if (hasMore) {
-        showLimitWarning({
-            totalCount,
-            totalCountExact,
-            totalCountLabel,
-            displayedCount,
-            searchMode: normalized.searchMode,
-            bulkSearchMode: normalized.bulkSearchMode,
-            fullSearchRemaining: quota.remaining,
-            fullSearchDailyLimit: quota.limit,
-            fullSearchEnabled: quota.enabled
-        });
-    } else {
-        hideLimitWarning();
-    }
+    hideLimitWarning();
 
     serverBaseDf1 = [...nextDf1];
     serverBaseDf2 = [...nextDf2];
     currentQueryMeta = {
         df1HasMore: Boolean(normalized.df1.has_more),
         df2HasMore: Boolean(normalized.df2.has_more),
+        df1Displayed: nextDf1.length,
+        df1Total: Number(normalized.df1.count || nextDf1.length || 0),
+        df1TotalLabel: String(normalized.df1.count_label || normalized.df1.count_summary || Number(normalized.df1.count || nextDf1.length || 0).toLocaleString('vi-VN')),
+        df2Displayed: nextDf2.length,
+        df2Total: Number(normalized.df2.count || nextDf2.length || 0),
+        df2TotalLabel: String(normalized.df2.count_label || normalized.df2.count_summary || Number(normalized.df2.count || nextDf2.length || 0).toLocaleString('vi-VN')),
         totalCount,
-        totalCountExact,
-        totalCountLabel,
+        totalCountExact: Boolean(normalized.totalCountExact),
+        totalCountLabel: String(normalized.totalCountLabel || totalCount),
         searchMode: normalized.searchMode,
         bulkSearchMode: normalized.bulkSearchMode,
         appliedTotalLimit: normalized.appliedTotalLimit
@@ -1492,11 +1502,10 @@ async function triggerFullSearch() {
         return;
     }
 
-    const warningDiv = document.getElementById('result-warning');
-    const actionButton = warningDiv?.querySelector('.result-warning-button');
-    if (actionButton) {
-        actionButton.disabled = true;
-        actionButton.textContent = 'Đang tải...';
+    const dockFullSearchButton = document.getElementById('insight-full-search');
+    if (dockFullSearchButton) {
+        dockFullSearchButton.disabled = true;
+        dockFullSearchButton.textContent = 'Đang tải...';
     }
 
     if (currentQueryMeta.searchMode === 'bulk' && lastBulkSearchPayloads?.length) {
@@ -1506,10 +1515,7 @@ async function triggerFullSearch() {
         } catch (error) {
             console.error('Bulk full search failed:', error);
         } finally {
-            if (actionButton) {
-                actionButton.disabled = false;
-                actionButton.textContent = 'Full search';
-            }
+            updateInsightEntryPoint();
         }
     }
 
@@ -1526,10 +1532,7 @@ async function triggerFullSearch() {
         }
         throw new Error(result.error || 'Full search failed');
     } catch (error) {
-        if (actionButton) {
-            actionButton.disabled = false;
-            actionButton.textContent = 'Full search';
-        }
+        updateInsightEntryPoint();
         console.error('Full search failed:', error);
         window.BIDFinderAnalytics?.track?.('search_failed', {
             search_mode: 'full',
@@ -1554,73 +1557,12 @@ function showLimitWarning({
     fullSearchDailyLimit = 0,
     fullSearchEnabled = true
 }) {
-    const localizedTotal = Number(totalCount || 0).toLocaleString('vi-VN');
-    const summaryText = String(totalCountLabel || (totalCountExact ? localizedTotal : `${localizedTotal}+`));
-    const displayedText = Number(displayedCount || 0).toLocaleString('vi-VN');
-    const canOfferFullSearch =
-        searchMode !== 'full'
-        && !(searchMode === 'bulk' && bulkSearchMode === 'full')
-        && fullSearchEnabled
-        && Number(fullSearchDailyLimit || 0) > 0
-        && Number(fullSearchRemaining || 0) > 0;
-
-    const warningDiv = document.getElementById('result-warning');
-    if (!warningDiv) {
-        return;
-    }
-
-    warningDiv.replaceChildren();
-
-    const title = document.createElement('strong');
-    title.textContent = searchMode === 'bulk'
-        ? 'Kết quả tra cứu hàng loạt đã đạt giới hạn hiển thị'
-        : (searchMode === 'full' ? 'Kết quả full search vẫn còn bị giới hạn' : 'Giới hạn kết quả tìm kiếm');
-    warningDiv.appendChild(title);
-    warningDiv.appendChild(document.createElement('br'));
-    warningDiv.appendChild(document.createTextNode(`Hiện đang hiển thị ${displayedText}/${summaryText} dòng.`));
-
-    const detail = document.createElement('div');
-    detail.className = 'result-warning-actions';
-
-    const quota = document.createElement('span');
-    quota.className = 'result-warning-quota';
-    if (canOfferFullSearch) {
-        quota.textContent = `Bạn còn ${Number(fullSearchRemaining).toLocaleString('vi-VN')}/${Number(fullSearchDailyLimit).toLocaleString('vi-VN')} lượt full search hôm nay.`;
-    } else if (searchMode === 'full' || (searchMode === 'bulk' && bulkSearchMode === 'full')) {
-        quota.textContent = 'Bạn đang ở chế độ full search. Hãy thu hẹp bộ lọc nếu cần ít nhiễu hơn.';
-    } else if (Number(fullSearchDailyLimit || 0) > 0) {
-        quota.textContent = `Bạn đã dùng hết ${Number(fullSearchDailyLimit).toLocaleString('vi-VN')} lượt full search hôm nay.`;
-    } else {
-        quota.textContent = 'Full search hiện chưa khả dụng.';
-    }
-    detail.appendChild(quota);
-
-    if (canOfferFullSearch) {
-        const actionButton = document.createElement('button');
-        actionButton.type = 'button';
-        actionButton.className = 'result-warning-button';
-        actionButton.textContent = 'Full search';
-        actionButton.addEventListener('click', () => {
-            void triggerFullSearch();
-        });
-        detail.appendChild(actionButton);
-    }
-
-    warningDiv.appendChild(detail);
-    warningDiv.style.display = 'block';
+    updateInsightEntryPoint();
 }
 
 // Helper: Hide limit warning
 function hideLimitWarning() {
-    const warningDiv = document.getElementById('result-warning');
-    if (warningDiv) {
-        setInfoBannerMessage(
-            warningDiv,
-            'Giới hạn kết quả tìm kiếm',
-            'Vui lòng thu hẹp điều kiện tìm kiếm.'
-        );
-        warningDiv.style.display = 'none';
-    }
+    updateInsightEntryPoint();
 }
 
 function resetQueryResultMeta() {
@@ -1630,6 +1572,12 @@ function resetQueryResultMeta() {
     currentQueryMeta = {
         df1HasMore: false,
         df2HasMore: false,
+        df1Displayed: 0,
+        df1Total: 0,
+        df1TotalLabel: '0',
+        df2Displayed: 0,
+        df2Total: 0,
+        df2TotalLabel: '0',
         totalCount: 0,
         totalCountExact: true,
         totalCountLabel: '0',
@@ -1896,6 +1844,7 @@ function hideAllPanels() {
 
 function closeTransientUi() {
     hideAllPanels();
+    closeInsightDrawer();
     closeFloatingTableUi();
     ['history-modal', 'readme-modal', 'contact-modal'].forEach(id => {
         document.getElementById(id)?.classList.remove('show');
@@ -1961,7 +1910,10 @@ function initLandingShell() {
     const applyLandingView = (view) => {
         sessionStorage.setItem('bidfinder:view', view);
         document.body.classList.toggle('landing-active', view === 'landing');
-        requestAnimationFrame(() => syncScopeSwitcherSlider());
+        requestAnimationFrame(() => {
+            syncScopeSwitcherSlider();
+            updateInsightEntryPoint();
+        });
     };
 
     const syncLandingView = (view) => {
@@ -1972,9 +1924,10 @@ function initLandingShell() {
         applyLandingView(view);
     };
 
-    const currentView = sessionStorage.getItem('bidfinder:view') || 'landing';
+    const hasSharedQueryUrl = hasActiveQueryFilters(readFilterUrlState());
+    const currentView = sessionStorage.getItem('bidfinder:view') || (hasSharedQueryUrl ? 'app' : 'landing');
     const canOpenSavedApp =
-        currentView === 'app' &&
+        (currentView === 'app' || hasSharedQueryUrl) &&
         (
             window.BIDFinderAuth?.isAuthenticated() ||
             !window.BIDFinderAuth?.requiresDataAuth?.()
@@ -2021,6 +1974,7 @@ function initLandingShell() {
     window.addEventListener('bidfinder:auth-ready', (event) => {
         const authed = Boolean(event.detail?.authenticated);
         const savedView = sessionStorage.getItem('bidfinder:view') || 'landing';
+        const hasSharedQueryUrl = hasActiveQueryFilters(readFilterUrlState());
         const mustLogin = Boolean(event.detail?.config?.require_auth_for_data_access);
 
         if (mustLogin && !authed) {
@@ -2028,8 +1982,9 @@ function initLandingShell() {
             return;
         }
 
-        applyLandingView(savedView === 'app' ? 'app' : 'landing');
-        if (savedView === 'app') {
+        const nextView = savedView === 'app' || hasSharedQueryUrl ? 'app' : 'landing';
+        applyLandingView(nextView);
+        if (nextView === 'app') {
             initializeAppData();
         }
     });
@@ -3542,6 +3497,7 @@ function renderProvinceValueMap(data = []) {
     const maxValue = Math.max(...values, 0);
 
     if (!maxValue) {
+        container.replaceChildren();
         showNoDataMessage('chart-province-map', 'Không có dữ liệu tỉnh/thành để hiển thị.');
         return;
     }
@@ -3554,6 +3510,35 @@ function renderProvinceValueMap(data = []) {
     svg.setAttribute('viewBox', vietnamMapDefinition.viewBox);
     svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
     svg.setAttribute('aria-hidden', 'true');
+
+    let activeProvincePath = null;
+    let activeProvinceOutline = null;
+    const clearActiveProvincePath = () => {
+        if (activeProvincePath) {
+            activeProvincePath.classList.remove('is-active');
+            activeProvincePath = null;
+        }
+        activeProvinceOutline?.remove();
+        activeProvinceOutline = null;
+        tooltip.classList.remove('visible');
+    };
+
+    const showProvinceOutline = (path) => {
+        activeProvinceOutline?.remove();
+        activeProvinceOutline = path.cloneNode(false);
+        activeProvinceOutline.removeAttribute('tabindex');
+        activeProvinceOutline.removeAttribute('aria-label');
+        activeProvinceOutline.classList.add('province-hover-outline');
+        activeProvinceOutline.setAttribute('fill', 'none');
+        activeProvinceOutline.setAttribute('stroke', '#073c52');
+        activeProvinceOutline.setAttribute('stroke-width', '1.55');
+        activeProvinceOutline.setAttribute('pointer-events', 'none');
+        activeProvinceOutline.setAttribute('vector-effect', 'non-scaling-stroke');
+        svg.appendChild(activeProvinceOutline);
+    };
+
+    container.onpointerleave = clearActiveProvincePath;
+    container.onmouseleave = clearActiveProvincePath;
 
     vietnamMapDefinition.features.forEach(({ path: pathData, properties }) => {
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -3582,9 +3567,13 @@ function renderProvinceValueMap(data = []) {
         path.setAttribute('tabindex', '0');
         path.setAttribute('aria-label', `${displayName}: ${valueText}`);
 
-        path.addEventListener('mouseenter', (event) => {
-            svg.appendChild(path);
+        path.addEventListener('pointerenter', (event) => {
+            if (activeProvincePath && activeProvincePath !== path) {
+                activeProvincePath.classList.remove('is-active');
+            }
+            activeProvincePath = path;
             path.classList.add('is-active');
+            showProvinceOutline(path);
             tooltip.replaceChildren();
             const nameEl = document.createElement('strong');
             const valueEl = document.createElement('span');
@@ -3596,19 +3585,33 @@ function renderProvinceValueMap(data = []) {
             tooltip.classList.add('visible');
             moveProvinceMapTooltip(container, tooltip, event);
         });
-        path.addEventListener('mousemove', (event) => {
+        path.addEventListener('pointermove', (event) => {
             moveProvinceMapTooltip(container, tooltip, event);
         });
-        path.addEventListener('mouseleave', () => {
-            path.classList.remove('is-active');
-            tooltip.classList.remove('visible');
+        path.addEventListener('pointerleave', (event) => {
+            if (event.relatedTarget?.closest?.('#chart-province-map svg path')) {
+                return;
+            }
+            if (activeProvincePath === path) {
+                clearActiveProvincePath();
+            } else {
+                path.classList.remove('is-active');
+            }
         });
         path.addEventListener('focus', () => {
-            svg.appendChild(path);
+            if (activeProvincePath && activeProvincePath !== path) {
+                activeProvincePath.classList.remove('is-active');
+            }
+            activeProvincePath = path;
             path.classList.add('is-active');
+            showProvinceOutline(path);
         });
         path.addEventListener('blur', () => {
-            path.classList.remove('is-active');
+            if (activeProvincePath === path) {
+                clearActiveProvincePath();
+            } else {
+                path.classList.remove('is-active');
+            }
         });
 
         svg.appendChild(path);
@@ -3616,7 +3619,110 @@ function renderProvinceValueMap(data = []) {
 
     container.appendChild(svg);
     container.appendChild(createProvinceMapLegend(maxValue));
+    provincePreviewVersion += 1;
     requestAnimationFrame(() => fitProvinceMapViewBox(svg));
+}
+
+function renderInsightPreviewBars(containerId, values = []) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    const bars = Array.from(container.querySelectorAll('span'));
+    const maxValue = Math.max(...values, 0);
+
+    bars.forEach((bar, index) => {
+        const value = Number(values[index] || 0);
+        const ratio = maxValue > 0 ? value / maxValue : 0;
+        bar.style.height = `${Math.max(8, Math.round(12 + ratio * 34))}px`;
+        bar.classList.toggle('is-empty', !value);
+    });
+}
+
+function renderInsightPreviewLine(values = []) {
+    const container = document.getElementById('insight-preview-timeline');
+    if (!container) return;
+
+    const points = Array.from(container.querySelectorAll('span'));
+    const maxValue = Math.max(...values, 0);
+    const minValue = Math.min(...values.filter(value => value > 0), maxValue);
+    const range = Math.max(1, maxValue - minValue);
+
+    points.forEach((point, index) => {
+        const value = Number(values[index] || 0);
+        const ratio = maxValue > 0 ? (value - minValue) / range : 0;
+        point.style.left = `${12 + index * 18}%`;
+        point.style.right = 'auto';
+        point.style.top = 'auto';
+        point.style.bottom = `${12 + Math.max(0, ratio) * 38}px`;
+        point.classList.toggle('is-empty', !value);
+    });
+
+    container.style.setProperty('--preview-line-gradient', buildPreviewLineGradient(values));
+}
+
+function buildPreviewLineGradient(values = []) {
+    if (!values.length || !Math.max(...values, 0)) {
+        return 'linear-gradient(90deg, transparent, transparent)';
+    }
+
+    return 'linear-gradient(135deg, transparent 0 18%, #1b866e 19% 22%, transparent 23% 44%, #1b866e 45% 48%, transparent 49% 67%, #1b866e 68% 71%, transparent 72%)';
+}
+
+function renderInsightPreviewProvinceMap() {
+    const preview = document.getElementById('insight-preview-province');
+    const sourceSvg = document.querySelector('#chart-province-map svg');
+    if (!preview) return;
+
+    preview.replaceChildren();
+    if (!sourceSvg) {
+        const empty = document.createElement('span');
+        empty.className = 'insight-preview-empty';
+        preview.appendChild(empty);
+        return;
+    }
+
+    const clone = sourceSvg.cloneNode(true);
+    clone.removeAttribute('aria-hidden');
+    clone.querySelectorAll('path').forEach(path => {
+        path.removeAttribute('tabindex');
+        path.classList.remove('is-active');
+    });
+    preview.appendChild(clone);
+}
+
+function updateInsightDataPreviews(totalRecords = getInsightResultCounts().total) {
+    if (!isInsightDrawerOpen()) return;
+
+    if (!totalRecords) {
+        if (insightPreviewSignature === 'empty') return;
+        insightPreviewSignature = 'empty';
+        renderInsightPreviewBars('insight-preview-price', []);
+        renderInsightPreviewLine([]);
+        const preview = document.getElementById('insight-preview-province');
+        if (preview) {
+            preview.replaceChildren();
+            const empty = document.createElement('span');
+            empty.className = 'insight-preview-empty';
+            preview.appendChild(empty);
+        }
+        return;
+    }
+
+    const histogramData = (chartInstances.histogram?.data?.datasets?.[0]?.data || []).slice(0, 5);
+    const timelineData = (chartInstances.timeline?.data?.datasets?.[0]?.data || []).slice(-4);
+    const nextSignature = [
+        totalRecords,
+        provincePreviewVersion,
+        histogramData.join(','),
+        timelineData.join(',')
+    ].join('|');
+
+    if (nextSignature === insightPreviewSignature) return;
+    insightPreviewSignature = nextSignature;
+
+    renderInsightPreviewBars('insight-preview-price', histogramData);
+    renderInsightPreviewLine(timelineData);
+    renderInsightPreviewProvinceMap();
 }
 
 const CHART_CONFIG = {
@@ -3799,6 +3905,286 @@ function parseMonthKey(dateStr) {
     return null;
 }
 
+const INSIGHT_CHART_META = {
+    province: {
+        title: 'Theo tỉnh/thành',
+        description: 'Bản đồ tổng giá trị trúng thầu theo từng tỉnh/thành trong kết quả hiện tại.'
+    },
+    price: {
+        title: 'Phân bố đơn giá',
+        description: 'Biểu đồ giúp nhận diện nhanh cụm giá thấp, cao hoặc bất thường.'
+    },
+    timeline: {
+        title: 'Theo thời gian',
+        description: 'Đường xu hướng tổng giá trị trúng thầu theo tháng phê duyệt.'
+    }
+};
+
+let activeInsightChart = 'province';
+let insightEntryPointUpdateFrame = null;
+let pendingInsightTotalRecords = null;
+let provincePreviewVersion = 0;
+let insightPreviewSignature = '';
+let insightDrawerCloseTimer = null;
+
+function getInsightResultCounts() {
+    const df1Count = currentFilteredDf1?.length || 0;
+    const df2Count = currentFilteredDf2?.length || 0;
+    return {
+        df1Count,
+        df2Count,
+        total: df1Count + df2Count
+    };
+}
+
+function formatInsightResultSummary(counts = getInsightResultCounts()) {
+    const totalText = Number(counts.total || 0).toLocaleString('vi-VN');
+    const df1Text = Number(counts.df1Count || 0).toLocaleString('vi-VN');
+    const df2Text = Number(counts.df2Count || 0).toLocaleString('vi-VN');
+    return `${totalText} bản ghi: ${df1Text} thuốc, ${df2Text} hàng hóa`;
+}
+
+function formatDockResultLine() {
+    const df1Displayed = Number(currentQueryMeta.df1Displayed || currentFilteredDf1?.length || 0);
+    const df2Displayed = Number(currentQueryMeta.df2Displayed || currentFilteredDf2?.length || 0);
+    const df1Total = String(currentQueryMeta.df1TotalLabel || Number(currentQueryMeta.df1Total || df1Displayed || 0).toLocaleString('vi-VN'));
+    const df2Total = String(currentQueryMeta.df2TotalLabel || Number(currentQueryMeta.df2Total || df2Displayed || 0).toLocaleString('vi-VN'));
+
+    return `Thuốc: ${df1Displayed.toLocaleString('vi-VN')}/${df1Total}; Hàng hóa: ${df2Displayed.toLocaleString('vi-VN')}/${df2Total}`;
+}
+
+function formatDockQuotaLine(quota = getFullSearchQuotaState()) {
+    if (!quota.enabled || Number(quota.limit || 0) <= 0) {
+        return 'Full search hiện chưa khả dụng';
+    }
+
+    return `Bạn còn ${Number(quota.remaining || 0).toLocaleString('vi-VN')}/${Number(quota.limit || 0).toLocaleString('vi-VN')} lượt full search hôm nay`;
+}
+
+function canRunDockFullSearch(quota = getFullSearchQuotaState()) {
+    const hasQuery = Boolean(currentQueryRequest);
+    const hasLoadedRows = Number(currentQueryMeta.df1Displayed || 0) + Number(currentQueryMeta.df2Displayed || 0) > 0;
+    const hasMoreRows = Boolean(currentQueryMeta.df1HasMore || currentQueryMeta.df2HasMore);
+    const alreadyFullSearch = currentQueryMeta.searchMode === 'full'
+        || (currentQueryMeta.searchMode === 'bulk' && currentQueryMeta.bulkSearchMode === 'full');
+
+    return hasQuery
+        && hasLoadedRows
+        && hasMoreRows
+        && !alreadyFullSearch
+        && quota.enabled
+        && Number(quota.limit || 0) > 0
+        && Number(quota.remaining || 0) > 0;
+}
+
+function isDataDockContextAllowed() {
+    const dataTabActive = document.getElementById('data-tab')?.classList.contains('active');
+
+    return dataTabActive && !document.body.classList.contains('landing-active');
+}
+
+function scheduleInsightEntryPointUpdate(totalRecords = null) {
+    pendingInsightTotalRecords = totalRecords;
+    if (insightEntryPointUpdateFrame !== null) return;
+
+    insightEntryPointUpdateFrame = requestAnimationFrame(() => {
+        const nextTotalRecords = pendingInsightTotalRecords;
+        pendingInsightTotalRecords = null;
+        insightEntryPointUpdateFrame = null;
+        updateInsightEntryPoint(nextTotalRecords ?? getInsightResultCounts().total);
+    });
+}
+
+function setDockLayoutReserve(enabled) {
+    const hasClass = document.body.classList.contains('data-dock-visible');
+    if (enabled && !hasClass) {
+        document.body.classList.add('data-dock-visible');
+    } else if (!enabled && hasClass) {
+        document.body.classList.remove('data-dock-visible');
+    }
+}
+
+function updateInsightEntryPoint(totalRecords = getInsightResultCounts().total) {
+    const dock = document.getElementById('insight-dock');
+    const dockResultLine = document.getElementById('insight-result-line');
+    const dockQuotaLine = document.getElementById('insight-quota-line');
+    const dockFullSearchButton = document.getElementById('insight-full-search');
+    const openButton = document.getElementById('open-insight-drawer');
+    const drawerSummary = document.getElementById('insight-drawer-summary');
+    if (!dock) return;
+
+    if (!isDataDockContextAllowed()) {
+        if (dock.classList.contains('is-visible')) dock.classList.remove('is-visible');
+        if (!dock.hidden) dock.hidden = true;
+        setDockLayoutReserve(false);
+        if (isInsightDrawerOpen()) closeInsightDrawer();
+        return;
+    }
+
+    const counts = getInsightResultCounts();
+    const hasData = Number(totalRecords || counts.total) > 0;
+    const quota = getFullSearchQuotaState();
+
+    if (dock.hidden) dock.hidden = false;
+    setDockLayoutReserve(true);
+    if (!dock.classList.contains('is-visible')) {
+        requestAnimationFrame(() => dock.classList.add('is-visible'));
+    }
+    if (dockResultLine) dockResultLine.textContent = formatDockResultLine();
+    if (dockQuotaLine) dockQuotaLine.textContent = formatDockQuotaLine(quota);
+    if (dockFullSearchButton) {
+        dockFullSearchButton.disabled = !canRunDockFullSearch(quota);
+        dockFullSearchButton.textContent = currentQueryMeta.searchMode === 'full'
+            || (currentQueryMeta.searchMode === 'bulk' && currentQueryMeta.bulkSearchMode === 'full')
+            ? 'Đã full search'
+            : 'Full search';
+    }
+    if (openButton) {
+        openButton.disabled = !hasData;
+        openButton.classList.toggle('is-disabled', !hasData);
+        openButton.classList.toggle('is-open', isInsightDrawerOpen());
+    }
+
+    if (!hasData) {
+        if (isInsightDrawerOpen()) closeInsightDrawer();
+        if (drawerSummary) drawerSummary.textContent = 'Kết quả hiện tại được tổng hợp theo địa lý, giá và thời gian.';
+        return;
+    }
+
+    const resultSummary = formatInsightResultSummary(counts);
+
+    const meta = INSIGHT_CHART_META[activeInsightChart] || INSIGHT_CHART_META.province;
+    if (drawerSummary) drawerSummary.textContent = `${resultSummary}. ${meta.description}`;
+}
+
+function refreshVisibleInsightChart() {
+    requestAnimationFrame(() => {
+        Object.values(chartInstances).forEach(chart => chart?.resize?.());
+
+        if (activeInsightChart === 'province') {
+            const svg = document.querySelector('#chart-province-map svg');
+            if (svg) fitProvinceMapViewBox(svg);
+        }
+    });
+}
+
+function setActiveInsightChart(chartKey = 'province', { redraw = false } = {}) {
+    if (!INSIGHT_CHART_META[chartKey]) return;
+    activeInsightChart = chartKey;
+
+    document.querySelectorAll('[data-chart-view]').forEach(button => {
+        const isActive = button.dataset.chartView === chartKey;
+        button.classList.toggle('active', isActive);
+        button.setAttribute('aria-pressed', String(isActive));
+    });
+
+    document.querySelectorAll('[data-chart-panel]').forEach(panel => {
+        panel.classList.toggle('active', panel.dataset.chartPanel === chartKey);
+    });
+
+    updateInsightEntryPoint();
+
+    if (redraw) {
+        requestAnimationFrame(() => drawCharts(currentFilteredDf1, currentFilteredDf2));
+    } else {
+        refreshVisibleInsightChart();
+    }
+}
+
+function openInsightDrawer() {
+    const drawer = document.getElementById('insight-drawer');
+    const openButton = document.getElementById('open-insight-drawer');
+    if (!drawer || !openButton) return;
+
+    const counts = getInsightResultCounts();
+    if (!counts.total) return;
+
+    closeFloatingTableUi();
+    if (insightDrawerCloseTimer) {
+        window.clearTimeout(insightDrawerCloseTimer);
+        insightDrawerCloseTimer = null;
+    }
+    drawer.classList.remove('is-closing');
+    drawer.classList.add('show');
+    drawer.setAttribute('aria-hidden', 'false');
+    openButton.setAttribute('aria-expanded', 'true');
+    openButton.classList.add('is-open');
+    document.body.classList.add('insight-drawer-open');
+
+    setActiveInsightChart(activeInsightChart, { redraw: true });
+}
+
+function closeInsightDrawer() {
+    const drawer = document.getElementById('insight-drawer');
+    const openButton = document.getElementById('open-insight-drawer');
+    if (!drawer) return;
+    const isOpen = drawer.classList.contains('show');
+    if (!isOpen && drawer.getAttribute('aria-hidden') === 'true' && !document.body.classList.contains('insight-drawer-open')) {
+        openButton?.setAttribute('aria-expanded', 'false');
+        openButton?.classList.remove('is-open');
+        return;
+    }
+
+    openButton?.setAttribute('aria-expanded', 'false');
+    openButton?.classList.remove('is-open');
+    if (drawer.classList.contains('is-closing')) return;
+
+    drawer.classList.add('is-closing');
+    drawer.classList.remove('show');
+    insightDrawerCloseTimer = window.setTimeout(() => {
+        insightDrawerCloseTimer = null;
+        drawer.classList.remove('is-closing');
+        if (drawer.getAttribute('aria-hidden') !== 'true') drawer.setAttribute('aria-hidden', 'true');
+        if (document.body.classList.contains('insight-drawer-open')) {
+            document.body.classList.remove('insight-drawer-open');
+        }
+    }, 440);
+}
+
+function isInsightDrawerOpen() {
+    const drawer = document.getElementById('insight-drawer');
+    return Boolean(drawer?.classList.contains('show') || drawer?.classList.contains('is-closing'));
+}
+
+function initInsightDrawerEvents() {
+    document.getElementById('open-insight-drawer')?.addEventListener('click', () => {
+        if (isInsightDrawerOpen()) {
+            closeInsightDrawer();
+        } else {
+            openInsightDrawer();
+        }
+    });
+    document.querySelector('[data-insight-close]')?.addEventListener('click', closeInsightDrawer);
+    document.getElementById('insight-full-search')?.addEventListener('click', () => {
+        void triggerFullSearch();
+    });
+
+    document.querySelectorAll('[data-chart-view]').forEach(button => {
+        button.addEventListener('click', () => setActiveInsightChart(button.dataset.chartView, { redraw: true }));
+    });
+
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && document.getElementById('insight-drawer')?.classList.contains('show')) {
+            closeInsightDrawer();
+        }
+    });
+
+    const dockVisibilityObserver = new MutationObserver(() => scheduleInsightEntryPointUpdate());
+    dockVisibilityObserver.observe(document.body, {
+        attributes: true,
+        attributeFilter: ['class']
+    });
+    document.querySelectorAll('.side-panel, .history-modal, .readme-modal, .contact-modal, .bulk-search-modal, .feedback-modal, .auth-modal, .panel-overlay').forEach(element => {
+        dockVisibilityObserver.observe(element, {
+            attributes: true,
+            attributeFilter: ['class', 'aria-hidden']
+        });
+    });
+
+    setActiveInsightChart(activeInsightChart);
+    updateInsightEntryPoint(0);
+}
+
 function initEmptyCharts() {
     Object.values(CHART_CONFIG).forEach(config => {
         const canvas = document.getElementById(config.canvasId);
@@ -3810,6 +4196,7 @@ function initEmptyCharts() {
         }
     });
     renderProvinceValueMap([]);
+    updateInsightEntryPoint(0);
 }
 
 function destroyCharts() {
@@ -3826,12 +4213,18 @@ function drawCharts(df1Data, df2Data) {
     const noDataMsg = 'Chưa có dữ liệu. Vui lòng thực hiện tìm kiếm.';
     
     destroyCharts();
+    updateInsightEntryPoint(totalRecords);
+
+    if (!isInsightDrawerOpen()) {
+        return;
+    }
     
     if (totalRecords === 0) {
         showNoDataMessage('chart-province-map', noDataMsg);
         Object.values(CHART_CONFIG).forEach(config => {
             showNoDataMessage(config.canvasId, noDataMsg);
         });
+        updateInsightDataPreviews(0);
         return;
     }
     
@@ -3842,6 +4235,7 @@ function drawCharts(df1Data, df2Data) {
     Object.entries(CHART_CONFIG).forEach(([key, config]) => {
         drawChart(key, config, allData);
     });
+    updateInsightDataPreviews(totalRecords);
 }
 
 function showNoDataMessage(canvasId, message) {
@@ -4638,13 +5032,6 @@ let df1 = [];
 let df2 = [];
 let resultPanelSwitchTimer = null;
 
-const CONFIG = {
-    tabs: {
-        charts: 'charts-tab',
-        data: 'data-tab'
-    }
-};
-
 const tableSel = {
     "standard-table": { isDown: false, start: null, end: null, text: "", lastActive: 0 },
     "extended-table": { isDown: false, start: null, end: null, text: "", lastActive: 0 }
@@ -4750,6 +5137,21 @@ let bulkImportedColumns = [];
 let bulkActiveScope = 'medicine';
 let lastBulkSearchPayloads = null;
 let lastBulkSearchWarnings = [];
+let bulkImportReadToken = 0;
+let bulkSearchRunToken = 0;
+let lastBulkExportResult = null;
+
+const BULK_EXCEL_ACCEPTED_EXTENSIONS = ['.xlsx', '.xls', '.csv'];
+const BULK_SEARCH_EXPORT_LIMIT = 1000;
+const BULK_EXPORT_SOURCE_INDEX_FIELD = 'Tra cứu hàng loạt';
+const BULK_EXPORT_SOURCE_LABEL_FIELD = 'Dòng tra cứu';
+const BULK_EXPORT_EXCLUDED_FIELDS = new Set([
+    '_dataset',
+    '__row_id',
+    '__has_duplicate_warning',
+    BULK_EXPORT_SOURCE_INDEX_FIELD,
+    BULK_EXPORT_SOURCE_LABEL_FIELD
+]);
 
 function normalizeBulkColumnName(value) {
     return String(value || '')
@@ -4762,10 +5164,24 @@ function normalizeBulkColumnName(value) {
         .trim();
 }
 
+function getBulkDiversitySelection() {
+    const selected = document.querySelector('input[name="bulk-diversity-limit"]:checked');
+    const [mode, rawLimit] = String(selected?.value || 'price:3').split(':');
+    const limit = Number(rawLimit || 3);
+    return {
+        mode: mode === 'product' ? 'product' : 'price',
+        limit: [3, 5, 10].includes(limit) ? limit : 3
+    };
+}
+
 function getBulkPriceLimit() {
-    const selected = document.querySelector('input[name="bulk-price-limit"]:checked');
-    const value = Number(selected?.value || 3);
-    return [3, 5, 10].includes(value) ? value : 3;
+    const selection = getBulkDiversitySelection();
+    return selection.mode === 'price' ? selection.limit : 0;
+}
+
+function getBulkProductLimit() {
+    const selection = getBulkDiversitySelection();
+    return selection.mode === 'product' ? selection.limit : 0;
 }
 
 function getSelectedBulkFields(scope) {
@@ -4778,7 +5194,7 @@ function getAllSelectedBulkScopes() {
     return getSelectedBulkFields(bulkActiveScope).length ? [bulkActiveScope] : [];
 }
 
-function setBulkActiveScope(scope) {
+function setBulkActiveScope(scope, options = {}) {
     if (!['medicine', 'goods'].includes(scope)) return;
     bulkActiveScope = scope;
     document.querySelectorAll('[data-bulk-fields]').forEach(panel => {
@@ -4786,7 +5202,10 @@ function setBulkActiveScope(scope) {
         panel.classList.toggle('is-active', isActive);
         panel.setAttribute('aria-pressed', String(isActive));
     });
-    setBulkSearchWarnings([]);
+    if (options.resetOutput !== false) {
+        resetBulkDownloadUi();
+        setBulkSearchWarnings([]);
+    }
 }
 
 function findBulkColumnForField(scope, field, normalizedColumns) {
@@ -4841,10 +5260,24 @@ function setBulkSearchWarnings(warnings = []) {
 
 function setBulkSearchStatus(message, type = '') {
     const status = document.getElementById('bulk-search-status');
-    if (!status) return;
-    status.textContent = message || '';
-    status.classList.toggle('is-success', type === 'success');
-    status.classList.toggle('is-error', type === 'error');
+    if (status) {
+        status.textContent = '';
+        status.classList.toggle('is-success', false);
+        status.classList.toggle('is-error', false);
+    }
+    const inlineStatus = document.getElementById('bulk-inline-status');
+    if (!inlineStatus) return;
+    inlineStatus.textContent = message || '';
+    inlineStatus.classList.toggle('is-error', type === 'error');
+}
+
+function isSupportedBulkExcelFile(file) {
+    const fileName = String(file?.name || '').toLowerCase();
+    return BULK_EXCEL_ACCEPTED_EXTENSIONS.some(extension => fileName.endsWith(extension));
+}
+
+function setBulkImportDragState(isDragging) {
+    document.getElementById('bulk-import-card')?.classList.toggle('is-dragging', Boolean(isDragging));
 }
 
 function openBulkSearchModal() {
@@ -4853,8 +5286,7 @@ function openBulkSearchModal() {
     modal.classList.add('show');
     modal.setAttribute('aria-hidden', 'false');
     setBulkSearchStatus('');
-    setBulkSearchWarnings([]);
-    setBulkActiveScope(bulkActiveScope);
+    setBulkActiveScope(bulkActiveScope, { resetOutput: false });
     requestAnimationFrame(() => document.getElementById('bulk-import-excel')?.focus());
     window.feather?.replace?.();
 }
@@ -4866,24 +5298,76 @@ function closeBulkSearchModal() {
     modal.setAttribute('aria-hidden', 'true');
 }
 
-function updateBulkImportFileName(text) {
+function updateBulkImportFileName(text, hasFile = false) {
     const label = document.getElementById('bulk-import-file-name');
-    if (label) label.textContent = text || 'Chưa chọn file';
+    if (label) {
+        label.textContent = text || 'Chưa chọn file';
+        label.hidden = false;
+    }
+    const selected = document.getElementById('bulk-import-selected');
+    if (selected) selected.hidden = !hasFile;
+    const downloadCopy = document.getElementById('bulk-download-copy');
+    if (downloadCopy) downloadCopy.hidden = true;
+    const downloadButton = document.getElementById('download-bulk-excel');
+    if (downloadButton) {
+        downloadButton.hidden = true;
+        downloadButton.disabled = true;
+    }
+
+    const clearButton = document.getElementById('bulk-clear-excel');
+    if (clearButton) {
+        clearButton.hidden = !hasFile;
+        clearButton.disabled = !hasFile;
+    }
+
+    document.getElementById('bulk-excel-dropzone')?.classList.toggle('has-file', hasFile);
+}
+
+function resetBulkInputState({ message = '' } = {}) {
+    bulkImportReadToken += 1;
+    bulkSearchRunToken += 1;
+    bulkImportedRows = [];
+    bulkImportedColumns = [];
+    lastBulkSearchPayloads = null;
+    lastBulkSearchWarnings = [];
+    resetBulkDownloadUi();
+    setBulkSearchWarnings([]);
+    updateBulkImportFileName('Chưa chọn file', false);
+
+    const input = document.getElementById('bulk-excel-file');
+    if (input) input.value = '';
+    setBulkSearchStatus(message);
+}
+
+function clearBulkImportedFile() {
+    resetBulkInputState();
 }
 
 async function handleBulkExcelFile(file) {
     if (!file) return;
+    if (!isSupportedBulkExcelFile(file)) {
+        setBulkSearchStatus('Chỉ hỗ trợ file .xlsx, .xls hoặc .csv.', 'error');
+        return;
+    }
     if (!window.XLSX) {
         setBulkSearchStatus('Không tải được thư viện đọc Excel. Vui lòng thử tải lại trang.', 'error');
         return;
     }
 
+    const readToken = ++bulkImportReadToken;
+    bulkImportedRows = [];
+    bulkImportedColumns = [];
+    lastBulkSearchPayloads = null;
+    lastBulkSearchWarnings = [];
+    resetBulkDownloadUi();
+    updateBulkImportFileName(file.name, false);
     setBulkSearchStatus('Đang đọc file Excel...');
     setBulkSearchWarnings([]);
 
     try {
         const buffer = await file.arrayBuffer();
         const workbook = window.XLSX.read(buffer, { type: 'array' });
+        if (readToken !== bulkImportReadToken) return;
         const firstSheetName = workbook.SheetNames?.[0];
         if (!firstSheetName) {
             throw new Error('File Excel không có sheet dữ liệu.');
@@ -4897,12 +5381,13 @@ async function handleBulkExcelFile(file) {
             throw new Error('File Excel chưa có dữ liệu hoặc chưa có dòng tiêu đề cột.');
         }
 
-        updateBulkImportFileName(`${file.name} (${bulkImportedRows.length} dòng)`);
-        setBulkSearchStatus(`Đã import ${bulkImportedRows.length} dòng từ sheet "${firstSheetName}".`, 'success');
+        updateBulkImportFileName(`${file.name} (${bulkImportedRows.length} dòng)`, true);
+        setBulkSearchStatus('');
     } catch (error) {
+        if (readToken !== bulkImportReadToken) return;
         bulkImportedRows = [];
         bulkImportedColumns = [];
-        updateBulkImportFileName('Chưa chọn file');
+        updateBulkImportFileName('Chưa chọn file', false);
         setBulkSearchStatus(error?.message || 'Không đọc được file Excel.', 'error');
     }
 }
@@ -4928,8 +5413,9 @@ function combineBulkResults(results) {
     const displayedTotal = Number(medicineData.data?.length || 0) + Number(goodsData.data?.length || 0);
     const hasMore = Boolean(medicineData.has_more || goodsData.has_more);
     const totalCount = Number(medicineData.count || 0) + Number(goodsData.count || 0);
-    const totalCountLabel = hasMore ? `${totalCount}+` : String(totalCount);
-    const totalCountSummary = hasMore ? `hơn ${totalCount}` : String(totalCount);
+    const totalCountExact = medicineData.count_exact !== false && goodsData.count_exact !== false;
+    const totalCountLabel = totalCountExact ? String(totalCount) : `${totalCount}+`;
+    const totalCountSummary = totalCountExact ? String(totalCount) : `hơn ${totalCount}`;
     const appliedTotalLimit = results.reduce((sum, item) => sum + Number(item.result?.applied_total_limit || 0), 0)
         || (hasMore ? displayedTotal : totalCount);
 
@@ -4940,14 +5426,17 @@ function combineBulkResults(results) {
             scope: results.length === 2 ? 'all' : (results[0]?.scope || 'all'),
             input_count: Math.max(...results.map(item => Number(item.result?.bulk?.input_count || 0)), 0),
             matched_count: displayedTotal,
+            matched_input_count: results.reduce((sum, item) => sum + Number(item.result?.bulk?.matched_input_count || 0), 0),
+            diversity_mode: getBulkDiversitySelection().mode,
             price_limit: getBulkPriceLimit(),
+            product_limit: getBulkProductLimit(),
             search_mode: results.some(item => item.result?.bulk?.search_mode === 'full') ? 'full' : 'standard',
             result_limit: appliedTotalLimit,
             truncated: hasMore,
             fields: results.reduce((fields, item) => fields.concat(item.result?.bulk?.fields || []), [])
         },
         total_count: totalCount,
-        total_count_exact: !hasMore,
+        total_count_exact: totalCountExact,
         total_count_label: totalCountLabel,
         total_count_summary: totalCountSummary,
         applied_total_limit: appliedTotalLimit,
@@ -4960,14 +5449,223 @@ function combineBulkResults(results) {
     };
 }
 
+function getBulkResultRows(result, scope) {
+    const scopeData = scope === 'medicine' ? result?.df1 : result?.df2;
+    return Array.isArray(scopeData?.data) ? scopeData.data : [];
+}
+
+function getBulkDisplayedTotal(result) {
+    return getBulkResultRows(result, 'medicine').length + getBulkResultRows(result, 'goods').length;
+}
+
+function getBulkMatchedSourceCount(result) {
+    const serverCount = Number(result?.bulk?.matched_input_count || 0);
+    if (serverCount > 0) return serverCount;
+    const indexes = new Set();
+    ['medicine', 'goods'].forEach(scope => {
+        getBulkResultRows(result, scope).forEach(row => {
+            const index = Number(row?.[BULK_EXPORT_SOURCE_INDEX_FIELD] || 0);
+            if (index > 0) indexes.add(index);
+        });
+    });
+    return indexes.size;
+}
+
+function getBulkInputSourceCount() {
+    return Math.max(...(lastBulkSearchPayloads || []).map(payload => Number(payload?.rows?.length || 0)), 0);
+}
+
+function sanitizeBulkExportRows(rows = []) {
+    return rows.map(row => Object.entries(row || {}).reduce((cleaned, [key, value]) => {
+        if (!BULK_EXPORT_EXCLUDED_FIELDS.has(key)) {
+            cleaned[key] = value ?? '';
+        }
+        return cleaned;
+    }, {}));
+}
+
+function getBulkPayloadForScope(scope) {
+    return (lastBulkSearchPayloads || []).find(payload => payload.scope === scope) || null;
+}
+
+function buildBulkSourceDisplayRow(sourceRow = {}, fields = [], scope = 'medicine') {
+    const labels = BULK_SEARCH_FIELD_LABELS?.[scope] || {};
+    return fields.reduce((row, field) => {
+        const label = labels[field] || field;
+        row[label] = sourceRow?.[field] ?? '';
+        return row;
+    }, {});
+}
+
+function getBulkUiColumns(scope = 'medicine') {
+    return scope === 'goods' ? [...DF2_COLUMNS_ORDER] : [...DF1_COLUMNS_ORDER];
+}
+
+function buildBulkExportSheet(rows = [], scope = 'medicine') {
+    const uiColumns = getBulkUiColumns(scope);
+    const cleanedRows = sanitizeBulkExportRows(rows).map(row => (
+        uiColumns.reduce((filtered, columnName) => {
+            filtered[columnName] = row[columnName] ?? '';
+            return filtered;
+        }, {})
+    ));
+    const payload = getBulkPayloadForScope(scope);
+    const sourceRows = Array.isArray(payload?.rows) ? payload.rows : [];
+    const fields = Array.isArray(payload?.fields) ? payload.fields : [];
+
+    const headers = [...uiColumns];
+    sourceRows.forEach(row => {
+        Object.keys(buildBulkSourceDisplayRow(row, fields, scope)).forEach(key => {
+            if (!headers.includes(key)) headers.push(key);
+        });
+    });
+    if (!headers.length) headers.push('Không có kết quả');
+
+    const resultGroups = rows.reduce((groups, row) => {
+        const index = Number(row?.[BULK_EXPORT_SOURCE_INDEX_FIELD] || 0);
+        if (index > 0) {
+            if (!groups.has(index)) groups.set(index, []);
+            groups.get(index).push(row);
+        }
+        return groups;
+    }, new Map());
+
+    const aoa = [
+        ['Nguồn: BIDFinder – Hệ thống quản lý dữ liệu đấu thầu y tế'],
+        [],
+        headers
+    ];
+    const sourceExcelRows = [];
+
+    sourceRows.forEach((sourceRow, index) => {
+        const excelRowIndex = aoa.length;
+        sourceExcelRows.push(excelRowIndex);
+        const sourceDisplayRow = buildBulkSourceDisplayRow(sourceRow, fields, scope);
+        aoa.push(headers.map(header => sourceDisplayRow[header] ?? ''));
+
+        const matchedRows = resultGroups.get(index + 1) || [];
+        matchedRows.forEach(resultRow => {
+            const cleaned = sanitizeBulkExportRows([resultRow])[0] || {};
+            aoa.push(headers.map(header => cleaned[header] ?? ''));
+        });
+    });
+
+    if (!sourceRows.length && cleanedRows.length) {
+        cleanedRows.forEach(row => aoa.push(headers.map(header => row[header] ?? '')));
+    }
+
+    const ws = window.XLSX.utils.aoa_to_sheet(aoa);
+    sourceExcelRows.forEach(rowIndex => {
+        headers.forEach((_, columnIndex) => {
+            const cellAddress = window.XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex });
+            if (!ws[cellAddress]) ws[cellAddress] = { t: 's', v: '' };
+            ws[cellAddress].s = {
+                fill: { patternType: 'solid', fgColor: { rgb: 'FFF2CC' } },
+                font: { bold: true }
+            };
+        });
+    });
+    return ws;
+}
+
+function getBulkExportFilename() {
+    const rowCount = getBulkDisplayedTotal(lastBulkExportResult);
+    return `BIDFinder_KQ_TCHL_${rowCount}.xlsx`;
+}
+
+function resetBulkDownloadUi() {
+    lastBulkExportResult = null;
+    const uploadName = document.getElementById('bulk-import-file-name');
+    const copy = document.getElementById('bulk-download-copy');
+    const title = document.getElementById('bulk-download-title');
+    const summary = document.getElementById('bulk-download-summary');
+    const button = document.getElementById('download-bulk-excel');
+    if (uploadName) uploadName.hidden = false;
+    if (copy) copy.hidden = true;
+    if (title) title.textContent = '';
+    if (summary) summary.textContent = '';
+    if (button) {
+        button.hidden = true;
+        button.disabled = true;
+    }
+    const runButton = document.getElementById('run-bulk-search');
+    if (runButton) runButton.disabled = false;
+}
+
+function updateBulkDownloadUi(result) {
+    lastBulkExportResult = result || null;
+    const selected = document.getElementById('bulk-import-selected');
+    const uploadName = document.getElementById('bulk-import-file-name');
+    const copy = document.getElementById('bulk-download-copy');
+    const title = document.getElementById('bulk-download-title');
+    const summary = document.getElementById('bulk-download-summary');
+    const button = document.getElementById('download-bulk-excel');
+    const clearButton = document.getElementById('bulk-clear-excel');
+    if (!selected || !uploadName || !copy || !title || !summary || !button) return;
+
+    const displayed = getBulkDisplayedTotal(result);
+    const total = Number(result?.total_count || displayed || 0);
+    selected.hidden = false;
+    uploadName.hidden = true;
+    copy.hidden = false;
+    button.hidden = false;
+    button.disabled = displayed <= 0;
+    const runButton = document.getElementById('run-bulk-search');
+    if (runButton) runButton.disabled = true;
+    if (clearButton) {
+        clearButton.hidden = false;
+        clearButton.disabled = false;
+    }
+    document.getElementById('bulk-excel-dropzone')?.classList.toggle('has-file', true);
+    title.textContent = getBulkExportFilename();
+    const matchedSources = getBulkMatchedSourceCount(result);
+    const inputSources = getBulkInputSourceCount();
+    const productLine = `${matchedSources.toLocaleString('vi-VN')}/${inputSources.toLocaleString('vi-VN')} sản phẩm có kết quả`;
+    const rowLine = displayed > 0
+        ? `${displayed.toLocaleString('vi-VN')}/${total.toLocaleString('vi-VN')} dòng sẵn sàng tải về.`
+        : 'Không có dòng kết quả để tải về.';
+    summary.textContent = displayed > 0
+        ? `${productLine}\n${rowLine}`
+        : 'Không có dòng kết quả để tải về.';
+}
+
+function downloadBulkSearchExcel() {
+    if (!lastBulkExportResult) return;
+    if (!window.XLSX) {
+        setBulkSearchStatus('Không tải được thư viện tạo Excel. Vui lòng thử tải lại trang.', 'error');
+        return;
+    }
+
+    const medicineRows = getBulkResultRows(lastBulkExportResult, 'medicine');
+    const goodsRows = getBulkResultRows(lastBulkExportResult, 'goods');
+    if (!medicineRows.length && !goodsRows.length) {
+        setBulkSearchStatus('Không có dữ liệu để tải Excel.', 'error');
+        return;
+    }
+
+    const workbook = window.XLSX.utils.book_new();
+    if (medicineRows.length) {
+        window.XLSX.utils.book_append_sheet(workbook, buildBulkExportSheet(medicineRows, 'medicine'), 'Thuoc');
+    }
+    if (goodsRows.length) {
+        window.XLSX.utils.book_append_sheet(workbook, buildBulkExportSheet(goodsRows, 'goods'), 'Hang hoa');
+    }
+
+    window.XLSX.writeFile(workbook, getBulkExportFilename());
+    window.BIDFinderAnalytics?.track?.('bulk_search_excel_downloaded', {
+        row_count: getBulkDisplayedTotal(lastBulkExportResult),
+        total_count: Number(lastBulkExportResult?.total_count || 0)
+    });
+}
+
 async function runBulkSearch(options = {}) {
-    const searchMode = options.searchMode === 'full' ? 'full' : 'standard';
+    const searchMode = 'standard';
     const reuseLastPayloads = Boolean(options.reuseLastPayloads);
     await window.BIDFinderAuth?.whenReady?.();
     if (!requireAuthenticatedSession('login', 'full_query')) return;
 
     if (!reuseLastPayloads && !bulkImportedRows.length) {
-        setBulkSearchStatus('Bạn import file Excel trước khi tra cứu.', 'error');
+        setBulkSearchStatus('Chưa có dữ liệu để tra cứu.', 'error');
         return;
     }
 
@@ -4980,22 +5678,18 @@ async function runBulkSearch(options = {}) {
     } else {
         const selectedScopes = getAllSelectedBulkScopes();
         if (!selectedScopes.length) {
-            setBulkSearchStatus('Bạn chọn ít nhất một trường tra cứu.', 'error');
+            setBulkSearchStatus('Cần chọn ít nhất một biến để tra cứu.', 'error');
             return;
         }
 
         payloads = selectedScopes
             .map(scope => {
                 const mapped = buildBulkMappedRows(scope);
-                mapped.missingFields.forEach(field => {
-                    warnings.push(`Không tìm thấy cột "${BULK_SEARCH_FIELD_LABELS[scope]?.[field] || field}".`);
-                });
                 if (!mapped.fields.length) {
-                    // warnings.push(`Nhóm ${scope === 'medicine' ? 'thuốc' : 'hàng hóa'} chưa có cột nào khớp để tra cứu.`);
                     return null;
                 }
                 if (!mapped.rows.length) {
-                    // warnings.push(`Nhóm ${scope === 'medicine' ? 'thuốc' : 'hàng hóa'} không có dòng nào có dữ liệu ở các cột đã map.`);
+                    setBulkSearchStatus('Chưa có dữ liệu hợp lệ để tra cứu.', 'error');
                     return null;
                 }
                 return { scope, fields: mapped.fields, rows: mapped.rows };
@@ -5003,31 +5697,35 @@ async function runBulkSearch(options = {}) {
             .filter(Boolean);
     }
 
-    setBulkSearchWarnings(warnings);
+    setBulkSearchWarnings([]);
     if (!payloads.length) {
         setBulkSearchStatus('Chưa có dữ liệu hợp lệ để tra cứu.', 'error');
         return;
     }
 
     const runButton = document.getElementById('run-bulk-search');
-    const defaultText = runButton?.textContent || 'Tra cứu hàng loạt';
+    const defaultText = runButton?.textContent || 'Tra cứu';
     if (runButton) {
         runButton.disabled = true;
         runButton.textContent = searchMode === 'full' ? 'Đang full search...' : 'Đang tra cứu...';
     }
     const totalInputRows = payloads.reduce((sum, item) => sum + item.rows.length, 0);
-    setBulkSearchStatus(`${searchMode === 'full' ? 'Đang full search' : 'Đang tra cứu'} ${totalInputRows} dòng...`);
+    const runToken = ++bulkSearchRunToken;
+    resetBulkDownloadUi();
+    setBulkSearchStatus(`${searchMode === 'full' ? 'Đang full search...' : 'Đang tra cứu...'}`);
 
     try {
         const results = [];
-        const limit = searchMode === 'full' ? FULL_SEARCH_TOTAL_LIMIT : MAX_RESULTS_PER_TABLE;
+        const limit = BULK_SEARCH_EXPORT_LIMIT;
         for (const payload of payloads) {
             const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/bulk-query`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     ...payload,
+                    diversityMode: getBulkDiversitySelection().mode,
                     priceLimit: getBulkPriceLimit(),
+                    productLimit: getBulkProductLimit(),
                     limit,
                     searchMode
                 })
@@ -5044,31 +5742,31 @@ async function runBulkSearch(options = {}) {
             window.BIDFinderAuth?.applyAuthConfig?.(result.auth);
         }
         markDatabaseWarm();
+        if (runToken !== bulkSearchRunToken) return;
 
-        currentQueryRequest = { scope: result.bulk?.scope || 'all', filters: {} };
-        clearFilterUrlState();
         lastBulkSearchPayloads = payloads;
         lastBulkSearchWarnings = warnings;
-        handleQuerySuccess(result);
-        setBulkSearchStatus(`Đã tìm thấy ${Number(result.total_count || 0).toLocaleString('vi-VN')} kết quả.`, 'success');
-        if (!warnings.length && searchMode !== 'full') {
-            closeBulkSearchModal();
-        }
+        updateBulkDownloadUi(result);
+        setBulkSearchWarnings([]);
+        setBulkSearchStatus('');
         window.BIDFinderAnalytics?.track?.('bulk_search_completed', {
             scope: result.bulk?.scope || 'all',
             search_mode: searchMode,
             input_count: totalInputRows,
             matched_count: Number(result.total_count || 0),
-            price_limit: getBulkPriceLimit()
+            diversity_mode: getBulkDiversitySelection().mode,
+            price_limit: getBulkPriceLimit(),
+            product_limit: getBulkProductLimit()
         });
     } catch (error) {
+        if (runToken !== bulkSearchRunToken) return;
         console.error('Bulk search failed:', error);
         setBulkSearchStatus(error?.message || 'Không thể tra cứu hàng loạt lúc này.', 'error');
     } finally {
-        if (runButton) {
-            runButton.disabled = false;
-            runButton.textContent = defaultText;
-        }
+    if (runButton) {
+        runButton.disabled = Boolean(lastBulkExportResult);
+        runButton.textContent = defaultText;
+    }
     }
 }
 
@@ -5086,16 +5784,61 @@ function initBulkSearchEvents() {
         panel.addEventListener('focusin', () => setBulkActiveScope(panel.dataset.bulkFields));
     });
     document.querySelectorAll('[data-bulk-fields] input[type="checkbox"]').forEach(input => {
-        input.addEventListener('change', () => setBulkSearchWarnings([]));
+        input.addEventListener('change', () => {
+            resetBulkDownloadUi();
+            setBulkSearchWarnings([]);
+        });
+    });
+    document.querySelectorAll('input[name="bulk-diversity-limit"]').forEach(input => {
+        input.addEventListener('change', () => {
+            resetBulkDownloadUi();
+            setBulkSearchWarnings([]);
+        });
     });
     document.getElementById('bulk-import-excel')?.addEventListener('click', () => {
         document.getElementById('bulk-excel-file')?.click();
     });
     document.getElementById('bulk-excel-file')?.addEventListener('change', event => {
         handleBulkExcelFile(event.target.files?.[0]);
+        event.target.value = '';
     });
+    document.getElementById('bulk-clear-excel')?.addEventListener('click', () => {
+        clearBulkImportedFile();
+    });
+
+    const dropZone = document.getElementById('bulk-import-card');
+    if (dropZone) {
+        let dragDepth = 0;
+        dropZone.addEventListener('dragenter', event => {
+            event.preventDefault();
+            dragDepth += 1;
+            setBulkImportDragState(true);
+        });
+        dropZone.addEventListener('dragover', event => {
+            event.preventDefault();
+            if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+            setBulkImportDragState(true);
+        });
+        dropZone.addEventListener('dragleave', event => {
+            event.preventDefault();
+            dragDepth = Math.max(0, dragDepth - 1);
+            if (dragDepth === 0) setBulkImportDragState(false);
+        });
+        dropZone.addEventListener('drop', event => {
+            event.preventDefault();
+            dragDepth = 0;
+            setBulkImportDragState(false);
+            const files = Array.from(event.dataTransfer?.files || []);
+            const file = files.find(isSupportedBulkExcelFile) || files[0];
+            handleBulkExcelFile(file);
+        });
+    }
+
     document.getElementById('run-bulk-search')?.addEventListener('click', runBulkSearch);
-    setBulkActiveScope(bulkActiveScope);
+    document.getElementById('download-bulk-excel')?.addEventListener('click', downloadBulkSearchExcel);
+    updateBulkImportFileName('Chưa chọn file', false);
+    resetBulkDownloadUi();
+    setBulkActiveScope(bulkActiveScope, { resetOutput: false });
 }
 
 function getFeedbackContextText() {
@@ -5288,37 +6031,6 @@ function initFeedbackModalEvents() {
     });
 }
 
-function initTabSwitching() {
-    const tabBtns = document.querySelectorAll('.primary-tab');
-    const tabContents = document.querySelectorAll('.tab-content');
-    const dataViewSwitcher = document.getElementById('data-view-switcher');
-
-    tabBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            if (btn.id === 'open-run-history') return;
-            
-            // Update active states
-            tabBtns.forEach(b => b.classList.remove('active'));
-            tabContents.forEach(content => content.classList.remove('active'));
-            
-            btn.classList.add('active');
-            const tabId = btn.getAttribute('data-tab');
-            document.getElementById(tabId)?.classList.add('active');
-
-            if (dataViewSwitcher) {
-                dataViewSwitcher.style.display = tabId === CONFIG.tabs.data ? 'flex' : 'none';
-            }
-
-            syncPrimaryTabIndicator();
-            requestAnimationFrame(syncScopeSwitcherSlider);
-
-            if (tabId === CONFIG.tabs.charts) {
-                drawCharts(currentFilteredDf1, currentFilteredDf2);
-            }
-        });
-    });
-}
-
 function initResultViewSwitching() {
     const viewButtons = document.querySelectorAll('.scope-btn');
 
@@ -5413,21 +6125,6 @@ function syncScopeSwitcherSlider() {
         slider.style.width = `${Math.ceil(activeBtn.offsetWidth)}px`;
         slider.style.transform = `translateX(${Math.round(activeBtn.offsetLeft)}px)`;
     }
-}
-
-function syncPrimaryTabIndicator() {
-    const switcher = document.querySelector('.primary-tab-switcher');
-    if (!switcher) return;
-
-    const indicator = switcher.querySelector('.primary-tab-indicator');
-    const activeBtn = switcher.querySelector('.primary-tab.active');
-    if (!indicator || !activeBtn) return;
-
-    const switcherRect = switcher.getBoundingClientRect();
-    const btnRect = activeBtn.getBoundingClientRect();
-
-    indicator.style.width = `${btnRect.width}px`;
-    indicator.style.transform = `translateX(${btnRect.left - switcherRect.left - 4}px)`;
 }
 
 function generateExportFilename(suffix = '') {
@@ -5663,20 +6360,20 @@ function initTableRangeSelection() {
 
 // Main initialization
 document.addEventListener('DOMContentLoaded', function() {
+    clearLegacyBulkUrlState();
     initStorageAndElements();
     initLandingShell();
     window.BIDFinderAuth?.init();
     initModalEvents();
     initBulkSearchEvents();
     initFeedbackModalEvents();
-    initTabSwitching();
+    initInsightDrawerEvents();
     initResultViewSwitching();
     initSearchFormEvents();
     initFilterUrlEvents();
     disableDefaultTooltips();
     initGlobalKeyboardShortcuts();
     initializeAppData();
-    syncPrimaryTabIndicator();
     syncScopeSwitcherSlider();
 });
 
@@ -5686,14 +6383,12 @@ window.addEventListener('load', function() {
         initTableColumnDragDrop();
         initTableRangeSelection();
         syncAllFrozenColumns();
-        syncPrimaryTabIndicator();
         syncScopeSwitcherSlider();
     }, 1000);
 });
 
 window.addEventListener('resize', () => {
     syncAllFrozenColumns();
-    syncPrimaryTabIndicator();
     syncScopeSwitcherSlider();
     rerenderActiveColumnMenu();
     rerenderColumnsPopover();

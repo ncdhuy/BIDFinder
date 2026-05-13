@@ -26,7 +26,6 @@ load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=False)
 from auth_utils import (
     change_password,
     clear_auth_session_cookie,
-    ensure_auth_schema as init_auth_schema,
     extract_session_token,
     get_auth_config_payload,
     get_authenticated_user,
@@ -46,16 +45,12 @@ logger = logging.getLogger("bidfinder.api")
 DATABASE_URL = os.getenv("DATABASE_URL")
 db_pool: Optional[asyncpg.Pool] = None
 db_pool_lock = asyncio.Lock()
-auth_schema_lock = asyncio.Lock()
-feedback_schema_lock = asyncio.Lock()
 rate_limit_lock = asyncio.Lock()
 rate_limit_buckets: Dict[str, deque] = defaultdict(deque)
 anonymous_full_query_usage_lock = asyncio.Lock()
 anonymous_full_query_usage: Dict[str, Dict[str, int]] = defaultdict(dict)
 full_search_usage_lock = asyncio.Lock()
 full_search_usage: Dict[str, Dict[str, int]] = defaultdict(dict)
-auth_schema_ready = False
-feedback_schema_ready = False
 cache_lock = asyncio.Lock()
 preview_cache: Dict[str, Dict[str, Any]] = {}
 autocomplete_cache: Dict[str, Dict[str, Any]] = {}
@@ -140,6 +135,7 @@ AUTH_CONFIG_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("AUTH_CONFIG_RATE_LIMIT
 FEEDBACK_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("FEEDBACK_RATE_LIMIT_PER_MINUTE", "10")))
 DEFAULT_QUERY_LIMIT = max(50, int(os.getenv("DEFAULT_QUERY_LIMIT", "200")))
 MAX_QUERY_LIMIT = max(DEFAULT_QUERY_LIMIT, int(os.getenv("MAX_QUERY_LIMIT", "1000")))
+BULK_EXPORT_QUERY_LIMIT = min(MAX_QUERY_LIMIT, max(1, int(os.getenv("BULK_EXPORT_QUERY_LIMIT", "1000"))))
 FULL_SEARCH_DAILY_LIMIT = max(0, int(os.getenv("FULL_SEARCH_DAILY_LIMIT", "3")))
 PREVIEW_BUCKET_LIMIT = max(10, int(os.getenv("PREVIEW_BUCKET_LIMIT", "100")))
 DB_POOL_MAX_SIZE = max(1, int(os.getenv("DB_POOL_MAX_SIZE", "8")))
@@ -491,7 +487,9 @@ class BulkQueryRequest(BaseModel):
     scope: Literal["medicine", "goods"]
     fields: List[str] = Field(default_factory=list)
     rows: List[Dict[str, Any]] = Field(default_factory=list)
+    diversityMode: Literal["price", "product"] = "price"
     priceLimit: int = 3
+    productLimit: int = 3
     limit: int = DEFAULT_QUERY_LIMIT
     searchMode: Literal["standard", "full"] = "standard"
 
@@ -765,67 +763,13 @@ async def ensure_db_pool() -> asyncpg.Pool:
     global db_pool
 
     if db_pool is not None:
-        await ensure_auth_schema_ready(db_pool)
-        await ensure_feedback_schema_ready(db_pool)
         return db_pool
 
     async with db_pool_lock:
         if db_pool is None:
             db_pool = await get_db_pool()
 
-    await ensure_auth_schema_ready(db_pool)
-    await ensure_feedback_schema_ready(db_pool)
     return db_pool
-
-
-async def ensure_auth_schema_ready(pool: asyncpg.Pool) -> None:
-    global auth_schema_ready
-
-    if auth_schema_ready:
-        return
-
-    async with auth_schema_lock:
-        if auth_schema_ready:
-            return
-
-        async with pool.acquire() as conn:
-            await init_auth_schema(conn)
-
-        auth_schema_ready = True
-
-
-async def ensure_feedback_schema_ready(pool: asyncpg.Pool) -> None:
-    global feedback_schema_ready
-
-    if feedback_schema_ready:
-        return
-
-    async with feedback_schema_lock:
-        if feedback_schema_ready:
-            return
-
-        async with pool.acquire() as conn:
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS app_feedback (
-                    id BIGSERIAL PRIMARY KEY,
-                    user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
-                    user_email TEXT,
-                    answers JSONB NOT NULL DEFAULT '[]'::jsonb,
-                    task TEXT,
-                    note TEXT,
-                    page_url TEXT,
-                    filter_context JSONB NOT NULL DEFAULT '{}'::jsonb,
-                    user_agent TEXT,
-                    client_ip TEXT,
-                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_app_feedback_created_at ON app_feedback (created_at DESC)")
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_app_feedback_user_id ON app_feedback (user_id)")
-
-        feedback_schema_ready = True
 
 
 def clean_value(val):
@@ -843,7 +787,7 @@ def clean_records(records):
     for record in records:
         normalized = {}
         for key, value in dict(record).items():
-            if key in {"__price_rank", "__recency_bucket", "__drug_group_filter"}:
+            if key in {"__price_rank", "__product_rank", "__product_row_rank", "__recency_bucket", "__drug_group_filter"}:
                 continue
             normalized[key] = clean_value(value)
         cleaned_records.append(normalized)
@@ -1377,7 +1321,9 @@ def build_bulk_item_query(
     scope_name: str,
     selected_fields: List[str],
     row_values: Dict[str, Any],
+    diversity_mode: str,
     price_limit: int,
+    product_limit: int,
     row_index: int,
 ):
     params: List[Any] = []
@@ -1407,6 +1353,33 @@ def build_bulk_item_query(
 
     where_clause = " WHERE " + " AND ".join(conditions)
     safe_price_limit = max(1, min(int(price_limit), 10))
+    safe_product_limit = max(1, min(int(product_limit), 10))
+    product_partition_column = '"Tên thuốc"' if scope_name == "medicine" else '"Search blob"'
+    if diversity_mode == "product":
+        query = f"""
+        {cte}
+        SELECT *
+        FROM (
+            SELECT
+                ranked_base.*,
+                ROW_NUMBER() OVER (
+                    PARTITION BY LOWER(COALESCE(ranked_base.{product_partition_column}, ''))
+                    ORDER BY ranked_base."__approval_date" DESC NULLS LAST, ranked_base."Đơn giá trúng thầu (VND)" ASC NULLS LAST, ranked_base."Mã TBMT" ASC
+                ) AS "__product_row_rank",
+                DENSE_RANK() OVER (
+                    ORDER BY LOWER(COALESCE(ranked_base.{product_partition_column}, '')), ranked_base."Mã TBMT" ASC
+                ) AS "__product_rank"
+            FROM {table_name} ranked_base
+            {where_clause}
+              AND ranked_base."Đơn giá trúng thầu (VND)" IS NOT NULL
+        ) ranked
+        WHERE "__product_rank" <= {safe_product_limit}
+          AND "__product_row_rank" = 1
+        ORDER BY "__product_rank" ASC, "__approval_date" DESC NULLS LAST, "Đơn giá trúng thầu (VND)" ASC, "Mã TBMT" ASC
+        LIMIT {safe_product_limit}
+        """
+        return query, params
+
     query = f"""
     {cte}
     SELECT *
@@ -1426,6 +1399,30 @@ def build_bulk_item_query(
     LIMIT {safe_price_limit}
     """
     return query, params
+
+
+def build_bulk_item_count_query(
+    scope_name: str,
+    selected_fields: List[str],
+    row_values: Dict[str, Any],
+    diversity_mode: str,
+    price_limit: int,
+    product_limit: int,
+    row_index: int,
+):
+    query, params = build_bulk_item_query(
+        scope_name,
+        selected_fields,
+        row_values,
+        diversity_mode,
+        price_limit,
+        product_limit,
+        row_index,
+    )
+    if not query:
+        return None, []
+
+    return f"SELECT COUNT(*) AS total_count FROM ({query}) bulk_counted", params
 
 
 def build_total_count_query(scope_name: str, filters: Optional[FilterRequest]):
@@ -1860,8 +1857,6 @@ async def lifespan(app: FastAPI):
             auth_config_payload.get("password_reset_status"),
         )
         db_pool = await get_db_pool()
-        await ensure_auth_schema_ready(db_pool)
-        await ensure_feedback_schema_ready(db_pool)
     except Exception as e:
         print(f"Database connection failed: {e}")
     yield
@@ -2500,11 +2495,12 @@ async def bulk_query_data(request: Request, payload: BulkQueryRequest):
 
     scope_name = payload.scope
     selected_fields = [field for field in payload.fields if field in BULK_SEARCH_FIELDS[scope_name]]
+    diversity_mode = payload.diversityMode if payload.diversityMode in {"price", "product"} else "price"
     price_limit = max(1, min(int(payload.priceLimit or 3), 10))
-    search_mode = payload.searchMode if payload.searchMode in {"standard", "full"} else "standard"
-    is_full_search = search_mode == "full"
-    requested_total_limit = max(1, min(int(payload.limit or MAX_QUERY_LIMIT), MAX_QUERY_LIMIT))
-    result_limit = requested_total_limit if is_full_search else max(1, min(int(payload.limit or DEFAULT_QUERY_LIMIT), DEFAULT_QUERY_LIMIT))
+    product_limit = max(1, min(int(payload.productLimit or 3), 10))
+    search_mode = "standard"
+    is_full_search = False
+    result_limit = BULK_EXPORT_QUERY_LIMIT
     rows = [row for row in payload.rows if isinstance(row, dict)]
 
     if not selected_fields:
@@ -2516,6 +2512,7 @@ async def bulk_query_data(request: Request, payload: BulkQueryRequest):
         pool = await ensure_db_pool()
         result_rows: List[Dict[str, Any]] = []
         total_matched = 0
+        matched_input_count = 0
         result_truncated = False
         current_user: Optional[Dict[str, Any]] = None
 
@@ -2527,16 +2524,34 @@ async def bulk_query_data(request: Request, payload: BulkQueryRequest):
                     raise HTTPException(status_code=429, detail=FULL_SEARCH_LIMIT_MESSAGE)
 
             for index, row_values in enumerate(rows, start=1):
+                count_query, count_params = build_bulk_item_count_query(
+                    scope_name,
+                    selected_fields,
+                    row_values,
+                    diversity_mode,
+                    price_limit,
+                    product_limit,
+                    index,
+                )
+                if not count_query:
+                    continue
+
+                row_total = int(await conn.fetchval(count_query, *count_params) or 0)
+                total_matched += row_total
+                if row_total > 0:
+                    matched_input_count += 1
                 remaining_result_slots = result_limit - len(result_rows)
                 if remaining_result_slots <= 0:
-                    result_truncated = True
-                    break
+                    result_truncated = result_truncated or row_total > 0
+                    continue
 
                 query, params = build_bulk_item_query(
                     scope_name,
                     selected_fields,
                     row_values,
+                    diversity_mode,
                     price_limit,
+                    product_limit,
                     index,
                 )
                 if not query:
@@ -2547,7 +2562,8 @@ async def bulk_query_data(request: Request, payload: BulkQueryRequest):
                 if len(cleaned) > remaining_result_slots:
                     cleaned = cleaned[:remaining_result_slots]
                     result_truncated = True
-                total_matched += len(cleaned)
+                if row_total > len(cleaned):
+                    result_truncated = True
                 query_label = " | ".join(
                     str(row_values.get(field) or "").strip()
                     for field in selected_fields
@@ -2560,12 +2576,11 @@ async def bulk_query_data(request: Request, payload: BulkQueryRequest):
 
                 if len(result_rows) >= result_limit and index < len(rows):
                     result_truncated = True
-                    break
 
             if is_full_search:
                 quota = await consume_full_search_usage(request, current_user)
 
-        result_count_meta = build_count_meta(total_matched, exact=not result_truncated)
+        result_count_meta = build_count_meta(total_matched, exact=True)
 
         empty_scope = {
             "data": [],
@@ -2583,9 +2598,9 @@ async def bulk_query_data(request: Request, payload: BulkQueryRequest):
             "count_exact": bool(result_count_meta["exact"]),
             "count_label": result_count_meta["label"],
             "count_summary": result_count_meta["summary"],
-            "displayed": total_matched,
+            "displayed": len(result_rows),
             "has_more": result_truncated,
-            "approx_total": int(result_count_meta["count"]) if result_truncated else None,
+            "approx_total": None,
         }
         response_payload = {
             "success": True,
@@ -2593,9 +2608,12 @@ async def bulk_query_data(request: Request, payload: BulkQueryRequest):
             "bulk": {
                 "scope": scope_name,
                 "search_mode": search_mode,
+                "diversity_mode": diversity_mode,
                 "input_count": len(rows),
                 "matched_count": total_matched,
+                "matched_input_count": matched_input_count,
                 "price_limit": price_limit,
+                "product_limit": product_limit,
                 "fields": selected_fields,
                 "result_limit": result_limit,
                 "truncated": result_truncated,

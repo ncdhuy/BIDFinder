@@ -3085,7 +3085,7 @@ def save_manifest_issues(issue_list):
         logger.error(f"❌ Lỗi Database khi save manifest issues: {e}")
 
 
-def delete_related_physical_files(target_tbmts, tracked_paths, tracked_dirs=None):
+def delete_related_physical_files(target_tbmts, tracked_paths, tracked_dirs=None, scan_raw_data_by_tbmt=True):
     deleted_paths = []
     failed_paths = []
     seen_paths = set()
@@ -3106,7 +3106,7 @@ def delete_related_physical_files(target_tbmts, tracked_paths, tracked_dirs=None
             failed_paths.append((path_value, str(e)))
 
     normalized_targets = tuple(sorted(target_tbmts))
-    if normalized_targets and os.path.exists(ROOT_DATA_DIR):
+    if scan_raw_data_by_tbmt and normalized_targets and os.path.exists(ROOT_DATA_DIR):
         for root, _, files in os.walk(ROOT_DATA_DIR):
             normalized_root = root.replace("\\", "/").lower()
             if "/latest" not in normalized_root and "/archive" not in normalized_root:
@@ -3703,7 +3703,12 @@ def purge_crawl_batch(mode="latest_run", crawl_date=None, dry_run=False):
 
                 conn.commit()
 
-        deleted_paths, failed_paths = delete_related_physical_files(tbmt_set, tracked_paths, tracked_dirs=tracked_dirs)
+        deleted_paths, failed_paths = delete_related_physical_files(
+            tbmt_set,
+            tracked_paths,
+            tracked_dirs=tracked_dirs,
+            scan_raw_data_by_tbmt=False,
+        )
         if mode == "latest_run":
             refresh_human_tasks_sheet("OCR", date_info["crawl_date"])
             refresh_human_tasks_sheet("MANUAL", date_info["crawl_date"])

@@ -80,6 +80,19 @@ def build_schema_mapping_config(config):
     return mapping
 
 
+def _is_unit_price_target(value) -> bool:
+    return clean_col_str(value) == "đơn giá trúng thầu (vnd)"
+
+
+def _is_unit_price_source(value) -> bool:
+    return "đơn giá" in clean_col_str(value)
+
+
+def _is_ambiguous_price_source(value) -> bool:
+    source_clean = clean_col_str(value)
+    return "giá" in source_clean and "đơn giá" not in source_clean
+
+
 def get_smart_column_mapping(df_columns, mapping_config):
     final_map = {}
     clean_mapping_config = {clean_col_str(k): v for k, v in mapping_config.items()}
@@ -90,10 +103,51 @@ def get_smart_column_mapping(df_columns, mapping_config):
     }
     best_target_choice = {}
 
+    def resolve_explicit_mapping(col):
+        col_clean = clean_col_str(col)
+        if col in mapping_config:
+            return mapping_config[col]
+        if col_clean in clean_mapping_config:
+            return clean_mapping_config[col_clean]
+        col_lookup = normalize_header_lookup_key(col)
+        if col_lookup and col_lookup in normalized_mapping_config:
+            return normalized_mapping_config[col_lookup]
+        return None
+
+    unit_price_locked_by_explicit_column = any(
+        _is_unit_price_target(resolve_explicit_mapping(col))
+        and _is_unit_price_source(col)
+        for col in df_columns
+    )
+
+    def resolve_contextual_target(source_col, target_col):
+        if (
+            unit_price_locked_by_explicit_column
+            and _is_unit_price_target(target_col)
+            and _is_ambiguous_price_source(source_col)
+        ):
+            return None
+        return target_col
+
     def register_candidate(source_col, target_col, priority):
+        target_col = resolve_contextual_target(source_col, target_col)
         if not target_col:
             return
-        candidate = (priority, len(str(source_col or "")))
+        source_lookup = normalize_header_lookup_key(source_col)
+        target_lookup = normalize_header_lookup_key(target_col)
+        canonical_exact = int(bool(source_lookup) and source_lookup == target_lookup)
+        unit_price_signal = int(_is_unit_price_target(target_col) and _is_unit_price_source(source_col))
+        ambiguous_price_signal = int(
+            _is_unit_price_target(target_col)
+            and _is_ambiguous_price_source(source_col)
+        )
+        candidate = (
+            priority,
+            canonical_exact,
+            unit_price_signal,
+            -ambiguous_price_signal,
+            len(str(source_col or "")),
+        )
         current = best_target_choice.get(target_col)
         if current is None or candidate > current[0]:
             best_target_choice[target_col] = (candidate, source_col)

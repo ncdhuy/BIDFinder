@@ -601,11 +601,19 @@ class CrawlerDB:
         self._cleanup_existing_pdf_duplicates(tbmt, qd_raw, ver_chk)
 
         self._safe_execute("""
-            SELECT 1 FROM packages
+            SELECT file_path
+            FROM packages
             WHERE ma_tbmt=%s AND so_qd=%s AND file_type=%s AND version=%s
         """, (tbmt, qd_raw, file_type, ver_chk))
-        if self.cursor.fetchone():
-            return "SKIPPED", None
+        existing_package = self.cursor.fetchone()
+        if existing_package:
+            existing_path = existing_package["file_path"]
+            if existing_path and os.path.exists(existing_path):
+                return "SKIPPED", None
+            logger.warning(
+                f"♻️ Packages đã có record nhưng file local mất, sẽ tải lại và cập nhật path: "
+                f"{tbmt} / {qd_raw} / v{ver_chk} / {file_type}"
+            )
 
         duplicate_result = self._normalize_cross_type_pdf_duplicate(
             tbmt, qd_raw, ver_chk, file_type, temp_path, new_filename
@@ -650,10 +658,17 @@ class CrawlerDB:
             logger.error(f"❌ Error moving file: {e}")
             return "ERROR", None
 
-        self._safe_execute("""
-            INSERT INTO packages (ma_tbmt, so_qd, version, file_type, file_path, crawled_at, status, is_latest)
-            VALUES (%s, %s, %s, %s, %s, %s, 'DONE', 0)
-        """, (tbmt, qd_raw, ver_chk, file_type, final_path, self._now_str()))
+        if existing_package:
+            self._safe_execute("""
+                UPDATE packages
+                SET file_path=%s, crawled_at=%s, status='DONE'
+                WHERE ma_tbmt=%s AND so_qd=%s AND version=%s AND file_type=%s
+            """, (final_path, self._now_str(), tbmt, qd_raw, ver_chk, file_type))
+        else:
+            self._safe_execute("""
+                INSERT INTO packages (ma_tbmt, so_qd, version, file_type, file_path, crawled_at, status, is_latest)
+                VALUES (%s, %s, %s, %s, %s, %s, 'DONE', 0)
+            """, (tbmt, qd_raw, ver_chk, file_type, final_path, self._now_str()))
 
         self._refresh_unit_latest_flags(tbmt, qd_raw)
 
@@ -1290,6 +1305,7 @@ loai_tu_gian_giao_thau = [
     "mạng lan", "chống sét", "xử lý nước thải", "sắc ký", "quang phổ", "sửa chữa", "máy phun thuốc", "thuốc hàn",
     "truyền thông", "xe", "máy soi thuốc", "cây thuốc", "đông dược", "dịch chiết", "tinh dầu",
     "máy chiết xơ", "nội độc tố", "dung môi", "chất chuẩn", "chuẩn hóa", "kiểm tra", "độ hòa tan", "bình phun thuốc",
+    "tư vấn"
 ]
  
 loai_chu_dau_tu = [
@@ -1319,7 +1335,9 @@ tu_khoa_luu_lai = [
 ]
 
 def _normalize_keyword_value(value):
-    return str(value or "").strip().lower()
+    text = unicodedata.normalize("NFC", str(value or ""))
+    text = re.sub(r"\s+", " ", text)
+    return text.strip().casefold()
 
 
 def _normalize_keyword_list(values):
@@ -1430,11 +1448,11 @@ def build_box_metadata_snapshot(box, ma_tbmt, dia_diem, box_name_text, ngay_phe_
 
 # ================== LỌC BOX ==================
 def is_luu_lai_theo_ten_goi_thau(ten_goi_thau):
-    ten_thap = ten_goi_thau.lower()
+    ten_thap = _normalize_keyword_value(ten_goi_thau)
     return any(re.search(rf'\b{re.escape(kw)}\b', ten_thap) for kw in tu_khoa_luu_lai)
 
 def is_loai_chu_dau_tu(ten_chu_dau_tu):
-    ten_thap = ten_chu_dau_tu.lower()
+    ten_thap = _normalize_keyword_value(ten_chu_dau_tu)
     for keyword, exclude_list in loai_chu_dau_tu:
         if re.search(rf'\b{re.escape(keyword)}\b', ten_thap):
             if any(re.search(rf'\b{re.escape(ex)}\b', ten_thap) for ex in exclude_list):
@@ -1444,7 +1462,7 @@ def is_loai_chu_dau_tu(ten_chu_dau_tu):
     return False
 
 def is_loai_ten_goi_thau(ten_goi_thau):
-    ten_thap = ten_goi_thau.lower()
+    ten_thap = _normalize_keyword_value(ten_goi_thau)
     if any(re.search(rf'\b{re.escape(word)}\b', ten_thap) for word in loai_tu_gian_giao_thau):
         return True
     return False
@@ -4006,10 +4024,6 @@ def get_box_detail_url(box):
         ).get_attribute("href")
     except Exception:
         return ""
-
-
-def _normalize_keyword_value(value):
-    return unicodedata.normalize("NFC", str(value or "")).strip().lower()
 
 
 def package_name_contains_search_keyword(package_name, search_keyword):

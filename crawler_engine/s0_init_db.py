@@ -145,7 +145,121 @@ class DatabaseMigrator:
                 )
             """)
 
-            # 5. Bảng Dữ liệu Đã Xử Lý (Thuốc)
+            # 5. Bảng tài khoản người dùng frontend
+            self.cursor.execute("""
+                CREATE TABLE IF NOT EXISTS app_users (
+                    id BIGSERIAL PRIMARY KEY,
+                    email TEXT NOT NULL UNIQUE,
+                    full_name TEXT NOT NULL,
+                    password_hash TEXT,
+                    google_sub TEXT UNIQUE,
+                    auth_provider TEXT NOT NULL DEFAULT 'email',
+                    work_unit TEXT,
+                    position TEXT,
+                    profile_stage TEXT NOT NULL DEFAULT 'basic',
+                    email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    last_login_at TIMESTAMP
+                )
+            """)
+            self.cursor.execute("""
+                ALTER TABLE app_users
+                ADD COLUMN IF NOT EXISTS password_hash TEXT,
+                ADD COLUMN IF NOT EXISTS google_sub TEXT,
+                ADD COLUMN IF NOT EXISTS auth_provider TEXT NOT NULL DEFAULT 'email',
+                ADD COLUMN IF NOT EXISTS work_unit TEXT,
+                ADD COLUMN IF NOT EXISTS position TEXT,
+                ADD COLUMN IF NOT EXISTS profile_stage TEXT NOT NULL DEFAULT 'basic',
+                ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+                ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP
+            """)
+            self.cursor.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_app_users_google_sub
+                ON app_users (google_sub)
+            """)
+            self.cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_app_users_auth_provider
+                ON app_users (auth_provider)
+            """)
+
+            self.cursor.execute("""
+                CREATE TABLE IF NOT EXISTS app_user_sessions (
+                    id BIGSERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TIMESTAMP NOT NULL,
+                    last_used_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    ip_address TEXT,
+                    user_agent TEXT
+                )
+            """)
+            self.cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_app_user_sessions_user_id
+                ON app_user_sessions (user_id)
+            """)
+            self.cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_app_user_sessions_expires_at
+                ON app_user_sessions (expires_at)
+            """)
+            self.cursor.execute("""
+                DELETE FROM app_user_sessions
+                WHERE expires_at < CURRENT_TIMESTAMP
+            """)
+
+            self.cursor.execute("""
+                CREATE TABLE IF NOT EXISTS app_password_reset_tokens (
+                    id BIGSERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TIMESTAMP NOT NULL,
+                    used_at TIMESTAMP,
+                    requested_ip TEXT,
+                    user_agent TEXT
+                )
+            """)
+            self.cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_app_password_reset_tokens_user_id
+                ON app_password_reset_tokens (user_id)
+            """)
+            self.cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_app_password_reset_tokens_expires_at
+                ON app_password_reset_tokens (expires_at)
+            """)
+            self.cursor.execute("""
+                DELETE FROM app_password_reset_tokens
+                WHERE expires_at < CURRENT_TIMESTAMP OR used_at IS NOT NULL
+            """)
+
+            # 6. Bảng feedback của frontend
+            self.cursor.execute("""
+                CREATE TABLE IF NOT EXISTS app_feedback (
+                    id BIGSERIAL PRIMARY KEY,
+                    user_id BIGINT REFERENCES app_users(id) ON DELETE SET NULL,
+                    user_email TEXT,
+                    answers JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    task TEXT,
+                    note TEXT,
+                    page_url TEXT,
+                    filter_context JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    user_agent TEXT,
+                    client_ip TEXT,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            self.cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_app_feedback_created_at
+                ON app_feedback (created_at DESC)
+            """)
+            self.cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_app_feedback_user_id
+                ON app_feedback (user_id)
+            """)
+
+            # 7. Bảng Dữ liệu Đã Xử Lý (Thuốc)
             # Chỉ lưu line-item đã chuẩn hóa. Không lưu cột KHLCNT ở bảng này.
             self.cursor.execute("""
                 CREATE TABLE IF NOT EXISTS processed_medicines (
@@ -177,7 +291,7 @@ class DatabaseMigrator:
                 )
             """)
 
-            # 6. Bảng Dữ liệu Đã Xử Lý (Hàng hóa)
+            # 8. Bảng Dữ liệu Đã Xử Lý (Hàng hóa)
             # Chỉ lưu line-item đã chuẩn hóa. Không lưu cột KHLCNT ở bảng này.
             self.cursor.execute("""
                 CREATE TABLE IF NOT EXISTS processed_goods (
@@ -208,7 +322,7 @@ class DatabaseMigrator:
                 )
             """)
 
-            # 7. Bảng Quản lý Lỗi (Anomalies)
+            # 9. Bảng Quản lý Lỗi (Anomalies)
             self.cursor.execute("""
                 ALTER TABLE processed_medicines
                 ADD COLUMN IF NOT EXISTS qd_display TEXT,
@@ -308,7 +422,7 @@ class DatabaseMigrator:
                 ON scan_anomalies (scan_date, ma_tbmt, so_qd, version, issue_type)
             """)
 
-            # 8. Bảng Manifest (Kiểm duyệt Data)
+            # 10. Bảng Manifest (Kiểm duyệt Data)
             self.cursor.execute("""
                 CREATE TABLE IF NOT EXISTS daily_manifest (
                     id SERIAL PRIMARY KEY,
@@ -327,7 +441,7 @@ class DatabaseMigrator:
                 )
             """)
             
-            # 9. Bảng audit issue từ manifest
+            # 11. Bảng audit issue từ manifest
             self.cursor.execute("""
                 CREATE TABLE IF NOT EXISTS manifest_issues (
                     id SERIAL PRIMARY KEY,
@@ -345,7 +459,7 @@ class DatabaseMigrator:
                 )
             """)
 
-            # 10. Bảng tác vụ xử lý có người tham gia (OCR / MANUAL)
+            # 12. Bảng tác vụ xử lý có người tham gia (OCR / MANUAL)
             self.cursor.execute("""
                 CREATE TABLE IF NOT EXISTS human_task_queue (
                     id SERIAL PRIMARY KEY,
@@ -372,7 +486,7 @@ class DatabaseMigrator:
                 )
             """)
 
-            # 11. Bảng facts nhà thầu trúng thầu lấy từ web detail
+            # 13. Bảng facts nhà thầu trúng thầu lấy từ web detail
             self.cursor.execute("""
                 CREATE TABLE IF NOT EXISTS web_winner_facts (
                     ma_tbmt TEXT NOT NULL,
@@ -393,7 +507,7 @@ class DatabaseMigrator:
                 DROP COLUMN IF EXISTS created_at
             """)
 
-            # 12. Bảng quan hệ QĐ
+            # 14. Bảng quan hệ QĐ
             self.cursor.execute("""
                 CREATE TABLE IF NOT EXISTS qd_relations (
                     ma_tbmt      TEXT NOT NULL,
@@ -407,12 +521,12 @@ class DatabaseMigrator:
                 )
             """)
 
-            # 13. Kích hoạt extension hỗ trợ tìm kiếm chuỗi con siêu tốc
+            # 15. Kích hoạt extension hỗ trợ tìm kiếm chuỗi con siêu tốc
             self.cursor.execute("""
                 CREATE EXTENSION IF NOT EXISTS pg_trgm;
             """)
 
-            # 14. Tạo GIN Index cho các cột cần làm autocomplete
+            # 16. Tạo GIN Index cho các cột cần làm autocomplete
             self.cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_medicines_join_keys
                 ON processed_medicines (ma_tbmt, so_qd, version);

@@ -45,8 +45,9 @@ class CustomSearchForm extends HTMLElement {
                 .search-form {
                     display: flex;
                     flex-direction: column;
-                    height: 100%;
+                    height: auto;
                     min-height: 0;
+                    overflow: hidden;
                     font-family: var(--font);
                     background: transparent;
                     color: var(--c-text);
@@ -60,9 +61,9 @@ class CustomSearchForm extends HTMLElement {
                     align-items: flex-start;
                     gap: 12px;
                     flex: 0 0 auto;
-                    padding: 8px 12px;
-                    margin-bottom: 10px;
-                    height: 112px;
+                    padding: 6px 10px;
+                    margin-bottom: 8px;
+                    height: clamp(56px, 10vh, 86px);
                     overflow: hidden;
                     background: var(--c-surface);
                     border: 1px solid var(--c-border);
@@ -84,7 +85,7 @@ class CustomSearchForm extends HTMLElement {
                     display: block;
                     flex: 1;
                     min-width: 0;
-                    max-height: 94px;
+                    max-height: 68px;
                     overflow-y: auto;
                     padding: 0 4px 4px 0;
                     text-align: left;
@@ -152,7 +153,7 @@ class CustomSearchForm extends HTMLElement {
                 ========================= */
                 .filter-layout {
                     display: flex;
-                    flex: 0 0 auto;
+                    flex: 0 1 auto;
                     align-items: stretch;
                     min-height: 0;
                     overflow: hidden;
@@ -169,8 +170,8 @@ class CustomSearchForm extends HTMLElement {
                     width: 430px;
                     min-height: 0;
                     flex-shrink: 0;
-                    padding: 10px;
-                    gap: 8px;
+                    padding: 7px;
+                    gap: 5px;
                     overflow: visible;
                     background: linear-gradient(180deg, #f8fcfe 0%, #f2f9fc 100%);
                     border-right: 1px solid #dce8ef;
@@ -195,7 +196,7 @@ class CustomSearchForm extends HTMLElement {
                 .sidebar-group {
                     display: block;
                     margin: 0 0 2px;
-                    padding: 7px 9px;
+                    padding: 5px 8px;
                     background: #e7f1f6;
                     border: 1px solid #dce8ef;
                     border-radius: var(--radius-sm);
@@ -219,9 +220,9 @@ class CustomSearchForm extends HTMLElement {
                     align-items: flex-start;
                     justify-content: center;
                     gap: 2px;
-                    min-height: 30px;
+                    min-height: 24px;
                     margin: 0;
-                    padding: 4px 22px 4px 8px;
+                    padding: 3px 20px 3px 7px;
                     border-left: 3px solid transparent;
                     border-radius: var(--radius-sm);
                     color: #374151;
@@ -283,8 +284,8 @@ class CustomSearchForm extends HTMLElement {
                     flex-direction: column;
                     flex: 1;
                     min-height: 0;
-                    padding: 24px 28px;
-                    overflow: visible;
+                    padding: 16px 20px;
+                    overflow: hidden;
                     background: var(--c-surface);
                 }
 
@@ -309,7 +310,7 @@ class CustomSearchForm extends HTMLElement {
                 }
 
                 .filter-pane h3 {
-                    margin: 0 0 8px;
+                    margin: 0 0 6px;
                     color: var(--c-text);
                     font-size: 20px;
                     font-weight: 750;
@@ -317,7 +318,7 @@ class CustomSearchForm extends HTMLElement {
                 }
 
                 .pane-desc {
-                    margin: 0 0 28px;
+                    margin: 0 0 14px;
                     color: var(--c-sub);
                     font-size: 14px;
                     line-height: 1.55;
@@ -365,7 +366,7 @@ class CustomSearchForm extends HTMLElement {
                 .field {
                     display: flex;
                     flex-direction: column;
-                    margin-bottom: 20px;
+                    margin-bottom: 14px;
                 }
 
                 label {
@@ -748,8 +749,11 @@ class CustomSearchForm extends HTMLElement {
                     gap: 12px;
                     flex: 0 0 auto;
                     margin-top: auto;
-                    padding-top: 18px;
+                    padding: 10px 0 0;
                     width: 100%;
+                    position: static;
+                    background: var(--c-surface);
+                    border-top: 1px solid var(--c-border);
                 }
 
                 .preview-result {
@@ -860,7 +864,7 @@ class CustomSearchForm extends HTMLElement {
                     }
 
                     .filter-content {
-                        padding: 24px 20px;
+                        padding: 14px 16px;
                     }
 
                     .fields-row {
@@ -870,9 +874,24 @@ class CustomSearchForm extends HTMLElement {
                 }
 
                 @media (max-height: 760px) {
+                    :host {
+                        --control-h: 38px;
+                        --field-pad-x: 12px;
+                    }
+
+                    .active-filters-topbar {
+                        height: 52px;
+                        margin-bottom: 8px;
+                        padding: 7px 10px;
+                    }
+
+                    .active-filters-list {
+                        max-height: 40px;
+                    }
+
                     .filter-sidebar {
-                        padding: 8px;
-                        gap: 8px;
+                        padding: 6px;
+                        gap: 4px;
                     }
 
                     .sidebar-column {
@@ -881,26 +900,26 @@ class CustomSearchForm extends HTMLElement {
 
                     .sidebar-group {
                         margin-bottom: 2px;
-                        padding: 7px 9px;
-                        font-size: 12px;
+                        padding: 4px 7px;
+                        font-size: 11px;
                     }
 
                     .sidebar-item {
-                        min-height: 28px;
-                        padding-top: 4px;
-                        padding-bottom: 4px;
+                        min-height: 22px;
+                        padding-top: 2px;
+                        padding-bottom: 2px;
                     }
 
                     .sidebar-item-main {
-                        font-size: 12.5px;
+                        font-size: 11.5px;
                     }
 
                     .sidebar-item-hint {
-                        font-size: 10.5px;
+                        font-size: 10px;
                     }
 
                     .filter-content {
-                        padding: 18px 22px;
+                        padding: 10px 14px;
                     }
 
                     .filter-pane h3 {
@@ -912,8 +931,80 @@ class CustomSearchForm extends HTMLElement {
                         font-size: 13px;
                     }
 
+                    .field {
+                        margin-bottom: 10px;
+                    }
+
                     .actions {
-                        padding-top: 14px;
+                        padding-top: 12px;
+                    }
+                }
+
+                @media (max-height: 640px) {
+                    :host {
+                        --control-h: 34px;
+                        --field-pad-x: 10px;
+                    }
+
+                    .active-filters-topbar {
+                        height: 42px;
+                        margin-bottom: 6px;
+                        padding: 6px 9px;
+                    }
+
+                    .active-filters-list {
+                        max-height: 32px;
+                    }
+
+                    .pane-desc {
+                        display: none;
+                    }
+
+                    .filter-sidebar {
+                        padding: 5px;
+                        gap: 3px;
+                    }
+
+                    .sidebar-column {
+                        gap: 1px;
+                    }
+
+                    .sidebar-group {
+                        padding: 4px 7px;
+                        font-size: 10.5px;
+                    }
+
+                    .sidebar-item {
+                        min-height: 25px;
+                        gap: 1px;
+                        padding: 3px 18px 3px 7px;
+                    }
+
+                    .sidebar-item-main {
+                        font-size: 11.5px;
+                    }
+
+                    .sidebar-item-hint {
+                        display: block;
+                        font-size: 10px;
+                        line-height: 1.14;
+                    }
+
+                    .filter-content {
+                        padding: 8px 12px;
+                    }
+
+                    .filter-pane h3 {
+                        font-size: 16px;
+                    }
+
+                    .field {
+                        margin-bottom: 8px;
+                    }
+
+                    .btn {
+                        min-width: 104px;
+                        padding: 8px 12px;
                     }
                 }
             </style>
@@ -1313,7 +1404,7 @@ class CustomSearchForm extends HTMLElement {
                         <!-- Buttons -->
                         <div class="actions">
                             <button class="btn btn-secondary" id="reset-filters-btn">Đặt lại toàn bộ</button>
-                            <button class="btn btn-primary" id="apply-filters-btn">Áp dụng bộ lọc</button>
+                            <button class="btn btn-primary" id="apply-filters-btn">Tra cứu</button>
                         </div>
 
                     </div> <!-- End Filter Content -->
@@ -1793,7 +1884,7 @@ class CustomSearchForm extends HTMLElement {
         }
 
         applyBtn.dataset.loading = '0';
-        applyBtn.textContent = applyBtn.dataset.defaultText || 'Áp dụng bộ lọc';
+        applyBtn.textContent = applyBtn.dataset.defaultText || 'Tra cứu';
         this.updateApplyButtonState();
     }
 
@@ -1912,7 +2003,7 @@ class CustomSearchForm extends HTMLElement {
 
         if (loading) {
             previewEl.textContent = warming
-                ? 'Đang kết nối dữ liệu...'
+                ? 'Đang trích xuất dữ liệu...'
                 : 'Đang ước tính...';
             previewEl.classList.add('is-loading');
             return;

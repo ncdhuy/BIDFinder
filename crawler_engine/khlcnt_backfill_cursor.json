@@ -1,11 +1,21 @@
 {
+  "Kế hoạch lựa chọn nhà thầu||IB2500045886||exact||2025||2026||nồi bơm máy giường xe túi nghiệm lá liệu bvtv chăn nuôi diệt": {
+    "exclude_key": "nồi bơm máy giường xe túi nghiệm lá liệu bvtv chăn nuôi diệt",
+    "keyword": "IB2500045886",
+    "last_completed_page": 1,
+    "match_mode": "exact",
+    "notice_type": "Kế hoạch lựa chọn nhà thầu",
+    "updated_at": "2026-05-09 05:35:43",
+    "year_from": 2025,
+    "year_to": 2026
+  },
   "Kế hoạch lựa chọn nhà thầu||thuốc||any-1||2025||2026||nồi bơm máy giường xe túi nghiệm lá liệu bvtv chăn nuôi diệt": {
     "exclude_key": "nồi bơm máy giường xe túi nghiệm lá liệu bvtv chăn nuôi diệt",
     "keyword": "thuốc",
-    "last_completed_page": 12,
+    "last_completed_page": 87,
     "match_mode": "any-1",
     "notice_type": "Kế hoạch lựa chọn nhà thầu",
-    "updated_at": "2026-05-08 18:24:40",
+    "updated_at": "2026-05-12 11:02:06",
     "year_from": 2025,
     "year_to": 2026
   }

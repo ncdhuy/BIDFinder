@@ -199,6 +199,10 @@
     }
   }
 
+  function hasSessionCandidate() {
+    return Boolean(state.token) || Boolean(state.user) || hasOptimisticAuthHint();
+  }
+
   function setAuthHint(isAuthed) {
     try {
       if (isAuthed) {
@@ -274,7 +278,7 @@
   }
 
   function renderUserState() {
-    const optimisticAuthed = !state.initialized && (Boolean(state.token) || hasOptimisticAuthHint());
+    const optimisticAuthed = !state.initialized && hasSessionCandidate();
     const authed = isAuthenticated() || optimisticAuthed;
 
     document.body.classList.toggle('auth-state-authed', authed);
@@ -693,6 +697,7 @@
       ? mode
       : 'register';
 
+    els['auth-modal']?.classList.remove('is-profile');
     if (els['auth-guest-view']) els['auth-guest-view'].hidden = false;
     if (els['auth-profile-view']) els['auth-profile-view'].hidden = true;
     if (els['auth-brand-guest-view']) els['auth-brand-guest-view'].hidden = false;
@@ -734,6 +739,7 @@
       return;
     }
 
+    els['auth-modal']?.classList.add('is-profile');
     if (els['auth-guest-view']) els['auth-guest-view'].hidden = true;
     if (els['auth-profile-view']) els['auth-profile-view'].hidden = false;
     if (els['auth-brand-guest-view']) els['auth-brand-guest-view'].hidden = true;
@@ -931,6 +937,12 @@
 
   async function restoreSession() {
     state.lastSessionVerifyAt = Date.now();
+
+    if (!hasSessionCandidate()) {
+      state.user = null;
+      markAuthInitialized();
+      return false;
+    }
 
     try {
       const response = await authorizedFetch(getApiUrl('/api/auth/me'), {

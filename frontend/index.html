@@ -20,8 +20,9 @@
         }
 
         const savedBidfinderView = sessionStorage.getItem('bidfinder:view') || 'landing';
+        const hasSharedFilterUrl = new URLSearchParams(window.location.search).has('q');
         const requireAuthForDataAccess = localStorage.getItem('bidfinder:require_auth_for_data_access') === '1';
-        if (savedBidfinderView === 'landing' || requireAuthForDataAccess) {
+        if ((!hasSharedFilterUrl && savedBidfinderView === 'landing') || requireAuthForDataAccess) {
             document.body.classList.add('landing-active');
         }
     </script>
@@ -133,32 +134,31 @@
                     </div>
                 </header>
                 
-                <!-- TABS NAVIGATION -->
-                <div class="tabs-container">
-                    <div class="workspace-toolbar">
-                        <div class="workspace-switchers">
-                            <div class="workspace-nav-stack">
-                                <div class="workspace-nav-inline">
-                                    <div class="primary-tab-switcher">
-                                        <button class="primary-tab active" data-tab="data-tab">
-                                            <span class="primary-tab-icon">
-                                                <i data-feather="database"></i>
-                                            </span>
-                                            <span class="primary-tab-text">Dữ liệu</span>
-                                        </button>
-                                        <button class="primary-tab" data-tab="charts-tab">
-                                            <span class="primary-tab-icon">
-                                                <i data-feather="bar-chart-2"></i>
-                                            </span>
-                                            <span class="primary-tab-text">Biểu đồ</span>
-                                        </button>
-                                        <div class="primary-tab-indicator"></div>
-                                    </div>
-
-                                </div>
+                <!-- DATA TABLES -->
+                <div id="data-tab" class="tab-content active">
+                    <div class="result-table-tabs" id="data-view-switcher">
+                        <div class="result-table-tab-list" role="tablist" aria-label="Chọn bảng kết quả">
+                            <button class="scope-btn result-table-tab active" type="button" data-view="df1-panel" aria-selected="true" role="tab">
+                                <span class="scope-icon" aria-hidden="true">
+                                    💊
+                                </span>
+                                <span class="scope-text">Thuốc</span>
+                                <span class="scope-count" id="df1-count-switcher">0</span>
+                            </button>
+                            <button class="scope-btn result-table-tab" type="button" data-view="df2-panel" aria-selected="false" role="tab">
+                                <span class="scope-icon" aria-hidden="true">
+                                    📦
+                                </span>
+                                <span class="scope-text">Hàng hóa</span>
+                                <span class="scope-count" id="df2-count-switcher">0</span>
+                            </button>
+                        </div>
+                        <div class="workspace-status">
+                            <div id="duplicate-warning" class="result-warning result-warning-duplicate" style="display: none;">
+                                <strong>Cảnh báo dữ liệu trùng</strong><br>
+                                Có dòng trùng trong kết quả hiện tại.
                             </div>
                         </div>
-
                         <div class="workspace-actions">
                             <button class="btn-meta-simple" id="open-run-history" aria-label="Lịch sử cập nhật dữ liệu">
                                 <i data-feather="refresh-ccw"></i>
@@ -178,36 +178,6 @@
                                 <i data-feather="search"></i>
                                 <span class="action-btn-label">Tra cứu</span>
                             </button>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- TAB 1: DATA TABLES -->
-                <div id="data-tab" class="tab-content active">
-                    <div class="result-table-tabs" id="data-view-switcher" role="tablist" aria-label="Chọn bảng kết quả">
-                        <button class="scope-btn result-table-tab active" type="button" data-view="df1-panel" aria-selected="true" role="tab">
-                            <span class="scope-icon" aria-hidden="true">
-                                💊
-                            </span>
-                            <span class="scope-text">Thuốc</span>
-                            <span class="scope-count" id="df1-count-switcher">0</span>
-                        </button>
-                        <button class="scope-btn result-table-tab" type="button" data-view="df2-panel" aria-selected="false" role="tab">
-                            <span class="scope-icon" aria-hidden="true">
-                                📦
-                            </span>
-                            <span class="scope-text">Hàng hóa</span>
-                            <span class="scope-count" id="df2-count-switcher">0</span>
-                        </button>
-                        <div class="workspace-status">
-                            <div id="result-warning" class="result-warning" style="display: none;">
-                                <strong>Giới hạn kết quả tìm kiếm</strong><br>
-                                Vui lòng thu hẹp điều kiện tìm kiếm.
-                            </div>
-                            <div id="duplicate-warning" class="result-warning result-warning-duplicate" style="display: none;">
-                                <strong>Cảnh báo dữ liệu trùng</strong><br>
-                                Có dòng trùng trong kết quả hiện tại.
-                            </div>
                         </div>
                     </div>
                     <!-- Bảng DF1 -->
@@ -313,51 +283,6 @@
                     </section>
                 </div>
 
-                <!-- TAB 2: CHARTS -->
-                <div id="charts-tab" class="tab-content">
-                    <section class="charts-section">
-                        <div class="data-card charts-card">
-                            <div class="data-card-header charts-card-header">
-                                <div class="data-card-heading">
-                                    <h2 class="charts-card-title">
-                                        <span class="data-card-icon charts">
-                                            <i data-feather="activity"></i>
-                                        </span>
-                                        THỐNG KÊ & PHÂN TÍCH
-                                    </h2>
-                                </div>
-                            </div>
-
-                            <div class="charts-card-body">
-                                <div class="charts-grid-4 charts-grid-analysis">
-                                    <!-- Chart 1: Value by Province/City -->
-                                    <article class="chart-block chart-block-province">
-                                        <h3>Tổng giá trị trúng thầu theo tỉnh/thành</h3>
-                                        <div class="chart-block-body">
-                                            <div id="chart-province-map" class="vietnam-province-map" role="img" aria-label="Bản đồ tổng giá trị trúng thầu theo tỉnh/thành"></div>
-                                        </div>
-                                    </article>
-
-                                    <!-- Chart 2: Price Histogram -->
-                                    <article class="chart-block chart-block-price">
-                                        <h3>Phân bố đơn giá</h3>
-                                        <div class="chart-block-body">
-                                            <canvas id="chart-price-histogram"></canvas>
-                                        </div>
-                                    </article>
-
-                                    <!-- Chart 3: Timeline Value -->
-                                    <article class="chart-block chart-block-timeline">
-                                        <h3>Tổng giá trị trúng thầu theo tháng</h3>
-                                        <div class="chart-block-body">
-                                            <canvas id="chart-timeline-value"></canvas>
-                                        </div>
-                                    </article>
-                                </div>
-                            </div>
-                        </div>
-                    </section>
-                </div>
             </main>
         </div>
 
@@ -395,6 +320,95 @@
         <footer class="app-footer">
             © 2026 Hệ thống quản lý dữ liệu đấu thầu y tế
         </footer>
+    </div>
+
+    <div id="insight-dock" class="insight-dock">
+        <div class="insight-dock-panel">
+            <span class="insight-dock-icon" aria-hidden="true">
+                <i data-feather="bar-chart-2"></i>
+            </span>
+            <span class="insight-dock-copy">
+                <strong id="insight-result-line">Thuốc: 0/0; Hàng hóa: 0/0</strong>
+                <span id="insight-quota-line">Bạn còn 0/0 lượt full search hôm nay</span>
+            </span>
+            <span class="insight-dock-actions">
+                <button id="insight-full-search" class="insight-dock-action insight-dock-action-secondary" type="button">
+                    Full search
+                </button>
+                <button id="open-insight-drawer" class="insight-dock-action insight-dock-action-primary" type="button" aria-controls="insight-drawer" aria-expanded="false">
+                    <span>Insight</span>
+                    <i data-feather="chevrons-up"></i>
+                </button>
+            </span>
+        </div>
+    </div>
+
+    <div id="insight-drawer" class="insight-drawer" aria-hidden="true">
+        <div class="insight-drawer-overlay" data-insight-close></div>
+        <section class="insight-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="insight-drawer-title">
+            <header class="insight-drawer-header">
+                <div class="insight-drawer-title-group">
+                    <span class="insight-drawer-kicker">Phân tích trực quan</span>
+                    <h3 id="insight-drawer-title">Insight từ kết quả tra cứu</h3>
+                    <p id="insight-drawer-summary">Kết quả hiện tại được tổng hợp theo địa lý, giá và thời gian.</p>
+                </div>
+            </header>
+
+            <div class="insight-drawer-body">
+                <nav class="insight-preview-list" aria-label="Chọn biểu đồ">
+                    <button class="insight-preview-card active" type="button" data-chart-view="province" aria-pressed="true">
+                        <span class="insight-preview-visual insight-preview-visual-map is-data-preview" id="insight-preview-province" aria-hidden="true">
+                            <span class="insight-preview-empty"></span>
+                        </span>
+                        <span class="insight-preview-copy">
+                            <strong>Theo tỉnh/thành</strong>
+                            <span>Tổng giá trị trúng thầu</span>
+                        </span>
+                    </button>
+                    <button class="insight-preview-card" type="button" data-chart-view="price" aria-pressed="false">
+                        <span class="insight-preview-visual insight-preview-visual-bars is-data-preview" id="insight-preview-price" aria-hidden="true">
+                            <span></span><span></span><span></span><span></span><span></span>
+                        </span>
+                        <span class="insight-preview-copy">
+                            <strong>Phân bố đơn giá</strong>
+                            <span>Nhìn nhanh cụm giá</span>
+                        </span>
+                    </button>
+                    <button class="insight-preview-card" type="button" data-chart-view="timeline" aria-pressed="false">
+                        <span class="insight-preview-visual insight-preview-visual-line is-data-preview" id="insight-preview-timeline" aria-hidden="true">
+                            <span></span><span></span><span></span><span></span>
+                        </span>
+                        <span class="insight-preview-copy">
+                            <strong>Theo thời gian</strong>
+                            <span>Tổng giá trị theo tháng</span>
+                        </span>
+                    </button>
+                </nav>
+
+                <div class="insight-chart-stage">
+                    <article class="chart-block chart-block-province insight-chart-panel active" data-chart-panel="province">
+                        <h3>Tổng giá trị trúng thầu theo tỉnh/thành</h3>
+                        <div class="chart-block-body">
+                            <div id="chart-province-map" class="vietnam-province-map" role="img" aria-label="Bản đồ tổng giá trị trúng thầu theo tỉnh/thành"></div>
+                        </div>
+                    </article>
+
+                    <article class="chart-block chart-block-price insight-chart-panel" data-chart-panel="price">
+                        <h3>Phân bố đơn giá</h3>
+                        <div class="chart-block-body">
+                            <canvas id="chart-price-histogram"></canvas>
+                        </div>
+                    </article>
+
+                    <article class="chart-block chart-block-timeline insight-chart-panel" data-chart-panel="timeline">
+                        <h3>Tổng giá trị trúng thầu theo tháng</h3>
+                        <div class="chart-block-body">
+                            <canvas id="chart-timeline-value"></canvas>
+                        </div>
+                    </article>
+                </div>
+            </div>
+        </section>
     </div>
 
     <div id="auth-modal" class="auth-modal" aria-hidden="true">
@@ -852,11 +866,18 @@
             </div>
             <div class="bulk-search-body">
                 <div class="bulk-price-section">
-                    <span class="bulk-section-title">Tìm kiếm hàng hóa theo các mức giá khác nhau</span>
-                    <div class="bulk-price-options" role="radiogroup" aria-label="Đa dạng giá">
-                        <label><input type="radio" name="bulk-price-limit" value="3" checked> Tối đa 3 giá</label>
-                        <label><input type="radio" name="bulk-price-limit" value="5"> Tối đa 5 giá</label>
-                        <label><input type="radio" name="bulk-price-limit" value="10"> Tối đa 10 giá</label>
+                    <span class="bulk-section-title">Tìm kiếm hàng hóa theo các tiêu chí</span>
+                    <div class="bulk-limit-row">
+                        <div class="bulk-price-options" role="radiogroup" aria-label="Đa dạng giá">
+                            <label><input type="radio" name="bulk-diversity-limit" value="price:3" checked> Tối đa 3 giá</label>
+                            <label><input type="radio" name="bulk-diversity-limit" value="price:5"> Tối đa 5 giá</label>
+                            <label><input type="radio" name="bulk-diversity-limit" value="price:10"> Tối đa 10 giá</label>
+                        </div>
+                        <div class="bulk-price-options bulk-product-options" role="radiogroup" aria-label="Đa dạng sản phẩm">
+                            <label><input type="radio" name="bulk-diversity-limit" value="product:3"> Tối đa 3 sản phẩm</label>
+                            <label><input type="radio" name="bulk-diversity-limit" value="product:5"> Tối đa 5 sản phẩm</label>
+                            <label><input type="radio" name="bulk-diversity-limit" value="product:10"> Tối đa 10 sản phẩm</label>
+                        </div>
                     </div>
                 </div>
                 <div class="bulk-field-columns">
@@ -899,22 +920,38 @@
                         </div>
                     </div>
                 </div>
-                <div class="bulk-import-card">
-                    <span class="bulk-section-title">File dữ liệu</span>
-                    <div class="bulk-import-row">
+                <div class="bulk-import-card" id="bulk-import-card">
+                    <div class="bulk-import-dropzone" id="bulk-excel-dropzone">
                         <input id="bulk-excel-file" type="file" accept=".xlsx,.xls,.csv" hidden>
-                        <button class="btn-feedback-secondary" id="bulk-import-excel" type="button">
-                            <i data-feather="upload"></i>
-                            Import Excel
-                        </button>
-                        <span class="bulk-import-file-name" id="bulk-import-file-name">Chưa chọn file</span>
+                        <div class="bulk-import-row">
+                            <button class="btn-feedback-secondary bulk-excel-action" id="bulk-import-excel" type="button">
+                                <i data-feather="upload"></i>
+                                Chọn file Excel
+                            </button>
+                            <span class="bulk-import-hint">hoặc kéo thả file Excel vào đây</span>
+                        </div>
+                        <div class="bulk-import-selected" id="bulk-import-selected" hidden>
+                            <span class="bulk-import-file-name" id="bulk-import-file-name">Chưa chọn file</span>
+                            <button class="btn-feedback-secondary bulk-excel-action" id="download-bulk-excel" type="button" disabled hidden>
+                                <i data-feather="download"></i>
+                                Tải file Excel
+                            </button>
+                            <div class="bulk-download-copy" id="bulk-download-copy" hidden>
+                                <strong id="bulk-download-title"></strong>
+                                <span id="bulk-download-summary"></span>
+                            </div>
+                            <button class="bulk-clear-file-btn" id="bulk-clear-excel" type="button" aria-label="Xóa file Excel đã upload" title="Xóa file đã upload" hidden>
+                                <i data-feather="trash-2"></i>
+                            </button>
+                        </div>
+                        <div class="bulk-inline-status" id="bulk-inline-status" aria-live="polite"></div>
                     </div>
                 </div>
                 <div class="bulk-search-warnings" id="bulk-search-warnings" hidden></div>
                 <p class="bulk-search-status" id="bulk-search-status" aria-live="polite"></p>
             </div>
             <div class="bulk-search-footer">
-                <button class="btn-feedback-primary" id="run-bulk-search" type="button">Tra cứu hàng loạt</button>
+                <button class="btn-feedback-primary" id="run-bulk-search" type="button">Tra cứu</button>
             </div>
         </div>
     </div>
@@ -1010,7 +1047,7 @@
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
-    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <script src="analytics-config.js"></script>
