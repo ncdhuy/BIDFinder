@@ -486,7 +486,45 @@ class DatabaseMigrator:
                 )
             """)
 
-            # 13. Bảng facts nhà thầu trúng thầu lấy từ web detail
+            # 13. Bảng log quyết định thủ công khi child KHLCNT không chứa keyword crawl
+            self.cursor.execute("""
+                CREATE TABLE IF NOT EXISTS khlcnt_manual_decision_logs (
+                    id SERIAL PRIMARY KEY,
+                    run_id INTEGER,
+                    ma_khlcnt TEXT,
+                    ma_khlcnt_full TEXT,
+                    khlcnt_version TEXT,
+                    ten_khlcnt TEXT,
+                    chu_dau_tu TEXT,
+                    search_keyword TEXT,
+                    child_index INTEGER,
+                    child_stt TEXT,
+                    child_name TEXT,
+                    linked_notice TEXT,
+                    decision TEXT NOT NULL,
+                    reason TEXT,
+                    operator_note TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            self.cursor.execute("""
+                ALTER TABLE khlcnt_manual_decision_logs
+                ADD COLUMN IF NOT EXISTS chu_dau_tu TEXT
+            """)
+            self.cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_khlcnt_manual_decision_khlcnt
+                ON khlcnt_manual_decision_logs (ma_khlcnt, khlcnt_version)
+            """)
+            self.cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_khlcnt_manual_decision_chu_dau_tu
+                ON khlcnt_manual_decision_logs (chu_dau_tu)
+            """)
+            self.cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_khlcnt_manual_decision_created_at
+                ON khlcnt_manual_decision_logs (created_at)
+            """)
+
+            # 14. Bảng facts nhà thầu trúng thầu lấy từ web detail
             self.cursor.execute("""
                 CREATE TABLE IF NOT EXISTS web_winner_facts (
                     ma_tbmt TEXT NOT NULL,
@@ -507,7 +545,7 @@ class DatabaseMigrator:
                 DROP COLUMN IF EXISTS created_at
             """)
 
-            # 14. Bảng quan hệ QĐ
+            # 15. Bảng quan hệ QĐ
             self.cursor.execute("""
                 CREATE TABLE IF NOT EXISTS qd_relations (
                     ma_tbmt      TEXT NOT NULL,
@@ -532,19 +570,29 @@ class DatabaseMigrator:
                 ON processed_medicines (ma_tbmt, so_qd, version);
                 CREATE INDEX IF NOT EXISTS idx_goods_join_keys
                 ON processed_goods (ma_tbmt, so_qd, version);
+                CREATE INDEX IF NOT EXISTS idx_medicines_qd_display_trgm ON processed_medicines USING gin (qd_display gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_medicines_ten_thuoc_trgm ON processed_medicines USING gin (ten_thuoc gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_medicines_ten_hoat_chat_trgm ON processed_medicines USING gin (ten_hoat_chat gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_medicines_nong_do_ham_luong_trgm ON processed_medicines USING gin (nong_do_ham_luong gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_medicines_duong_dung_trgm ON processed_medicines USING gin (duong_dung gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_medicines_dang_bao_che_trgm ON processed_medicines USING gin (dang_bao_che gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_medicines_quy_cach_trgm ON processed_medicines USING gin (quy_cach gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_medicines_nhom_thuoc_trgm ON processed_medicines USING gin (nhom_thuoc gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_medicines_nhom_thuoc_filter ON processed_medicines USING gin (nhom_thuoc_filter);
+                CREATE INDEX IF NOT EXISTS idx_medicines_so_dk_gpnk_trgm ON processed_medicines USING gin (so_dk_gpnk gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_medicines_don_vi_tinh_trgm ON processed_medicines USING gin (don_vi_tinh gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_medicines_co_so_san_xuat_trgm ON processed_medicines USING gin (co_so_san_xuat gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_medicines_xuat_xu_trgm ON processed_medicines USING gin (xuat_xu gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_medicines_nha_thau_trung_thau_trgm ON processed_medicines USING gin (nha_thau_trung_thau gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_goods_qd_display_trgm ON processed_goods USING gin (qd_display gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_goods_danh_muc_hang_hoa_trgm ON processed_goods USING gin (danh_muc_hang_hoa gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_goods_ten_phan_lo_trgm ON processed_goods USING gin (ten_phan_lo gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_goods_ky_ma_hieu_trgm ON processed_goods USING gin (ky_ma_hieu gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_goods_nhan_hieu_trgm ON processed_goods USING gin (nhan_hieu gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_goods_hang_san_xuat_trgm ON processed_goods USING gin (hang_san_xuat gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_goods_mat_hang_du_thau_trgm ON processed_goods USING gin (mat_hang_du_thau gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_goods_tinh_nang_ky_thuat_trgm ON processed_goods USING gin (tinh_nang_ky_thuat gin_trgm_ops);
+                CREATE INDEX IF NOT EXISTS idx_goods_don_vi_tinh_trgm ON processed_goods USING gin (don_vi_tinh gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_goods_xuat_xu_trgm ON processed_goods USING gin (xuat_xu gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_goods_nha_thau_trung_thau_trgm ON processed_goods USING gin (nha_thau_trung_thau gin_trgm_ops);
                 CREATE INDEX IF NOT EXISTS idx_goods_search_blob_trgm
@@ -562,6 +610,10 @@ class DatabaseMigrator:
                 CREATE INDEX IF NOT EXISTS idx_metadata_dia_diem ON package_metadata (dia_diem);
                 CREATE INDEX IF NOT EXISTS idx_metadata_tinh_trang_hieu_luc ON package_metadata (tinh_trang_hieu_luc);
                 CREATE INDEX IF NOT EXISTS idx_metadata_ngay_phe_duyet_date ON package_metadata (ngay_phe_duyet_date);
+                CREATE INDEX IF NOT EXISTS idx_metadata_approval_join_sort
+                ON package_metadata (ngay_phe_duyet_date DESC NULLS LAST, ma_tbmt, so_qd, version);
+                CREATE INDEX IF NOT EXISTS idx_metadata_validity_join
+                ON package_metadata (tinh_trang_hieu_luc, ma_tbmt, so_qd, version);
                 CREATE INDEX IF NOT EXISTS idx_metadata_last_checked_at ON package_metadata (last_checked_at);
                 CREATE INDEX IF NOT EXISTS idx_human_task_queue_lookup ON human_task_queue (work_date, task_type, status);
                 CREATE INDEX IF NOT EXISTS idx_web_winner_facts_status ON web_winner_facts (capture_status);

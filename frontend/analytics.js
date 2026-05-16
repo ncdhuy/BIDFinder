@@ -8,15 +8,36 @@
     return Boolean(CONFIG.enabled && CONFIG.apiKey && CONFIG.apiHost);
   }
 
+  function isLocalEnvironment() {
+    const hostname = window.location.hostname;
+    return (
+      window.location.protocol === 'file:' ||
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '0.0.0.0' ||
+      hostname === '::1'
+    );
+  }
+
+  function getSuppressedReason() {
+    if (!isConfigured()) return 'not_configured';
+    if (isLocalEnvironment() && CONFIG.trackLocalhost !== true) return 'local_environment';
+    return '';
+  }
+
+  function isTrackingAllowed() {
+    return getSuppressedReason() === '';
+  }
+
   function loadPostHogSnippet() {
-    if (!isConfigured() || window.posthog?.__loaded) return;
+    if (!isTrackingAllowed() || window.posthog?.__loaded) return;
 
     !function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.async=!0,p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="init capture register register_once register_for_session unregister opt_out_capturing has_opted_out_capturing opt_in_capturing reset isFeatureEnabled getFeatureFlag getFeatureFlagPayload reloadFeatureFlags group identify setPersonProperties setPersonPropertiesForFlags resetPersonPropertiesForFlags resetGroups onFeatureFlags addFeatureFlagsHandler onSessionId getSurveys getActiveMatchingSurveys renderSurvey canRenderSurvey getNextSurveyStep".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
     window.posthog.__loaded = true;
   }
 
   function init() {
-    if (initialized || !isConfigured()) return false;
+    if (initialized || !isTrackingAllowed()) return false;
 
     loadPostHogSnippet();
 
@@ -81,7 +102,7 @@
   }
 
   function track(eventName, properties = {}) {
-    if (!eventName || !isConfigured()) return;
+    if (!eventName || !isTrackingAllowed()) return;
 
     const safeProperties = sanitizeProperties(properties);
     if (!initialized) {
@@ -93,7 +114,7 @@
   }
 
   function identify(user) {
-    if (!isConfigured() || CONFIG.identifyAuthenticatedUsers === false) return;
+    if (!isTrackingAllowed() || CONFIG.identifyAuthenticatedUsers === false) return;
 
     const distinctId = getUserId(user);
     if (!distinctId) return;
@@ -104,7 +125,7 @@
   }
 
   function reset() {
-    if (!isConfigured()) return;
+    if (!isTrackingAllowed()) return;
     window.posthog?.reset?.();
   }
 
@@ -152,6 +173,9 @@
     const posthogLoaded = Boolean(window.posthog);
     return {
       configured: isConfigured(),
+      trackingAllowed: isTrackingAllowed(),
+      suppressedReason: getSuppressedReason(),
+      localEnvironment: isLocalEnvironment(),
       initialized,
       posthogLoaded,
       pendingEvents: pending.length,

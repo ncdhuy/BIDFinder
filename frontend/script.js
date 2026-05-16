@@ -4010,7 +4010,6 @@ function updateInsightEntryPoint(totalRecords = getInsightResultCounts().total) 
     const dockQuotaLine = document.getElementById('insight-quota-line');
     const dockFullSearchButton = document.getElementById('insight-full-search');
     const openButton = document.getElementById('open-insight-drawer');
-    const drawerSummary = document.getElementById('insight-drawer-summary');
     if (!dock) return;
 
     if (!isDataDockContextAllowed()) {
@@ -4047,14 +4046,8 @@ function updateInsightEntryPoint(totalRecords = getInsightResultCounts().total) 
 
     if (!hasData) {
         if (isInsightDrawerOpen()) closeInsightDrawer();
-        if (drawerSummary) drawerSummary.textContent = 'Kết quả hiện tại được tổng hợp theo địa lý, giá và thời gian.';
         return;
     }
-
-    const resultSummary = formatInsightResultSummary(counts);
-
-    const meta = INSIGHT_CHART_META[activeInsightChart] || INSIGHT_CHART_META.province;
-    if (drawerSummary) drawerSummary.textContent = `${resultSummary}. ${meta.description}`;
 }
 
 function refreshVisibleInsightChart() {

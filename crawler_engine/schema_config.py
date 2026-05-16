@@ -84,6 +84,7 @@ SCHEMAS = {
             "Số lượng đề nghị trúng thầu": "Số lượng",
             "Đơn giá trúng thầu": "Đơn giá trúng thầu (VND)",
             "Đơn giá dự thầu": "Đơn giá trúng thầu (VND)",
+            "Đơn giá dự thầu (VND)": "Đơn giá trúng thầu (VND)",
             "Đơn giá (VAT)": "Đơn giá trúng thầu (VND)",
             "Đơn giá (VND)": "Đơn giá trúng thầu (VND)",
             "Đơn giá (có VAT)": "Đơn giá trúng thầu (VND)",

@@ -2,6 +2,8 @@
 crawler_engine/raw_data/
 crawler_engine/test_outputs/
 crawler_engine/tmp_storage/
+crawler_engine/reports/
+load_tests/
 
 # 2. Chặn các file môi trường chứa thông tin bảo mật (DATABASE_URL, API_KEY)
 .env

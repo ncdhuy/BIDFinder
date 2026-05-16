@@ -350,7 +350,6 @@
                 <div class="insight-drawer-title-group">
                     <span class="insight-drawer-kicker">Phân tích trực quan</span>
                     <h3 id="insight-drawer-title">Insight từ kết quả tra cứu</h3>
-                    <p id="insight-drawer-summary">Kết quả hiện tại được tổng hợp theo địa lý, giá và thời gian.</p>
                 </div>
             </header>
 
@@ -365,22 +364,22 @@
                             <span>Tổng giá trị trúng thầu</span>
                         </span>
                     </button>
-                    <button class="insight-preview-card" type="button" data-chart-view="price" aria-pressed="false">
-                        <span class="insight-preview-visual insight-preview-visual-bars is-data-preview" id="insight-preview-price" aria-hidden="true">
-                            <span></span><span></span><span></span><span></span><span></span>
-                        </span>
-                        <span class="insight-preview-copy">
-                            <strong>Phân bố đơn giá</strong>
-                            <span>Nhìn nhanh cụm giá</span>
-                        </span>
-                    </button>
                     <button class="insight-preview-card" type="button" data-chart-view="timeline" aria-pressed="false">
                         <span class="insight-preview-visual insight-preview-visual-line is-data-preview" id="insight-preview-timeline" aria-hidden="true">
                             <span></span><span></span><span></span><span></span>
                         </span>
                         <span class="insight-preview-copy">
                             <strong>Theo thời gian</strong>
-                            <span>Tổng giá trị theo tháng</span>
+                            <span>Tổng giá trị trúng thầu</span>
+                        </span>
+                    </button>
+                    <button class="insight-preview-card" type="button" data-chart-view="price" aria-pressed="false">
+                        <span class="insight-preview-visual insight-preview-visual-bars is-data-preview" id="insight-preview-price" aria-hidden="true">
+                            <span></span><span></span><span></span><span></span><span></span>
+                        </span>
+                        <span class="insight-preview-copy">
+                            <strong>Phân bố đơn giá</strong>
+                            <span>Xu hướng giá trúng thầu</span>
                         </span>
                     </button>
                 </nav>
@@ -393,17 +392,17 @@
                         </div>
                     </article>
 
-                    <article class="chart-block chart-block-price insight-chart-panel" data-chart-panel="price">
-                        <h3>Phân bố đơn giá</h3>
-                        <div class="chart-block-body">
-                            <canvas id="chart-price-histogram"></canvas>
-                        </div>
-                    </article>
-
                     <article class="chart-block chart-block-timeline insight-chart-panel" data-chart-panel="timeline">
                         <h3>Tổng giá trị trúng thầu theo tháng</h3>
                         <div class="chart-block-body">
                             <canvas id="chart-timeline-value"></canvas>
+                        </div>
+                    </article>
+
+                    <article class="chart-block chart-block-price insight-chart-panel" data-chart-panel="price">
+                        <h3>Phân bố đơn giá</h3>
+                        <div class="chart-block-body">
+                            <canvas id="chart-price-histogram"></canvas>
                         </div>
                     </article>
                 </div>

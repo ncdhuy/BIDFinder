@@ -142,6 +142,7 @@ DB_POOL_MAX_SIZE = max(1, int(os.getenv("DB_POOL_MAX_SIZE", "8")))
 PREVIEW_CACHE_TTL_SECONDS = max(1, int(os.getenv("PREVIEW_CACHE_TTL_SECONDS", "15")))
 AUTOCOMPLETE_CACHE_TTL_SECONDS = max(1, int(os.getenv("AUTOCOMPLETE_CACHE_TTL_SECONDS", "20")))
 CACHE_MAX_ENTRIES = max(50, int(os.getenv("CACHE_MAX_ENTRIES", "500")))
+STANDARD_QUERY_EXACT_COUNT_ENABLED = get_env_flag("STANDARD_QUERY_EXACT_COUNT_ENABLED", False)
 SERVER_ERROR_MESSAGE = "Hệ thống đang bận hoặc gặp lỗi nội bộ. Vui lòng thử lại sau."
 DRUG_GROUP_UNKNOWN = "UNKNOWN"
 DRUG_GROUP_CANONICAL = ("BDG", "N1", "N2", "N3", "N4", "N5")
@@ -306,14 +307,139 @@ WITH df2_full AS (
                 ELSE 'Hết hiệu lực'
             END
         ) AS "Tình trạng hiệu lực",
-        CONCAT_WS(
-            ' | ',
-            g.ten_phan_lo,
-            g.danh_muc_hang_hoa,
-            g.ky_ma_hieu,
-            g.nhan_hieu,
-            g.mat_hang_du_thau,
-            g.tinh_nang_ky_thuat
+        (
+            COALESCE(g.ten_phan_lo, '') || ' | ' ||
+            COALESCE(g.danh_muc_hang_hoa, '') || ' | ' ||
+            COALESCE(g.ky_ma_hieu, '') || ' | ' ||
+            COALESCE(g.nhan_hieu, '') || ' | ' ||
+            COALESCE(g.mat_hang_du_thau, '') || ' | ' ||
+            COALESCE(g.tinh_nang_ky_thuat, '')
+        ) AS "Search blob"
+    FROM processed_goods g
+    LEFT JOIN package_metadata p
+        ON g.ma_tbmt = p.ma_tbmt
+       AND g.so_qd = p.so_qd
+       AND g.version = p.version
+)
+"""
+
+DF1_SEARCH_CTE = """
+WITH df1_search AS (
+    SELECT
+        m.id AS "__row_id",
+        m.ma_tbmt AS "Mã TBMT",
+        COALESCE(NULLIF(m.qd_display, ''), m.so_qd) AS "Quyết định phê duyệt",
+        m.version AS "Version",
+        m.ma_thuoc AS "Mã thuốc",
+        m.ten_thuoc AS "Tên thuốc",
+        m.ten_hoat_chat AS "Tên hoạt chất",
+        m.nong_do_ham_luong AS "Nồng độ, hàm lượng",
+        m.duong_dung AS "Đường dùng",
+        m.dang_bao_che AS "Dạng bào chế",
+        m.quy_cach AS "Quy cách",
+        m.nhom_thuoc AS "Nhóm thuốc",
+        COALESCE(m.nhom_thuoc_filter, ARRAY[]::TEXT[]) AS "__drug_group_filter",
+        m.so_dk_gpnk AS "GĐKLH hoặc GPNK",
+        m.co_so_san_xuat AS "Cơ sở sản xuất",
+        m.xuat_xu AS "Xuất xứ",
+        m.don_vi_tinh AS "Đơn vị tính",
+        m.so_luong AS "Số lượng",
+        m.don_gia_trung_thau AS "Đơn giá trúng thầu (VND)",
+        m.thanh_tien AS "Thành tiền (VND)",
+        m.nha_thau_trung_thau AS "Nhà thầu trúng thầu",
+        p.chu_dau_tu AS "Chủ đầu tư",
+        p.ngay_phe_duyet AS "Ngày phê duyệt",
+        COALESCE(
+            p.ngay_phe_duyet_date,
+            CASE
+                WHEN p.ngay_phe_duyet ~ '^\\d{2}/\\d{2}/\\d{4}$' THEN TO_DATE(p.ngay_phe_duyet, 'DD/MM/YYYY')
+                ELSE NULL
+            END
+        ) AS "__approval_date",
+        p.hinh_thuc_lcnt AS "Hình thức LCNT",
+        p.dia_diem AS "Địa điểm",
+        p.ngay_het_hieu_luc AS "__expiry_date",
+        COALESCE(
+            NULLIF(
+                CASE
+                    WHEN p.tinh_trang_hieu_luc = 'CÒN HIỆU LỰC' THEN 'Còn hiệu lực'
+                    WHEN p.tinh_trang_hieu_luc = 'HẾT HIỆU LỰC' THEN 'Hết hiệu lực'
+                    WHEN p.tinh_trang_hieu_luc = 'KHÔNG XÁC ĐỊNH' THEN 'Chưa xác định'
+                    ELSE p.tinh_trang_hieu_luc
+                END,
+                ''
+            ),
+            CASE
+                WHEN p.ngay_het_hieu_luc IS NULL THEN 'Chưa xác định'
+                WHEN p.ngay_het_hieu_luc >= CURRENT_DATE THEN 'Còn hiệu lực'
+                ELSE 'Hết hiệu lực'
+            END
+        ) AS "Tình trạng hiệu lực"
+    FROM processed_medicines m
+    LEFT JOIN package_metadata p
+        ON m.ma_tbmt = p.ma_tbmt
+       AND m.so_qd = p.so_qd
+       AND m.version = p.version
+)
+"""
+
+DF2_SEARCH_CTE = """
+WITH df2_search AS (
+    SELECT
+        g.id AS "__row_id",
+        g.ma_tbmt AS "Mã TBMT",
+        COALESCE(NULLIF(g.qd_display, ''), g.so_qd) AS "Quyết định phê duyệt",
+        g.version AS "Version",
+        g.ma_phan_lo AS "Mã phần/lô",
+        g.ten_phan_lo AS "Tên phần/lô",
+        g.nha_thau_trung_thau AS "Nhà thầu trúng thầu",
+        g.danh_muc_hang_hoa AS "Danh mục hàng hóa",
+        g.ky_ma_hieu AS "Ký mã hiệu",
+        g.nhan_hieu AS "Nhãn hiệu",
+        g.hang_san_xuat AS "Hãng sản xuất",
+        g.mat_hang_du_thau AS "Mặt hàng dự thầu",
+        g.don_vi_tinh AS "Đơn vị tính",
+        g.khoi_luong AS "Khối lượng",
+        g.xuat_xu AS "Xuất xứ",
+        g.nam_san_xuat AS "Năm sản xuất",
+        g.tinh_nang_ky_thuat AS "Tính năng kỹ thuật",
+        g.don_gia_trung_thau AS "Đơn giá trúng thầu (VND)",
+        g.thanh_tien AS "Thành tiền (VND)",
+        p.chu_dau_tu AS "Chủ đầu tư",
+        p.ngay_phe_duyet AS "Ngày phê duyệt",
+        COALESCE(
+            p.ngay_phe_duyet_date,
+            CASE
+                WHEN p.ngay_phe_duyet ~ '^\\d{2}/\\d{2}/\\d{4}$' THEN TO_DATE(p.ngay_phe_duyet, 'DD/MM/YYYY')
+                ELSE NULL
+            END
+        ) AS "__approval_date",
+        p.hinh_thuc_lcnt AS "Hình thức LCNT",
+        p.dia_diem AS "Địa điểm",
+        p.ngay_het_hieu_luc AS "__expiry_date",
+        COALESCE(
+            NULLIF(
+                CASE
+                    WHEN p.tinh_trang_hieu_luc = 'CÒN HIỆU LỰC' THEN 'Còn hiệu lực'
+                    WHEN p.tinh_trang_hieu_luc = 'HẾT HIỆU LỰC' THEN 'Hết hiệu lực'
+                    WHEN p.tinh_trang_hieu_luc = 'KHÔNG XÁC ĐỊNH' THEN 'Chưa xác định'
+                    ELSE p.tinh_trang_hieu_luc
+                END,
+                ''
+            ),
+            CASE
+                WHEN p.ngay_het_hieu_luc IS NULL THEN 'Chưa xác định'
+                WHEN p.ngay_het_hieu_luc >= CURRENT_DATE THEN 'Còn hiệu lực'
+                ELSE 'Hết hiệu lực'
+            END
+        ) AS "Tình trạng hiệu lực",
+        (
+            COALESCE(g.ten_phan_lo, '') || ' | ' ||
+            COALESCE(g.danh_muc_hang_hoa, '') || ' | ' ||
+            COALESCE(g.ky_ma_hieu, '') || ' | ' ||
+            COALESCE(g.nhan_hieu, '') || ' | ' ||
+            COALESCE(g.mat_hang_du_thau, '') || ' | ' ||
+            COALESCE(g.tinh_nang_ky_thuat, '')
         ) AS "Search blob"
     FROM processed_goods g
     LEFT JOIN package_metadata p
@@ -410,14 +536,13 @@ WITH df2_preview AS (
                 ELSE 'Hết hiệu lực'
             END
         ) AS "Tình trạng hiệu lực",
-        CONCAT_WS(
-            ' | ',
-            g.ten_phan_lo,
-            g.danh_muc_hang_hoa,
-            g.ky_ma_hieu,
-            g.nhan_hieu,
-            g.mat_hang_du_thau,
-            g.tinh_nang_ky_thuat
+        (
+            COALESCE(g.ten_phan_lo, '') || ' | ' ||
+            COALESCE(g.danh_muc_hang_hoa, '') || ' | ' ||
+            COALESCE(g.ky_ma_hieu, '') || ' | ' ||
+            COALESCE(g.nhan_hieu, '') || ' | ' ||
+            COALESCE(g.mat_hang_du_thau, '') || ' | ' ||
+            COALESCE(g.tinh_nang_ky_thuat, '')
         ) AS "Search blob"
     FROM processed_goods g
     LEFT JOIN package_metadata p
@@ -1266,6 +1391,14 @@ def build_sort_order_parts(scope_name: str, sort_rules: List[SortRule]) -> List[
     return ['"__approval_date" DESC NULLS LAST', '"Mã TBMT" ASC']
 
 
+def prefix_sort_order_parts(order_parts: List[str], table_alias: str) -> List[str]:
+    prefixed = []
+    prefix = f'{table_alias}.'
+    for part in order_parts:
+        prefixed.append(part.replace('"', prefix + '"', 1) if part.startswith('"') else part)
+    return prefixed
+
+
 def build_result_query(
     scope_name: str,
     filters: Optional[FilterRequest],
@@ -1276,7 +1409,8 @@ def build_result_query(
     diversify_prices: bool = False,
 ):
     params: List[Any] = []
-    cte, table_name = get_scope_query_parts(scope_name, variant="full")
+    search_cte, search_table_name = get_scope_query_parts(scope_name, variant="search")
+    full_cte, full_table_name = get_scope_query_parts(scope_name, variant="full")
     conditions = build_scope_filters(scope_name, filters, params)
     where_clause = ""
     if conditions:
@@ -1284,35 +1418,27 @@ def build_result_query(
 
     order_parts = build_sort_order_parts(scope_name, sort_rules)
     order_clause = ", ".join(order_parts)
+    selected_order_clause = ", ".join(prefix_sort_order_parts(order_parts, "selected_rows"))
     effective_limit = int(limit) + (1 if include_overflow_probe else 0)
 
-    if diversify_prices:
-        query = f"""
-        {cte}
+    full_cte_body = full_cte.lstrip().removeprefix("WITH ")
+
+    query = f"""
+    {search_cte},
+    selected_rows AS MATERIALIZED (
         SELECT *
-        FROM (
-            SELECT
-                ranked_base.*,
-                ROW_NUMBER() OVER (
-                    PARTITION BY ranked_base."__recency_bucket", ranked_base."Đơn giá trúng thầu (VND)"
-                    ORDER BY {order_clause}
-                ) AS "__price_rank"
-            FROM (
-                SELECT
-                    {table_name}.*,
-                    CASE
-                        WHEN "__approval_date" >= (CURRENT_DATE - INTERVAL '12 months') THEN 0
-                        ELSE 1
-                    END AS "__recency_bucket"
-                FROM {table_name}
-                {where_clause}
-            ) ranked_base
-        ) ranked
-        ORDER BY "__recency_bucket" ASC, "__price_rank" ASC, {order_clause}
+        FROM {search_table_name}
+        {where_clause}
+        ORDER BY {order_clause}
         LIMIT {effective_limit}
-        """
-    else:
-        query = f"{cte} SELECT * FROM {table_name}{where_clause} ORDER BY {order_clause} LIMIT {effective_limit}"
+    ),
+    {full_cte_body}
+    SELECT full_rows.*
+    FROM {full_table_name} full_rows
+    JOIN selected_rows
+      ON full_rows."__row_id" = selected_rows."__row_id"
+    ORDER BY {selected_order_clause}
+    """
 
     return query, params
 
@@ -1427,7 +1553,7 @@ def build_bulk_item_count_query(
 
 def build_total_count_query(scope_name: str, filters: Optional[FilterRequest]):
     params: List[Any] = []
-    cte, table_name = get_scope_query_parts(scope_name, variant="full")
+    cte, table_name = get_scope_query_parts(scope_name, variant="search")
     query = f"{cte} SELECT COUNT(*) AS total_count FROM {table_name}"
     conditions = build_scope_filters(scope_name, filters, params)
 
@@ -1493,15 +1619,17 @@ def allocate_full_search_limits(
     }
 
 
-def get_scope_query_parts(scope_name: str, variant: Literal["full", "preview"] = "full"):
+def get_scope_query_parts(scope_name: str, variant: Literal["full", "preview", "search"] = "full"):
     query_map = {
         "medicine": {
             "full": (DF1_CTE, "df1_full"),
             "preview": (DF1_PREVIEW_CTE, "df1_preview"),
+            "search": (DF1_SEARCH_CTE, "df1_search"),
         },
         "goods": {
             "full": (DF2_CTE, "df2_full"),
             "preview": (DF2_PREVIEW_CTE, "df2_preview"),
+            "search": (DF2_SEARCH_CTE, "df2_search"),
         },
     }
     return query_map[scope_name][variant]
@@ -1803,6 +1931,7 @@ async def fetch_result_page(
     limit: int,
     *,
     diversify_prices: bool = False,
+    exact_count_enabled: bool = False,
 ) -> Dict[str, Any]:
     query, params = build_result_query(
         scope_name=scope_name,
@@ -1816,10 +1945,12 @@ async def fetch_result_page(
     has_more = len(rows) > limit
     visible_rows = rows[:limit]
 
-    if has_more:
+    if has_more and exact_count_enabled:
         count_query, count_params = build_total_count_query(scope_name, filters)
         total_count = int(await conn.fetchval(count_query, *count_params) or 0)
         count_meta = build_count_meta(total_count, exact=True)
+    elif has_more:
+        count_meta = build_count_meta(limit, exact=False)
     else:
         count_meta = build_count_meta(len(visible_rows), exact=True)
 
@@ -2395,7 +2526,7 @@ async def query_data(request: Request, payload: QueryRequest):
         result = {
             "success": True,
             "search_mode": search_mode,
-            "diversify_prices": not is_full_search,
+            "diversify_prices": False,
             "applied_limit_per_scope": limit,
             "applied_total_limit": limit * 2 if payload.scope == "all" and not is_full_search else limit,
         }
@@ -2429,7 +2560,8 @@ async def query_data(request: Request, payload: QueryRequest):
                     filters,
                     sort_rules,
                     allocation["medicine"],
-                    diversify_prices=not is_full_search,
+                    diversify_prices=False,
+                    exact_count_enabled=is_full_search or STANDARD_QUERY_EXACT_COUNT_ENABLED,
                 )
                 result["df1"] = page
                 count_parts.append({
@@ -2444,7 +2576,8 @@ async def query_data(request: Request, payload: QueryRequest):
                     filters,
                     sort_rules,
                     allocation["goods"],
-                    diversify_prices=not is_full_search,
+                    diversify_prices=False,
+                    exact_count_enabled=is_full_search or STANDARD_QUERY_EXACT_COUNT_ENABLED,
                 )
                 result["df2"] = page
                 count_parts.append({

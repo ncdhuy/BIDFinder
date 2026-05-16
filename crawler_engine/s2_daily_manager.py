@@ -2543,6 +2543,53 @@ def check_price_column_quality_for_schema(df: pd.DataFrame, schema_type: str):
     return True, "OK"
 
 
+def check_amount_consistency_for_schema(df: pd.DataFrame, schema_type: str):
+    quantity_col = "Số lượng" if schema_type == "MEDICINE_STANDARD" else "Khối lượng"
+    price_col = "Đơn giá trúng thầu (VND)"
+    amount_col = "Thành tiền (VND)"
+    required_cols = [quantity_col, price_col, amount_col]
+
+    if any(col not in df.columns for col in required_cols):
+        return True, "OK"
+
+    quantity = clean_numeric_series_loose(df[quantity_col])
+    price = clean_numeric_series_loose(df[price_col])
+    amount = clean_numeric_series_loose(df[amount_col])
+
+    comparable_mask = (
+        quantity.notna()
+        & price.notna()
+        & amount.notna()
+        & (quantity > 0)
+        & (price > 0)
+        & (amount > 0)
+    )
+    checked_count = int(comparable_mask.sum())
+    if checked_count == 0:
+        return True, "OK"
+
+    expected = quantity * price
+    diff = (amount - expected).abs()
+    tolerance = expected.abs().mul(0.0001).clip(lower=1)
+    mismatch_mask = comparable_mask & (diff > tolerance)
+    mismatch_count = int(mismatch_mask.sum())
+    if mismatch_count == 0:
+        return True, "OK"
+
+    sample_parts = []
+    for idx in df.index[mismatch_mask][:3]:
+        sample_parts.append(
+            f"dòng {idx + 1}: {quantity.loc[idx]:g} * {price.loc[idx]:g} = "
+            f"{expected.loc[idx]:g}, file={amount.loc[idx]:g}"
+        )
+    sample_text = "; ".join(sample_parts)
+    return (
+        False,
+        f"Sai công thức {quantity_col} * Đơn giá != Thành tiền: "
+        f"{mismatch_count}/{checked_count} dòng. Ví dụ: {sample_text}",
+    )
+
+
 def prepare_schema_validation_frame(df_check: pd.DataFrame, schema_type: str):
     config = SCHEMAS[schema_type]
     working_df = df_check.copy()
@@ -2718,6 +2765,10 @@ def validate_manifest_schema(
         price_ok, price_reason = check_price_column_quality_for_schema(working_df, schema_type)
         if not price_ok:
             _add_schema_issue(issues, "QUALITY", price_reason)
+
+        amount_ok, amount_reason = check_amount_consistency_for_schema(working_df, schema_type)
+        if not amount_ok:
+            _add_schema_issue(issues, "QUALITY", amount_reason)
 
     active_tiers = [
         tier for tier in SCHEMA_VALIDATION_TIER_ORDER

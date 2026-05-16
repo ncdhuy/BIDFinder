@@ -69,6 +69,7 @@ POSITION_OPTIONS = [
 
 PASSWORD_MIN_LENGTH = max(9, int(os.getenv("AUTH_PASSWORD_MIN_LENGTH", "9")))
 SESSION_TTL_DAYS = max(1, int(os.getenv("AUTH_SESSION_TTL_DAYS", "30")))
+SESSION_TOUCH_INTERVAL_SECONDS = max(0, int(os.getenv("AUTH_SESSION_TOUCH_INTERVAL_SECONDS", "300")))
 PBKDF2_ITERATIONS = max(120_000, int(os.getenv("AUTH_PBKDF2_ITERATIONS", "240000")))
 PASSWORD_RESET_TTL_MINUTES = max(5, int(os.getenv("AUTH_PASSWORD_RESET_TTL_MINUTES", "30")))
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -647,7 +648,8 @@ async def get_authenticated_user(conn: asyncpg.Connection, raw_token: str) -> Op
         SELECT
             u.*,
             s.id AS session_id,
-            s.expires_at
+            s.expires_at,
+            s.last_used_at
         FROM app_user_sessions s
         JOIN app_users u ON u.id = s.user_id
         WHERE s.token_hash = $1
@@ -663,10 +665,18 @@ async def get_authenticated_user(conn: asyncpg.Connection, raw_token: str) -> Op
         await conn.execute("DELETE FROM app_user_sessions WHERE id = $1", row["session_id"])
         return None
 
-    await conn.execute(
-        "UPDATE app_user_sessions SET last_used_at = CURRENT_TIMESTAMP WHERE id = $1",
-        row["session_id"],
-    )
+    last_used_at = record_get(row, "last_used_at")
+    should_touch_session = last_used_at is None or SESSION_TOUCH_INTERVAL_SECONDS == 0
+    if last_used_at and SESSION_TOUCH_INTERVAL_SECONDS > 0:
+        should_touch_session = (
+            datetime.utcnow() - last_used_at
+        ).total_seconds() >= SESSION_TOUCH_INTERVAL_SECONDS
+
+    if should_touch_session:
+        await conn.execute(
+            "UPDATE app_user_sessions SET last_used_at = CURRENT_TIMESTAMP WHERE id = $1",
+            row["session_id"],
+        )
     return serialize_user(row)
 
 

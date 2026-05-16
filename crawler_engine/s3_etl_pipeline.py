@@ -1151,7 +1151,7 @@ def _is_numeric_like_text(text) -> bool:
 
 
 def _extract_group_label_from_stt(value):
-    text = _normalize_stt_value(value)
+    text = re.sub(r"\s+", " ", _normalize_stt_value(value)).strip()
     if not text:
         return None
 
@@ -1756,6 +1756,23 @@ def normalize_grouped_rows_generic(df: pd.DataFrame, schema_type: str):
             amount_col=amount_col,
         )
         if autofill_group:
+            if auto_create_target == "Nhà thầu trúng thầu":
+                vendor_like_values = [
+                    value for value in autofill_group.get("carry_values", {}).values()
+                    if _looks_like_vendor_name_text(value)
+                ]
+                if vendor_like_values:
+                    if auto_create_target not in working_df.columns:
+                        working_df[auto_create_target] = np.nan
+                        current[auto_create_target] = np.nan
+                        if auto_create_target not in group_cols:
+                            group_cols.append(auto_create_target)
+                    current_context = {
+                        "root": autofill_group["root"],
+                        "carry_values": {auto_create_target: _strip_vendor_group_prefix(vendor_like_values[0])},
+                        "source_cols": autofill_group["source_cols"],
+                    }
+                    continue
             current_context = autofill_group
             continue
 
@@ -1768,6 +1785,18 @@ def normalize_grouped_rows_generic(df: pd.DataFrame, schema_type: str):
             amount_col=amount_col,
         )
         if true_group:
+            if auto_create_target == "Nhà thầu trúng thầu" and _looks_like_vendor_name_text(true_group["text"]):
+                if auto_create_target not in working_df.columns:
+                    working_df[auto_create_target] = np.nan
+                    current[auto_create_target] = np.nan
+                    if auto_create_target not in group_cols:
+                        group_cols.append(auto_create_target)
+                current_context = {
+                    "root": true_group["root"],
+                    "carry_values": {auto_create_target: _strip_vendor_group_prefix(true_group["text"])},
+                    "source_cols": true_group["source_cols"],
+                }
+                continue
             current_context = true_group
             continue
 
@@ -3270,6 +3299,32 @@ def detect_non_vendor_group_header_manual_reason(df: pd.DataFrame, schema_name: 
     for idx in range(len(df) - 1):
         current = df.iloc[idx]
         next_row = df.iloc[idx + 1]
+        true_group = detect_true_group_header_generic(
+            current=current,
+            next_row=next_row,
+            stt_col=stt_col,
+            detail_cols=detail_cols,
+            group_cols=group_cols,
+            amount_col=amount_col,
+        )
+        if true_group and not any(is_vendor_group_column_name(col) for col in true_group["source_cols"]):
+            if not _wrong_group_matches_adjacent_vendor_signal(
+                true_group,
+                current,
+                next_row,
+                vendor_signal_cols,
+            ):
+                blank_count = None
+                if auto_create_target in df.columns:
+                    target_series = df[auto_create_target].astype("string")
+                    blank_count = int(target_series.fillna("").str.strip().eq("").sum())
+                return _format_vendor_autofill_ambiguous_reason(
+                    vendor_signal_cols=vendor_signal_cols,
+                    vendor_col=auto_create_target,
+                    blank_count=blank_count,
+                    source_cols=true_group["source_cols"],
+                )
+
         wrong_group = detect_wrong_column_group_header_generic(
             current=current,
             next_row=next_row,

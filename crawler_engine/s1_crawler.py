@@ -135,6 +135,7 @@ FORCE_FULL_SCAN = _get_env_bool("FORCE_FULL_SCAN", False)
 KEY = os.getenv("KEY")
 KEY_BATCHES = os.getenv("KEY_BATCHES")
 EXC_KEY = os.getenv("EXC_KEY")
+KHLCNT_CHILD_ACCEPT_KEYWORDS_RAW = os.getenv("KHLCNT_CHILD_ACCEPT_KEYWORDS")
 SEARCH_MATCH_MODE = (os.getenv("SEARCH_MATCH_MODE") or "exact").strip()
 SEARCH_MATCH_MODE_MAP = os.getenv("SEARCH_MATCH_MODE_MAP")
 SEARCH_NOTICE_TYPE = os.getenv("SEARCH_NOTICE_TYPE")
@@ -288,7 +289,6 @@ def _version_key(version_value):
 class CrawlerDB:
     def __init__(self):
         self._connect()
-        self._ensure_web_winner_facts_schema()
 
     def _connect(self):
         """Tạo hoặc tái kết nối PostgreSQL"""
@@ -303,46 +303,6 @@ class CrawlerDB:
         except Exception:
             pass
         self._connect()
-
-    def _ensure_web_winner_facts_schema(self):
-        try:
-            self._safe_execute("""
-                CREATE TABLE IF NOT EXISTS web_winner_facts (
-                    ma_tbmt TEXT NOT NULL,
-                    so_qd TEXT NOT NULL,
-                    version TEXT NOT NULL,
-                    capture_status TEXT NOT NULL,
-                    only_winner_name TEXT,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (ma_tbmt, so_qd, version)
-                )
-            """)
-            self._safe_execute("""
-                ALTER TABLE web_winner_facts
-                DROP COLUMN IF EXISTS winner_count,
-                DROP COLUMN IF EXISTS winner_names_json,
-                DROP COLUMN IF EXISTS capture_note,
-                DROP COLUMN IF EXISTS created_at
-            """)
-            self._safe_execute("""
-                DROP INDEX IF EXISTS idx_web_winner_facts_status
-            """)
-            self._safe_execute("""
-                CREATE INDEX idx_web_winner_facts_status
-                ON web_winner_facts (capture_status)
-            """)
-            self._safe_execute("""
-                ALTER TABLE package_metadata
-                ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMP
-            """)
-            self._safe_execute("""
-                CREATE INDEX IF NOT EXISTS idx_metadata_last_checked_at
-                ON package_metadata (last_checked_at)
-            """)
-            self.conn.commit()
-        except psycopg2.Error as e:
-            self.conn.rollback()
-            logger.warning(f"⚠️ Không thể đảm bảo schema web_winner_facts: {e}")
 
     def _safe_execute(self, sql, params=None):
         """Wrapper thực thi query có tự reconnect nếu connection bị đứt"""
@@ -864,7 +824,9 @@ class CrawlerDB:
     def log_khlcnt_filtered_skip(self, plan_record, reason):
         khlcnt_name = _collapse_whitespace(plan_record.get("Tên KHLCNT", ""))
         reason_text = _collapse_whitespace(reason)
-        if khlcnt_name:
+        if reason_text == "Không có gói thầu con nào hợp lệ sau filter":
+            reason_text = khlcnt_name or reason_text
+        elif khlcnt_name:
             reason_text = f"{reason_text} | Tên KHLCNT: {khlcnt_name}" if reason_text else f"Tên KHLCNT: {khlcnt_name}"
         self._safe_execute("""
             INSERT INTO scan_logs (
@@ -927,6 +889,43 @@ class CrawlerDB:
             plan_record.get("Mã KHLCNT đầy đủ") or "",
             plan_record.get("Phiên bản KHLCNT") or "",
             "TBMT_LINKED_PENDING",
+            self._now_str(),
+        ))
+        self.conn.commit()
+        return True
+
+    def log_khlcnt_manual_decision(self, plan_record, child_row, search_keyword, decision, reason="", operator_note=""):
+        decision_text = _collapse_whitespace(decision).upper()
+        if decision_text not in {"ACCEPT", "REJECT"}:
+            decision_text = "REJECT"
+
+        try:
+            child_index = int(child_row.get("Dòng gói thầu con") or 0) or None
+        except (TypeError, ValueError):
+            child_index = None
+
+        self._safe_execute("""
+            INSERT INTO khlcnt_manual_decision_logs (
+                run_id, ma_khlcnt, ma_khlcnt_full, khlcnt_version, ten_khlcnt, chu_dau_tu,
+                search_keyword, child_index, child_stt, child_name, linked_notice,
+                decision, reason, operator_note, created_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            CURRENT_RUN_ID or 0,
+            plan_record.get("Mã KHLCNT") or "",
+            plan_record.get("Mã KHLCNT đầy đủ") or "",
+            plan_record.get("Phiên bản KHLCNT") or "",
+            plan_record.get("Tên KHLCNT") or "",
+            plan_record.get("Chủ đầu tư") or "",
+            search_keyword or "",
+            child_index,
+            child_row.get("STT gói thầu con") or "",
+            child_row.get("Tên gói thầu con") or "",
+            child_row.get("Số thông báo liên kết") or "",
+            decision_text,
+            reason or "",
+            operator_note or "",
             self._now_str(),
         ))
         self.conn.commit()
@@ -1102,7 +1101,6 @@ class CrawlerDB:
         if _version_key(ver_chk) == _version_key(latest_ver):
             self.mark_unit_checked(tbmt, qd_raw, ver_chk)
             return False, f"SAME_VERSION v{ver_chk}"
-        self.mark_unit_checked(tbmt, qd_raw, ver_chk)
         return False, f"OLDER_VERSION v{ver_chk} < v{latest_ver}"
 
     def close(self):
@@ -1292,10 +1290,10 @@ def append_run_history(start_time, end_time, boxes_selected_count):
 # ================== TỪ KHÓA LỌC ==================
 loai_tu_gian_giao_thau = [
     "kích thích", "môi trường", "nông nghiệp", "khuyến nông", "nông dân", "vườn", "thức ăn", "bvtv", "bảo vệ thực vật",
-    "lúa", "cao su", "giống", "phân bón", "diệt cỏ", "thuốc cỏ", "trừ cỏ", "thuốc sâu", "tưới nước", "cắt cỏ",
-    "trừ sâu", "trừ bệnh", "rầy côn trùng", "phấn trắng", "đạo ôn", "chăn nuôi", "thủy sản", "thú y",
-    "vật nuôi", "gia súc", "gia cầm", "chó", "mèo", "ruồi", "gà", "trâu", "bò", "vịt", "chuột", "cá", "tôm", "tả heo",
-    "muỗi", "mối", "lở mồm", "cúm gia cầm",
+    "lúa", "cao su", "giống", "phân bón", "diệt cỏ", "thuốc cỏ", "trừ cỏ", "thuốc sâu", "tưới nước", "cắt cỏ", "thuốc xịt cỏ",
+    "trừ sâu", "trừ bệnh", "rầy côn trùng", "phấn trắng", "đạo ôn", "chăn nuôi", "thủy sản", "thú y", "rừng",
+    "vật nuôi", "gia súc", "gia cầm", "chó", "mèo", "ruồi", "gà", "trâu", "bò", "vịt", "chuột", "cá", "tôm", "heo",
+    "muỗi", "mối", "lở mồm", "cúm gia cầm", "lợn", "nấm hồng", "bệnh lá", "cây trồng",
     "vị thuốc", "thuốc y học cổ truyền", "chế phẩm y học cổ truyền", "thuốc cổ truyền", "đông y", "sinh học", "shpt", 
     "thuốc dược liệu", "thuốc thành phẩm y học cổ truyền", "tủ", "kho thuốc", "thuốc nổ",
     "sản xuất", "cứu hỏa", "lao động", "công nghiệp", "bão", "lụt", "hàng hóa dịch vụ", "phần mềm", "thuốc lá",
@@ -1305,7 +1303,7 @@ loai_tu_gian_giao_thau = [
     "mạng lan", "chống sét", "xử lý nước thải", "sắc ký", "quang phổ", "sửa chữa", "máy phun thuốc", "thuốc hàn",
     "truyền thông", "xe", "máy soi thuốc", "cây thuốc", "đông dược", "dịch chiết", "tinh dầu",
     "máy chiết xơ", "nội độc tố", "dung môi", "chất chuẩn", "chuẩn hóa", "kiểm tra", "độ hòa tan", "bình phun thuốc",
-    "tư vấn"
+    "tư vấn", "thi công", "gia công", "giám sát", "lắp đặt", "điều hòa",
 ]
  
 loai_chu_dau_tu = [
@@ -1334,6 +1332,11 @@ tu_khoa_luu_lai = [
     "thiết bị y tế", "vật tư y tế", "thực phẩm chức năng", "thực phẩm bảo vệ sức khỏe", "thực phẩm dinh dưỡng"
 ]
 
+DEFAULT_KHLCNT_CHILD_ACCEPT_KEYWORDS = [
+    "generic", "biệt dược gốc", "bdg", "khám chữa bệnh",
+    "thiết bị y tế", "vật tư y tế", "thực phẩm chức năng", "thực phẩm bảo vệ sức khỏe", "thực phẩm dinh dưỡng"
+]
+
 def _normalize_keyword_value(value):
     text = unicodedata.normalize("NFC", str(value or ""))
     text = re.sub(r"\s+", " ", text)
@@ -1349,6 +1352,13 @@ def _normalize_keyword_list(values):
     return seen
 
 
+def _parse_env_keyword_list(raw_value, fallback_values=None):
+    if raw_value and str(raw_value).strip():
+        parts = re.split(r"\r?\n|\|\|", str(raw_value))
+        return _normalize_keyword_list(parts)
+    return _normalize_keyword_list(fallback_values or [])
+
+
 def _normalize_investor_rules(rules):
     normalized_rules = []
     for keyword, exclude_list in rules:
@@ -1361,6 +1371,10 @@ def _normalize_investor_rules(rules):
 
 loai_tu_gian_giao_thau = _normalize_keyword_list(loai_tu_gian_giao_thau)
 tu_khoa_luu_lai = _normalize_keyword_list(tu_khoa_luu_lai)
+KHLCNT_CHILD_ACCEPT_KEYWORDS = _parse_env_keyword_list(
+    KHLCNT_CHILD_ACCEPT_KEYWORDS_RAW,
+    DEFAULT_KHLCNT_CHILD_ACCEPT_KEYWORDS,
+)
 loai_chu_dau_tu = _normalize_investor_rules(loai_chu_dau_tu)
 
 # ================== HELPER WAIT ELEMENT ==================
@@ -1678,11 +1692,30 @@ def extract_tbmt_khlcnt_metadata():
                 metadata["Mã KHLCNT"] = value
                 metadata["Mã KHLCNT đầy đủ"] = value
                 metadata["Phiên bản KHLCNT"] = "00"
-            elif title_key == "tên dự toán mua sắm":
+            elif title_key in {
+                "tên dự toán mua sắm",
+                "tên dự án/dự toán mua sắm",
+                "tên dự án dự toán mua sắm",
+            }:
                 metadata["Tên KHLCNT"] = value
         return metadata
     except Exception:
         return {}
+
+
+def extract_tbmt_khlcnt_metadata_with_retry(timeout=4):
+    metadata = extract_tbmt_khlcnt_metadata()
+    if metadata.get("Mã KHLCNT"):
+        return metadata
+
+    def khlcnt_metadata_ready(_driver):
+        result = extract_tbmt_khlcnt_metadata()
+        return result if result.get("Mã KHLCNT") else False
+
+    try:
+        return WebDriverWait(driver, timeout, poll_frequency=0.2).until(khlcnt_metadata_ready)
+    except TimeoutException:
+        return metadata
 
 
 def merge_khlcnt_metadata(info_snapshot, khlcnt_metadata=None):
@@ -3162,6 +3195,33 @@ def collect_khlcnt_result_file(ma_tbmt, so_qd, version, target_card=None, target
 
 
 # ========== HÀM HANDLE QĐ (ĐƠN / ĐA) ==========
+def wait_for_qd_content_after_kqlcnt_click(timeout=4):
+    """
+    Chờ có điều kiện sau khi click tab KQLCNT.
+    Gói bình thường đã có dữ liệu thì trả về gần như ngay; chỉ gói nặng mới chờ thêm.
+    """
+    qd_ready_xpaths = [
+        "//div[contains(@class,'card-header') and contains(normalize-space(),'Danh sách quyết định phê duyệt')]",
+        "//div[contains(@class,'infomation__content__title') and normalize-space(text())='Số quyết định phê duyệt']",
+        "//div[contains(@class,'infomation__content__title') and normalize-space(text())='Quyết định phê duyệt']",
+    ]
+
+    def qd_content_ready(_driver):
+        for xpath in qd_ready_xpaths:
+            try:
+                if _driver.find_elements(By.XPATH, xpath):
+                    return True
+            except Exception:
+                continue
+        return False
+
+    try:
+        WebDriverWait(driver, timeout, poll_frequency=0.2).until(qd_content_ready)
+        return True
+    except TimeoutException:
+        return False
+
+
 def wait_until_so_qd_matches(so_qd, timeout=10):
     try:
         WebDriverWait(driver, timeout).until(
@@ -3296,6 +3356,12 @@ def handle_quyet_dinh_phe_duyet_all(ma_tbmt, box_index, box_name_text, ngay_phe_
         )
         logger.warning(f"⚠️ Phát hiện unit trùng trong box {box_index}: {ma_tbmt} / {qd_norm} / v{ver_norm}")
 
+    def get_qd_text_from_table_row(row):
+        try:
+            return row.find_element(By.XPATH, "./td[2]").text.strip()
+        except Exception:
+            return ""
+
     # =========================================================
     # CASE 3: ĐA QĐ
     # =========================================================
@@ -3351,6 +3417,32 @@ def handle_quyet_dinh_phe_duyet_all(ma_tbmt, box_index, box_name_text, ngay_phe_
                                 ver_select = current_row.find_element(By.CSS_SELECTOR, "select.form-select")
                                 
                                 logger.info(f"👉 Dòng {i_row+1} - Version {ver_code}")
+
+                                precheck_so_qd = get_qd_text_from_table_row(current_row)
+                                if precheck_so_qd:
+                                    should_download, skip_reason = tracker.should_download_unit(
+                                        ma_tbmt,
+                                        precheck_so_qd,
+                                        ver_code,
+                                    )
+                                    if not should_download:
+                                        if khlcnt_metadata and khlcnt_metadata.get("Mã KHLCNT"):
+                                            tracker.save_khlcnt_metadata_for_tbmt(ma_tbmt, khlcnt_metadata)
+                                        handled_qd_count += 1
+                                        finalize_one_qd_result(
+                                            ma_tbmt=ma_tbmt,
+                                            box_index=box_index,
+                                            dia_diem=dia_diem,
+                                            so_qd=precheck_so_qd,
+                                            ver_code=ver_code,
+                                            any_dl=True,
+                                            any_excel=False,
+                                            dest_qd=None,
+                                            info_snapshot=khlcnt_metadata,
+                                            winner_fact=None,
+                                            download_skipped_reason=skip_reason,
+                                        )
+                                        continue
                                 
                                 wait_version_applied(ver_select, i_ver)
                                 wait_dom_settled(timeout=2)
@@ -3591,7 +3683,7 @@ def process_box(box, index):
     khlcnt_metadata = {}
 
     try:
-        khlcnt_metadata = extract_tbmt_khlcnt_metadata()
+        khlcnt_metadata = extract_tbmt_khlcnt_metadata_with_retry(timeout=4)
         if khlcnt_metadata.get("Mã KHLCNT"):
             logger.info("🔗 TBMT %s: KHLCNT %s", ma_tbmt, khlcnt_metadata.get("Mã KHLCNT"))
 
@@ -3603,6 +3695,7 @@ def process_box(box, index):
             driver.execute_script("arguments[0].scrollIntoView(true);", ket_qua_tab)
             wait_dom_settled(timeout=15)
             ket_qua_tab.click()
+            wait_for_qd_content_after_kqlcnt_click(timeout=4)
         except UnexpectedAlertPresentException:
             logger.warning(f"⚠️ Box {index}: alert trong lúc click tab KQLCNT, xử lý alert rồi click lại.")
             handle_connection_alert_once(timeout=3, post_wait=3)
@@ -3613,6 +3706,7 @@ def process_box(box, index):
             driver.execute_script("arguments[0].scrollIntoView(true);", ket_qua_tab)
             wait_dom_settled(timeout=15)
             ket_qua_tab.click()
+            wait_for_qd_content_after_kqlcnt_click(timeout=4)
             wait_dom_settled(timeout=15)
 
         logger.info(f"Box {index}: {ma_tbmt}")
@@ -4032,6 +4126,13 @@ def package_name_contains_search_keyword(package_name, search_keyword):
     return True if not keyword else keyword in name
 
 
+def package_name_contains_khlcnt_accept_keyword(package_name):
+    name = _normalize_keyword_value(package_name)
+    if not name:
+        return False
+    return any(re.search(rf'\b{re.escape(keyword)}\b', name) for keyword in KHLCNT_CHILD_ACCEPT_KEYWORDS)
+
+
 def classify_khlcnt_parent(plan_name):
     if is_luu_lai_theo_ten_goi_thau(plan_name):
         return "CHỌN", ""
@@ -4041,13 +4142,46 @@ def classify_khlcnt_parent(plan_name):
 
 
 def classify_khlcnt_child_package(child_name, search_keyword):
-    if is_luu_lai_theo_ten_goi_thau(child_name):
-        return "CHỌN", ""
-    if not package_name_contains_search_keyword(child_name, search_keyword):
-        return "LOẠI", "Không chứa keyword crawl"
     if is_loai_ten_goi_thau(child_name):
         return "LOẠI", "Loại theo từ khóa tên gói thầu con"
-    return "CHỌN", ""
+    if package_name_contains_search_keyword(child_name, search_keyword):
+        return "CHỌN", ""
+    if package_name_contains_khlcnt_accept_keyword(child_name):
+        return "CHỌN", "Chứa keyword bổ sung KHLCNT"
+    return "MANUAL_REVIEW", "Không chứa keyword crawl"
+
+
+def prompt_khlcnt_child_manual_decision(plan_record, child_row, search_keyword, reason):
+    khlcnt_code = plan_record.get("Mã KHLCNT", "")
+    khlcnt_name = _collapse_whitespace(plan_record.get("Tên KHLCNT", ""))
+    investor_name = _collapse_whitespace(plan_record.get("Chủ đầu tư", ""))
+    child_name = _collapse_whitespace(child_row.get("Tên gói thầu con", ""))
+    child_stt = child_row.get("STT gói thầu con") or child_row.get("Dòng gói thầu con") or ""
+    linked_notice = _collapse_whitespace(child_row.get("Số thông báo liên kết", ""))
+
+    print("\n" + "=" * 90)
+    print("KHLCNT child cần kiểm tra thủ công")
+    print(f"Mã KHLCNT       : {khlcnt_code}")
+    print(f"Tên KHLCNT      : {khlcnt_name}")
+    print(f"Chủ đầu tư      : {investor_name}")
+    print(f"Keyword crawl   : {search_keyword}")
+    print(f"STT child       : {child_stt}")
+    print(f"Tên child       : {child_name}")
+    if linked_notice:
+        print(f"TBMT liên kết   : {linked_notice}")
+    print(f"Lý do           : {reason}")
+    print("=" * 90)
+
+    prompt = "Child này hợp lệ để xử lý tiếp? [y/N]: "
+    try:
+        answer = input(prompt).strip().casefold()
+    except (EOFError, KeyboardInterrupt):
+        logger.warning("⚠️ Không nhận được quyết định thủ công, bỏ qua child KHLCNT %s / %s", khlcnt_code, child_stt)
+        return "REJECT", "Không nhận được input thủ công"
+
+    if answer in {"y", "yes", "c", "co", "có", "1"}:
+        return "ACCEPT", "Người vận hành chọn hợp lệ"
+    return "REJECT", "Người vận hành chọn bỏ qua"
 
 
 def extract_tbmt_codes(data):
@@ -4473,6 +4607,7 @@ def process_khlcnt_plan_detail(plan_record, search_keyword):
         "saved_count": 0,
         "valid_child_count": 0,
         "filtered_child_count": 0,
+        "manual_review_count": 0,
         "pending_child_count": 0,
         "linked_child_count": 0,
         "linked_missing_metadata_count": 0,
@@ -4490,6 +4625,7 @@ def process_khlcnt_plan_detail(plan_record, search_keyword):
     saved_count = 0
     filtered_child_count = 0
     valid_child_count = 0
+    manual_review_count = 0
     pending_child_count = 0
     linked_child_count = 0
     linked_missing_metadata_count = 0
@@ -4502,6 +4638,37 @@ def process_khlcnt_plan_detail(plan_record, search_keyword):
             return plan_state
         for child_index, child_row in enumerate(child_rows, start=1):
             child_result, child_reason = classify_khlcnt_child_package(child_row.get("Tên gói thầu con", ""), search_keyword)
+            if child_result == "MANUAL_REVIEW":
+                manual_review_count += 1
+                manual_decision, manual_reason = prompt_khlcnt_child_manual_decision(
+                    plan_record,
+                    child_row,
+                    search_keyword,
+                    child_reason,
+                )
+                tracker.log_khlcnt_manual_decision(
+                    plan_record,
+                    child_row,
+                    search_keyword,
+                    manual_decision,
+                    child_reason,
+                    manual_reason,
+                )
+                if manual_decision != "ACCEPT":
+                    filtered_child_count += 1
+                    logger.info(
+                        "⏭️ KHLCNT %s child %s: manual reject (%s)",
+                        plan_record.get("Mã KHLCNT", ""),
+                        child_row.get("STT gói thầu con") or child_index,
+                        manual_reason,
+                    )
+                    continue
+                logger.info(
+                    "✅ KHLCNT %s child %s: manual accept",
+                    plan_record.get("Mã KHLCNT", ""),
+                    child_row.get("STT gói thầu con") or child_index,
+                )
+                child_result = "CHỌN"
             if child_result != "CHỌN":
                 filtered_child_count += 1
                 continue
@@ -4539,6 +4706,7 @@ def process_khlcnt_plan_detail(plan_record, search_keyword):
             "saved_count": saved_count,
             "valid_child_count": valid_child_count,
             "filtered_child_count": filtered_child_count,
+            "manual_review_count": manual_review_count,
             "pending_child_count": pending_child_count,
             "linked_child_count": linked_child_count,
             "linked_missing_metadata_count": linked_missing_metadata_count,

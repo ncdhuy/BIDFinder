@@ -1,6 +1,7 @@
 (function () {
   window.BIDFINDER_POSTHOG_CONFIG = {
     enabled: true,
+    trackLocalhost: false,
     apiKey: 'phc_zuDz34DPfNujQtv2wtH8Q4X86E3inuexKgsvc2D87Jn9',
     apiHost: 'https://us.i.posthog.com',
     uiHost: 'https://us.posthog.com',

@@ -798,7 +798,6 @@ class CustomSearchForm extends HTMLElement {
                 .btn-primary:hover:not(:disabled) {
                     background: var(--c-primary-hover);
                     box-shadow: 0 10px 22px rgba(10, 97, 123, 0.18);
-                    transform: translateY(-1px);
                 }
 
                 .btn-secondary {
@@ -1898,6 +1897,26 @@ class CustomSearchForm extends HTMLElement {
         });
     }
 
+    dispatchResetIfNoFilters() {
+        const payload = this.collectFilterPayload();
+        if (this.hasAnyFilterValue(payload?.filters || {})) return false;
+        if (this.pendingEmptyResetDispatch) return true;
+
+        this.pendingEmptyResetDispatch = true;
+        queueMicrotask(() => {
+            this.pendingEmptyResetDispatch = false;
+            const nextPayload = this.collectFilterPayload();
+            if (this.hasAnyFilterValue(nextPayload?.filters || {})) return;
+
+            this.dispatchEvent(new CustomEvent('reset-filters', {
+                bubbles: true,
+                composed: true
+            }));
+        });
+
+        return true;
+    }
+
     clearPreviewEstimate() {
         clearTimeout(this.previewDebounceTimer);
         this.setPreviewResult({ idle: true });
@@ -2313,6 +2332,9 @@ class CustomSearchForm extends HTMLElement {
                 } else {
                     this.clearPreviewEstimate();
                 }
+                if (meta.reason === 'token-removed') {
+                    this.dispatchResetIfNoFilters();
+                }
             }
             });
 
@@ -2543,6 +2565,7 @@ class CustomSearchForm extends HTMLElement {
             this.filterOrder = this.filterOrder.filter(x => x !== id);
             this.updateApplyButtonState();
             this.renderActiveChips();
+            this.dispatchResetIfNoFilters();
             this.queueFocusActiveField();
             });
         });
