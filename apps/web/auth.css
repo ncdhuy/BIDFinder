@@ -30,6 +30,7 @@
 
 body.auth-state-authed #open-account-nav,
 body.auth-state-authed #open-feedback-nav,
+body.auth-state-authed #open-product-journey,
 body.auth-state-authed #open-feedback-modal {
   display: inline-flex;
 }
@@ -43,6 +44,7 @@ body.auth-state-authed #open-login-app {
 
 body.auth-state-guest #open-account-nav,
 body.auth-state-guest #open-feedback-nav,
+body.auth-state-guest #open-product-journey,
 body.auth-state-guest #open-feedback-modal {
   display: none;
 }

@@ -1,1 +1,1 @@
--r backend/requirements.txt
+-r apps/api/requirements.txt

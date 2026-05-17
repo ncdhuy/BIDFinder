@@ -119,9 +119,16 @@ DEFAULT_ALLOWED_ORIGINS = [
     "http://localhost:8000",
     "http://127.0.0.1:8000",
 ]
+
+FRONTEND_URL = os.getenv("FRONTEND_URL", "").strip()
 ALLOWED_ORIGINS = [
     origin.strip()
-    for origin in os.getenv("ALLOWED_ORIGINS", ",".join(DEFAULT_ALLOWED_ORIGINS)).split(",")
+    for origin in ",".join(
+        [
+            os.getenv("ALLOWED_ORIGINS", ",".join(DEFAULT_ALLOWED_ORIGINS)),
+            FRONTEND_URL,
+        ]
+    ).split(",")
     if origin.strip()
 ]
 RATE_LIMIT_WINDOW_SECONDS = max(10, int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60")))
@@ -138,7 +145,7 @@ MAX_QUERY_LIMIT = max(DEFAULT_QUERY_LIMIT, int(os.getenv("MAX_QUERY_LIMIT", "100
 BULK_EXPORT_QUERY_LIMIT = min(MAX_QUERY_LIMIT, max(1, int(os.getenv("BULK_EXPORT_QUERY_LIMIT", "1000"))))
 FULL_SEARCH_DAILY_LIMIT = max(0, int(os.getenv("FULL_SEARCH_DAILY_LIMIT", "3")))
 PREVIEW_BUCKET_LIMIT = max(10, int(os.getenv("PREVIEW_BUCKET_LIMIT", "100")))
-DB_POOL_MAX_SIZE = max(1, int(os.getenv("DB_POOL_MAX_SIZE", "8")))
+DB_POOL_MAX_SIZE = max(1, int(os.getenv("DB_POOL_MAX_SIZE", "4")))
 PREVIEW_CACHE_TTL_SECONDS = max(1, int(os.getenv("PREVIEW_CACHE_TTL_SECONDS", "15")))
 AUTOCOMPLETE_CACHE_TTL_SECONDS = max(1, int(os.getenv("AUTOCOMPLETE_CACHE_TTL_SECONDS", "20")))
 CACHE_MAX_ENTRIES = max(50, int(os.getenv("CACHE_MAX_ENTRIES", "500")))
@@ -1451,6 +1458,7 @@ def build_bulk_item_query(
     price_limit: int,
     product_limit: int,
     row_index: int,
+    include_overflow_probe: bool = False,
 ):
     params: List[Any] = []
     cte, table_name = get_scope_query_parts(scope_name, variant="full")
@@ -1480,6 +1488,8 @@ def build_bulk_item_query(
     where_clause = " WHERE " + " AND ".join(conditions)
     safe_price_limit = max(1, min(int(price_limit), 10))
     safe_product_limit = max(1, min(int(product_limit), 10))
+    effective_price_limit = safe_price_limit + (1 if include_overflow_probe else 0)
+    effective_product_limit = safe_product_limit + (1 if include_overflow_probe else 0)
     product_partition_column = '"Tên thuốc"' if scope_name == "medicine" else '"Search blob"'
     if diversity_mode == "product":
         query = f"""
@@ -1499,10 +1509,10 @@ def build_bulk_item_query(
             {where_clause}
               AND ranked_base."Đơn giá trúng thầu (VND)" IS NOT NULL
         ) ranked
-        WHERE "__product_rank" <= {safe_product_limit}
+        WHERE "__product_rank" <= {effective_product_limit}
           AND "__product_row_rank" = 1
         ORDER BY "__product_rank" ASC, "__approval_date" DESC NULLS LAST, "Đơn giá trúng thầu (VND)" ASC, "Mã TBMT" ASC
-        LIMIT {safe_product_limit}
+        LIMIT {effective_product_limit}
         """
         return query, params
 
@@ -1522,7 +1532,7 @@ def build_bulk_item_query(
     ) ranked
     WHERE "__price_rank" = 1
     ORDER BY "__approval_date" DESC NULLS LAST, "Đơn giá trúng thầu (VND)" ASC, "Mã TBMT" ASC
-    LIMIT {safe_price_limit}
+    LIMIT {effective_price_limit}
     """
     return query, params
 
@@ -1973,23 +1983,19 @@ async def fetch_result_page(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global db_pool
-    try:
-        logger.info(
-            "Startup auth config: ANONYMOUS_ACCESS_LEVEL=%s, AUTH_REQUIRED_FOR_DATA_ACCESS=%s, AUTH_REQUIRED_FOR_FULL_QUERY=%s, ANONYMOUS_FULL_QUERY_DAILY_LIMIT=%s",
-            ANONYMOUS_ACCESS_LEVEL,
-            AUTH_REQUIRED_FOR_DATA_ACCESS,
-            AUTH_REQUIRED_FOR_FULL_QUERY,
-            ANONYMOUS_FULL_QUERY_DAILY_LIMIT,
-        )
-        auth_config_payload = get_auth_config_payload()
-        logger.info(
-            "Startup login config: google_status=%s, password_reset_status=%s",
-            auth_config_payload.get("google_status"),
-            auth_config_payload.get("password_reset_status"),
-        )
-        db_pool = await get_db_pool()
-    except Exception as e:
-        print(f"Database connection failed: {e}")
+    logger.info(
+        "Startup auth config: ANONYMOUS_ACCESS_LEVEL=%s, AUTH_REQUIRED_FOR_DATA_ACCESS=%s, AUTH_REQUIRED_FOR_FULL_QUERY=%s, ANONYMOUS_FULL_QUERY_DAILY_LIMIT=%s",
+        ANONYMOUS_ACCESS_LEVEL,
+        AUTH_REQUIRED_FOR_DATA_ACCESS,
+        AUTH_REQUIRED_FOR_FULL_QUERY,
+        ANONYMOUS_FULL_QUERY_DAILY_LIMIT,
+    )
+    auth_config_payload = get_auth_config_payload()
+    logger.info(
+        "Startup login config: google_status=%s, password_reset_status=%s",
+        auth_config_payload.get("google_status"),
+        auth_config_payload.get("password_reset_status"),
+    )
     yield
     if db_pool:
         await db_pool.close()
@@ -2021,10 +2027,22 @@ async def add_security_headers(request: Request, call_next):
 
 
 @app.api_route("/health", methods=["GET", "HEAD"])
-async def health():
-    if db_pool is None:
-        return Response(status_code=503)
-    return Response(status_code=200)
+async def health(request: Request):
+    if request.method == "HEAD":
+        return Response(status_code=200)
+    return {"status": "ok"}
+
+
+@app.get("/ready")
+async def ready():
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            await conn.fetchval("SELECT 1")
+        return {"status": "ready"}
+    except Exception as exc:
+        log_server_exception("readiness check failed", exc)
+        return JSONResponse(status_code=503, content={"status": "unavailable"})
 
 
 def auth_error_response(exc: HTTPException) -> JSONResponse:
@@ -2657,25 +2675,9 @@ async def bulk_query_data(request: Request, payload: BulkQueryRequest):
                     raise HTTPException(status_code=429, detail=FULL_SEARCH_LIMIT_MESSAGE)
 
             for index, row_values in enumerate(rows, start=1):
-                count_query, count_params = build_bulk_item_count_query(
-                    scope_name,
-                    selected_fields,
-                    row_values,
-                    diversity_mode,
-                    price_limit,
-                    product_limit,
-                    index,
-                )
-                if not count_query:
-                    continue
-
-                row_total = int(await conn.fetchval(count_query, *count_params) or 0)
-                total_matched += row_total
-                if row_total > 0:
-                    matched_input_count += 1
                 remaining_result_slots = result_limit - len(result_rows)
                 if remaining_result_slots <= 0:
-                    result_truncated = result_truncated or row_total > 0
+                    result_truncated = True
                     continue
 
                 query, params = build_bulk_item_query(
@@ -2686,16 +2688,24 @@ async def bulk_query_data(request: Request, payload: BulkQueryRequest):
                     price_limit,
                     product_limit,
                     index,
+                    include_overflow_probe=True,
                 )
                 if not query:
                     continue
 
                 records = await conn.fetch(query, *params)
-                cleaned = clean_records(records)
+                per_row_limit = product_limit if diversity_mode == "product" else price_limit
+                row_has_more = len(records) > per_row_limit
+                visible_records = records[:per_row_limit]
+                cleaned = clean_records(visible_records)
+                row_visible_count = len(cleaned)
+                total_matched += row_visible_count + (1 if row_has_more else 0)
+                if row_visible_count > 0 or row_has_more:
+                    matched_input_count += 1
                 if len(cleaned) > remaining_result_slots:
                     cleaned = cleaned[:remaining_result_slots]
                     result_truncated = True
-                if row_total > len(cleaned):
+                if row_has_more:
                     result_truncated = True
                 query_label = " | ".join(
                     str(row_values.get(field) or "").strip()
@@ -2713,7 +2723,7 @@ async def bulk_query_data(request: Request, payload: BulkQueryRequest):
             if is_full_search:
                 quota = await consume_full_search_usage(request, current_user)
 
-        result_count_meta = build_count_meta(total_matched, exact=True)
+        result_count_meta = build_count_meta(total_matched, exact=not result_truncated)
 
         empty_scope = {
             "data": [],

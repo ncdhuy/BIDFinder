@@ -1,9 +1,11 @@
 const API_BASE_URL =
-  (window.location.protocol === 'file:' ||
-    window.location.hostname === 'localhost' ||
-    window.location.hostname === '127.0.0.1')
+  window.API_BASE_URL ||
+  window.BIDFINDER_CONFIG?.apiBaseUrl ||
+  ((window.location.protocol === 'file:' ||
+      window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1')
     ? 'http://127.0.0.1:8000'
-    : 'https://bidfinder.onrender.com';
+    : 'https://bidfinder-api-staging-774667987564.asia-southeast1.run.app');
 
 window.API_BASE_URL = API_BASE_URL;
 
@@ -6298,6 +6300,558 @@ function initFilterUrlEvents() {
     });
 }
 
+// ==============================
+// PRODUCT JOURNEY
+// ==============================
+const PRODUCT_JOURNEY_STORAGE_KEY = 'bidfinder:product_journey_seen';
+const PRODUCT_JOURNEY_TIMING = {
+    clickStartDelay: 760,
+    cursorPressDelay: 520,
+    surfaceOpenDelay: 840,
+    cursorHideDelay: 1320,
+    repositionDelay: 180
+};
+let productJourneyState = null;
+
+function getActiveTableIdForJourney() {
+    return document.querySelector('.result-panel.active .table-wrapper')?.dataset.tableId || 'standard-table';
+}
+
+function getActiveTableWrapperForJourney() {
+    return getTableWrapper(getActiveTableIdForJourney()) || document.querySelector('.table-wrapper');
+}
+
+function getFirstColumnMenuTriggerForJourney() {
+    const tableId = getActiveTableIdForJourney();
+    return document.querySelector(`.result-panel.active .column-menu-trigger[data-table-id="${tableId}"]`)
+        || document.querySelector('.column-menu-trigger');
+}
+
+function getVisibleTableToolButtonForJourney(action) {
+    const tableId = getActiveTableIdForJourney();
+    return document.querySelector(`.result-panel.active .table-tool-btn[data-action="${action}"][data-table-id="${tableId}"]`)
+        || document.querySelector(`.table-tool-btn[data-action="${action}"]`);
+}
+
+function getVisibleTableControlsForJourney() {
+    const tableId = getActiveTableIdForJourney();
+    return document.querySelector(`.result-panel.active .table-hover-controls[data-table-id="${tableId}"]`)
+        || document.querySelector('.table-hover-controls');
+}
+
+function setJourneyTableToolsVisible(visible = true) {
+    const wrapper = getActiveTableWrapperForJourney();
+    wrapper?.classList.toggle('table-tools-open', Boolean(visible));
+}
+
+function setJourneyCardVisible(visible) {
+    productJourneyState?.root
+        ?.querySelector('.product-journey-card')
+        ?.classList.toggle('is-hidden', !visible);
+}
+
+function markJourneySurface(element) {
+    if (!element) return;
+    element.classList.remove('product-journey-surface-pop');
+    void element.offsetWidth;
+    element.classList.add('product-journey-surface-pop');
+    window.setTimeout(() => element.classList.remove('product-journey-surface-pop'), 620);
+}
+
+function closeJourneySurfaces() {
+    closeFloatingTableUi();
+    setJourneyTableToolsVisible(false);
+    hideAllPanels();
+    closeBulkSearchModal();
+    closeFeedbackModal();
+    document.getElementById('history-modal')?.classList.remove('show');
+}
+
+function openHistoryForJourney() {
+    closeJourneySurfaces();
+    const modal = document.getElementById('history-modal');
+    if (!modal) return;
+    if (typeof renderEmptyHistory === 'function') {
+        renderEmptyHistory();
+    }
+    modal.classList.add('show');
+    markJourneySurface(modal.querySelector('.history-content'));
+    window.feather?.replace?.();
+}
+
+function openBulkForJourney() {
+    closeJourneySurfaces();
+    openBulkSearchModal();
+    markJourneySurface(document.querySelector('#bulk-search-modal .bulk-search-dialog'));
+}
+
+function openFilterForJourney() {
+    closeJourneySurfaces();
+    showPanel('filter-panel');
+    markJourneySurface(document.getElementById('filter-panel'));
+}
+
+function openColumnMenuForJourney() {
+    closeJourneySurfaces();
+    const trigger = getFirstColumnMenuTriggerForJourney();
+    if (!trigger) return;
+    openColumnMenu(trigger.dataset.tableId, trigger.dataset.colName, trigger);
+}
+
+function openColumnsPopoverForJourney() {
+    closeJourneySurfaces();
+    const button = getVisibleTableToolButtonForJourney('toggle-columns');
+    if (button) openColumnsPopover(button);
+}
+
+function openFeedbackForJourney() {
+    closeJourneySurfaces();
+    openFeedbackModal();
+    markJourneySurface(document.querySelector('#feedback-modal .feedback-dialog'));
+}
+
+function ensureAppViewForJourney() {
+    document.body.classList.remove('landing-active');
+    try {
+        sessionStorage.setItem('bidfinder:view', 'app');
+    } catch (error) {
+        // Session storage can be unavailable in private contexts.
+    }
+}
+
+function getProductJourneySteps() {
+    return [
+        {
+            title: 'Khám phá nhanh',
+            body: '2 phút qua các cụm chức năng chính của BIDFinder. Bấm chuột hoặc nhấn phím bất kỳ để đi tiếp.',
+            selector: '.main-content',
+            placement: 'center',
+            before: () => {
+                ensureAppViewForJourney();
+                closeJourneySurfaces();
+            }
+        },
+        {
+            title: 'Cụm thao tác chính',
+            body: 'Ba nút này là điểm bắt đầu nhanh: xem lịch sử cập nhật, tra cứu hàng loạt từ Excel, hoặc mở panel tra cứu thủ công.',
+            selector: '.workspace-actions',
+            placement: 'bottom',
+            before: closeJourneySurfaces
+        },
+        {
+            title: 'Nút lịch sử cập nhật',
+            body: 'Nút này mở cửa sổ theo dõi dữ liệu được cập nhật theo thời gian. Journey sẽ bấm thử để bạn thấy cửa sổ thật.',
+            afterTitle: 'Cửa sổ lịch sử cập nhật',
+            afterBody: 'Tại đây user xem xu hướng dữ liệu mới theo 30, 90 hoặc 180 ngày để biết hệ thống đang được cập nhật ra sao.',
+            selector: '#open-run-history',
+            focusAfterSelector: '#history-modal .history-content',
+            afterClick: openHistoryForJourney
+        },
+        {
+            title: 'Nút tra cứu hàng loạt',
+            body: 'Nút này dành cho người đang có file Excel. Journey sẽ mô phỏng click để mở không gian upload và chọn biến.',
+            afterTitle: 'Cửa sổ tra cứu hàng loạt',
+            afterBody: 'User chọn biến cần so khớp cho Thuốc hoặc Hàng hóa, upload file Excel, rồi chạy tra cứu để nhận file kết quả.',
+            selector: '#open-bulk-search-modal',
+            focusAfterSelector: '#bulk-search-modal .bulk-search-dialog',
+            before: closeJourneySurfaces,
+            afterClick: openBulkForJourney
+        },
+        {
+            title: 'Nút tra cứu',
+            body: 'Nút Tra cứu mở panel bộ lọc. Đây là lối đi chính khi user muốn tìm trực tiếp trên app thay vì xuất Excel ngay.',
+            afterTitle: 'Panel tra cứu',
+            afterBody: 'Panel này gom các bộ lọc, từ khóa và logic AND/OR/NOT để user tạo truy vấn chính xác trước khi xem bảng kết quả.',
+            selector: '#open-filter-panel',
+            focusAfterSelector: '#filter-panel',
+            before: closeJourneySurfaces,
+            afterClick: openFilterForJourney
+        },
+        {
+            title: 'Thuốc và hàng hóa',
+            body: 'Switcher này đổi nhanh giữa hai biểu mẫu kết quả. Số bên cạnh cho biết lượng dữ liệu tìm được ở từng nhóm.',
+            selector: '#data-view-switcher .result-table-tab-list',
+            placement: 'bottom',
+            before: () => {
+                closeJourneySurfaces();
+                activateResultView('df1-panel', { animate: false });
+            }
+        },
+        {
+            title: 'Không gian bảng',
+            body: 'Bảng hỗ trợ chọn hàng, chọn cột, chọn ô hoặc range và copy trực tiếp như đang làm việc với spreadsheet.',
+            getElement: getActiveTableWrapperForJourney,
+            placement: 'top',
+            before: closeJourneySurfaces
+        },
+        {
+            title: 'Thao tác trên từng cột',
+            body: 'Mở menu cột để sort, lọc nhanh, wrap text, autosize, ghim cột hoặc ẩn cột đang xem.',
+            getElement: () => document.querySelector('.column-menu-popover') || getFirstColumnMenuTriggerForJourney(),
+            placement: 'right',
+            before: openColumnMenuForJourney
+        },
+        {
+            title: 'Cụm công cụ bảng',
+            body: 'Cụm nút nổi ở góc bảng gồm ẩn/hiện cột, tải Excel và toàn màn hình. Đây là các thao tác nhanh sau khi đã có kết quả.',
+            getElement: getVisibleTableControlsForJourney,
+            before: () => {
+                closeJourneySurfaces();
+                setJourneyTableToolsVisible(true);
+            }
+        },
+        {
+            title: 'Nút ẩn/hiện cột',
+            body: 'Journey sẽ bấm nút mắt để mở danh sách cột.',
+            afterTitle: 'Ẩn/hiện cột',
+            afterBody: 'Dùng popover này để chỉ giữ các cột cần phân tích. Khi cần, bấm hiện tất cả để quay về mặc định.',
+            getElement: () => getVisibleTableToolButtonForJourney('toggle-columns'),
+            focusAfterSelector: '.table-columns-popover:not([hidden])',
+            before: () => {
+                closeJourneySurfaces();
+                setJourneyTableToolsVisible(true);
+            },
+            afterClick: openColumnsPopoverForJourney
+        },
+        {
+            title: 'Nút tải Excel',
+            body: 'Journey sẽ chỉ mô phỏng thao tác, không tải file thật trong lúc hướng dẫn.',
+            afterTitle: 'Tải Excel',
+            afterBody: 'Nút tải xuất dữ liệu và các cột đang hiển thị, phù hợp khi cần gửi báo cáo hoặc xử lý offline.',
+            getElement: () => getVisibleTableToolButtonForJourney('download'),
+            before: () => {
+                closeJourneySurfaces();
+                setJourneyTableToolsVisible(true);
+            },
+            afterClick: () => setJourneyTableToolsVisible(true)
+        },
+        {
+            title: 'Nút toàn màn hình',
+            body: 'Journey sẽ chỉ mô phỏng click để tránh chuyển chế độ fullscreen thật.',
+            afterTitle: 'Toàn màn hình',
+            afterBody: 'Khi cần rà soát nhiều cột, mở fullscreen để có thêm không gian thao tác trên bảng.',
+            getElement: () => getVisibleTableToolButtonForJourney('fullscreen'),
+            before: () => {
+                closeJourneySurfaces();
+                setJourneyTableToolsVisible(true);
+            },
+            afterClick: () => setJourneyTableToolsVisible(true)
+        },
+        {
+            title: 'Tài khoản và góp ý',
+            body: 'Khu vực này dùng để quản lý tài khoản, mở lại hướng dẫn, và gửi phản hồi nhanh cho đội phát triển.',
+            selector: '.app-header-links',
+            placement: 'bottom',
+            before: closeJourneySurfaces
+        },
+        {
+            title: 'Nút góp ý',
+            body: 'Khi gặp thao tác khó hiểu hoặc thiếu chức năng, user có thể bấm Góp ý ngay tại đây. Journey sẽ mở thử form phản hồi.',
+            afterTitle: 'Form góp ý',
+            afterBody: 'Form có lựa chọn nhanh và ô ghi chú để user mô tả tình huống cụ thể mà BIDFinder cần cải thiện.',
+            selector: '#open-feedback-modal',
+            focusAfterSelector: '#feedback-modal .feedback-dialog',
+            before: closeJourneySurfaces,
+            afterClick: openFeedbackForJourney
+        },
+        {
+            title: 'Sẵn sàng tra cứu',
+            body: 'Bạn đã đi qua các chức năng chính. Bấm Tra cứu để bắt đầu, hoặc mở lại Hướng dẫn bất cứ lúc nào trên thanh trên cùng.',
+            selector: '#open-filter-panel',
+            placement: 'bottom',
+            before: closeJourneySurfaces
+        }
+    ];
+}
+
+function createProductJourneyDom() {
+    if (document.getElementById('product-journey-root')) return;
+
+    const root = document.createElement('div');
+    root.id = 'product-journey-root';
+    root.className = 'product-journey-root';
+    root.hidden = true;
+    root.innerHTML = `
+        <div class="product-journey-dim"></div>
+        <div class="product-journey-highlight" aria-hidden="true"></div>
+        <div class="product-journey-cursor" aria-hidden="true"></div>
+        <section class="product-journey-card" role="dialog" aria-live="polite" aria-label="Hướng dẫn sử dụng BIDFinder">
+            <div class="product-journey-kicker"></div>
+            <h3></h3>
+            <p></p>
+            <div class="product-journey-footer">
+                <span class="product-journey-hint">Nhấn phím bất kỳ để tiếp tục</span>
+                <div class="product-journey-actions">
+                    <button type="button" data-journey-action="prev">Quay lại</button>
+                    <button type="button" data-journey-action="skip">Bỏ qua</button>
+                    <button type="button" data-journey-action="next">Tiếp</button>
+                </div>
+            </div>
+        </section>
+    `;
+    document.body.appendChild(root);
+}
+
+function getJourneyTargetPoint(target) {
+    const rect = target?.getBoundingClientRect?.();
+    if (!rect) return null;
+    return {
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2
+    };
+}
+
+function simulateJourneyClick(target, onClick) {
+    const state = productJourneyState;
+    const cursor = state?.root?.querySelector('.product-journey-cursor');
+    const point = getJourneyTargetPoint(target);
+    if (!cursor || !point) {
+        onClick?.();
+        return;
+    }
+
+    cursor.style.left = `${point.x}px`;
+    cursor.style.top = `${point.y}px`;
+    cursor.classList.add('is-visible');
+    cursor.classList.remove('is-pressing');
+
+    window.setTimeout(() => {
+        cursor.classList.add('is-pressing');
+    }, PRODUCT_JOURNEY_TIMING.cursorPressDelay);
+
+    window.setTimeout(() => {
+        onClick?.();
+        cursor.classList.remove('is-pressing');
+    }, PRODUCT_JOURNEY_TIMING.surfaceOpenDelay);
+
+    window.setTimeout(() => {
+        cursor.classList.remove('is-visible');
+    }, PRODUCT_JOURNEY_TIMING.cursorHideDelay);
+}
+
+function resolveJourneyElement(step) {
+    if (typeof step.getElement === 'function') return step.getElement();
+    if (step.selector) return document.querySelector(step.selector);
+    return null;
+}
+
+function positionProductJourney(step, target) {
+    const state = productJourneyState;
+    if (!state?.root || !target) return;
+
+    const rect = target.getBoundingClientRect();
+    const highlight = state.root.querySelector('.product-journey-highlight');
+    const card = state.root.querySelector('.product-journey-card');
+    const margin = 8;
+    const highlightRect = {
+        left: Math.max(8, rect.left - margin),
+        top: Math.max(8, rect.top - margin),
+        width: Math.min(window.innerWidth - 16, rect.width + margin * 2),
+        height: Math.min(window.innerHeight - 16, rect.height + margin * 2)
+    };
+
+    highlight.style.left = `${highlightRect.left}px`;
+    highlight.style.top = `${highlightRect.top}px`;
+    highlight.style.width = `${Math.max(44, highlightRect.width)}px`;
+    highlight.style.height = `${Math.max(36, highlightRect.height)}px`;
+
+    const cardRect = card.getBoundingClientRect();
+    const gap = 16;
+    let left = highlightRect.left + highlightRect.width + gap;
+    let top = highlightRect.top + (highlightRect.height - cardRect.height) / 2;
+
+    if (step.placement === 'center') {
+        left = (window.innerWidth - cardRect.width) / 2;
+        top = (window.innerHeight - cardRect.height) / 2;
+    } else {
+        const spaces = {
+            right: window.innerWidth - (highlightRect.left + highlightRect.width),
+            left: highlightRect.left,
+            bottom: window.innerHeight - (highlightRect.top + highlightRect.height),
+            top: highlightRect.top
+        };
+        const canFit = {
+            right: spaces.right >= cardRect.width + gap + 12,
+            left: spaces.left >= cardRect.width + gap + 12,
+            bottom: spaces.bottom >= cardRect.height + gap + 12,
+            top: spaces.top >= cardRect.height + gap + 12
+        };
+        const preferredOrder = window.innerWidth < 920
+            ? ['bottom', 'top', 'right', 'left']
+            : ['right', 'left', 'bottom', 'top'];
+        const placement = preferredOrder.find(side => canFit[side])
+            || preferredOrder.sort((a, b) => spaces[b] - spaces[a])[0];
+
+        if (placement === 'left') {
+            left = highlightRect.left - cardRect.width - gap;
+            top = highlightRect.top + (highlightRect.height - cardRect.height) / 2;
+        } else if (placement === 'bottom') {
+            left = highlightRect.left + (highlightRect.width - cardRect.width) / 2;
+            top = highlightRect.top + highlightRect.height + gap;
+        } else if (placement === 'top') {
+            left = highlightRect.left + (highlightRect.width - cardRect.width) / 2;
+            top = highlightRect.top - cardRect.height - gap;
+        }
+    }
+
+    left = Math.max(12, Math.min(left, window.innerWidth - cardRect.width - 12));
+    top = Math.max(12, Math.min(top, window.innerHeight - cardRect.height - 12));
+    card.style.left = `${left}px`;
+    card.style.top = `${top}px`;
+}
+
+function renderProductJourneyStep() {
+    const state = productJourneyState;
+    if (!state) return;
+
+    const steps = state.steps;
+    const step = steps[state.index];
+    if (!step) {
+        endProductJourney({ completed: true });
+        return;
+    }
+
+    state.isAnimating = false;
+    step.before?.();
+
+    requestAnimationFrame(() => {
+        const target = resolveJourneyElement(step);
+        if (!target) {
+            nextProductJourneyStep();
+            return;
+        }
+
+        target.scrollIntoView?.({ block: 'center', inline: 'center', behavior: 'smooth' });
+        state.activeTarget = target;
+        state.root.hidden = false;
+        document.body.classList.add('product-journey-active');
+        setJourneyCardVisible(typeof step.afterClick !== 'function');
+
+        state.root.querySelector('.product-journey-kicker').textContent = `${state.index + 1}/${steps.length}`;
+        state.root.querySelector('h3').textContent = step.title;
+        state.root.querySelector('p').textContent = step.body;
+        state.root.querySelector('[data-journey-action="prev"]').disabled = state.index === 0;
+        state.root.querySelector('[data-journey-action="next"]').textContent = state.index === steps.length - 1 ? 'Xong' : 'Tiếp';
+
+        setTimeout(() => positionProductJourney(step, target), 80);
+        if (typeof step.afterClick === 'function') {
+            state.isAnimating = true;
+            window.setTimeout(() => {
+                simulateJourneyClick(target, () => {
+                    step.afterClick();
+                    if (step.afterTitle) {
+                        state.root.querySelector('h3').textContent = step.afterTitle;
+                    }
+                    if (step.afterBody) {
+                        state.root.querySelector('p').textContent = step.afterBody;
+                    }
+                    const nextTarget = step.focusAfterSelector
+                        ? document.querySelector(step.focusAfterSelector)
+                        : resolveJourneyElement(step);
+                    if (nextTarget) {
+                        state.activeTarget = nextTarget;
+                        setTimeout(() => {
+                            setJourneyCardVisible(true);
+                            positionProductJourney(step, nextTarget);
+                        }, PRODUCT_JOURNEY_TIMING.repositionDelay);
+                    }
+                    state.isAnimating = false;
+                });
+            }, PRODUCT_JOURNEY_TIMING.clickStartDelay);
+        }
+        window.BIDFinderAnalytics?.track?.('product_journey_step_viewed', {
+            step_index: state.index + 1,
+            step_title: step.title
+        });
+    });
+}
+
+function nextProductJourneyStep() {
+    if (!productJourneyState) return;
+    productJourneyState.index += 1;
+    renderProductJourneyStep();
+}
+
+function previousProductJourneyStep() {
+    if (!productJourneyState || productJourneyState.index === 0) return;
+    productJourneyState.index -= 1;
+    renderProductJourneyStep();
+}
+
+function endProductJourney({ completed = false } = {}) {
+    if (!productJourneyState) return;
+    const { root } = productJourneyState;
+    root.hidden = true;
+    document.body.classList.remove('product-journey-active');
+    closeJourneySurfaces();
+    productJourneyState = null;
+    try {
+        localStorage.setItem(PRODUCT_JOURNEY_STORAGE_KEY, '1');
+    } catch (error) {
+        // Ignore storage failures.
+    }
+    window.BIDFinderAnalytics?.track?.('product_journey_closed', { completed });
+}
+
+function handleProductJourneyKeydown(event) {
+    if (!productJourneyState) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (productJourneyState.isAnimating) return;
+    nextProductJourneyStep();
+}
+
+function handleProductJourneyClick(event) {
+    if (!productJourneyState) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    const action = event.target.closest('[data-journey-action]')?.dataset.journeyAction;
+    if (productJourneyState.isAnimating && action !== 'skip') return;
+    if (action === 'prev') {
+        previousProductJourneyStep();
+        return;
+    }
+    if (action === 'skip') {
+        endProductJourney({ completed: false });
+        return;
+    }
+    nextProductJourneyStep();
+}
+
+function startProductJourney() {
+    createProductJourneyDom();
+    productJourneyState = {
+        root: document.getElementById('product-journey-root'),
+        steps: getProductJourneySteps(),
+        index: 0,
+        activeTarget: null
+    };
+    renderProductJourneyStep();
+    window.BIDFinderAnalytics?.track?.('product_journey_started');
+}
+
+function initProductJourney() {
+    createProductJourneyDom();
+    document.getElementById('open-product-journey')?.addEventListener('click', (event) => {
+        event.preventDefault();
+        startProductJourney();
+    });
+
+    document.addEventListener('keydown', handleProductJourneyKeydown, true);
+    document.addEventListener('click', handleProductJourneyClick, true);
+    window.addEventListener('resize', () => {
+        if (!productJourneyState) return;
+        const step = productJourneyState.steps[productJourneyState.index];
+        positionProductJourney(step, productJourneyState.activeTarget);
+    });
+    window.addEventListener('scroll', () => {
+        if (!productJourneyState) return;
+        const step = productJourneyState.steps[productJourneyState.index];
+        positionProductJourney(step, productJourneyState.activeTarget);
+    }, true);
+}
+
 
 
 function disableDefaultTooltips() {
@@ -6361,6 +6915,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initBulkSearchEvents();
     initFeedbackModalEvents();
     initInsightDrawerEvents();
+    initProductJourney();
     initResultViewSwitching();
     initSearchFormEvents();
     initFilterUrlEvents();

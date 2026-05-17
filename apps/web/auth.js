@@ -1,10 +1,12 @@
 (function () {
   const API_BASE_URL =
-    (window.location.protocol === 'file:' ||
-      window.location.hostname === 'localhost' ||
-      window.location.hostname === '127.0.0.1')
+    window.API_BASE_URL ||
+    window.BIDFINDER_CONFIG?.apiBaseUrl ||
+    ((window.location.protocol === 'file:' ||
+        window.location.hostname === 'localhost' ||
+        window.location.hostname === '127.0.0.1')
       ? 'http://127.0.0.1:8000'
-      : 'https://bidfinder.onrender.com';
+      : 'https://bidfinder-api-staging-774667987564.asia-southeast1.run.app');
 
   const STORAGE_KEY = 'bidfinder:auth_token';
   const DATA_ACCESS_KEY = 'bidfinder:require_auth_for_data_access';

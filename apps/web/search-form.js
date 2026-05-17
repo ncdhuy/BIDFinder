@@ -1420,7 +1420,7 @@ class CustomSearchForm extends HTMLElement {
         this.attachInputListeners();
         this.updateApplyButtonState();
         this.previewDebounceTimer = null;
-        this.previewDebounceMs = 30;
+        this.previewDebounceMs = 100;
         this.lastQueuedPreviewKey = '';
         this.setupSelectPlaceholderColors();
         this.setupDateEmptyState();
@@ -2831,7 +2831,7 @@ class AdvancedFilterManager {
 
         clearTimeout(this.debounceTimer);
         this.renderDropdown([query], query);
-        this.debounceTimer = setTimeout(() => this.fetchData(query), 30);
+        this.debounceTimer = setTimeout(() => this.fetchData(query), 150);
     }
 
     cancelPendingAutocomplete() {
@@ -2873,7 +2873,7 @@ class AdvancedFilterManager {
             field: this.fieldName,
             keyword: query,
             excludeSelf: true,
-            limit: 10
+            limit: 5
         };
 
         const cacheKey = JSON.stringify(payload);
@@ -3122,7 +3122,7 @@ class AdvancedFilterManager {
 
         return isLocal
             ? 'http://127.0.0.1:8000'
-            : 'https://bidfinder.onrender.com';
+            : 'https://bidfinder-api-staging-774667987564.asia-southeast1.run.app';
     }
 
 

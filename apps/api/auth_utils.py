@@ -91,7 +91,10 @@ RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
 RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "").strip()
 RESEND_FROM_NAME = os.getenv("RESEND_FROM_NAME", SMTP_FROM_NAME).strip() or SMTP_FROM_NAME
 PASSWORD_RESET_BASE_URL = os.getenv("AUTH_PASSWORD_RESET_URL_BASE", "").strip()
-FRONTEND_BASE_URL = os.getenv("APP_FRONTEND_URL", "").strip()
+FRONTEND_BASE_URL = (
+    os.getenv("FRONTEND_URL", "").strip()
+    or os.getenv("APP_FRONTEND_URL", "").strip()
+)
 
 
 def normalize_text(value: Any) -> str:

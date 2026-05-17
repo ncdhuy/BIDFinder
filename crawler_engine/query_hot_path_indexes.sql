@@ -1,5 +1,20 @@
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
+CREATE INDEX IF NOT EXISTS idx_medicines_ten_thuoc_trgm
+ON processed_medicines USING gin (ten_thuoc gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_medicines_ten_hoat_chat_trgm
+ON processed_medicines USING gin (ten_hoat_chat gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_medicines_nha_thau_trung_thau_trgm
+ON processed_medicines USING gin (nha_thau_trung_thau gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_medicines_xuat_xu_trgm
+ON processed_medicines USING gin (xuat_xu gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_medicines_co_so_san_xuat_trgm
+ON processed_medicines USING gin (co_so_san_xuat gin_trgm_ops);
+
 CREATE INDEX IF NOT EXISTS idx_medicines_qd_display_trgm
 ON processed_medicines USING gin (qd_display gin_trgm_ops);
 
@@ -11,6 +26,25 @@ ON processed_medicines USING gin (so_dk_gpnk gin_trgm_ops);
 
 CREATE INDEX IF NOT EXISTS idx_medicines_don_vi_tinh_trgm
 ON processed_medicines USING gin (don_vi_tinh gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_goods_search_blob_trgm
+ON processed_goods USING gin ((
+    COALESCE(ten_phan_lo, '') || ' | ' ||
+    COALESCE(danh_muc_hang_hoa, '') || ' | ' ||
+    COALESCE(ky_ma_hieu, '') || ' | ' ||
+    COALESCE(nhan_hieu, '') || ' | ' ||
+    COALESCE(mat_hang_du_thau, '') || ' | ' ||
+    COALESCE(tinh_nang_ky_thuat, '')
+) gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_goods_nha_thau_trung_thau_trgm
+ON processed_goods USING gin (nha_thau_trung_thau gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_goods_xuat_xu_trgm
+ON processed_goods USING gin (xuat_xu gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_goods_hang_san_xuat_trgm
+ON processed_goods USING gin (hang_san_xuat gin_trgm_ops);
 
 CREATE INDEX IF NOT EXISTS idx_goods_qd_display_trgm
 ON processed_goods USING gin (qd_display gin_trgm_ops);
