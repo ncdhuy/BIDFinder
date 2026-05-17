@@ -54,6 +54,7 @@ full_search_usage: Dict[str, Dict[str, int]] = defaultdict(dict)
 cache_lock = asyncio.Lock()
 preview_cache: Dict[str, Dict[str, Any]] = {}
 autocomplete_cache: Dict[str, Dict[str, Any]] = {}
+metadata_cache: Dict[str, Dict[str, Any]] = {}
 
 
 def get_env_flag(name: str, default: bool = False) -> bool:
@@ -61,6 +62,24 @@ def get_env_flag(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def get_env_int(name: str, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        value = default
+    else:
+        raw_text = raw.strip()
+        try:
+            value = int(raw_text)
+        except (TypeError, ValueError):
+            logger.warning("Invalid integer env %s=%r; using default %s", name, raw, default)
+            value = default
+    if minimum is not None:
+        value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
+    return value
 
 
 def normalize_anonymous_access_level(value: str) -> str:
@@ -131,24 +150,41 @@ ALLOWED_ORIGINS = [
     ).split(",")
     if origin.strip()
 ]
-RATE_LIMIT_WINDOW_SECONDS = max(10, int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60")))
-QUERY_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("QUERY_RATE_LIMIT_PER_MINUTE", "30")))
-AUTOCOMPLETE_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("AUTOCOMPLETE_RATE_LIMIT_PER_MINUTE", "120")))
-PREVIEW_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("PREVIEW_RATE_LIMIT_PER_MINUTE", "90")))
-METADATA_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("METADATA_RATE_LIMIT_PER_MINUTE", "20")))
-FILTER_CONFIG_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("FILTER_CONFIG_RATE_LIMIT_PER_MINUTE", "30")))
-AUTH_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("AUTH_RATE_LIMIT_PER_MINUTE", "20")))
-AUTH_CONFIG_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("AUTH_CONFIG_RATE_LIMIT_PER_MINUTE", "60")))
-FEEDBACK_RATE_LIMIT_PER_MINUTE = max(1, int(os.getenv("FEEDBACK_RATE_LIMIT_PER_MINUTE", "10")))
-DEFAULT_QUERY_LIMIT = max(50, int(os.getenv("DEFAULT_QUERY_LIMIT", "200")))
-MAX_QUERY_LIMIT = max(DEFAULT_QUERY_LIMIT, int(os.getenv("MAX_QUERY_LIMIT", "1000")))
-BULK_EXPORT_QUERY_LIMIT = min(MAX_QUERY_LIMIT, max(1, int(os.getenv("BULK_EXPORT_QUERY_LIMIT", "1000"))))
-FULL_SEARCH_DAILY_LIMIT = max(0, int(os.getenv("FULL_SEARCH_DAILY_LIMIT", "3")))
-PREVIEW_BUCKET_LIMIT = max(10, int(os.getenv("PREVIEW_BUCKET_LIMIT", "100")))
-DB_POOL_MAX_SIZE = max(1, int(os.getenv("DB_POOL_MAX_SIZE", "4")))
-PREVIEW_CACHE_TTL_SECONDS = max(1, int(os.getenv("PREVIEW_CACHE_TTL_SECONDS", "15")))
-AUTOCOMPLETE_CACHE_TTL_SECONDS = max(1, int(os.getenv("AUTOCOMPLETE_CACHE_TTL_SECONDS", "20")))
-CACHE_MAX_ENTRIES = max(50, int(os.getenv("CACHE_MAX_ENTRIES", "500")))
+RATE_LIMIT_WINDOW_SECONDS = get_env_int("RATE_LIMIT_WINDOW_SECONDS", 60, minimum=10)
+QUERY_RATE_LIMIT_PER_MINUTE = get_env_int("QUERY_RATE_LIMIT_PER_MINUTE", 30, minimum=1)
+AUTOCOMPLETE_RATE_LIMIT_PER_MINUTE = get_env_int("AUTOCOMPLETE_RATE_LIMIT_PER_MINUTE", 120, minimum=1)
+PREVIEW_RATE_LIMIT_PER_MINUTE = get_env_int("PREVIEW_RATE_LIMIT_PER_MINUTE", 90, minimum=1)
+METADATA_RATE_LIMIT_PER_MINUTE = get_env_int("METADATA_RATE_LIMIT_PER_MINUTE", 20, minimum=1)
+FILTER_CONFIG_RATE_LIMIT_PER_MINUTE = get_env_int("FILTER_CONFIG_RATE_LIMIT_PER_MINUTE", 30, minimum=1)
+AUTH_RATE_LIMIT_PER_MINUTE = get_env_int("AUTH_RATE_LIMIT_PER_MINUTE", 20, minimum=1)
+AUTH_CONFIG_RATE_LIMIT_PER_MINUTE = get_env_int("AUTH_CONFIG_RATE_LIMIT_PER_MINUTE", 60, minimum=1)
+FEEDBACK_RATE_LIMIT_PER_MINUTE = get_env_int("FEEDBACK_RATE_LIMIT_PER_MINUTE", 10, minimum=1)
+FEEDBACK_READ_RATE_LIMIT_PER_MINUTE = get_env_int(
+    "FEEDBACK_READ_RATE_LIMIT_PER_MINUTE",
+    60,
+    minimum=1,
+)
+ADMIN_EMAILS = {
+    email.strip().lower()
+    for email in os.getenv("ADMIN_EMAILS", "").split(",")
+    if email.strip()
+}
+DEFAULT_QUERY_LIMIT = get_env_int("DEFAULT_QUERY_LIMIT", 200, minimum=50)
+MAX_QUERY_LIMIT = get_env_int("MAX_QUERY_LIMIT", 1000, minimum=DEFAULT_QUERY_LIMIT)
+BULK_EXPORT_QUERY_LIMIT = 1000
+FULL_SEARCH_DAILY_LIMIT = get_env_int("FULL_SEARCH_DAILY_LIMIT", 3, minimum=0)
+PREVIEW_BUCKET_LIMIT = get_env_int("PREVIEW_BUCKET_LIMIT", 100, minimum=10)
+DB_POOL_MAX_SIZE = get_env_int("DB_POOL_MAX_SIZE", 4, minimum=1)
+DB_POOL_MIN_SIZE = get_env_int("DB_POOL_MIN_SIZE", 0, minimum=0, maximum=DB_POOL_MAX_SIZE)
+DB_POOL_MAX_INACTIVE_CONNECTION_LIFETIME = get_env_int(
+    "DB_POOL_MAX_INACTIVE_CONNECTION_LIFETIME",
+    60,
+    minimum=10,
+)
+PREVIEW_CACHE_TTL_SECONDS = get_env_int("PREVIEW_CACHE_TTL_SECONDS", 15, minimum=1)
+AUTOCOMPLETE_CACHE_TTL_SECONDS = get_env_int("AUTOCOMPLETE_CACHE_TTL_SECONDS", 20, minimum=1)
+METADATA_CACHE_TTL_SECONDS = get_env_int("METADATA_CACHE_TTL_SECONDS", 300, minimum=1)
+CACHE_MAX_ENTRIES = get_env_int("CACHE_MAX_ENTRIES", 500, minimum=50)
 STANDARD_QUERY_EXACT_COUNT_ENABLED = get_env_flag("STANDARD_QUERY_EXACT_COUNT_ENABLED", False)
 SERVER_ERROR_MESSAGE = "Hệ thống đang bận hoặc gặp lỗi nội bộ. Vui lòng thử lại sau."
 DRUG_GROUP_UNKNOWN = "UNKNOWN"
@@ -169,7 +205,7 @@ except ZoneInfoNotFoundError:
     APP_TIMEZONE = ZoneInfo("UTC")
 ANONYMOUS_FULL_QUERY_DAILY_LIMIT = max(
     0,
-    int(os.getenv("ANONYMOUS_FULL_QUERY_DAILY_LIMIT", "10")),
+    get_env_int("ANONYMOUS_FULL_QUERY_DAILY_LIMIT", 10),
 )
 ANONYMOUS_FULL_QUERY_LIMIT_MESSAGE = (
     f"Bạn đã dùng hết {ANONYMOUS_FULL_QUERY_DAILY_LIMIT} lượt tra cứu hôm nay. "
@@ -684,6 +720,20 @@ class FeedbackRequest(BaseModel):
     context: Dict[str, Any] = Field(default_factory=dict)
 
 
+class FeedbackTopicCreateRequest(BaseModel):
+    title: str
+    body: str
+    category: Optional[str] = "idea"
+
+
+class FeedbackReplyCreateRequest(BaseModel):
+    body: str
+
+
+class FeedbackTopicUpdateRequest(BaseModel):
+    status: Literal["open", "planned", "in_progress", "resolved", "closed"]
+
+
 # =========================
 # FIELD REGISTRY
 # =========================
@@ -882,10 +932,10 @@ async def get_db_pool():
         raise RuntimeError("DATABASE_URL is missing")
     return await asyncpg.create_pool(
         dsn=DATABASE_URL,
-        min_size=1,
+        min_size=DB_POOL_MIN_SIZE,
         max_size=DB_POOL_MAX_SIZE,
         command_timeout=60,
-        max_inactive_connection_lifetime=300,
+        max_inactive_connection_lifetime=DB_POOL_MAX_INACTIVE_CONNECTION_LIFETIME,
         setup=setup_connection,
         ssl=db_ssl_config,
     )
@@ -2165,6 +2215,50 @@ async def enforce_data_access_policy(
     return current_user or await require_authenticated_user(conn, request)
 
 
+def is_feedback_admin(user: Optional[Dict[str, Any]]) -> bool:
+    email = str((user or {}).get("email") or "").strip().lower()
+    return bool(email and email in ADMIN_EMAILS)
+
+
+def is_feedback_admin_email(email: Optional[str]) -> bool:
+    normalized = str(email or "").strip().lower()
+    return bool(normalized and normalized in ADMIN_EMAILS)
+
+
+def serialize_feedback_topic(row: asyncpg.Record) -> Dict[str, Any]:
+    keys = set(row.keys())
+    return {
+        "id": int(row["id"]),
+        "title": row["title"],
+        "body": row["body"] if "body" in keys else "",
+        "category": row["category"],
+        "status": row["status"],
+        "is_admin_topic": (
+            (bool(row["is_admin_topic"]) if "is_admin_topic" in keys else False)
+            or is_feedback_admin_email(row["user_email"])
+        ),
+        "reply_count": int(row["reply_count"] or 0),
+        "user_email": row["user_email"],
+        "author_name": row["author_name"] if "author_name" in keys else None,
+        "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+        "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+        "last_activity_at": row["last_activity_at"].isoformat() if row["last_activity_at"] else None,
+    }
+
+
+def serialize_feedback_reply(row: asyncpg.Record) -> Dict[str, Any]:
+    keys = set(row.keys())
+    return {
+        "id": int(row["id"]),
+        "topic_id": int(row["topic_id"]),
+        "body": row["body"],
+        "user_email": row["user_email"],
+        "author_name": row["author_name"] if "author_name" in keys else None,
+        "is_admin": bool(row["is_admin"]),
+        "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+    }
+
+
 @app.get("/api/auth/config")
 async def get_auth_config(request: Request):
     limited = await enforce_rate_limit(request, "auth-config", AUTH_CONFIG_RATE_LIMIT_PER_MINUTE)
@@ -2500,6 +2594,238 @@ async def create_feedback(request: Request, payload: FeedbackRequest):
         return validation_error_response("Không thể lưu góp ý lúc này, vui lòng thử lại sau.", 500)
 
 
+@app.get("/api/feedback/topics")
+async def list_feedback_topics(request: Request):
+    limited = await enforce_rate_limit(request, "feedback-topics", FEEDBACK_READ_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            current_user = await require_authenticated_user(conn, request)
+            rows = await conn.fetch(
+                """
+                SELECT t.id, t.user_id, t.user_email, u.full_name AS author_name,
+                       t.title, t.category, t.status, t.is_admin_topic,
+                       t.reply_count, t.created_at, t.updated_at, t.last_activity_at
+                FROM app_feedback_topics t
+                LEFT JOIN app_users u ON u.id = t.user_id
+                ORDER BY t.created_at DESC, t.id DESC
+                LIMIT 100
+                """
+            )
+        return {
+            "success": True,
+            "topics": [serialize_feedback_topic(row) for row in rows],
+            "is_admin": is_feedback_admin(current_user),
+        }
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        log_server_exception("list_feedback_topics failed", exc)
+        return internal_error_response()
+
+
+@app.post("/api/feedback/topics")
+async def create_feedback_topic(request: Request, payload: FeedbackTopicCreateRequest):
+    limited = await enforce_rate_limit(request, "feedback-create-topic", FEEDBACK_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    title = str(payload.title or "").strip()
+    body = str(payload.body or "").strip()
+    category = str(payload.category or "idea").strip().lower()
+    if category not in {"idea", "bug", "question", "data", "other"}:
+        category = "idea"
+    if len(title) < 6:
+        return validation_error_response("Tiêu đề chủ đề cần ít nhất 6 ký tự.")
+    if len(body) < 10:
+        return validation_error_response("Nội dung chủ đề cần ít nhất 10 ký tự.")
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            current_user = await require_authenticated_user(conn, request)
+            is_admin_topic = is_feedback_admin(current_user)
+            row = await conn.fetchrow(
+                """
+                INSERT INTO app_feedback_topics (
+                    user_id, user_email, title, body, category, is_admin_topic
+                )
+                VALUES ($1, $2, $3, $4, $5, $6)
+                RETURNING id, user_id, user_email, title, body, category, status, is_admin_topic,
+                          reply_count, created_at, updated_at, last_activity_at
+                """,
+                int(current_user["id"]),
+                current_user.get("email"),
+                title[:180],
+                body[:4000],
+                category,
+                is_admin_topic,
+            )
+        return {"success": True, "topic": serialize_feedback_topic(row), "message": "Đã tạo chủ đề."}
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        log_server_exception("create_feedback_topic failed", exc)
+        return internal_error_response()
+
+
+@app.get("/api/feedback/topics/{topic_id}")
+async def get_feedback_topic(request: Request, topic_id: int):
+    limited = await enforce_rate_limit(request, "feedback-topic-detail", FEEDBACK_READ_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        try:
+            comments_limit = int(request.query_params.get("comments_limit", "20"))
+            comments_offset = int(request.query_params.get("comments_offset", "0"))
+        except (TypeError, ValueError):
+            comments_limit = 20
+            comments_offset = 0
+        comments_limit = min(max(comments_limit, 1), 50)
+        comments_offset = max(comments_offset, 0)
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            current_user = await require_authenticated_user(conn, request)
+            topic = await conn.fetchrow(
+                """
+                SELECT t.id, t.user_id, t.user_email, u.full_name AS author_name,
+                       t.title, t.body, t.category, t.status, t.is_admin_topic,
+                       t.reply_count, t.created_at, t.updated_at, t.last_activity_at
+                FROM app_feedback_topics t
+                LEFT JOIN app_users u ON u.id = t.user_id
+                WHERE t.id = $1
+                """,
+                topic_id,
+            )
+            if not topic:
+                raise HTTPException(status_code=404, detail="Không tìm thấy chủ đề.")
+            replies = await conn.fetch(
+                """
+                SELECT r.id, r.topic_id, r.user_id, r.user_email, u.full_name AS author_name,
+                       r.body, r.is_admin, r.created_at
+                FROM app_feedback_replies r
+                LEFT JOIN app_users u ON u.id = r.user_id
+                WHERE r.topic_id = $1
+                ORDER BY r.created_at ASC, r.id ASC
+                LIMIT $2 OFFSET $3
+                """,
+                topic_id,
+                comments_limit + 1,
+                comments_offset,
+            )
+            replies_has_more = len(replies) > comments_limit
+            replies_page = replies[:comments_limit]
+        return {
+            "success": True,
+            "topic": serialize_feedback_topic(topic),
+            "replies": [serialize_feedback_reply(row) for row in replies_page],
+            "replies_has_more": replies_has_more,
+            "replies_next_offset": comments_offset + len(replies_page),
+            "is_admin": is_feedback_admin(current_user),
+        }
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        log_server_exception("get_feedback_topic failed", exc)
+        return internal_error_response()
+
+
+@app.patch("/api/feedback/topics/{topic_id}")
+async def update_feedback_topic(request: Request, topic_id: int, payload: FeedbackTopicUpdateRequest):
+    limited = await enforce_rate_limit(request, "feedback-topic-update", FEEDBACK_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            current_user = await require_authenticated_user(conn, request)
+            if not is_feedback_admin(current_user):
+                return validation_error_response("Bạn không có quyền cập nhật chủ đề này.", 403)
+            topic = await conn.fetchrow(
+                """
+                UPDATE app_feedback_topics
+                SET status = $2, updated_at = NOW(), last_activity_at = NOW()
+                WHERE id = $1
+                RETURNING id, user_id, user_email, title, body, category, status, is_admin_topic,
+                          reply_count, created_at, updated_at, last_activity_at
+                """,
+                topic_id,
+                payload.status,
+            )
+            if not topic:
+                raise HTTPException(status_code=404, detail="Không tìm thấy chủ đề.")
+
+        return {
+            "success": True,
+            "topic": serialize_feedback_topic(topic),
+            "message": "Đã cập nhật trạng thái chủ đề.",
+        }
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        log_server_exception("update_feedback_topic failed", exc)
+        return internal_error_response()
+
+
+@app.post("/api/feedback/topics/{topic_id}/replies")
+async def create_feedback_reply(request: Request, topic_id: int, payload: FeedbackReplyCreateRequest):
+    limited = await enforce_rate_limit(request, "feedback-reply", FEEDBACK_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    body = str(payload.body or "").strip()
+    if len(body) < 2:
+        return validation_error_response("")
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            current_user = await require_authenticated_user(conn, request)
+            topic = await conn.fetchrow("SELECT id, status FROM app_feedback_topics WHERE id = $1", topic_id)
+            if not topic:
+                raise HTTPException(status_code=404, detail="Không tìm thấy chủ đề.")
+
+            is_admin = is_feedback_admin(current_user)
+            if topic["status"] == "closed" and not is_admin:
+                return validation_error_response("Chủ đề đã đóng, không thể bình luận thêm.")
+
+            async with conn.transaction():
+                reply = await conn.fetchrow(
+                    """
+                    INSERT INTO app_feedback_replies (
+                        topic_id, user_id, user_email, body, is_admin
+                    )
+                    VALUES ($1, $2, $3, $4, $5)
+                    RETURNING id, topic_id, user_id, user_email, body, is_admin, created_at
+                    """,
+                    topic_id,
+                    int(current_user["id"]),
+                    current_user.get("email"),
+                    body[:4000],
+                    is_admin,
+                )
+                await conn.execute(
+                    """
+                    UPDATE app_feedback_topics
+                    SET reply_count = reply_count + 1,
+                        updated_at = NOW(), last_activity_at = NOW()
+                    WHERE id = $1
+                    """,
+                    topic_id,
+                )
+        return {"success": True, "reply": serialize_feedback_reply(reply), "message": "Đã gửi phản hồi."}
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        log_server_exception("create_feedback_reply failed", exc)
+        return internal_error_response()
+
+
 @app.get("/api/filter-config")
 async def get_filter_config(request: Request):
     limited = await enforce_rate_limit(request, "filter-config", FILTER_CONFIG_RATE_LIMIT_PER_MINUTE)
@@ -2723,7 +3049,8 @@ async def bulk_query_data(request: Request, payload: BulkQueryRequest):
             if is_full_search:
                 quota = await consume_full_search_usage(request, current_user)
 
-        result_count_meta = build_count_meta(total_matched, exact=not result_truncated)
+        result_count = len(result_rows) if result_truncated else total_matched
+        result_count_meta = build_count_meta(result_count, exact=not result_truncated)
 
         empty_scope = {
             "data": [],
@@ -2753,7 +3080,7 @@ async def bulk_query_data(request: Request, payload: BulkQueryRequest):
                 "search_mode": search_mode,
                 "diversity_mode": diversity_mode,
                 "input_count": len(rows),
-                "matched_count": total_matched,
+                "matched_count": int(result_count_meta["count"]),
                 "matched_input_count": matched_input_count,
                 "price_limit": price_limit,
                 "product_limit": product_limit,
@@ -2960,6 +3287,9 @@ async def get_metadata(request: Request):
         pool = await ensure_db_pool()
         async with pool.acquire() as conn:
             await enforce_data_access_policy(conn, request, "metadata")
+            cached = await get_cached_payload(metadata_cache, "metadata:v1")
+            if cached is not None:
+                return JSONResponse(content=cached)
 
             rows = await conn.fetch("""
                 SELECT start_time, end_time, duration_seconds, boxes_selected
@@ -3007,20 +3337,24 @@ async def get_metadata(request: Request):
             if row["approval_date"]
         ]
         if not history:
-            return JSONResponse(content={
+            payload = {
                 "success": False,
                 "message": "Chưa có lịch sử cập nhật",
                 "history": [],
                 "approval_timeline": approval_timeline,
-            })
+            }
+            await set_cached_payload(metadata_cache, "metadata:v1", payload, METADATA_CACHE_TTL_SECONDS)
+            return JSONResponse(content=payload)
 
-        return JSONResponse(content={
+        payload = {
             "success": True,
             "history": history,
             "approval_timeline": approval_timeline,
             "last_run": history[0],
             "total_runs": int(total_runs or 0)
-        })
+        }
+        await set_cached_payload(metadata_cache, "metadata:v1", payload, METADATA_CACHE_TTL_SECONDS)
+        return JSONResponse(content=payload)
 
     except HTTPException as exc:
         return auth_error_response(exc)

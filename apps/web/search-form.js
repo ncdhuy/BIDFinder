@@ -1403,7 +1403,7 @@ class CustomSearchForm extends HTMLElement {
                         <!-- Buttons -->
                         <div class="actions">
                             <button class="btn btn-secondary" id="reset-filters-btn">Đặt lại toàn bộ</button>
-                            <button class="btn btn-primary" id="apply-filters-btn">Tra cứu</button>
+                            <button class="btn btn-primary" id="apply-filters-btn">Tra cứu nâng cao</button>
                         </div>
 
                     </div> <!-- End Filter Content -->
@@ -1420,7 +1420,7 @@ class CustomSearchForm extends HTMLElement {
         this.attachInputListeners();
         this.updateApplyButtonState();
         this.previewDebounceTimer = null;
-        this.previewDebounceMs = 100;
+        this.previewDebounceMs = 400;
         this.lastQueuedPreviewKey = '';
         this.setupSelectPlaceholderColors();
         this.setupDateEmptyState();
@@ -1883,7 +1883,7 @@ class CustomSearchForm extends HTMLElement {
         }
 
         applyBtn.dataset.loading = '0';
-        applyBtn.textContent = applyBtn.dataset.defaultText || 'Tra cứu';
+        applyBtn.textContent = applyBtn.dataset.defaultText || 'Tra cứu nâng cao';
         this.updateApplyButtonState();
     }
 
@@ -2831,7 +2831,7 @@ class AdvancedFilterManager {
 
         clearTimeout(this.debounceTimer);
         this.renderDropdown([query], query);
-        this.debounceTimer = setTimeout(() => this.fetchData(query), 150);
+        this.debounceTimer = setTimeout(() => this.fetchData(query), 250);
     }
 
     cancelPendingAutocomplete() {

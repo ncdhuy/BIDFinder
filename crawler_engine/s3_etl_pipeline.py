@@ -241,8 +241,7 @@ def expand_active_jobs_with_relation_peers(cursor, active_jobs: list[dict], igno
 
 
 def ensure_qd_display_columns(cursor):
-    cursor.execute("ALTER TABLE processed_medicines ADD COLUMN IF NOT EXISTS qd_display TEXT")
-    cursor.execute("ALTER TABLE processed_goods ADD COLUMN IF NOT EXISTS qd_display TEXT")
+    return None
 
 
 RELATION_REPLACEMENT_DELETE_SQL_TEMPLATE = """
@@ -2594,16 +2593,7 @@ def audit_processed_units_for_empty_review_columns(manifest_date: str | None = N
     log_pending_review_summary(flagged_summary, f"TỔNG KẾT AUDIT HỒI TỐ [{scope_label}]")
 
 def ensure_indexes(conn, table_name: str, index_columns: list):
-    if not index_columns: return
-    try:
-        with conn.cursor() as cursor:
-            for col in index_columns:
-                idx_name = f"idx_{table_name}_{col}"
-                cursor.execute(f'CREATE INDEX IF NOT EXISTS {idx_name} ON {table_name}("{col}")')
-            conn.commit()
-        logger.info(f"   ⚡ Đã kiểm tra/tạo Index cho bảng '{table_name}'.")
-    except Exception as e:
-        logger.error(f"⚠️ Lỗi khi tạo Index cho bảng {table_name}: {e}")
+    return None
 
 import psycopg2.extras
 
@@ -2757,15 +2747,6 @@ def sync_and_clean_all_metadata():
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
-                cursor.execute("""
-                    ALTER TABLE package_metadata 
-                    ADD COLUMN IF NOT EXISTS tinh_trang_hieu_luc TEXT;
-                """)
-                cursor.execute("""
-                    ALTER TABLE package_metadata
-                    ADD COLUMN IF NOT EXISTS ngay_phe_duyet_date DATE;
-                """)
-                
                 cursor.execute("""
                     SELECT ma_tbmt, so_qd, version, 
                            gia_goi_thau, ngay_phe_duyet, thoi_gian_thuc_hien, dia_diem, ngay_het_hieu_luc

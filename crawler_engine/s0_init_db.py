@@ -1,9 +1,11 @@
 import os
 import psycopg2
 from dotenv import load_dotenv
+from pathlib import Path
 
 # Load biến môi trường từ file .env
 load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / "apps" / "api" / ".env", override=False)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
@@ -259,7 +261,87 @@ class DatabaseMigrator:
                 ON app_feedback (user_id)
             """)
 
-            # 7. Bảng Dữ liệu Đã Xử Lý (Thuốc)
+            # 7. Bảng diễn đàn / cộng đồng của frontend
+            self.cursor.execute("""
+                CREATE TABLE IF NOT EXISTS app_feedback_topics (
+                    id BIGSERIAL PRIMARY KEY,
+                    user_id BIGINT REFERENCES app_users(id) ON DELETE SET NULL,
+                    user_email TEXT,
+                    title TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    category TEXT NOT NULL DEFAULT 'idea',
+                    status TEXT NOT NULL DEFAULT 'open',
+                    is_admin_topic BOOLEAN NOT NULL DEFAULT FALSE,
+                    reply_count INTEGER NOT NULL DEFAULT 0,
+                    last_activity_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            self.cursor.execute("""
+                ALTER TABLE app_feedback_topics
+                ADD COLUMN IF NOT EXISTS is_admin_topic BOOLEAN NOT NULL DEFAULT FALSE,
+                ADD COLUMN IF NOT EXISTS reply_count INTEGER NOT NULL DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            """)
+            self.cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_app_feedback_topics_created
+                ON app_feedback_topics (created_at DESC, id DESC)
+            """)
+            self.cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_app_feedback_topics_last_activity
+                ON app_feedback_topics (last_activity_at DESC)
+            """)
+
+            self.cursor.execute("""
+                CREATE TABLE IF NOT EXISTS app_feedback_replies (
+                    id BIGSERIAL PRIMARY KEY,
+                    topic_id BIGINT NOT NULL REFERENCES app_feedback_topics(id) ON DELETE CASCADE,
+                    user_id BIGINT REFERENCES app_users(id) ON DELETE SET NULL,
+                    user_email TEXT,
+                    body TEXT NOT NULL,
+                    is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            self.cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_app_feedback_replies_topic_created
+                ON app_feedback_replies (topic_id, created_at ASC)
+            """)
+
+            admin_emails = [
+                email.strip().lower()
+                for email in os.getenv("ADMIN_EMAILS", "").split(",")
+                if email.strip()
+            ]
+            if admin_emails:
+                self.cursor.execute(
+                    """
+                    UPDATE app_feedback_topics
+                    SET is_admin_topic = TRUE
+                    WHERE LOWER(COALESCE(user_email, '')) = ANY(%s)
+                      AND is_admin_topic = FALSE
+                    """,
+                    (admin_emails,),
+                )
+
+            self.cursor.execute("""
+                CREATE TABLE IF NOT EXISTS numeric_x10_repair_backup (
+                    run_id TEXT NOT NULL,
+                    dataset TEXT NOT NULL,
+                    processed_row_id INTEGER NOT NULL,
+                    ma_tbmt TEXT,
+                    so_qd TEXT,
+                    version TEXT,
+                    old_quantity NUMERIC,
+                    old_don_gia_trung_thau NUMERIC,
+                    old_thanh_tien NUMERIC,
+                    backed_up_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # 8. Bảng Dữ liệu Đã Xử Lý (Thuốc)
             # Chỉ lưu line-item đã chuẩn hóa. Không lưu cột KHLCNT ở bảng này.
             self.cursor.execute("""
                 CREATE TABLE IF NOT EXISTS processed_medicines (

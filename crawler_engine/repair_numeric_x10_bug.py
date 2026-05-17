@@ -152,22 +152,7 @@ def repair_dataset(cursor, dataset):
 
 
 def ensure_backup_table(cursor):
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS numeric_x10_repair_backup (
-            run_id TEXT NOT NULL,
-            dataset TEXT NOT NULL,
-            processed_row_id INTEGER NOT NULL,
-            ma_tbmt TEXT,
-            so_qd TEXT,
-            version TEXT,
-            old_quantity NUMERIC,
-            old_don_gia_trung_thau NUMERIC,
-            old_thanh_tien NUMERIC,
-            backed_up_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """
-    )
+    return None
 
 
 def backup_dataset(cursor, dataset, run_id):

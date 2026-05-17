@@ -1312,6 +1312,7 @@ let dbWarmupReadyUntil = 0;
 const DB_WARM_TTL_MS = 4 * 60 * 1000;
 const LOADING_CONNECTION_MESSAGE_MS = 700;
 const PREVIEW_REQUEST_TIMEOUT_MS = 25000;
+const DB_WARMUP_ENABLED = window.BIDFINDER_CONFIG?.dbWarmupEnabled === true;
 
 function markDatabaseWarm() {
     dbWarmupReadyUntil = Date.now() + DB_WARM_TTL_MS;
@@ -1322,6 +1323,7 @@ function isDatabaseRecentlyWarm() {
 }
 
 function shouldWarmDatabase() {
+    if (!DB_WARMUP_ENABLED) return false;
     const auth = window.BIDFinderAuth;
     if (auth?.requiresDataAuth?.() && !auth?.isAuthenticated?.()) return false;
     return true;
@@ -5600,6 +5602,7 @@ function updateBulkDownloadUi(result) {
 
     const displayed = getBulkDisplayedTotal(result);
     const total = Number(result?.total_count || displayed || 0);
+    const totalLabel = String(result?.total_count_label || total.toLocaleString('vi-VN'));
     selected.hidden = false;
     uploadName.hidden = true;
     copy.hidden = false;
@@ -5617,7 +5620,7 @@ function updateBulkDownloadUi(result) {
     const inputSources = getBulkInputSourceCount();
     const productLine = `${matchedSources.toLocaleString('vi-VN')}/${inputSources.toLocaleString('vi-VN')} sản phẩm có kết quả`;
     const rowLine = displayed > 0
-        ? `${displayed.toLocaleString('vi-VN')}/${total.toLocaleString('vi-VN')} dòng sẵn sàng tải về.`
+        ? `${displayed.toLocaleString('vi-VN')}/${totalLabel} dòng sẵn sàng tải về.`
         : 'Không có dòng kết quả để tải về.';
     summary.textContent = displayed > 0
         ? `${productLine}\n${rowLine}`
@@ -5913,15 +5916,393 @@ function setFeedbackStatus(message, type = '') {
     status.classList.toggle('is-error', type === 'error');
 }
 
+let feedbackBoardState = {
+    topics: [],
+    topicDetails: new Map(),
+    activeTopicId: null,
+    activeTopic: null,
+    replies: [],
+    repliesNextOffset: 0,
+    repliesHasMore: false,
+    repliesLoading: false,
+    topicFilter: 'all',
+    isAdmin: false
+};
+
+const FEEDBACK_REPLY_BATCH_SIZE = 20;
+const FEEDBACK_TOPIC_CACHE_TTL_MS = 45 * 1000;
+
+const FEEDBACK_STATUS_ICONS = {
+    open: '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"></circle><circle cx="12" cy="12" r="2.7" fill="currentColor" stroke="none"></circle></svg>',
+    closed: '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor"><path d="M9 12l2 2 4-4"></path><circle cx="12" cy="12" r="9"></circle></svg>'
+};
+
+const FEEDBACK_LOCK_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor"><rect x="5" y="11" width="14" height="9" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg>';
+
+const FEEDBACK_STATUS_LABELS = {
+    open: 'Mở',
+    planned: 'Đã ghi nhận',
+    in_progress: 'Đang xử lý',
+    resolved: 'Đã xử lý',
+    closed: 'Đóng'
+};
+
+const FEEDBACK_CATEGORY_LABELS = {
+    idea: 'Ý tưởng',
+    bug: 'Lỗi',
+    question: 'Câu hỏi',
+    data: 'Dữ liệu',
+    other: 'Khác'
+};
+
+const FEEDBACK_TOPIC_FILTER_LABELS = {
+    all: 'Tất cả',
+    admin: 'BIDFinder'
+};
+
+function formatFeedbackDate(value) {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
+}
+
+function getFeedbackAuthorLabel(authorName, email, isAdmin = false) {
+    if (isAdmin) return 'BIDFinder';
+    const name = String(authorName || '').trim();
+    if (name) return name;
+    const value = String(email || '').trim();
+    return value || 'Người dùng';
+}
+
+function getFeedbackAuthorInitial(authorName, email, isAdmin = false) {
+    if (isAdmin) return 'B';
+    const name = String(authorName || '').trim();
+    if (name) return name[0].toUpperCase();
+    const value = String(email || '').trim();
+    return (value[0] || 'U').toUpperCase();
+}
+
+function getVisibleFeedbackTopics() {
+    if (feedbackBoardState.topicFilter === 'admin') {
+        return feedbackBoardState.topics.filter(topic => topic.is_admin_topic);
+    }
+    return feedbackBoardState.topics;
+}
+
+function updateFeedbackReplyButtonState() {
+    const replyBody = document.getElementById('feedback-reply-body');
+    const sendButton = document.getElementById('send-feedback-reply');
+    if (!replyBody || !sendButton) return;
+    const isClosedForUser = feedbackBoardState.activeTopic?.status === 'closed' && !feedbackBoardState.isAdmin;
+    sendButton.disabled = isClosedForUser || !replyBody.value.trim();
+}
+
+function renderFeedbackReplies(replies = []) {
+    const replyList = document.getElementById('feedback-reply-list');
+    if (!replyList) return;
+    const replyMarkup = replies.length
+        ? replies.map(reply => `
+            <article class="feedback-reply${reply.is_admin ? ' is-admin' : ''}">
+                <span class="feedback-avatar${reply.is_admin ? ' is-admin' : ''}">${escapeHtml(getFeedbackAuthorInitial(reply.author_name, reply.user_email, reply.is_admin))}</span>
+                <div class="feedback-comment-content">
+                    <div class="feedback-comment-bubble">
+                        <div class="feedback-reply-meta">
+                            <strong>${escapeHtml(getFeedbackAuthorLabel(reply.author_name, reply.user_email, reply.is_admin))}</strong>
+                            ${reply.is_admin ? '<span class="feedback-admin-pill">Admin-BIDFinder</span>' : ''}
+                        </div>
+                        <p>${escapeHtml(reply.body || '')}</p>
+                    </div>
+                    <div class="feedback-comment-foot">${formatFeedbackDate(reply.created_at)}</div>
+                </div>
+            </article>
+        `).join('')
+        : '';
+    const closedEvent = feedbackBoardState.activeTopic?.status === 'closed'
+        ? `
+            <div class="feedback-lock-event">
+                <span class="feedback-lock-icon">${FEEDBACK_LOCK_ICON}</span>
+                <span><strong>BIDFinder</strong> đã đóng chủ đề này.</span>
+            </div>
+        `
+        : '';
+    replyList.innerHTML = `${replyMarkup}${closedEvent}`;
+}
+
+function renderFeedbackTopicList() {
+    const list = document.getElementById('feedback-topic-list');
+    if (!list) return;
+
+    const filterLabel = document.getElementById('feedback-topic-filter-label');
+    if (filterLabel) filterLabel.textContent = FEEDBACK_TOPIC_FILTER_LABELS[feedbackBoardState.topicFilter] || 'Tất cả';
+    document.querySelectorAll('[data-feedback-filter-value]').forEach(button => {
+        const isActive = button.dataset.feedbackFilterValue === feedbackBoardState.topicFilter;
+        button.classList.toggle('active', isActive);
+        button.setAttribute('aria-selected', String(isActive));
+    });
+
+    const visibleTopics = getVisibleFeedbackTopics();
+    if (!visibleTopics.length) {
+        const isAdminFilter = feedbackBoardState.topicFilter === 'admin';
+        list.innerHTML = `
+            <div class="feedback-topic-empty">
+                <strong>${isAdminFilter ? 'Chưa có thông báo BIDFinder' : 'Chưa có chủ đề nào'}</strong>
+                <span>${isAdminFilter ? 'Các topic do admin đăng sẽ xuất hiện tại đây.' : 'Hãy tạo chủ đề đầu tiên cho cộng đồng BIDFinder.'}</span>
+            </div>
+        `;
+        return;
+    }
+
+    list.innerHTML = visibleTopics.map(topic => `
+        <button class="feedback-topic-item${topic.id === feedbackBoardState.activeTopicId ? ' active' : ''}" type="button" data-topic-id="${topic.id}">
+            <span class="feedback-topic-item-meta">
+                ${topic.is_admin_topic ? '<span class="feedback-topic-admin-badge">BIDFinder</span>' : ''}
+                <span class="feedback-topic-item-status${topic.status === 'closed' ? ' is-closed' : ' is-open'}">
+                    ${FEEDBACK_STATUS_ICONS[topic.status] || FEEDBACK_STATUS_ICONS.open}
+                    ${FEEDBACK_STATUS_LABELS[topic.status] || topic.status}
+                </span>
+            </span>
+            <strong>${escapeHtml(topic.title || '')}</strong>
+            <span>${FEEDBACK_CATEGORY_LABELS[topic.category] || 'Chủ đề'} · ${Number(topic.reply_count || 0)} phản hồi · ${formatFeedbackDate(topic.created_at)}</span>
+        </button>
+    `).join('');
+}
+
+function showFeedbackEmptyDetail(message = 'Chọn một chủ đề để xem trao đổi') {
+    const empty = document.getElementById('feedback-empty-detail');
+    const detail = document.getElementById('feedback-topic-detail');
+    const form = document.getElementById('feedback-topic-form');
+    feedbackBoardState.activeTopic = null;
+    feedbackBoardState.replies = [];
+    feedbackBoardState.repliesNextOffset = 0;
+    feedbackBoardState.repliesHasMore = false;
+    feedbackBoardState.repliesLoading = false;
+    if (empty) {
+        empty.hidden = false;
+        const strong = empty.querySelector('strong');
+        if (strong) strong.textContent = message;
+    }
+    if (detail) detail.hidden = true;
+    if (form) form.hidden = true;
+}
+
+function showFeedbackTopicForm() {
+    document.getElementById('feedback-empty-detail')?.setAttribute('hidden', '');
+    document.getElementById('feedback-topic-detail')?.setAttribute('hidden', '');
+    feedbackBoardState.activeTopic = null;
+    feedbackBoardState.replies = [];
+    feedbackBoardState.repliesNextOffset = 0;
+    feedbackBoardState.repliesHasMore = false;
+    feedbackBoardState.repliesLoading = false;
+    const form = document.getElementById('feedback-topic-form');
+    if (form) {
+        form.hidden = false;
+        requestAnimationFrame(() => document.getElementById('feedback-topic-input')?.focus());
+    }
+}
+
+function renderFeedbackTopicPreview(topic) {
+    if (!topic) return;
+    renderFeedbackTopicDetail(
+        { ...topic, body: topic.body || '' },
+        [],
+        { loading: !topic.body }
+    );
+}
+
+function renderFeedbackTopicDetail(topic, replies = [], options = {}) {
+    const empty = document.getElementById('feedback-empty-detail');
+    const detail = document.getElementById('feedback-topic-detail');
+    const form = document.getElementById('feedback-topic-form');
+    if (empty) empty.hidden = true;
+    if (form) form.hidden = true;
+    if (!detail) return;
+
+    detail.hidden = false;
+    feedbackBoardState.activeTopic = topic;
+    const statusEl = document.getElementById('feedback-topic-status');
+    if (statusEl) {
+        statusEl.textContent = FEEDBACK_STATUS_LABELS[topic.status] || topic.status;
+        statusEl.hidden = true;
+    }
+    document.getElementById('feedback-topic-title').textContent = topic.title || '';
+    const bodyEl = document.getElementById('feedback-topic-body');
+    if (bodyEl) {
+        bodyEl.classList.toggle('is-loading', Boolean(options.loading));
+        bodyEl.textContent = options.loading ? '' : (topic.body || '');
+    }
+    document.getElementById('feedback-topic-actions').hidden = !feedbackBoardState.isAdmin;
+
+    const closeButton = document.getElementById('close-feedback-topic');
+    const reopenButton = document.getElementById('reopen-feedback-topic');
+    if (closeButton) closeButton.hidden = topic.status === 'closed';
+    if (reopenButton) reopenButton.hidden = topic.status !== 'closed';
+
+    const isClosedForUser = topic.status === 'closed' && !feedbackBoardState.isAdmin;
+    const replyBody = document.getElementById('feedback-reply-body');
+    const currentAvatar = document.getElementById('feedback-current-avatar');
+    const currentUser = window.BIDFinderAuth?.getUser?.();
+    if (currentAvatar) {
+        currentAvatar.textContent = getFeedbackAuthorInitial(currentUser?.full_name, currentUser?.email, feedbackBoardState.isAdmin);
+        currentAvatar.classList.toggle('is-admin', feedbackBoardState.isAdmin);
+    }
+    if (replyBody) {
+        replyBody.disabled = isClosedForUser;
+        replyBody.value = '';
+        replyBody.placeholder = 'Viết bình luận...';
+    }
+    updateFeedbackReplyButtonState();
+
+    renderFeedbackReplies(replies);
+}
+
+async function loadFeedbackTopics({ selectFirst = true } = {}) {
+    setFeedbackStatus('');
+    const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/feedback/topics`);
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || result.success === false) {
+        throw new Error(result.message || result.detail || 'Không tải được danh sách chủ đề.');
+    }
+    feedbackBoardState.topics = Array.isArray(result.topics) ? result.topics : [];
+    feedbackBoardState.isAdmin = Boolean(result.is_admin);
+    if (selectFirst && !feedbackBoardState.activeTopicId && feedbackBoardState.topics.length) {
+        const adminTopics = feedbackBoardState.topics.filter(topic => topic.is_admin_topic);
+        const defaultTopic = adminTopics.reduce((newest, topic) => {
+            const newestTime = new Date(newest?.created_at || 0).getTime();
+            const topicTime = new Date(topic.created_at || 0).getTime();
+            return topicTime > newestTime ? topic : newest;
+        }, adminTopics[0]) || feedbackBoardState.topics[0];
+        feedbackBoardState.activeTopicId = defaultTopic.id;
+    }
+    renderFeedbackTopicList();
+    setFeedbackStatus('');
+    if (feedbackBoardState.activeTopicId) {
+        await loadFeedbackTopicDetail(feedbackBoardState.activeTopicId);
+    } else {
+        showFeedbackEmptyDetail();
+    }
+}
+
+async function loadFeedbackTopicDetail(topicId) {
+    const numericTopicId = Number(topicId);
+    feedbackBoardState.activeTopicId = numericTopicId;
+    feedbackBoardState.replies = [];
+    feedbackBoardState.repliesNextOffset = 0;
+    feedbackBoardState.repliesHasMore = false;
+    feedbackBoardState.repliesLoading = false;
+    renderFeedbackTopicList();
+    setFeedbackStatus('');
+
+    const cached = feedbackBoardState.topicDetails.get(numericTopicId);
+    const cachedAt = Number(cached?.cachedAt || 0);
+    const isFreshCache = cached?.topic && Date.now() - cachedAt < FEEDBACK_TOPIC_CACHE_TTL_MS;
+    if (cached?.topic) {
+        feedbackBoardState.replies = Array.isArray(cached.replies) ? cached.replies.slice() : [];
+        feedbackBoardState.repliesHasMore = Boolean(cached.repliesHasMore);
+        feedbackBoardState.repliesNextOffset = Number(cached.repliesNextOffset || feedbackBoardState.replies.length);
+        renderFeedbackTopicDetail(cached.topic, feedbackBoardState.replies);
+        const scroller = document.querySelector('#feedback-topic-detail .feedback-discussion-scroll');
+        if (scroller) scroller.scrollTop = 0;
+    } else {
+        const topicMeta = feedbackBoardState.topics.find(topic => topic.id === numericTopicId);
+        if (topicMeta) {
+            renderFeedbackTopicPreview(topicMeta);
+            const scroller = document.querySelector('#feedback-topic-detail .feedback-discussion-scroll');
+            if (scroller) scroller.scrollTop = 0;
+        }
+    }
+    if (isFreshCache) {
+        setFeedbackStatus('');
+        return;
+    }
+
+    const params = new URLSearchParams({
+        comments_limit: String(FEEDBACK_REPLY_BATCH_SIZE),
+        comments_offset: '0'
+    });
+    let response;
+    try {
+        response = await getAuthorizedFetch()(`${API_BASE_URL}/api/feedback/topics/${topicId}?${params.toString()}`);
+    } catch (error) {
+        if (feedbackBoardState.activeTopicId !== numericTopicId) return;
+        throw error;
+    }
+    const result = await response.json().catch(() => ({}));
+    if (feedbackBoardState.activeTopicId !== numericTopicId) return;
+    if (!response.ok || result.success === false) {
+        throw new Error(result.message || result.detail || 'Không tải được chủ đề này.');
+    }
+    feedbackBoardState.isAdmin = Boolean(result.is_admin);
+    feedbackBoardState.replies = Array.isArray(result.replies) ? result.replies : [];
+    feedbackBoardState.repliesHasMore = Boolean(result.replies_has_more);
+    feedbackBoardState.repliesNextOffset = Number(result.replies_next_offset || feedbackBoardState.replies.length);
+    feedbackBoardState.topicDetails.set(numericTopicId, {
+        topic: result.topic,
+        replies: feedbackBoardState.replies.slice(),
+        repliesHasMore: feedbackBoardState.repliesHasMore,
+        repliesNextOffset: feedbackBoardState.repliesNextOffset,
+        cachedAt: Date.now()
+    });
+    renderFeedbackTopicDetail(result.topic, feedbackBoardState.replies);
+    const scroller = document.querySelector('#feedback-topic-detail .feedback-discussion-scroll');
+    if (scroller) scroller.scrollTop = 0;
+    setFeedbackStatus('');
+}
+
+async function loadMoreFeedbackReplies() {
+    const topicId = feedbackBoardState.activeTopicId;
+    if (!topicId || !feedbackBoardState.repliesHasMore || feedbackBoardState.repliesLoading) return;
+    feedbackBoardState.repliesLoading = true;
+    try {
+        const params = new URLSearchParams({
+            comments_limit: String(FEEDBACK_REPLY_BATCH_SIZE),
+            comments_offset: String(feedbackBoardState.repliesNextOffset)
+        });
+        const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/feedback/topics/${topicId}?${params.toString()}`);
+        const result = await response.json().catch(() => ({}));
+        if (feedbackBoardState.activeTopicId !== topicId) return;
+        if (!response.ok || result.success === false) return;
+        const nextReplies = Array.isArray(result.replies) ? result.replies : [];
+        const existingIds = new Set(feedbackBoardState.replies.map(reply => reply.id));
+        feedbackBoardState.replies = feedbackBoardState.replies.concat(nextReplies.filter(reply => !existingIds.has(reply.id)));
+        feedbackBoardState.repliesHasMore = Boolean(result.replies_has_more);
+        feedbackBoardState.repliesNextOffset = Number(result.replies_next_offset || feedbackBoardState.replies.length);
+        const cached = feedbackBoardState.topicDetails.get(Number(topicId));
+        if (cached) {
+            cached.replies = feedbackBoardState.replies.slice();
+            cached.repliesHasMore = feedbackBoardState.repliesHasMore;
+            cached.repliesNextOffset = feedbackBoardState.repliesNextOffset;
+            cached.cachedAt = Date.now();
+        }
+        renderFeedbackReplies(feedbackBoardState.replies);
+    } finally {
+        feedbackBoardState.repliesLoading = false;
+    }
+}
+
+function handleFeedbackDiscussionScroll(event) {
+    const scroller = event.currentTarget;
+    if (!scroller || feedbackBoardState.repliesLoading || !feedbackBoardState.repliesHasMore) return;
+    const remaining = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    if (remaining < 160) {
+        loadMoreFeedbackReplies();
+    }
+}
+
 function openFeedbackModal() {
     const modal = document.getElementById('feedback-modal');
-    const firstChoice = document.querySelector('#feedback-modal input[type="radio"]');
     if (!modal) return;
 
     modal.classList.add('show');
     modal.setAttribute('aria-hidden', 'false');
     setFeedbackStatus('');
-    requestAnimationFrame(() => firstChoice?.focus());
+    feedbackBoardState.activeTopicId = null;
+    feedbackBoardState.activeTopic = null;
+    loadFeedbackTopics().catch(error => {
+        console.error('Feedback topics load failed:', error);
+        setFeedbackStatus(error?.message || 'Không tải được diễn đàn lúc này.', 'error');
+        showFeedbackEmptyDetail('Không tải được diễn đàn');
+    });
     window.feather?.replace?.();
     window.BIDFinderAnalytics?.track?.('feedback_opened');
 }
@@ -5932,6 +6313,137 @@ function closeFeedbackModal() {
 
     modal.classList.remove('show');
     modal.setAttribute('aria-hidden', 'true');
+}
+
+async function createFeedbackTopic(event) {
+    event?.preventDefault?.();
+    const title = document.getElementById('feedback-topic-input')?.value?.trim() || '';
+    const body = document.getElementById('feedback-topic-body-input')?.value?.trim() || '';
+    const category = document.getElementById('feedback-category-input')?.value || 'idea';
+    const button = document.getElementById('send-feedback-topic');
+    const defaultText = button?.textContent || 'Đăng chủ đề';
+    if (button) {
+        button.disabled = true;
+        button.textContent = 'Đang đăng...';
+    }
+    try {
+        const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/feedback/topics`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title, body, category })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || result.success === false) {
+            throw new Error(result.message || result.detail || 'Không tạo được chủ đề.');
+        }
+        document.getElementById('feedback-topic-form')?.reset?.();
+        feedbackBoardState.activeTopicId = result.topic?.id || null;
+        await loadFeedbackTopics({ selectFirst: false });
+        setFeedbackStatus('Đã đăng chủ đề.', 'success');
+    } catch (error) {
+        setFeedbackStatus(error?.message || 'Không tạo được chủ đề.', 'error');
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.textContent = defaultText;
+        }
+    }
+}
+
+async function sendFeedbackReply() {
+    const topicId = feedbackBoardState.activeTopicId;
+    if (!topicId) return;
+    if (feedbackBoardState.activeTopic?.status === 'closed' && !feedbackBoardState.isAdmin) {
+        setFeedbackStatus('', 'error');
+        return;
+    }
+    const body = document.getElementById('feedback-reply-body')?.value?.trim() || '';
+    if (!body) {
+        updateFeedbackReplyButtonState();
+        return;
+    }
+    const button = document.getElementById('send-feedback-reply');
+    if (button) {
+        button.disabled = true;
+    }
+    try {
+        const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/feedback/topics/${topicId}/replies`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ body })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || result.success === false) {
+            throw new Error(result.message || result.detail || '');
+        }
+        const replyBody = document.getElementById('feedback-reply-body');
+        if (replyBody) replyBody.value = '';
+        updateFeedbackReplyButtonState();
+        if (result.reply) {
+            const currentUser = window.BIDFinderAuth?.getUser?.();
+            if (!result.reply.author_name && currentUser?.full_name) {
+                result.reply.author_name = currentUser.full_name;
+            }
+            const existingIds = new Set(feedbackBoardState.replies.map(reply => reply.id));
+            if (!existingIds.has(result.reply.id)) {
+                feedbackBoardState.replies = feedbackBoardState.replies.concat([result.reply]);
+            }
+            renderFeedbackReplies(feedbackBoardState.replies);
+            const cached = feedbackBoardState.topicDetails.get(Number(topicId));
+            if (cached) {
+                cached.replies = feedbackBoardState.replies.slice();
+                cached.repliesHasMore = feedbackBoardState.repliesHasMore;
+                cached.repliesNextOffset = feedbackBoardState.repliesNextOffset;
+                cached.cachedAt = Date.now();
+            }
+            const scroller = document.querySelector('#feedback-topic-detail .feedback-discussion-scroll');
+            requestAnimationFrame(() => {
+                if (scroller) scroller.scrollTop = scroller.scrollHeight;
+            });
+        }
+        feedbackBoardState.topics = feedbackBoardState.topics.map(topic => (
+            topic.id === topicId
+                ? { ...topic, reply_count: Number(topic.reply_count || 0) + 1 }
+                : topic
+        ));
+        renderFeedbackTopicList();
+        setFeedbackStatus('', 'success');
+    } catch (error) {
+        setFeedbackStatus('', 'error');
+    } finally {
+        updateFeedbackReplyButtonState();
+    }
+}
+
+async function updateFeedbackTopicStatus(status) {
+    const topicId = feedbackBoardState.activeTopicId;
+    if (!topicId || !feedbackBoardState.isAdmin) return;
+    const closeButton = document.getElementById('close-feedback-topic');
+    const reopenButton = document.getElementById('reopen-feedback-topic');
+    [closeButton, reopenButton].forEach(button => {
+        if (button) button.disabled = true;
+    });
+    try {
+        const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/feedback/topics/${topicId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || result.success === false) {
+            throw new Error(result.message || result.detail || 'Không cập nhật được chủ đề.');
+        }
+        feedbackBoardState.topicDetails.delete(Number(topicId));
+        await loadFeedbackTopics({ selectFirst: false });
+        await loadFeedbackTopicDetail(topicId);
+        setFeedbackStatus(status === 'closed' ? 'Đã đóng chủ đề.' : 'Đã mở lại chủ đề.', 'success');
+    } catch (error) {
+        setFeedbackStatus(error?.message || 'Không cập nhật được chủ đề.', 'error');
+    } finally {
+        [closeButton, reopenButton].forEach(button => {
+            if (button) button.disabled = false;
+        });
+    }
 }
 
 async function copyFeedbackText() {
@@ -6016,8 +6528,66 @@ function initFeedbackModalEvents() {
     document.getElementById('open-feedback-nav')?.addEventListener('click', openFeedbackModal);
     document.getElementById('close-feedback-modal')?.addEventListener('click', closeFeedbackModal);
     document.querySelector('#feedback-modal .feedback-overlay')?.addEventListener('click', closeFeedbackModal);
-    document.getElementById('copy-feedback')?.addEventListener('click', copyFeedbackText);
-    document.getElementById('send-feedback')?.addEventListener('click', sendFeedback);
+    document.getElementById('new-feedback-topic')?.addEventListener('click', showFeedbackTopicForm);
+    document.getElementById('cancel-feedback-topic')?.addEventListener('click', () => {
+        feedbackBoardState.activeTopicId
+            ? loadFeedbackTopicDetail(feedbackBoardState.activeTopicId).catch(() => showFeedbackEmptyDetail())
+            : showFeedbackEmptyDetail();
+    });
+    document.getElementById('feedback-topic-form')?.addEventListener('submit', createFeedbackTopic);
+    document.getElementById('send-feedback-reply')?.addEventListener('click', sendFeedbackReply);
+    document.getElementById('feedback-reply-body')?.addEventListener('input', updateFeedbackReplyButtonState);
+    document.querySelector('#feedback-topic-detail .feedback-discussion-scroll')?.addEventListener('scroll', handleFeedbackDiscussionScroll);
+    document.getElementById('feedback-reply-body')?.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' || event.isComposing) return;
+        event.preventDefault();
+        if (!document.getElementById('send-feedback-reply')?.disabled) {
+            sendFeedbackReply();
+        }
+    });
+    document.getElementById('close-feedback-topic')?.addEventListener('click', () => updateFeedbackTopicStatus('closed'));
+    document.getElementById('reopen-feedback-topic')?.addEventListener('click', () => updateFeedbackTopicStatus('open'));
+    const filterButton = document.getElementById('feedback-topic-filter-button');
+    const filterMenu = document.getElementById('feedback-topic-filter-menu');
+    filterButton?.addEventListener('click', event => {
+        event.stopPropagation();
+        const nextHidden = !filterMenu?.hidden ? true : false;
+        if (filterMenu) filterMenu.hidden = nextHidden;
+        filterButton.setAttribute('aria-expanded', String(!nextHidden));
+    });
+    filterMenu?.addEventListener('click', event => {
+        const option = event.target.closest('[data-feedback-filter-value]');
+        if (!option) return;
+        const filter = option.dataset.feedbackFilterValue || 'all';
+        feedbackBoardState.topicFilter = filter;
+        filterMenu.hidden = true;
+        filterButton?.setAttribute('aria-expanded', 'false');
+        const visibleTopics = getVisibleFeedbackTopics();
+        if (!visibleTopics.some(topic => topic.id === feedbackBoardState.activeTopicId)) {
+            feedbackBoardState.activeTopicId = visibleTopics[0]?.id || null;
+            if (feedbackBoardState.activeTopicId) {
+                loadFeedbackTopicDetail(feedbackBoardState.activeTopicId).catch(error => {
+                    setFeedbackStatus(error?.message || 'Không tải được chủ đề.', 'error');
+                });
+            } else {
+                showFeedbackEmptyDetail(filter === 'admin' ? 'Chưa có thông báo BIDFinder' : 'Chọn một chủ đề để xem trao đổi');
+            }
+        }
+        renderFeedbackTopicList();
+    });
+    document.addEventListener('click', event => {
+        if (!filterMenu || filterMenu.hidden) return;
+        if (event.target.closest('.feedback-topic-filter')) return;
+        filterMenu.hidden = true;
+        filterButton?.setAttribute('aria-expanded', 'false');
+    });
+    document.getElementById('feedback-topic-list')?.addEventListener('click', event => {
+        const item = event.target.closest('[data-topic-id]');
+        if (!item) return;
+        loadFeedbackTopicDetail(Number(item.dataset.topicId)).catch(error => {
+            setFeedbackStatus(error?.message || 'Không tải được chủ đề.', 'error');
+        });
+    });
 
     document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape' && document.getElementById('feedback-modal')?.classList.contains('show')) {
@@ -6422,46 +6992,47 @@ function ensureAppViewForJourney() {
 function getProductJourneySteps() {
     return [
         {
-            title: 'Khám phá nhanh',
-            body: '2 phút qua các cụm chức năng chính của BIDFinder. Bấm chuột hoặc nhấn phím bất kỳ để đi tiếp.',
+            title: 'Làm quen với BIDFinder',
+            body: '2 phút khám phá các chức năng chính của BIDFinder.',
             selector: '.main-content',
             placement: 'center',
+            dialogOnly: true,
             before: () => {
                 ensureAppViewForJourney();
                 closeJourneySurfaces();
             }
         },
         {
-            title: 'Cụm thao tác chính',
-            body: 'Ba nút này là điểm bắt đầu nhanh: xem lịch sử cập nhật, tra cứu hàng loạt từ Excel, hoặc mở panel tra cứu thủ công.',
+            title: 'Cụm chức năng chính',
+            body: 'Xem lịch sử cập nhật, tra cứu hàng loạt từ file Excel hoặc tra cứu nâng cao.',
             selector: '.workspace-actions',
             placement: 'bottom',
             before: closeJourneySurfaces
         },
         {
-            title: 'Nút lịch sử cập nhật',
-            body: 'Nút này mở cửa sổ theo dõi dữ liệu được cập nhật theo thời gian. Journey sẽ bấm thử để bạn thấy cửa sổ thật.',
-            afterTitle: 'Cửa sổ lịch sử cập nhật',
-            afterBody: 'Tại đây user xem xu hướng dữ liệu mới theo 30, 90 hoặc 180 ngày để biết hệ thống đang được cập nhật ra sao.',
+            title: 'Lịch sử cập nhật',
+            body: 'Theo dõi gói thầu được cập nhật theo khoảng thời gian.',
+            afterTitle: 'Lịch sử cập nhật',
+            afterBody: 'Theo dõi gói thầu được cập nhật theo khoảng thời gian.',
             selector: '#open-run-history',
             focusAfterSelector: '#history-modal .history-content',
             afterClick: openHistoryForJourney
         },
         {
-            title: 'Nút tra cứu hàng loạt',
-            body: 'Nút này dành cho người đang có file Excel. Journey sẽ mô phỏng click để mở không gian upload và chọn biến.',
-            afterTitle: 'Cửa sổ tra cứu hàng loạt',
-            afterBody: 'User chọn biến cần so khớp cho Thuốc hoặc Hàng hóa, upload file Excel, rồi chạy tra cứu để nhận file kết quả.',
+            title: 'Tra cứu hàng loạt',
+            body: 'Tra cứu hàng loạt sản phẩm từ file Excel.',
+            afterTitle: 'Tra cứu hàng loạt',
+            afterBody: 'Tìm kiếm dựa trên file Excel có danh sách sản phẩm cần tra cứu. BIDFinder không lưu trữ file này.',
             selector: '#open-bulk-search-modal',
             focusAfterSelector: '#bulk-search-modal .bulk-search-dialog',
             before: closeJourneySurfaces,
             afterClick: openBulkForJourney
         },
         {
-            title: 'Nút tra cứu',
-            body: 'Nút Tra cứu mở panel bộ lọc. Đây là lối đi chính khi user muốn tìm trực tiếp trên app thay vì xuất Excel ngay.',
-            afterTitle: 'Panel tra cứu',
-            afterBody: 'Panel này gom các bộ lọc, từ khóa và logic AND/OR/NOT để user tạo truy vấn chính xác trước khi xem bảng kết quả.',
+            title: 'Tra cứu nâng cao',
+            body: 'Tra cứu với bộ lọc nâng cao.',
+            afterTitle: 'Tra cứu nâng cao',
+            afterBody: 'Tra cứu với bộ lọc nâng cao.',
             selector: '#open-filter-panel',
             focusAfterSelector: '#filter-panel',
             before: closeJourneySurfaces,
@@ -6469,7 +7040,7 @@ function getProductJourneySteps() {
         },
         {
             title: 'Thuốc và hàng hóa',
-            body: 'Switcher này đổi nhanh giữa hai biểu mẫu kết quả. Số bên cạnh cho biết lượng dữ liệu tìm được ở từng nhóm.',
+            body: 'Kết quả tìm kiếm được phân loại theo 02 biểu mẫu: Thuốc và Hàng hóa.',
             selector: '#data-view-switcher .result-table-tab-list',
             placement: 'bottom',
             before: () => {
@@ -6478,8 +7049,8 @@ function getProductJourneySteps() {
             }
         },
         {
-            title: 'Không gian bảng',
-            body: 'Bảng hỗ trợ chọn hàng, chọn cột, chọn ô hoặc range và copy trực tiếp như đang làm việc với spreadsheet.',
+            title: 'Không gian bảng dữ liệu',
+            body: 'Bảng hỗ trợ thao tác tương tự làm việc với spreadsheet.',
             getElement: getActiveTableWrapperForJourney,
             placement: 'top',
             before: closeJourneySurfaces
@@ -6492,8 +7063,8 @@ function getProductJourneySteps() {
             before: openColumnMenuForJourney
         },
         {
-            title: 'Cụm công cụ bảng',
-            body: 'Cụm nút nổi ở góc bảng gồm ẩn/hiện cột, tải Excel và toàn màn hình. Đây là các thao tác nhanh sau khi đã có kết quả.',
+            title: 'Cụm chức năng trên bảng',
+            body: 'Các chức năng Ẩn/hiện cột, tải Excel và chế độ toàn màn hình.',
             getElement: getVisibleTableControlsForJourney,
             before: () => {
                 closeJourneySurfaces();
@@ -6501,10 +7072,10 @@ function getProductJourneySteps() {
             }
         },
         {
-            title: 'Nút ẩn/hiện cột',
-            body: 'Journey sẽ bấm nút mắt để mở danh sách cột.',
+            title: 'Ẩn/hiện cột',
+            body: 'Tùy chỉnh trên danh sách cột.',
             afterTitle: 'Ẩn/hiện cột',
-            afterBody: 'Dùng popover này để chỉ giữ các cột cần phân tích. Khi cần, bấm hiện tất cả để quay về mặc định.',
+            afterBody: 'Tùy chỉnh trên danh sách cột.',
             getElement: () => getVisibleTableToolButtonForJourney('toggle-columns'),
             focusAfterSelector: '.table-columns-popover:not([hidden])',
             before: () => {
@@ -6514,10 +7085,10 @@ function getProductJourneySteps() {
             afterClick: openColumnsPopoverForJourney
         },
         {
-            title: 'Nút tải Excel',
-            body: 'Journey sẽ chỉ mô phỏng thao tác, không tải file thật trong lúc hướng dẫn.',
+            title: 'Tải Excel',
+            body: 'Tải dữ liệu đang hiển thị.',
             afterTitle: 'Tải Excel',
-            afterBody: 'Nút tải xuất dữ liệu và các cột đang hiển thị, phù hợp khi cần gửi báo cáo hoặc xử lý offline.',
+            afterBody: 'Tải dữ liệu đang hiển thị.',
             getElement: () => getVisibleTableToolButtonForJourney('download'),
             before: () => {
                 closeJourneySurfaces();
@@ -6526,10 +7097,10 @@ function getProductJourneySteps() {
             afterClick: () => setJourneyTableToolsVisible(true)
         },
         {
-            title: 'Nút toàn màn hình',
-            body: 'Journey sẽ chỉ mô phỏng click để tránh chuyển chế độ fullscreen thật.',
+            title: 'Toàn màn hình',
+            body: 'Mở rộng không gian hiển thị bảng dữ liệu.',
             afterTitle: 'Toàn màn hình',
-            afterBody: 'Khi cần rà soát nhiều cột, mở fullscreen để có thêm không gian thao tác trên bảng.',
+            afterBody: 'Mở rộng không gian hiển thị bảng dữ liệu.',
             getElement: () => getVisibleTableToolButtonForJourney('fullscreen'),
             before: () => {
                 closeJourneySurfaces();
@@ -6538,17 +7109,17 @@ function getProductJourneySteps() {
             afterClick: () => setJourneyTableToolsVisible(true)
         },
         {
-            title: 'Tài khoản và góp ý',
-            body: 'Khu vực này dùng để quản lý tài khoản, mở lại hướng dẫn, và gửi phản hồi nhanh cho đội phát triển.',
+            title: 'Hướng dẫn, diễn đàn và tài khoản',
+            body: 'Xem hướng dẫn, trao đổi trên diễn đàn và quản lý tài khoản.',
             selector: '.app-header-links',
             placement: 'bottom',
             before: closeJourneySurfaces
         },
         {
-            title: 'Nút góp ý',
-            body: 'Khi gặp thao tác khó hiểu hoặc thiếu chức năng, user có thể bấm Góp ý ngay tại đây. Journey sẽ mở thử form phản hồi.',
-            afterTitle: 'Form góp ý',
-            afterBody: 'Form có lựa chọn nhanh và ô ghi chú để user mô tả tình huống cụ thể mà BIDFinder cần cải thiện.',
+            title: 'Diễn đàn',
+            body: 'Nơi trao đổi, góp ý và theo dõi các cập nhật từ BIDFinder.',
+            afterTitle: 'Diễn đàn',
+            afterBody: 'User có thể chọn chủ đề, tạo chủ đề mới và trao đổi công khai với admin.',
             selector: '#open-feedback-modal',
             focusAfterSelector: '#feedback-modal .feedback-dialog',
             before: closeJourneySurfaces,
@@ -6556,9 +7127,10 @@ function getProductJourneySteps() {
         },
         {
             title: 'Sẵn sàng tra cứu',
-            body: 'Bạn đã đi qua các chức năng chính. Bấm Tra cứu để bắt đầu, hoặc mở lại Hướng dẫn bất cứ lúc nào trên thanh trên cùng.',
+            body: 'Bạn đã đi qua các chức năng chính của BIDFinder. Chúc bạn một ngày làm việc hiệu quả.',
             selector: '#open-filter-panel',
-            placement: 'bottom',
+            placement: 'center',
+            dialogOnly: true,
             before: closeJourneySurfaces
         }
     ];
@@ -6580,11 +7152,11 @@ function createProductJourneyDom() {
             <h3></h3>
             <p></p>
             <div class="product-journey-footer">
-                <span class="product-journey-hint">Nhấn phím bất kỳ để tiếp tục</span>
+                <span class="product-journey-hint">Nhấn phím bất kỳ để tiếp tục.</span>
                 <div class="product-journey-actions">
-                    <button type="button" data-journey-action="prev">Quay lại</button>
-                    <button type="button" data-journey-action="skip">Bỏ qua</button>
-                    <button type="button" data-journey-action="next">Tiếp</button>
+                    <button type="button" data-journey-action="prev" aria-label="Quay lại" title="Quay lại"></button>
+                    <button type="button" data-journey-action="next" aria-label="Tiếp" title="Tiếp"></button>
+                    <button type="button" data-journey-action="skip" aria-label="Tắt hướng dẫn" title="Tắt"></button>
                 </div>
             </div>
         </section>
@@ -6606,6 +7178,7 @@ function simulateJourneyClick(target, onClick) {
     const cursor = state?.root?.querySelector('.product-journey-cursor');
     const point = getJourneyTargetPoint(target);
     if (!cursor || !point) {
+        productJourneyState?.pendingClickComplete?.();
         onClick?.();
         return;
     }
@@ -6615,18 +7188,59 @@ function simulateJourneyClick(target, onClick) {
     cursor.classList.add('is-visible');
     cursor.classList.remove('is-pressing');
 
-    window.setTimeout(() => {
+    state.animationTimers.push(window.setTimeout(() => {
         cursor.classList.add('is-pressing');
-    }, PRODUCT_JOURNEY_TIMING.cursorPressDelay);
+    }, PRODUCT_JOURNEY_TIMING.cursorPressDelay));
 
-    window.setTimeout(() => {
+    state.animationTimers.push(window.setTimeout(() => {
+        state.pendingClickComplete?.();
         onClick?.();
         cursor.classList.remove('is-pressing');
-    }, PRODUCT_JOURNEY_TIMING.surfaceOpenDelay);
+    }, PRODUCT_JOURNEY_TIMING.surfaceOpenDelay));
 
-    window.setTimeout(() => {
+    state.animationTimers.push(window.setTimeout(() => {
         cursor.classList.remove('is-visible');
-    }, PRODUCT_JOURNEY_TIMING.cursorHideDelay);
+    }, PRODUCT_JOURNEY_TIMING.cursorHideDelay));
+}
+
+function clearJourneyAnimationTimers() {
+    if (!productJourneyState) return;
+    (productJourneyState.animationTimers || []).forEach(timerId => window.clearTimeout(timerId));
+    productJourneyState.animationTimers = [];
+}
+
+function completeJourneyClickAnimation() {
+    const state = productJourneyState;
+    if (!state?.isAnimating) return false;
+    clearJourneyAnimationTimers();
+    state.root?.querySelector('.product-journey-cursor')?.classList.remove('is-visible', 'is-pressing');
+    state.pendingClickComplete?.();
+    return true;
+}
+
+function finishJourneyClickStep(step) {
+    const state = productJourneyState;
+    if (!state) return;
+
+    state.pendingClickComplete = null;
+    step.afterClick?.();
+    if (step.afterTitle) {
+        state.root.querySelector('h3').textContent = step.afterTitle;
+    }
+    if (step.afterBody) {
+        state.root.querySelector('p').textContent = step.afterBody;
+    }
+    const nextTarget = step.focusAfterSelector
+        ? document.querySelector(step.focusAfterSelector)
+        : resolveJourneyElement(step);
+    if (nextTarget) {
+        state.activeTarget = nextTarget;
+        setTimeout(() => {
+            setJourneyCardVisible(true);
+            positionProductJourney(step, nextTarget);
+        }, PRODUCT_JOURNEY_TIMING.repositionDelay);
+    }
+    state.isAnimating = false;
 }
 
 function resolveJourneyElement(step) {
@@ -6642,6 +7256,16 @@ function positionProductJourney(step, target) {
     const rect = target.getBoundingClientRect();
     const highlight = state.root.querySelector('.product-journey-highlight');
     const card = state.root.querySelector('.product-journey-card');
+
+    if (step.dialogOnly) {
+        highlight.hidden = true;
+        const cardRect = card.getBoundingClientRect();
+        card.style.left = `${Math.max(12, (window.innerWidth - cardRect.width) / 2)}px`;
+        card.style.top = `${Math.max(12, (window.innerHeight - cardRect.height) / 2)}px`;
+        return;
+    }
+
+    highlight.hidden = false;
     const margin = 8;
     const highlightRect = {
         left: Math.max(8, rect.left - margin),
@@ -6712,6 +7336,8 @@ function renderProductJourneyStep() {
     }
 
     state.isAnimating = false;
+    clearJourneyAnimationTimers();
+    state.pendingClickComplete = null;
     step.before?.();
 
     requestAnimationFrame(() => {
@@ -6724,6 +7350,7 @@ function renderProductJourneyStep() {
         target.scrollIntoView?.({ block: 'center', inline: 'center', behavior: 'smooth' });
         state.activeTarget = target;
         state.root.hidden = false;
+        state.root.classList.toggle('is-dialog-only', Boolean(step.dialogOnly));
         document.body.classList.add('product-journey-active');
         setJourneyCardVisible(typeof step.afterClick !== 'function');
 
@@ -6731,33 +7358,15 @@ function renderProductJourneyStep() {
         state.root.querySelector('h3').textContent = step.title;
         state.root.querySelector('p').textContent = step.body;
         state.root.querySelector('[data-journey-action="prev"]').disabled = state.index === 0;
-        state.root.querySelector('[data-journey-action="next"]').textContent = state.index === steps.length - 1 ? 'Xong' : 'Tiếp';
+        state.root.querySelector('[data-journey-action="next"]').classList.toggle('is-final', state.index === steps.length - 1);
 
         setTimeout(() => positionProductJourney(step, target), 80);
         if (typeof step.afterClick === 'function') {
             state.isAnimating = true;
-            window.setTimeout(() => {
-                simulateJourneyClick(target, () => {
-                    step.afterClick();
-                    if (step.afterTitle) {
-                        state.root.querySelector('h3').textContent = step.afterTitle;
-                    }
-                    if (step.afterBody) {
-                        state.root.querySelector('p').textContent = step.afterBody;
-                    }
-                    const nextTarget = step.focusAfterSelector
-                        ? document.querySelector(step.focusAfterSelector)
-                        : resolveJourneyElement(step);
-                    if (nextTarget) {
-                        state.activeTarget = nextTarget;
-                        setTimeout(() => {
-                            setJourneyCardVisible(true);
-                            positionProductJourney(step, nextTarget);
-                        }, PRODUCT_JOURNEY_TIMING.repositionDelay);
-                    }
-                    state.isAnimating = false;
-                });
-            }, PRODUCT_JOURNEY_TIMING.clickStartDelay);
+            state.pendingClickComplete = () => finishJourneyClickStep(step);
+            state.animationTimers.push(window.setTimeout(() => {
+                simulateJourneyClick(target);
+            }, PRODUCT_JOURNEY_TIMING.clickStartDelay));
         }
         window.BIDFinderAnalytics?.track?.('product_journey_step_viewed', {
             step_index: state.index + 1,
@@ -6768,12 +7377,14 @@ function renderProductJourneyStep() {
 
 function nextProductJourneyStep() {
     if (!productJourneyState) return;
+    if (completeJourneyClickAnimation()) return;
     productJourneyState.index += 1;
     renderProductJourneyStep();
 }
 
 function previousProductJourneyStep() {
     if (!productJourneyState || productJourneyState.index === 0) return;
+    clearJourneyAnimationTimers();
     productJourneyState.index -= 1;
     renderProductJourneyStep();
 }
@@ -6782,6 +7393,7 @@ function endProductJourney({ completed = false } = {}) {
     if (!productJourneyState) return;
     const { root } = productJourneyState;
     root.hidden = true;
+    clearJourneyAnimationTimers();
     document.body.classList.remove('product-journey-active');
     closeJourneySurfaces();
     productJourneyState = null;
@@ -6797,7 +7409,22 @@ function handleProductJourneyKeydown(event) {
     if (!productJourneyState) return;
     event.preventDefault();
     event.stopPropagation();
-    if (productJourneyState.isAnimating) return;
+    if (event.key === 'Escape') {
+        endProductJourney({ completed: false });
+        return;
+    }
+    if (productJourneyState.isAnimating) {
+        completeJourneyClickAnimation();
+        return;
+    }
+    if (event.key === 'ArrowLeft') {
+        previousProductJourneyStep();
+        return;
+    }
+    if (event.key === 'ArrowRight') {
+        nextProductJourneyStep();
+        return;
+    }
     nextProductJourneyStep();
 }
 
@@ -6807,7 +7434,10 @@ function handleProductJourneyClick(event) {
     event.stopPropagation();
 
     const action = event.target.closest('[data-journey-action]')?.dataset.journeyAction;
-    if (productJourneyState.isAnimating && action !== 'skip') return;
+    if (productJourneyState.isAnimating && action !== 'skip') {
+        if (action === 'next' || !action) completeJourneyClickAnimation();
+        return;
+    }
     if (action === 'prev') {
         previousProductJourneyStep();
         return;
@@ -6825,7 +7455,9 @@ function startProductJourney() {
         root: document.getElementById('product-journey-root'),
         steps: getProductJourneySteps(),
         index: 0,
-        activeTarget: null
+        activeTarget: null,
+        animationTimers: [],
+        pendingClickComplete: null
     };
     renderProductJourneyStep();
     window.BIDFinderAnalytics?.track?.('product_journey_started');
@@ -6877,9 +7509,11 @@ async function initializeAppData() {
     try {
         appDataInitialized = true;
         // ✅ Không load df1/df2 nữa vì filter từ database
-        warmupDatabase().catch(error => {
-            console.warn('Database warmup failed:', error);
-        });
+        if (DB_WARMUP_ENABLED) {
+            warmupDatabase().catch(error => {
+                console.warn('Database warmup failed:', error);
+            });
+        }
         await loadMetadata();
         initEmptyCharts();
         await restoreFilterUrlState();

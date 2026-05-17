@@ -14,6 +14,8 @@ Use `realistic` mode for user-capacity decisions. It includes think time, so `30
 
 ```powershell
 $env:BASE_URL="https://bidfinder-api-staging-774667987564.asia-southeast1.run.app"
+$env:LOGIN_EMAIL="ncdhuy.jul04@gmail.com"
+$env:LOGIN_PASSWORD="Huy0939650717"
 $env:LOGIN_MODE="shared"
 $env:PRELOGIN_VUS="false"
 $env:SETUP_TIMEOUT="5m"

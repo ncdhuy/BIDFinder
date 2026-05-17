@@ -38,7 +38,7 @@
                 </a>
 
                 <nav class="bf-nav">
-                    <button class="bf-nav-link" id="open-feedback-nav" type="button">Góp ý</button>
+                    <button class="bf-nav-link" id="open-feedback-nav" type="button">Diễn đàn</button>
                     <button class="bf-nav-link" id="open-account-nav" type="button">Tài khoản</button>
                     <button class="bf-nav-link" id="open-register-nav" type="button">Đăng ký</button>
                     <button class="bf-nav-link" id="open-login-nav" type="button">Đăng nhập</button>
@@ -124,11 +124,11 @@
                     </div>
 
                     <div class="app-header-links">
+                        <button class="app-auth-btn" id="open-product-journey" type="button">Hướng dẫn</button>
+                        <button class="app-auth-btn" id="open-feedback-modal" type="button">Diễn đàn</button>
                         <div class="app-auth-shell is-hidden" id="app-auth-shell">
                             <button class="app-auth-btn" id="auth-edit-profile-btn" type="button">Tài khoản</button>
                         </div>
-                        <button class="app-auth-btn" id="open-feedback-modal" type="button">Góp ý</button>
-                        <button class="app-auth-btn" id="open-product-journey" type="button">Hướng dẫn</button>
                         <button class="app-auth-btn" id="open-register-app" type="button">Đăng ký</button>
                         <button class="app-auth-btn" id="open-login-app" type="button">Đăng nhập</button>
                         
@@ -175,9 +175,12 @@
                                     <span>hàng loạt</span>
                                 </span>
                             </button>
-                            <button class="action-btn" id="open-filter-panel" aria-label="Tra cứu">
+                            <button class="action-btn" id="open-filter-panel" aria-label="Tra cứu nâng cao">
                                 <i data-feather="search"></i>
-                                <span class="action-btn-label">Tra cứu</span>
+                                <span class="action-btn-label action-btn-label-stacked">
+                                    <span>Tra cứu</span>
+                                    <span>nâng cao</span>
+                                </span>
                             </button>
                         </div>
                     </div>
@@ -291,7 +294,7 @@
         <div id="filter-panel" class="side-panel">
             <div class="panel-header">
                 <div class="panel-title-group">
-                    <h3><i data-feather="search"></i>Tra cứu</h3>
+                    <h3><i data-feather="search"></i>Tra cứu nâng cao</h3>
                     <button id="filter-help-btn" class="help-icon" type="button" aria-label="Trợ giúp">i</button>
                 </div>
                 <button id="close-filter-panel" class="btn-close" aria-label="Đóng">
@@ -951,7 +954,7 @@
                 <p class="bulk-search-status" id="bulk-search-status" aria-live="polite"></p>
             </div>
             <div class="bulk-search-footer">
-                <button class="btn-feedback-primary" id="run-bulk-search" type="button">Tra cứu</button>
+                <button class="btn-feedback-primary" id="run-bulk-search" type="button">Tra cứu hàng loạt</button>
             </div>
         </div>
     </div>
@@ -964,80 +967,86 @@
                 <div>
                     <h3 id="feedback-title">
                         <i data-feather="message-square"></i>
-                        Góp ý
+                        Diễn đàn
                     </h3>
-                    
+                    <p>Trao đổi, cập nhật thông tin mới nhất từ BIDFinder.</p>
                 </div>
                 <button class="btn-close" id="close-feedback-modal" type="button" aria-label="Đóng">
                     <i data-feather="x"></i>
                 </button>
             </div>
             <div class="feedback-body">
-                <div class="feedback-choice-list" aria-label="Nội dung góp ý nhanh">
-                    <div class="feedback-choice-row" data-feedback-question="Thao tác dễ sử dụng">
-                        <span>Thao tác dễ sử dụng</span>
-                        <div class="feedback-choice-options">
-                            <label><input type="radio" name="feedback-usability" value="Có"> Có</label>
-                            <label><input type="radio" name="feedback-usability" value="Không"> Không</label>
+                <aside class="feedback-board-sidebar">
+                    <div class="feedback-topic-filter">
+                        <button class="feedback-topic-filter-button" id="feedback-topic-filter-button" type="button" aria-haspopup="listbox" aria-expanded="false">
+                            <span id="feedback-topic-filter-label">Tất cả</span>
+                            <i data-feather="chevron-down"></i>
+                        </button>
+                        <div class="feedback-topic-filter-menu" id="feedback-topic-filter-menu" role="listbox" hidden>
+                            <button class="active" type="button" data-feedback-filter-value="all" role="option" aria-selected="true">Tất cả</button>
+                            <button type="button" data-feedback-filter-value="admin" role="option" aria-selected="false">BIDFinder</button>
                         </div>
                     </div>
-                    <div class="feedback-choice-row" data-feedback-question="App trả kết quả nhanh chóng">
-                        <span>App trả kết quả nhanh chóng</span>
-                        <div class="feedback-choice-options">
-                            <label><input type="radio" name="feedback-speed" value="Có"> Có</label>
-                            <label><input type="radio" name="feedback-speed" value="Không"> Không</label>
+                    <div class="feedback-topic-list" id="feedback-topic-list" aria-label="Danh sách chủ đề"></div>
+                    <div class="feedback-board-toolbar">
+                        <button class="btn-feedback-primary" id="new-feedback-topic" type="button">Tạo chủ đề</button>
+                    </div>
+                </aside>
+                <section class="feedback-board-detail">
+                    <div class="feedback-topic-detail" id="feedback-topic-detail" hidden>
+                        <div class="feedback-discussion-scroll">
+                            <div class="feedback-topic-head">
+                                <span class="feedback-topic-status" id="feedback-topic-status"></span>
+                                <h4 id="feedback-topic-title"></h4>
+                                <p id="feedback-topic-body"></p>
+                                <div class="feedback-topic-actions" id="feedback-topic-actions" hidden>
+                                    <button class="btn-feedback-secondary" id="reopen-feedback-topic" type="button">Mở lại</button>
+                                    <button class="btn-feedback-danger" id="close-feedback-topic" type="button">Đóng chủ đề</button>
+                                </div>
+                            </div>
+                            <div class="feedback-reply-list" id="feedback-reply-list"></div>
+                        </div>
+                        <div class="feedback-reply-form feedback-comment-composer">
+                            <div class="feedback-composer-row">
+                                <span class="feedback-avatar" id="feedback-current-avatar">B</span>
+                                <textarea id="feedback-reply-body" rows="2" maxlength="1600" placeholder="Viết bình luận..."></textarea>
+                                <button class="btn-feedback-primary feedback-comment-send" id="send-feedback-reply" type="button" aria-label="Gửi bình luận" disabled>
+                                    <i data-feather="send"></i>
+                                </button>
+                            </div>
                         </div>
                     </div>
-                    <div class="feedback-choice-row" data-feedback-question="Bộ lọc đúng logic nghiệp vụ">
-                        <span>Bộ lọc đúng logic nghiệp vụ</span>
-                        <div class="feedback-choice-options">
-                            <label><input type="radio" name="feedback-filter-logic" value="Có"> Có</label>
-                            <label><input type="radio" name="feedback-filter-logic" value="Không"> Không</label>
+                    <form class="feedback-topic-form" id="feedback-topic-form" hidden>
+                        <div class="feedback-row">
+                            <label class="feedback-field">
+                                <span>Danh mục chủ đề</span>
+                                <select id="feedback-category-input">
+                                    <option value="data">Dữ liệu</option>
+                                    <option value="bug">Lỗi</option>
+                                    <option value="idea">Ý tưởng</option>
+                                    <option value="question">Câu hỏi</option>
+                                    <option value="other">Khác</option>
+                                </select>
+                            </label>
+
+                            <label class="feedback-field">
+                                <span>Tiêu đề</span>
+                                <input id="feedback-topic-input"
+                                    maxlength="180"
+                                    placeholder="Viết tên chủ đề...">
+                            </label>
                         </div>
-                    </div>
-                    <div class="feedback-choice-row" data-feedback-question="Dữ liệu bao phủ được nội dung cần tìm">
-                        <span>Dữ liệu bao phủ được nội dung cần tìm</span>
-                        <div class="feedback-choice-options">
-                            <label><input type="radio" name="feedback-coverage" value="Có"> Có</label>
-                            <label><input type="radio" name="feedback-coverage" value="Không"> Không</label>
+                        <label class="feedback-field">
+                            <span>Nội dung</span>
+                            <textarea id="feedback-topic-body-input" rows="6" maxlength="4000" placeholder="Viết nội dung chi tiết..."></textarea>
+                        </label>
+                        <div class="feedback-form-actions">
+                            <button class="btn-feedback-secondary" id="cancel-feedback-topic" type="button">Hủy</button>
+                            <button class="btn-feedback-primary" id="send-feedback-topic" type="submit">Đăng chủ đề</button>
                         </div>
-                    </div>
-                    <div class="feedback-choice-row" data-feedback-question="Dữ liệu đúng, không có sai sót khi tìm kiếm">
-                        <span>Dữ liệu đúng, không có sai sót khi tìm kiếm</span>
-                        <div class="feedback-choice-options">
-                            <label><input type="radio" name="feedback-accuracy" value="Có"> Có</label>
-                            <label><input type="radio" name="feedback-accuracy" value="Không"> Không</label>
-                        </div>
-                    </div>
-                    <div class="feedback-choice-row" data-feedback-question="Không có điểm mù nào khiến người dùng phải quay về tra cứu thủ công">
-                        <span>Không có “điểm mù” nào khiến người dùng phải quay về tra cứu thủ công</span>
-                        <div class="feedback-choice-options">
-                            <label><input type="radio" name="feedback-blindspot" value="Có"> Có</label>
-                            <label><input type="radio" name="feedback-blindspot" value="Không"> Không</label>
-                        </div>
-                    </div>
-                    <div class="feedback-choice-row" data-feedback-question="Hiệu suất tốt hơn cách truyền thống trên mua sắm công">
-                        <span>Hiệu suất tốt hơn cách truyền thống (tra cứu trên mua sắm công)</span>
-                        <div class="feedback-choice-options">
-                            <label><input type="radio" name="feedback-performance" value="Có"> Có</label>
-                            <label><input type="radio" name="feedback-performance" value="Không"> Không</label>
-                        </div>
-                    </div>
-                </div>
-                <label class="feedback-field">
-                    <span>Có chức năng nào rất muốn thực hiện nhưng app chưa hỗ trợ?</span>
-                    <textarea id="feedback-task" rows="4" maxlength="1600" placeholder="Mô tả chức năng hoặc tình huống cụ thể..."></textarea>
-                </label>
-                <label class="feedback-field">
-                    <span>Ghi chú thêm</span>
-                    <textarea id="feedback-message" rows="3" maxlength="1200" placeholder="Bổ sung góp ý,ví dụ mong muốn cải thiện..."></textarea>
-                </label>
-                
-                <p id="feedback-status" class="feedback-status" aria-live="polite"></p>
-            </div>
-            <div class="feedback-footer">
-                <button class="btn-feedback-secondary" id="copy-feedback" type="button">Sao chép</button>
-                <button class="btn-feedback-primary" id="send-feedback" type="button">Gửi góp ý</button>
+                    </form>
+                    <p id="feedback-status" class="feedback-status" aria-live="polite"></p>
+                </section>
             </div>
         </div>
     </div>

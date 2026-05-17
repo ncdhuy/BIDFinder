@@ -220,14 +220,7 @@ def run_scalar(cursor, sql: str) -> int:
 
 
 def ensure_qd_display_columns(cursor):
-    cursor.execute("""
-        ALTER TABLE processed_medicines
-        ADD COLUMN IF NOT EXISTS qd_display TEXT
-    """)
-    cursor.execute("""
-        ALTER TABLE processed_goods
-        ADD COLUMN IF NOT EXISTS qd_display TEXT
-    """)
+    return None
 
 
 def main():

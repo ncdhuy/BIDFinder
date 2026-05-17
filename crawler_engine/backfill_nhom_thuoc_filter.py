@@ -11,41 +11,6 @@ from drug_group_parser import build_drug_group_filter_array
 load_dotenv()
 
 
-def ensure_schema(conn) -> None:
-    with conn.cursor() as cursor:
-        cursor.execute("""
-            ALTER TABLE processed_medicines
-            ADD COLUMN IF NOT EXISTS nhom_thuoc_filter TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]
-        """)
-        cursor.execute("""
-            UPDATE processed_medicines
-            SET nhom_thuoc_filter = ARRAY[]::TEXT[]
-            WHERE nhom_thuoc_filter IS NULL
-        """)
-        cursor.execute("""
-            ALTER TABLE processed_medicines
-            ALTER COLUMN nhom_thuoc_filter SET DEFAULT ARRAY[]::TEXT[],
-            ALTER COLUMN nhom_thuoc_filter SET NOT NULL
-        """)
-    conn.commit()
-
-
-def ensure_index(conn) -> None:
-    if conn.status != psycopg2.extensions.STATUS_READY:
-        conn.rollback()
-    previous_autocommit = conn.autocommit
-    conn.autocommit = True
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_medicines_nhom_thuoc_filter
-                ON processed_medicines
-                USING gin (nhom_thuoc_filter)
-            """)
-    finally:
-        conn.autocommit = previous_autocommit
-
-
 def backfill(conn, batch_size: int, dry_run: bool, ma_tbmt: str | None = None) -> int:
     total = 0
     last_id = 0
@@ -112,7 +77,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Backfill processed_medicines.nhom_thuoc_filter.")
     parser.add_argument("--batch-size", type=int, default=5000)
     parser.add_argument("--ma-tbmt", default="", help="Only backfill rows for one ma_tbmt.")
-    parser.add_argument("--skip-index", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -121,15 +85,7 @@ def main() -> None:
         raise RuntimeError("Missing DATABASE_URL")
 
     with psycopg2.connect(database_url) as conn:
-        ensure_schema(conn)
         total = backfill(conn, max(1, args.batch_size), args.dry_run, ma_tbmt=args.ma_tbmt)
-
-    if not args.skip_index and not args.dry_run:
-        conn = psycopg2.connect(database_url)
-        try:
-            ensure_index(conn)
-        finally:
-            conn.close()
 
     print(f"Done. Rows scanned for backfill: {total}")
 
