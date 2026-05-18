@@ -2977,7 +2977,7 @@ async def bulk_query_data(request: Request, payload: BulkQueryRequest):
     product_limit = max(1, min(int(payload.productLimit or 3), 10))
     search_mode = "standard"
     is_full_search = False
-    result_limit = BULK_EXPORT_QUERY_LIMIT
+    result_limit = max(1, min(int(payload.limit or BULK_EXPORT_QUERY_LIMIT), BULK_EXPORT_QUERY_LIMIT))
     rows = [row for row in payload.rows if isinstance(row, dict)]
 
     if not selected_fields:
@@ -2991,6 +2991,7 @@ async def bulk_query_data(request: Request, payload: BulkQueryRequest):
         total_matched = 0
         matched_input_count = 0
         result_truncated = False
+        diversity_truncated = False
         current_user: Optional[Dict[str, Any]] = None
 
         async with pool.acquire() as conn:
@@ -3025,14 +3026,14 @@ async def bulk_query_data(request: Request, payload: BulkQueryRequest):
                 visible_records = records[:per_row_limit]
                 cleaned = clean_records(visible_records)
                 row_visible_count = len(cleaned)
-                total_matched += row_visible_count + (1 if row_has_more else 0)
+                total_matched += row_visible_count
                 if row_visible_count > 0 or row_has_more:
                     matched_input_count += 1
                 if len(cleaned) > remaining_result_slots:
                     cleaned = cleaned[:remaining_result_slots]
                     result_truncated = True
                 if row_has_more:
-                    result_truncated = True
+                    diversity_truncated = True
                 query_label = " | ".join(
                     str(row_values.get(field) or "").strip()
                     for field in selected_fields
@@ -3049,7 +3050,7 @@ async def bulk_query_data(request: Request, payload: BulkQueryRequest):
             if is_full_search:
                 quota = await consume_full_search_usage(request, current_user)
 
-        result_count = len(result_rows) if result_truncated else total_matched
+        result_count = result_limit if result_truncated else total_matched
         result_count_meta = build_count_meta(result_count, exact=not result_truncated)
 
         empty_scope = {
@@ -3087,6 +3088,7 @@ async def bulk_query_data(request: Request, payload: BulkQueryRequest):
                 "fields": selected_fields,
                 "result_limit": result_limit,
                 "truncated": result_truncated,
+                "diversity_truncated": diversity_truncated,
             },
             "total_count": int(result_count_meta["count"]),
             "total_count_exact": bool(result_count_meta["exact"]),

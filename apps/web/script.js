@@ -1092,6 +1092,7 @@ let currentQueryRequest = {
     filters: {}
 };
 let currentAppliedPreview = null;
+let latestFilterPreview = null;
 
 
 // ======== 1. APPLY
@@ -1463,11 +1464,7 @@ async function applyFilters(payload) {
             setFilterUrlState(currentQueryRequest);
             currentAppliedPreview = {
                 requestKey: stableStringify(currentQueryRequest),
-                payload: {
-                    total: Number(result?.total_count || 0),
-                    totalLabel: String(result?.total_count_label || Number(result?.total_count || 0).toLocaleString('vi-VN')),
-                    exact: result?.total_count_exact !== false
-                }
+                payload: getPreviewPayloadForRequest(currentQueryRequest, result)
             };
             return result;
         } else {
@@ -1573,6 +1570,7 @@ function resetQueryResultMeta() {
     serverBaseDf1 = [];
     serverBaseDf2 = [];
     currentAppliedPreview = null;
+    latestFilterPreview = null;
     currentQueryMeta = {
         df1HasMore: false,
         df2HasMore: false,
@@ -1824,6 +1822,23 @@ function getAppliedPreviewPayload() {
         totalLabel: String(currentQueryMeta.totalCountLabel || Number(currentQueryMeta.totalCount || 0).toLocaleString('vi-VN')),
         exact: currentQueryMeta.totalCountExact !== false
     };
+}
+
+function buildResultPreviewPayload(result) {
+    const total = Number(result?.total_count || 0);
+    return {
+        total,
+        totalLabel: String(result?.total_count_label || total.toLocaleString('vi-VN')),
+        exact: result?.total_count_exact !== false
+    };
+}
+
+function getPreviewPayloadForRequest(queryRequest, fallbackResult = null) {
+    const requestKey = stableStringify(buildQueryRequest(queryRequest));
+    if (latestFilterPreview?.requestKey === requestKey && latestFilterPreview?.payload) {
+        return latestFilterPreview.payload;
+    }
+    return fallbackResult ? buildResultPreviewPayload(fallbackResult) : null;
 }
 
 function restoreAppliedFilterPreview(searchForm) {
@@ -5413,8 +5428,7 @@ function combineBulkResults(results) {
     const totalCountExact = medicineData.count_exact !== false && goodsData.count_exact !== false;
     const totalCountLabel = totalCountExact ? String(totalCount) : `${totalCount}+`;
     const totalCountSummary = totalCountExact ? String(totalCount) : `hơn ${totalCount}`;
-    const appliedTotalLimit = results.reduce((sum, item) => sum + Number(item.result?.applied_total_limit || 0), 0)
-        || (hasMore ? displayedTotal : totalCount);
+    const appliedTotalLimit = BULK_SEARCH_EXPORT_LIMIT;
 
     return {
         success: true,
@@ -5428,7 +5442,7 @@ function combineBulkResults(results) {
             price_limit: getBulkPriceLimit(),
             product_limit: getBulkProductLimit(),
             search_mode: results.some(item => item.result?.bulk?.search_mode === 'full') ? 'full' : 'standard',
-            result_limit: appliedTotalLimit,
+            result_limit: BULK_SEARCH_EXPORT_LIMIT,
             truncated: hasMore,
             fields: results.reduce((fields, item) => fields.concat(item.result?.bulk?.fields || []), [])
         },
@@ -5437,7 +5451,7 @@ function combineBulkResults(results) {
         total_count_label: totalCountLabel,
         total_count_summary: totalCountSummary,
         applied_total_limit: appliedTotalLimit,
-        applied_limit_per_scope: appliedTotalLimit,
+        applied_limit_per_scope: BULK_SEARCH_EXPORT_LIMIT,
         df1: medicineData,
         df2: goodsData,
         auth: goodsResult.auth || medicineResult.auth,
@@ -5714,8 +5728,9 @@ async function runBulkSearch(options = {}) {
 
     try {
         const results = [];
-        const limit = BULK_SEARCH_EXPORT_LIMIT;
+        let remainingLimit = BULK_SEARCH_EXPORT_LIMIT;
         for (const payload of payloads) {
+            if (remainingLimit <= 0) break;
             const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/bulk-query`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -5724,7 +5739,7 @@ async function runBulkSearch(options = {}) {
                     diversityMode: getBulkDiversitySelection().mode,
                     priceLimit: getBulkPriceLimit(),
                     productLimit: getBulkProductLimit(),
-                    limit,
+                    limit: remainingLimit,
                     searchMode
                 })
             });
@@ -5733,6 +5748,9 @@ async function runBulkSearch(options = {}) {
                 throw new Error(result.message || result.error || 'Tra cứu hàng loạt thất bại.');
             }
             results.push({ scope: payload.scope, result });
+            const resultRows = getBulkResultRows(result, payload.scope).length;
+            remainingLimit = Math.max(0, remainingLimit - resultRows);
+            if (result?.bulk?.truncated) break;
         }
 
         const result = combineBulkResults(results);
@@ -6779,11 +6797,7 @@ function initSearchFormEvents() {
         }
 
         if (appliedResult?.success) {
-            searchForm.setPreviewResult?.({
-                total: Number(appliedResult?.total_count || 0),
-                totalLabel: String(appliedResult?.total_count_label || Number(appliedResult?.total_count || 0).toLocaleString('vi-VN')),
-                exact: appliedResult?.total_count_exact !== false
-            });
+            searchForm.setPreviewResult?.(getPreviewPayloadForRequest(e.detail, appliedResult));
         }
 
         const filterPanel = document.getElementById('filter-panel');
@@ -6821,11 +6835,16 @@ function initSearchFormEvents() {
             );
             if (requestId !== previewRequestId) return;
 
-            searchForm.setPreviewResult?.({
+            const previewPayload = {
                 total: Number(result?.total || 0),
                 totalLabel: String(result?.display || Number(result?.total || 0).toLocaleString('vi-VN')),
                 exact: Boolean(result?.exact)
-            });
+            };
+            latestFilterPreview = {
+                requestKey: stableStringify(buildQueryRequest(e.detail)),
+                payload: previewPayload
+            };
+            searchForm.setPreviewResult?.(previewPayload);
         } catch (err) {
             const aborted = controller.signal.aborted
                 || err?.name === 'AbortError'
@@ -7119,7 +7138,7 @@ function getProductJourneySteps() {
             title: 'Diễn đàn',
             body: 'Nơi trao đổi, góp ý và theo dõi các cập nhật từ BIDFinder.',
             afterTitle: 'Diễn đàn',
-            afterBody: 'User có thể chọn chủ đề, tạo chủ đề mới và trao đổi công khai với admin.',
+            afterBody: 'Người dùng có thể theo dõi chủ đề, tạo chủ đề mới và tham gia bình luận.',
             selector: '#open-feedback-modal',
             focusAfterSelector: '#feedback-modal .feedback-dialog',
             before: closeJourneySurfaces,

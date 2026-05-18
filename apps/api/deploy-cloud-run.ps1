@@ -26,11 +26,14 @@ param(
     [string]$SmtpUseTls = "true",
     [string]$SmtpUseSsl = "false",
     [string]$ResendFromName = "BIDFinder",
+    [string]$AdminEmails = "admin@bidfinder.vn",
     [int]$QueryRateLimitPerMinute = 2000,
     [int]$AutocompleteRateLimitPerMinute = 3000,
     [int]$PreviewRateLimitPerMinute = 3000,
     [int]$FilterConfigRateLimitPerMinute = 1000,
-    [int]$AuthRateLimitPerMinute = 500
+    [int]$AuthRateLimitPerMinute = 500,
+    [int]$FeedbackRateLimitPerMinute = 10,
+    [int]$FeedbackReadRateLimitPerMinute = 60
 )
 
 $ErrorActionPreference = "Stop"
@@ -54,6 +57,9 @@ $envVars = @(
     "PREVIEW_RATE_LIMIT_PER_MINUTE=$PreviewRateLimitPerMinute",
     "FILTER_CONFIG_RATE_LIMIT_PER_MINUTE=$FilterConfigRateLimitPerMinute",
     "AUTH_RATE_LIMIT_PER_MINUTE=$AuthRateLimitPerMinute",
+    "FEEDBACK_RATE_LIMIT_PER_MINUTE=$FeedbackRateLimitPerMinute",
+    "FEEDBACK_READ_RATE_LIMIT_PER_MINUTE=$FeedbackReadRateLimitPerMinute",
+    "ADMIN_EMAILS=$AdminEmails",
     "RESEND_FROM_NAME=$ResendFromName",
     "AUTH_SMTP_HOST=$SmtpHost",
     "AUTH_SMTP_PORT=$SmtpPort",
