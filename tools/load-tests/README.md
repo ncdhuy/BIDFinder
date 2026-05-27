@@ -1,33 +1,46 @@
-# BIDFinder Load Test
+# BIDFinder Load Tests
 
-This folder contains the k6 script for backend capacity checks.
+k6 tests for backend capacity and heavy task checks.
 
-## Install k6
+## Install
 
 ```powershell
 winget install k6.k6
 ```
 
-## Recommended Test
+## Common Setup
 
-Use `realistic` mode for user-capacity decisions. It includes think time, so `300` VUs is closer to 300 active users than the older tight-loop `mixed` mode.
+Set these once per terminal session. Use a real test account; do not commit credentials.
 
 ```powershell
 $env:BASE_URL="https://bidfinder-api-staging-774667987564.asia-southeast1.run.app"
-$env:LOGIN_EMAIL="ncdhuy.jul04@gmail.com"
-$env:LOGIN_PASSWORD="Huy0939650717"
+$env:LOGIN_EMAIL="your-login-email"
+$env:LOGIN_PASSWORD="your-login-password"
 $env:LOGIN_MODE="shared"
 $env:PRELOGIN_VUS="false"
 $env:SETUP_TIMEOUT="5m"
 $env:LOGIN_TIMEOUT="120s"
+```
 
+Use Render backup only by changing:
+
+```powershell
+$env:BASE_URL="https://bidfinder.onrender.com"
+```
+
+## Recommended Capacity
+
+Use this for normal 300-user capacity checks.
+
+```powershell
 $env:TEST_MODE="realistic"
 $env:VUS="300"
-$env:RAMP_UP="5m"
-$env:DURATION="20m"
-$env:RAMP_DOWN="3m"
+$env:RAMP_UP="2m"
+$env:DURATION="5m"
+$env:RAMP_DOWN="2m"
 
 $env:REALISTIC_BULK_RATE="0.02"
+$env:REALISTIC_FORUM_RATE="0"
 $env:REALISTIC_AUTOCOMPLETE_PREVIEW_RATE="0.2"
 $env:REALISTIC_QUERY_RATE="0.7"
 $env:REALISTIC_MIN_THINK_SECONDS="10"
@@ -38,55 +51,114 @@ $env:REALISTIC_BULK_MAX_THINK_SECONDS="60"
 k6 run .\tools\load-tests\bidfinder.k6.js
 ```
 
-Use Render backup by changing only:
+## Heavy Realistic
+
+Use this after the recommended test passes. It mixes normal search, forum reads, and user-like Excel bulk uploads for both medicine and goods. Goods upload is intentionally heavier because product diversity partitions by the merged goods search blob.
 
 ```powershell
-$env:BASE_URL="https://bidfinder.onrender.com"
-```
+$env:TEST_MODE="realistic"
+$env:VUS="300"
+$env:RAMP_UP="2m"
+$env:DURATION="5m"
+$env:RAMP_DOWN="2m"
 
-Do not add spaces around the URL. If k6 says `invalid URL`, check:
+$env:QUERY_LIMIT="300"
+$env:BULK_PROFILE="upload-mix"
+$env:BULK_ROWS="200"
+$env:BULK_LIMIT="1000"
+$env:BULK_DIVERSITY_MODE="product"
+$env:BULK_PRODUCT_LIMIT="5"
+$env:FORUM_COMMENTS_LIMIT="50"
 
-```powershell
-Write-Host "BASE_URL=[$env:BASE_URL]"
-```
+$env:REALISTIC_BULK_RATE="0.01"
+$env:REALISTIC_FORUM_RATE="0.1"
+$env:REALISTIC_AUTOCOMPLETE_PREVIEW_RATE="0.2"
+$env:REALISTIC_QUERY_RATE="0.6"
+$env:REALISTIC_MIN_THINK_SECONDS="8"
+$env:REALISTIC_MAX_THINK_SECONDS="24"
+$env:REALISTIC_BULK_MIN_THINK_SECONDS="30"
+$env:REALISTIC_BULK_MAX_THINK_SECONDS="90"
 
-## Quick Endpoint Tests
-
-```powershell
-$env:TEST_MODE="query"
 k6 run .\tools\load-tests\bidfinder.k6.js
 ```
+
+## Focused Checks
+
+Medicine upload:
 
 ```powershell
 $env:TEST_MODE="bulk"
-$env:BULK_ROWS="10"
+$env:VUS="5"
+$env:RAMP_UP="1m"
+$env:DURATION="5m"
+$env:RAMP_DOWN="1m"
+$env:BULK_PROFILE="medicine-upload"
+$env:BULK_ROWS="124"
 $env:BULK_LIMIT="1000"
+$env:BULK_DIVERSITY_MODE="product"
+$env:BULK_PRODUCT_LIMIT="5"
 k6 run .\tools\load-tests\bidfinder.k6.js
 ```
 
-Use old `mixed` mode only as a stress test. It is intentionally much harsher than real usage.
+Goods upload:
 
-## Main Knobs
-
-```text
-BASE_URL
-VUS
-RAMP_UP
-DURATION
-RAMP_DOWN
-TEST_MODE
-LOGIN_EMAIL / LOGIN_PASSWORD
-LOGIN_MODE
-DB-side watch: Neon CPU, active connections, pooler connections
+```powershell
+$env:TEST_MODE="bulk"
+$env:VUS="3"
+$env:RAMP_UP="1m"
+$env:DURATION="5m"
+$env:RAMP_DOWN="1m"
+$env:BULK_PROFILE="goods-upload"
+$env:BULK_ROWS="124"
+$env:BULK_LIMIT="1000"
+$env:BULK_DIVERSITY_MODE="product"
+$env:BULK_PRODUCT_LIMIT="5"
+k6 run .\tools\load-tests\bidfinder.k6.js
 ```
 
-## How to read results
+Forum:
 
-- `http_req_failed`: keep below 1-5%.
-- `bidfinder_429s`: near zero for normal capacity tests.
-- `bidfinder_5xxs`: zero or near zero.
-- `bidfinder_query_ms p(95)`: target below 5s.
-- `bidfinder_preview_ms p(95)`: target below 2.5s.
-- `bidfinder_autocomplete_ms p(95)`: target below 1.5s.
+```powershell
+$env:TEST_MODE="forum"
+$env:VUS="100"
+$env:RAMP_UP="1m"
+$env:DURATION="5m"
+$env:RAMP_DOWN="1m"
+$env:FORUM_COMMENTS_LIMIT="50"
+k6 run .\tools\load-tests\bidfinder.k6.js
+```
 
-If Neon CPU is low but latency is high, the backend host is likely the bottleneck. If Neon CPU is high, reduce concurrency, improve queries, or raise Neon CU.
+## Modes And Profiles
+
+```text
+TEST_MODE:
+  realistic   user-like mixed workload with think time
+  query       query endpoint only
+  bulk        bulk-query endpoint only
+  forum       forum topic list/detail only
+  mixed       old tight-loop stress mode; harsher than real usage
+
+BULK_PROFILE:
+  synthetic        older random medicine/goods cases
+  medicine-upload  user-like medicine Excel upload
+  goods-upload     user-like goods Excel upload
+  upload-mix       alternates medicine-upload and goods-upload
+```
+
+## Read Results
+
+Normal targets:
+
+```text
+http_req_failed                 below 1-5%
+bidfinder_429s                 near zero
+bidfinder_5xxs                 zero or near zero
+bidfinder_query_ms p95         below 5s
+bidfinder_preview_ms p95       below 2.5s
+bidfinder_autocomplete_ms p95  below 1.5s
+bidfinder_forum_* p95          below 2.5s
+```
+
+Bulk targets depend on workload size. For heavy upload tests, `bulk p95` can be much higher than normal endpoint latency; use it to find the practical limit for concurrent bulk uploads.
+
+Watch Neon CPU/CU, active connections, pooler client connections, Cloud Run instance count, Cloud Run CPU/memory, and request latency during every run.

@@ -7,6 +7,11 @@
         window.location.hostname === '127.0.0.1')
       ? 'http://127.0.0.1:8000'
       : 'https://bidfinder-api-staging-774667987564.asia-southeast1.run.app');
+  const AUTH_API_CANDIDATE_URLS = Array.from(new Set([
+    API_BASE_URL,
+    window.BIDFINDER_CONFIG?.primaryApiBaseUrl,
+    window.BIDFINDER_CONFIG?.backupApiBaseUrl
+  ].filter(Boolean).map((value) => String(value).replace(/\/+$/, ''))));
 
   const STORAGE_KEY = 'bidfinder:auth_token';
   const DATA_ACCESS_KEY = 'bidfinder:require_auth_for_data_access';
@@ -69,6 +74,7 @@
     lastSessionVerifyAt: 0,
     sessionVerifyPromise: null
   };
+  state.authApiBaseUrl = API_BASE_URL.replace(/\/+$/, '');
 
   const els = {};
 
@@ -156,7 +162,10 @@
   }
 
   function getApiUrl(path) {
-    return `${API_BASE_URL}${path}`;
+    const baseUrl = String(path || '').startsWith('/api/auth')
+      ? state.authApiBaseUrl
+      : API_BASE_URL;
+    return `${baseUrl}${path}`;
   }
 
   function isAuthenticated() {
@@ -991,15 +1000,22 @@
 
   async function loadAuthConfig() {
     try {
-      const response = await fetch(getApiUrl('/api/auth/config'), {
-        credentials: 'include'
-      });
-      const payload = await parseResponseBody(response);
-      if (response.ok && payload.success) {
-        applyAuthConfig(payload, { merge: false });
+      for (const baseUrl of AUTH_API_CANDIDATE_URLS) {
+        try {
+          const response = await fetch(`${baseUrl}/api/auth/config`, {
+            credentials: 'include'
+          });
+          const payload = await parseResponseBody(response);
+          if (response.ok && payload.success) {
+            state.authApiBaseUrl = baseUrl;
+            applyAuthConfig(payload, { merge: false });
+            break;
+          }
+        } catch (err) {
+          continue;
+        }
       }
-    } catch (err) {}
-    finally {
+    } finally {
       state.configLoaded = true;
     }
 

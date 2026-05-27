@@ -197,6 +197,10 @@ def collapse_duplicate_columns(df: pd.DataFrame) -> pd.DataFrame:
 def _normalize_numeric_text(value) -> str:
     if pd.isna(value):
         return ""
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        if not np.isfinite(value):
+            return ""
+        return str(value)
 
     text = str(value).strip()
     if text in {"nan", "None", "<NA>", "NaT", "nat", "null", "NULL"}:
@@ -225,8 +229,6 @@ def _normalize_numeric_text(value) -> str:
     elif comma_count:
         parts = text.split(",")
         if comma_count > 1 and all(len(part) == 3 for part in parts[1:]):
-            text = "".join(parts)
-        elif len(parts[-1]) == 3 and len(parts[0]) <= 3:
             text = "".join(parts)
         else:
             text = text.replace(",", ".", 1).replace(",", "")

@@ -1030,11 +1030,11 @@ class CustomSearchForm extends HTMLElement {
                         
                         <div class="sidebar-column">
                             <div class="sidebar-group goods-group">💊 Hàng hóa</div>
-                            <div class="sidebar-item goods-filter active" data-target="pane-drug">
+                            <div class="sidebar-item goods-filter" data-target="pane-drug">
                                 <span class="sidebar-item-main">Tên thương mại</span>
                                 <span class="sidebar-item-hint">VD: Efferalgan, kim bướm,...</span>
                             </div>
-                            <div class="sidebar-item goods-filter" data-target="pane-active-ing">
+                            <div class="sidebar-item goods-filter active" data-target="pane-active-ing">
                                 <span class="sidebar-item-main">Tên hoạt chất</span>
                                 <span class="sidebar-item-hint">VD: Paracetamol</span>
                             </div>
@@ -1132,12 +1132,23 @@ class CustomSearchForm extends HTMLElement {
                         </div>
 
                         <!-- Drug Name Pane -->
-                        <div class="filter-pane active" id="pane-drug">
+                        <div class="filter-pane" id="pane-drug">
                             <h3>Tên thương mại</h3>
                             <p class="pane-desc"></p>
                             <div class="field">
                                 <div class="token-input-container" id="drug-name-container"><input type="text" placeholder="Nhập tên thuốc hoặc hàng hóa (tên, danh mục, tính năng kỹ thuật...)" /></div>
                                 <input type="hidden" id="filter-drug-name" />
+                            </div>
+                            
+                        </div>
+
+                        <!-- Active Ingredient Pane -->
+                        <div class="filter-pane active" id="pane-active-ing">
+                            <h3>Tên hoạt chất</h3>
+                            <p class="pane-desc"></p>
+                            <div class="field">
+                                <div class="token-input-container" id="active-ingredient-container"><input type="text" placeholder="Nhập tên hoạt chất hoặc hàng hóa (tên, danh mục, tính năng kỹ thuật...)..." /></div>
+                                <input type="hidden" id="filter-active-ingredient" />
                             </div>
                             <div class="pane-desc">
                                 <p>1. Gõ từ khóa</p>
@@ -1145,17 +1156,6 @@ class CustomSearchForm extends HTMLElement {
                                 <p>3. Nếu có nhiều điều kiện, lặp lại bước 1 và 2</p>
                                 <p>4. Điều chỉnh bằng cách click OR AND NOT để tạo điều kiện</p>
                                 <p><span class="pane-help-prefix">Xem </span><button class="pane-help-link" type="button" data-open-filter-help>Mẹo tìm kiếm</button></p>
-                            </div>
-                            
-                        </div>
-
-                        <!-- Active Ingredient Pane -->
-                        <div class="filter-pane" id="pane-active-ing">
-                            <h3>Tên hoạt chất</h3>
-                            <p class="pane-desc"></p>
-                            <div class="field">
-                                <div class="token-input-container" id="active-ingredient-container"><input type="text" placeholder="Nhập hoạt chất..." /></div>
-                                <input type="hidden" id="filter-active-ingredient" />
                             </div>
                         </div>
 
@@ -1361,7 +1361,7 @@ class CustomSearchForm extends HTMLElement {
                             <p class="pane-desc"></p>
                             <div class="field">
                                 <div class="token-input-container" id="reg-no-container">
-                                <input type="text" placeholder="Nhập số đăng ký..." />
+                                <input type="text" placeholder="Nhập số đăng ký hoặc ký mã hiệu/nhãn hiệu..." />
                                 </div>
                                 <input type="hidden" id="filter-reg-no" />
                             </div>

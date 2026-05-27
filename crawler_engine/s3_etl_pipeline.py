@@ -134,6 +134,21 @@ def load_ignored_qd_map(cursor):
     return ignored_map
 
 
+def mark_typo_error_manifest_processed(cursor, manifest_date: str) -> int:
+    cursor.execute("""
+        UPDATE daily_manifest m
+        SET status = 'PROCESSED'
+        FROM qd_relations r
+        WHERE m.manifest_date = %s
+          AND m.status IN ('READY', 'PENDING_ETL_REVIEW')
+          AND r.relation_type = 'TYPO_ERROR'
+          AND r.ma_tbmt = m.ma_tbmt
+          AND r.so_qd = m.so_qd
+          AND r.version = m.version
+    """, (manifest_date,))
+    return int(cursor.rowcount or 0)
+
+
 def version_key(version_value):
     raw = str(version_value or "00").strip().replace("/", "-")
     parts = [p for p in raw.split("-") if p != ""]
@@ -575,6 +590,114 @@ def is_blank_cell(value) -> bool:
     if isinstance(value, str):
         return clean_col_str(value) in {"", "nan", "none", "<na>", "nat"}
     return False
+
+
+def is_strict_numeric_cell(value) -> bool:
+    if is_blank_cell(value):
+        return True
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        return np.isfinite(value)
+
+    text = str(value).strip().lower()
+    text = text.replace("\u00a0", " ")
+    for token in ("vnđ", "vnd", "đồng", "dong", "đ"):
+        text = text.replace(token, "")
+    text = re.sub(r"\s+", "", text)
+    if not text:
+        return True
+    if not re.fullmatch(r"[-+]?\(?[\d.,]+\)?", text):
+        return False
+    return pd.notna(clean_numeric_series(pd.Series([value])).iloc[0])
+
+
+def detect_invalid_numeric_cells_manual_reason(df: pd.DataFrame, schema_name: str) -> str | None:
+    if df is None or df.empty or schema_name not in ("MEDICINE_STANDARD", "GOODS_STANDARD"):
+        return None
+
+    numeric_cols = ["Đơn giá trúng thầu (VND)", "Thành tiền (VND)"]
+    numeric_cols.append("Số lượng" if schema_name == "MEDICINE_STANDARD" else "Khối lượng")
+    bad_examples = []
+
+    for col in numeric_cols:
+        if col not in df.columns:
+            continue
+        bad_values = [
+            str(value).strip()
+            for value in df[col].tolist()
+            if not is_blank_cell(value) and not is_strict_numeric_cell(value)
+        ]
+        if bad_values:
+            sample = ", ".join(bad_values[:3])
+            bad_examples.append(f"{col}: {sample}")
+
+    if not bad_examples:
+        return None
+
+    return (
+        "Cột numeric có giá trị không phải số sau mapping, nghi file bị lệch cột hoặc nhập sai: "
+        + " | ".join(bad_examples[:3])
+    )
+
+
+def repair_goods_shifted_price_amount_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    if df is None or df.empty:
+        return df, {"repaired": False}
+
+    hs_col = "Mã HS"
+    quantity_col = "Khối lượng"
+    price_col = "Đơn giá trúng thầu (VND)"
+    amount_col = "Thành tiền (VND)"
+    required_cols = [hs_col, quantity_col, price_col, amount_col]
+    if any(col not in df.columns for col in required_cols):
+        return df, {"repaired": False}
+
+    amount_text = df[amount_col]
+    bad_amount_mask = amount_text.map(lambda value: not is_blank_cell(value) and not is_strict_numeric_cell(value))
+    if int(bad_amount_mask.sum()) == 0:
+        return df, {"repaired": False}
+
+    quantity = clean_numeric_series(df[quantity_col])
+    shifted_price = clean_numeric_series(df[hs_col])
+    shifted_amount = clean_numeric_series(df[price_col])
+    comparable_mask = (
+        bad_amount_mask
+        & quantity.notna()
+        & shifted_price.notna()
+        & shifted_amount.notna()
+        & (quantity > 0)
+        & (shifted_price > 0)
+        & (shifted_amount > 0)
+    )
+    comparable_count = int(comparable_mask.sum())
+    if comparable_count < 1:
+        return df, {"repaired": False}
+
+    expected_amount = quantity * shifted_price
+    tolerance = expected_amount.abs().mul(0.0001).clip(lower=1)
+    formula_match_mask = comparable_mask & ((expected_amount - shifted_amount).abs() <= tolerance)
+    match_count = int(formula_match_mask.sum())
+    required_match_count = 1 if comparable_count == 1 else max(2, int(comparable_count * 0.8))
+    if match_count < required_match_count:
+        return df, {"repaired": False}
+
+    repaired = df.copy()
+    time_col = next(
+        (col for col in repaired.columns if "thời gian" in clean_col_str(col) and col != amount_col),
+        None,
+    )
+    if time_col:
+        time_missing = repaired[time_col].map(is_blank_cell)
+        repaired.loc[bad_amount_mask & time_missing, time_col] = repaired.loc[bad_amount_mask & time_missing, amount_col]
+
+    repaired.loc[bad_amount_mask, amount_col] = repaired.loc[bad_amount_mask, price_col]
+    repaired.loc[bad_amount_mask, price_col] = repaired.loc[bad_amount_mask, hs_col]
+    repaired.loc[bad_amount_mask, hs_col] = np.nan
+    return repaired, {
+        "repaired": True,
+        "rows": int(bad_amount_mask.sum()),
+        "formula_rows": match_count,
+        "comparable_rows": comparable_count,
+    }
 
 
 def analyze_review_column_gaps(df: pd.DataFrame, schema_name: str) -> list[dict]:
@@ -3482,7 +3605,18 @@ def normalize_data(df: pd.DataFrame, schema_name: str, tbmt=None, so_qd=None, ve
     df = fill_vendor_from_sparse_group_headers(df, schema_name)
     post_fill_amount_col = next((c for c in df.columns if clean_col_str(c) == "thành tiền (vnd)"), None)
     df = drop_summary_rows(df, post_fill_amount_col)
+    if schema_name == "GOODS_STANDARD":
+        df, shifted_repair = repair_goods_shifted_price_amount_columns(df)
+        if shifted_repair.get("repaired"):
+            logger.info(
+                f"🩹 [GOODS-SHIFTED-COLUMNS] {tbmt} / {so_qd} / v{version}: "
+                f"dịch lại Đơn giá/Thành tiền cho {shifted_repair.get('rows', 0)} dòng "
+                f"({shifted_repair.get('formula_rows', 0)}/{shifted_repair.get('comparable_rows', 0)} dòng khớp công thức)."
+            )
     if schema_name in ("MEDICINE_STANDARD", "GOODS_STANDARD"):
+        invalid_numeric_reason = detect_invalid_numeric_cells_manual_reason(df, schema_name)
+        if invalid_numeric_reason:
+            raise WebWinnerManualReviewRequired(invalid_numeric_reason)
         df = drop_invalid_value_rows(df, schema_name)
     if df.empty:
         raise ValueError("File rỗng sau chuẩn hóa")
@@ -3529,6 +3663,13 @@ def process_pipeline():
     
     with get_db_connection() as conn, conn.cursor() as c:
         ignored_qd_map = load_ignored_qd_map(c)
+        typo_processed_count = mark_typo_error_manifest_processed(c, TARGET_DATE)
+        if typo_processed_count:
+            conn.commit()
+            logger.info(
+                f"ℹ️ Đã bỏ qua {typo_processed_count} manifest TYPO_ERROR trong ngày {TARGET_DATE} "
+                "và đánh dấu PROCESSED."
+            )
         # Lấy file READY để ETL, dùng COALESCE(so_qd_original, so_qd) vì bảng relations đã đổi tên cột
         c.execute("""
             SELECT COALESCE(r.so_qd_original, m.so_qd) as qd_original,

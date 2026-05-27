@@ -1802,7 +1802,7 @@ function showPanel(panelId) {
     if (panelId === 'filter-panel') {
         const searchForm = document.querySelector('custom-search-form');
         if (typeof searchForm?.activatePane === 'function') {
-            searchForm.activatePane('drug', { focus: false });
+            searchForm.activatePane('active-ing', { focus: false });
         }
         restoreAppliedFilterPreview(searchForm);
 
@@ -3164,9 +3164,74 @@ function initTableWorkspaceControls() {
             closeColumnMenu();
         });
     });
+    initHorizontalScrollHint();
 
     document.addEventListener('fullscreenchange', syncFullscreenButtons);
     syncFullscreenButtons();
+}
+
+function getHorizontalScrollHintElement() {
+    let hint = document.getElementById('horizontal-scroll-hint');
+    if (hint) return hint;
+
+    hint = document.createElement('div');
+    hint.id = 'horizontal-scroll-hint';
+    hint.className = 'horizontal-scroll-hint';
+    hint.setAttribute('role', 'tooltip');
+    hint.innerHTML = 'Giữ <kbd>Shift</kbd> + lăn chuột<br>để cuộn ngang bảng';
+    document.body.appendChild(hint);
+    return hint;
+}
+
+function hideHorizontalScrollHint() {
+    document.getElementById('horizontal-scroll-hint')?.classList.remove('is-visible');
+}
+
+function positionHorizontalScrollHint(hint, x, y) {
+    const width = hint.offsetWidth || 280;
+    const padding = 12;
+    const minX = (width / 2) + padding;
+    const maxX = window.innerWidth - (width / 2) - padding;
+    const nextX = Math.min(Math.max(x, minX), Math.max(minX, maxX));
+    hint.style.left = `${nextX}px`;
+    hint.style.top = `${y}px`;
+}
+
+function initHorizontalScrollHint() {
+    if (document.body.dataset.horizontalScrollHintBound === '1') return;
+    document.body.dataset.horizontalScrollHintBound = '1';
+
+    const supportsHover = window.matchMedia?.('(hover: hover) and (pointer: fine)')?.matches ?? true;
+    if (!supportsHover) return;
+
+    document.addEventListener('mousemove', (event) => {
+        const scroller = event.target.closest?.('.table-wrapper .table-scroll');
+        if (!scroller || scroller.scrollWidth <= scroller.clientWidth + 8) {
+            hideHorizontalScrollHint();
+            return;
+        }
+
+        const rect = scroller.getBoundingClientRect();
+        const scrollbarHoverBand = 24;
+        const isNearHorizontalScrollbar =
+            event.clientX >= rect.left &&
+            event.clientX <= rect.right &&
+            event.clientY >= rect.bottom - scrollbarHoverBand &&
+            event.clientY <= rect.bottom + 2;
+
+        if (!isNearHorizontalScrollbar) {
+            hideHorizontalScrollHint();
+            return;
+        }
+
+        const hint = getHorizontalScrollHintElement();
+        hint.classList.add('is-visible');
+        positionHorizontalScrollHint(hint, event.clientX, rect.bottom - 10);
+    }, { passive: true });
+
+    document.addEventListener('mouseleave', hideHorizontalScrollHint);
+    window.addEventListener('scroll', hideHorizontalScrollHint, { passive: true });
+    window.addEventListener('resize', hideHorizontalScrollHint);
 }
 
 
@@ -6027,7 +6092,7 @@ function renderFeedbackReplies(replies = []) {
                     <div class="feedback-comment-bubble">
                         <div class="feedback-reply-meta">
                             <strong>${escapeHtml(getFeedbackAuthorLabel(reply.author_name, reply.user_email, reply.is_admin))}</strong>
-                            ${reply.is_admin ? '<span class="feedback-admin-pill">Admin-BIDFinder</span>' : ''}
+                            ${reply.is_admin ? '<span class="feedback-admin-pill">Admin</span>' : ''}
                         </div>
                         <p>${escapeHtml(reply.body || '')}</p>
                     </div>

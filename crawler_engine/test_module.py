@@ -23,6 +23,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.select import Select
 from selenium.webdriver.support.ui import WebDriverWait
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH = os.path.join(SCRIPT_DIR, ".env")
@@ -249,21 +250,23 @@ def shutdown_runtime():
 
 
 loai_tu_gian_giao_thau = [
-    "kích thích", "môi trường", "nông nghiệp", "khuyến nông", "nông dân", "vườn", "thức ăn", "bvtv", "bảo vệ thực vật",
-    "lúa", "cao su", "giống", "phân bón", "diệt cỏ", "thuốc cỏ", "trừ cỏ", "thuốc sâu", "tưới nước", "cắt cỏ",
-    "trừ sâu", "trừ bệnh", "rầy côn trùng", "phấn trắng", "đạo ôn", "chăn nuôi", "thủy sản", "thú y",
-    "vật nuôi", "gia súc", "gia cầm", "chó", "mèo", "ruồi", "gà", "trâu", "bò", "vịt", "chuột", "cá", "tôm", "heo", "lợn", "tả heo",
-    "muỗi", "mối", "lở mồm", "cúm gia cầm",
-    "vị thuốc", "thuốc y học cổ truyền", "chế phẩm y học cổ truyền", "thuốc cổ truyền", "đông y", "sinh học", "shpt", 
+    "kích thích", "nông nghiệp", "khuyến nông", "nông dân", "vườn", "thức ăn", "bvtv", "bảo vệ thực vật",
+    "lúa", "cao su", "giống", "phân bón", "diệt cỏ", "thuốc cỏ", "trừ cỏ", "thuốc sâu", "tưới nước", "cắt cỏ", "thuốc xịt cỏ",
+    "trừ sâu", "trừ bệnh", "rầy côn trùng", "phấn trắng", "đạo ôn", "chăn nuôi", "thủy sản", "thú y", "rừng",
+    "vật nuôi", "gia súc", "gia cầm", "chó", "mèo", "ruồi", "gà", "trâu", "bò", "vịt", "chuột", "cá", "tôm", "heo", "ốc sên", "cua",
+    "muỗi", "xử lý mối", "chống mối", "lở mồm", "cúm gia cầm", "lợn", "nấm hồng", "bệnh lá", "cây trồng", "trang trại",
+    "vị thuốc", "thuốc y học cổ truyền", "chế phẩm y học cổ truyền", "thuốc cổ truyền", "đông y",
     "thuốc dược liệu", "thuốc thành phẩm y học cổ truyền", "tủ", "kho thuốc", "thuốc nổ",
-    "sản xuất", "cứu hỏa", "lao động", "công nghiệp", "bão", "lụt", "hàng hóa dịch vụ", "phần mềm", "thuốc lá",
-    "quặng", "nhuộm", "văn phòng", "bảo quản", "bao đựng", "rác", "túi đựng", "mực in", "giấy in", "linh kiện",
+    "cứu hỏa", "lao động", "công nghiệp", "bão", "lụt", "hàng hóa dịch vụ", "phần mềm", "thuốc lá",
+    "quặng", "văn phòng", "bảo quản", "bao đựng", "rác", "chất thải", "mực in", "giấy in",
     "nghiên cứu", "kiểm nghiệm", "mỹ thuật", "nhu yếu phẩm", "tài sản", "lương thực", "in ấn", "sửa chữa",
-    "thí nghiệm", "nhu yếu phẩm", "vận chuyển","công nghệ thông tin", "hệ thống mạng", "tin học", "máy tính",
-    "mạng lan", "chống sét", "xử lý nước thải", "sắc ký", "quang phổ", "sửa chữa", "máy phun thuốc", "thuốc hàn",
+    "thí nghiệm", "nhu yếu phẩm", "công nghệ thông tin", "hệ thống mạng", "tin học", "máy tính",
+    "mạng lan", "chống sét", "xử lý nước thải", "quang phổ", "sửa chữa", "máy phun thuốc", "thuốc hàn",
     "truyền thông", "xe", "máy soi thuốc", "cây thuốc", "đông dược", "dịch chiết", "tinh dầu",
-    "máy chiết xơ", "nội độc tố", "dung môi", "chất chuẩn", "chuẩn hóa", "kiểm tra", "độ hòa tan", "bình phun thuốc",
-    "ma túy", "phun thuốc"
+    "máy chiết xơ", "nội độc tố", "dung môi", "chất chuẩn", "chuẩn hóa", "độ hòa tan", "bình phun thuốc",
+    "tư vấn", "thi công", "gia công", "giám sát", "lắp đặt", "điều hòa", "đề tài", "bể bơi", "công cụ dụng cụ", "quan trắc","thông cống",
+    "nông thôn", "du lịch", "vật tư hóa chất phục vụ chuyên ngành", "dịch hại", "canh tác"
+
 ]
  
 loai_chu_dau_tu = [
@@ -277,14 +280,40 @@ loai_chu_dau_tu = [
     ("phòng kinh tế", []),
     ("thuốc lá", []),
     ("viện nghiên cứu", []),
+    ("trung tâm nghiên cứu", []),
     ("chế biến", []),
     ("nông lâm", []),
     ("nước sạch", []),
-    ("vệ sinh", []),
-    ("công ty", []),
+    ("vệ sinh", ["dịch tễ"]),
+    ("công ty", ["bệnh viện"]),
     ("chăn nuôi", []),
     ("thú y", []),
     ("kiểm nghiệm", []),
+    ("môi trường", []),
+    ("tên lửa", []),
+    ("viện công nghệ", []),
+    ("viện khoa học", []),
+    ("đổi mới", []),
+    ("sáng tạo", []),
+    ("thuốc nổ", []),
+    ("viện hóa học", []),
+    ("trung tâm nhiệt đới", []),
+    ("kinh tế", []),
+    ("lúa", []),
+    ('trung tâm chiếu xạ', []),
+    ('kiểm lâm', []),
+    ("thực vật", []),
+    ("đạn dược", []),
+    ("liên đoàn quy hoạch", []),
+    ("trung tâm công nghệ", []),
+    ("trung tâm dịch vụ", []),
+    ("trung tâm thực nghiệm", []),
+    ("vũ trụ", []),
+    ("viện sinh học", []),
+    ("viện sinh thái", []),
+    ("vật lý", []),
+    ("vũ khí", []),
+
 ]
 
 tu_khoa_luu_lai = [
@@ -639,19 +668,19 @@ def apply_post_search_filters(active_notice_type: str):
         logger.info("Bỏ qua filter Đã đóng thầu/Có nhà thầu trúng thầu cho loại: %s", active_notice_type)
         return
 
-    wait_clickable(
-        driver,
-        By.XPATH,
-        "//ul[contains(@class, 'nav-tabs')]//a[contains(text(),'Đã đóng thầu')]",
-        timeout=20,
-    ).click()
-    time.sleep(1)
-    wait_clickable(
-        driver,
-        By.XPATH,
-        "//div[contains(@class, 'content__body__option')]//span[contains(normalize-space(),'Có nhà thầu trúng thầu')]",
-        timeout=20,
-    ).click()
+    # wait_clickable(
+    #     driver,
+    #     By.XPATH,
+    #     "//ul[contains(@class, 'nav-tabs')]//a[contains(text(),'Đã đóng thầu')]",
+    #     timeout=20,
+    # ).click()
+    # time.sleep(1)
+    # wait_clickable(
+    #     driver,
+    #     By.XPATH,
+    #     "//div[contains(@class, 'content__body__option')]//span[contains(normalize-space(),'Có nhà thầu trúng thầu')]",
+    #     timeout=20,
+    # ).click()
 
 
 def prepare_search_form(search_keyword: str, notice_type: str = DEFAULT_SEARCH_NOTICE_TYPE):
@@ -2173,9 +2202,16 @@ def counter_to_df(counter: Counter, min_count=2):
     return pd.DataFrame(rows)
 
 
+def clean_illegal_chars(value):
+    if isinstance(value, str):
+        return ILLEGAL_CHARACTERS_RE.sub("", value)
+    return value
+
+
 def save_outputs(all_records, khlcnt_outputs=None):
     out_dir = os.path.join(BASE_DIR, "test_outputs")
     os.makedirs(out_dir, exist_ok=True)
+
     legacy_output_columns = [
         "Loại thông tin",
         "Keyword crawl",
@@ -2186,6 +2222,7 @@ def save_outputs(all_records, khlcnt_outputs=None):
         "Chủ đầu tư",
         "Kết quả lọc",
     ]
+
     khlcnt_output_columns = [
         "Loại thông tin",
         "Keyword crawl",
@@ -2199,8 +2236,21 @@ def save_outputs(all_records, khlcnt_outputs=None):
         "Chủ đầu tư",
         "Kết quả lọc",
     ]
-    output_columns = khlcnt_output_columns if should_crawl_khlcnt_details() else legacy_output_columns
-    legacy_dedup_subset = ["Loại thông tin", "Keyword crawl", "Mã TBMT", "Chủ đầu tư", "Tên gói thầu"]
+
+    output_columns = (
+        khlcnt_output_columns
+        if should_crawl_khlcnt_details()
+        else legacy_output_columns
+    )
+
+    legacy_dedup_subset = [
+        "Loại thông tin",
+        "Keyword crawl",
+        "Mã TBMT",
+        "Chủ đầu tư",
+        "Tên gói thầu",
+    ]
+
     khlcnt_dedup_subset = [
         "Loại thông tin",
         "Keyword crawl",
@@ -2209,19 +2259,46 @@ def save_outputs(all_records, khlcnt_outputs=None):
         "Tên KHLCNT",
         "Tên gói thầu",
     ]
-    dedup_subset = khlcnt_dedup_subset if should_crawl_khlcnt_details() else legacy_dedup_subset
+
+    dedup_subset = (
+        khlcnt_dedup_subset
+        if should_crawl_khlcnt_details()
+        else legacy_dedup_subset
+    )
 
     dedup_all = pd.DataFrame(all_records)
+
     for column in output_columns:
         if column not in dedup_all.columns:
             dedup_all[column] = None
-    dedup_all = dedup_all[output_columns].drop_duplicates(subset=dedup_subset)
+
+    dedup_all = dedup_all[output_columns].drop_duplicates(
+        subset=dedup_subset
+    )
+
+    # CLEAN ILLEGAL CHARACTERS
+    dedup_all = dedup_all.applymap(clean_illegal_chars)
 
     if not should_crawl_khlcnt_details():
-        dedup_all.to_excel(os.path.join(out_dir, OUTPUT_NAME), index=False, engine="openpyxl")
 
-        selected_count = int((dedup_all["Kết quả lọc"] == "CHỌN").sum()) if not dedup_all.empty else 0
-        filtered_count = int((dedup_all["Kết quả lọc"] == "LOẠI").sum()) if not dedup_all.empty else 0
+        dedup_all.to_excel(
+            os.path.join(out_dir, OUTPUT_NAME),
+            index=False,
+            engine="openpyxl",
+        )
+
+        selected_count = (
+            int((dedup_all["Kết quả lọc"] == "CHỌN").sum())
+            if not dedup_all.empty
+            else 0
+        )
+
+        filtered_count = (
+            int((dedup_all["Kết quả lọc"] == "LOẠI").sum())
+            if not dedup_all.empty
+            else 0
+        )
+
         logger.info(
             "Đã lưu %s: %s dòng | CHỌN: %s | LOẠI: %s",
             OUTPUT_NAME,
@@ -2229,26 +2306,111 @@ def save_outputs(all_records, khlcnt_outputs=None):
             selected_count,
             filtered_count,
         )
+
     else:
-        logger.info("TEST_CRAWL_TASK=2: bỏ qua xuất %s, chỉ xuất workbook KHLCNT test metadata + excel/attachment.", OUTPUT_NAME)
+        logger.info(
+            "TEST_CRAWL_TASK=2: bỏ qua xuất %s, chỉ xuất workbook KHLCNT test metadata + excel/attachment.",
+            OUTPUT_NAME,
+        )
 
     if ENABLE_KEYWORD_NGRAMS and not should_crawl_khlcnt_details():
-        with pd.ExcelWriter(os.path.join(out_dir, "keyword_ngrams.xlsx"), engine="openpyxl") as writer:
+
+        with pd.ExcelWriter(
+            os.path.join(out_dir, "keyword_ngrams.xlsx"),
+            engine="openpyxl",
+        ) as writer:
+
             all_rows = dedup_all.to_dict("records")
-            counter_to_df(build_ngram_counter(all_rows, 1)).to_excel(writer, sheet_name="all_1gram", index=False)
-            counter_to_df(build_ngram_counter(all_rows, 2)).to_excel(writer, sheet_name="all_2gram", index=False)
-            counter_to_df(build_ngram_counter(all_rows, 3)).to_excel(writer, sheet_name="all_3gram", index=False)
-            counter_to_df(build_ngram_counter([row for row in all_rows if row.get("Kết quả lọc") == "CHỌN"], 1)).to_excel(writer, sheet_name="chon_1gram", index=False)
-            counter_to_df(build_ngram_counter([row for row in all_rows if row.get("Kết quả lọc") == "CHỌN"], 2)).to_excel(writer, sheet_name="chon_2gram", index=False)
-            counter_to_df(build_ngram_counter([row for row in all_rows if row.get("Kết quả lọc") == "CHỌN"], 3)).to_excel(writer, sheet_name="chon_3gram", index=False)
-            counter_to_df(build_ngram_counter([row for row in all_rows if row.get("Kết quả lọc") == "LOẠI"], 1)).to_excel(writer, sheet_name="loai_1gram", index=False)
-            counter_to_df(build_ngram_counter([row for row in all_rows if row.get("Kết quả lọc") == "LOẠI"], 2)).to_excel(writer, sheet_name="loai_2gram", index=False)
-            counter_to_df(build_ngram_counter([row for row in all_rows if row.get("Kết quả lọc") == "LOẠI"], 3)).to_excel(writer, sheet_name="loai_3gram", index=False)
-        logger.info("Đã lưu keyword_ngrams.xlsx để phân tích biến thể từ khóa.")
+
+            counter_to_df(
+                build_ngram_counter(all_rows, 1)
+            ).to_excel(writer, sheet_name="all_1gram", index=False)
+
+            counter_to_df(
+                build_ngram_counter(all_rows, 2)
+            ).to_excel(writer, sheet_name="all_2gram", index=False)
+
+            counter_to_df(
+                build_ngram_counter(all_rows, 3)
+            ).to_excel(writer, sheet_name="all_3gram", index=False)
+
+            counter_to_df(
+                build_ngram_counter(
+                    [
+                        row
+                        for row in all_rows
+                        if row.get("Kết quả lọc") == "CHỌN"
+                    ],
+                    1,
+                )
+            ).to_excel(writer, sheet_name="chon_1gram", index=False)
+
+            counter_to_df(
+                build_ngram_counter(
+                    [
+                        row
+                        for row in all_rows
+                        if row.get("Kết quả lọc") == "CHỌN"
+                    ],
+                    2,
+                )
+            ).to_excel(writer, sheet_name="chon_2gram", index=False)
+
+            counter_to_df(
+                build_ngram_counter(
+                    [
+                        row
+                        for row in all_rows
+                        if row.get("Kết quả lọc") == "CHỌN"
+                    ],
+                    3,
+                )
+            ).to_excel(writer, sheet_name="chon_3gram", index=False)
+
+            counter_to_df(
+                build_ngram_counter(
+                    [
+                        row
+                        for row in all_rows
+                        if row.get("Kết quả lọc") == "LOẠI"
+                    ],
+                    1,
+                )
+            ).to_excel(writer, sheet_name="loai_1gram", index=False)
+
+            counter_to_df(
+                build_ngram_counter(
+                    [
+                        row
+                        for row in all_rows
+                        if row.get("Kết quả lọc") == "LOẠI"
+                    ],
+                    2,
+                )
+            ).to_excel(writer, sheet_name="loai_2gram", index=False)
+
+            counter_to_df(
+                build_ngram_counter(
+                    [
+                        row
+                        for row in all_rows
+                        if row.get("Kết quả lọc") == "LOẠI"
+                    ],
+                    3,
+                )
+            ).to_excel(writer, sheet_name="loai_3gram", index=False)
+
+        logger.info(
+            "Đã lưu keyword_ngrams.xlsx để phân tích biến thể từ khóa."
+        )
+
     else:
-        logger.info("Không xuất keyword_ngrams.xlsx trong mode hiện tại.")
+        logger.info(
+            "Không xuất keyword_ngrams.xlsx trong mode hiện tại."
+        )
 
     if should_crawl_khlcnt_details() and khlcnt_outputs:
+
         child_columns = [
             "Loại thông tin",
             "Keyword crawl",
@@ -2297,12 +2459,14 @@ def save_outputs(all_records, khlcnt_outputs=None):
             "Kết quả lọc",
             "Lý do",
         ]
+
         plan_skip_columns = khlcnt_output_columns + [
             "Lý do",
             "Số dòng con",
             "Số dòng con hợp lệ",
             "Số dòng con bị loại",
         ]
+
         linked_child_columns = [
             "Loại thông tin",
             "Keyword crawl",
@@ -2325,6 +2489,7 @@ def save_outputs(all_records, khlcnt_outputs=None):
             "Kết quả lọc",
             "Lý do",
         ]
+
         table_row_columns = [
             "Mã KHLCNT",
             "Mã KHLCNT đầy đủ",
@@ -2335,8 +2500,17 @@ def save_outputs(all_records, khlcnt_outputs=None):
             "Trang bảng",
             "Dòng trên trang",
         ]
-        khlcnt_path = os.path.join(out_dir, "khlcnt_child_packages.xlsx")
-        with pd.ExcelWriter(khlcnt_path, engine="openpyxl") as writer:
+
+        khlcnt_path = os.path.join(
+            out_dir,
+            "khlcnt_child_packages.xlsx",
+        )
+
+        with pd.ExcelWriter(
+            khlcnt_path,
+            engine="openpyxl",
+        ) as writer:
+
             for sheet_name, columns in [
                 ("matched_child_packages", child_columns),
                 ("pending_child_packages", child_columns),
@@ -2346,18 +2520,43 @@ def save_outputs(all_records, khlcnt_outputs=None):
                 ("filtered_skip_khlcnt", plan_skip_columns),
                 ("khlcnt_plans", khlcnt_output_columns),
             ]:
+
                 rows = khlcnt_outputs.get(sheet_name, [])
+
                 df = pd.DataFrame(rows)
+
                 for column in columns:
                     if column not in df.columns:
                         df[column] = None
+
+                # CLEAN ILLEGAL CHARACTERS
+                df = df.applymap(clean_illegal_chars)
+
                 if sheet_name == "child_table_rows":
-                    dynamic_columns = [col for col in df.columns if col not in columns]
-                    df[columns + dynamic_columns].to_excel(writer, sheet_name=sheet_name[:31], index=False)
+
+                    dynamic_columns = [
+                        col for col in df.columns
+                        if col not in columns
+                    ]
+
+                    df[columns + dynamic_columns].to_excel(
+                        writer,
+                        sheet_name=sheet_name[:31],
+                        index=False,
+                    )
+
                 else:
-                    df[columns].to_excel(writer, sheet_name=sheet_name[:31], index=False)
+
+                    df[columns].to_excel(
+                        writer,
+                        sheet_name=sheet_name[:31],
+                        index=False,
+                    )
+
         logger.info(
-            "Đã lưu khlcnt_child_packages.xlsx: CHỌN child=%s | child bị loại=%s | child có TBMT=%s | child treo=%s | KHLCNT skip=%s",
+            "Đã lưu khlcnt_child_packages.xlsx: "
+            "CHỌN child=%s | child bị loại=%s | "
+            "child có TBMT=%s | child treo=%s | KHLCNT skip=%s",
             len(khlcnt_outputs.get("matched_child_packages", [])),
             len(khlcnt_outputs.get("filtered_child_packages", [])),
             len(khlcnt_outputs.get("linked_child_packages", [])),

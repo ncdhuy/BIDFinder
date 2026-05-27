@@ -127,6 +127,11 @@ def _get_env_bool(name, default=False):
 SKIP_DAYS = _get_env_int("SKIP_DAYS", 7)
 KHLCNT_LINKED_PENDING_SKIP_DAYS = _get_env_int("KHLCNT_LINKED_PENDING_SKIP_DAYS", 30)
 KHLCNT_RESULTDTO_TIMEOUT = _get_env_float("KHLCNT_RESULTDTO_TIMEOUT", 10)
+KHLCNT_CHILD_UI_QD_TIMEOUT = _get_env_float("KHLCNT_CHILD_UI_QD_TIMEOUT", 4)
+KHLCNT_CHILD_IDENTITY_TIMEOUT = _get_env_float("KHLCNT_CHILD_IDENTITY_TIMEOUT", max(KHLCNT_RESULTDTO_TIMEOUT, 5))
+KHLCNT_CHILD_SYNC_RETRY_TIMEOUT = _get_env_float("KHLCNT_CHILD_SYNC_RETRY_TIMEOUT", max(KHLCNT_CHILD_IDENTITY_TIMEOUT, 4))
+KHLCNT_CHILD_UI_STABLE_SECONDS = _get_env_float("KHLCNT_CHILD_UI_STABLE_SECONDS", 0.8)
+KHLCNT_TARGET_CARD_TIMEOUT = _get_env_float("KHLCNT_TARGET_CARD_TIMEOUT", 2)
 KHLCNT_BACKFILL_CURSOR_ENABLED = _get_env_bool("KHLCNT_BACKFILL_CURSOR_ENABLED", False)
 KHLCNT_BACKFILL_CURSOR_FILE = os.getenv("KHLCNT_BACKFILL_CURSOR_FILE") or os.path.join(BASE_DIR, "khlcnt_backfill_cursor.json")
 FORCE_FULL_SCAN = _get_env_bool("FORCE_FULL_SCAN", False)
@@ -1289,21 +1294,25 @@ def append_run_history(start_time, end_time, boxes_selected_count):
 
 # ================== TỪ KHÓA LỌC ==================
 loai_tu_gian_giao_thau = [
-    "kích thích", "môi trường", "nông nghiệp", "khuyến nông", "nông dân", "vườn", "thức ăn", "bvtv", "bảo vệ thực vật",
-    "lúa", "cao su", "giống", "phân bón", "diệt cỏ", "thuốc cỏ", "trừ cỏ", "thuốc sâu", "tưới nước", "cắt cỏ", "thuốc xịt cỏ",
+    "kích thích", "nông nghiệp", "khuyến nông", "nông dân", "vườn", "thức ăn", "bvtv", "bảo vệ thực vật",
+    "lúa", "cao su", "giống", "phân bón", "phân hữu cơ", "diệt cỏ", "thuốc cỏ", "trừ cỏ", "thuốc sâu", "tưới nước", "cắt cỏ", "thuốc xịt cỏ",
     "trừ sâu", "trừ bệnh", "rầy côn trùng", "phấn trắng", "đạo ôn", "chăn nuôi", "thủy sản", "thú y", "rừng",
-    "vật nuôi", "gia súc", "gia cầm", "chó", "mèo", "ruồi", "gà", "trâu", "bò", "vịt", "chuột", "cá", "tôm", "heo",
-    "muỗi", "mối", "lở mồm", "cúm gia cầm", "lợn", "nấm hồng", "bệnh lá", "cây trồng",
-    "vị thuốc", "thuốc y học cổ truyền", "chế phẩm y học cổ truyền", "thuốc cổ truyền", "đông y", "sinh học", "shpt", 
+    "vật nuôi", "gia súc", "gia cầm", "chó", "mèo", "ruồi", "gà", "trâu", "bò", "vịt", "chuột", "cá", "tôm", "heo", "ốc sên", "cua",
+    "muỗi", "xử lý mối", "chống mối", "lở mồm", "cúm gia cầm", "lợn", "lươn","khoai tây", "cây ăn quả", "cây công nghiệp", "cây xanh",
+    "nấm hồng", "bệnh lá", "cây trồng", "trang trại", "ớt",
+    "vị thuốc", "thuốc y học cổ truyền", "chế phẩm y học cổ truyền", "thuốc cổ truyền", "đông y",
     "thuốc dược liệu", "thuốc thành phẩm y học cổ truyền", "tủ", "kho thuốc", "thuốc nổ",
-    "sản xuất", "cứu hỏa", "lao động", "công nghiệp", "bão", "lụt", "hàng hóa dịch vụ", "phần mềm", "thuốc lá",
-    "quặng", "nhuộm", "văn phòng", "bảo quản", "bao đựng", "rác", "túi đựng", "mực in", "giấy in", "linh kiện",
+    "cứu hỏa", "lao động", "công nghiệp", "bão", "lụt", "hàng hóa dịch vụ", "phần mềm", "thuốc lá",
+    "quặng", "văn phòng", "bảo quản", "bao đựng", "rác", "chất thải", "mực in", "giấy in",
     "nghiên cứu", "kiểm nghiệm", "mỹ thuật", "nhu yếu phẩm", "tài sản", "lương thực", "in ấn", "sửa chữa",
-    "thí nghiệm", "nhu yếu phẩm", "vận chuyển","công nghệ thông tin", "hệ thống mạng", "tin học", "máy tính",
-    "mạng lan", "chống sét", "xử lý nước thải", "sắc ký", "quang phổ", "sửa chữa", "máy phun thuốc", "thuốc hàn",
+    "thí nghiệm", "nhu yếu phẩm", "công nghệ thông tin", "hệ thống mạng", "tin học", "máy tính",
+    "mạng lan", "chống sét", "xử lý nước thải", "quang phổ", "sửa chữa", "máy phun thuốc", "thuốc hàn",
     "truyền thông", "xe", "máy soi thuốc", "cây thuốc", "đông dược", "dịch chiết", "tinh dầu",
-    "máy chiết xơ", "nội độc tố", "dung môi", "chất chuẩn", "chuẩn hóa", "kiểm tra", "độ hòa tan", "bình phun thuốc",
-    "tư vấn", "thi công", "gia công", "giám sát", "lắp đặt", "điều hòa",
+    "máy chiết xơ", "nội độc tố", "dung môi", "chất chuẩn", "chuẩn hóa", "độ hòa tan", "bình phun thuốc",
+    "tư vấn", "thi công", "gia công", "giám sát", "lắp đặt", "điều hòa", "đề tài", "bể bơi", "công cụ dụng cụ", "quan trắc","thông cống",
+    "nông thôn", "du lịch", "vật tư hóa chất phục vụ chuyên ngành", "dịch hại", "canh tác", "thẩm định hồ sơ", "lập hồ sơ", "E-HSMT", "HSMT"
+    "rượu", "hoa, quả", "công trình", "kiểm toán","hút hầm cầu",
+
 ]
  
 loai_chu_dau_tu = [
@@ -1317,14 +1326,40 @@ loai_chu_dau_tu = [
     ("phòng kinh tế", []),
     ("thuốc lá", []),
     ("viện nghiên cứu", []),
+    ("trung tâm nghiên cứu", []),
     ("chế biến", []),
     ("nông lâm", []),
     ("nước sạch", []),
-    ("vệ sinh", []),
-    ("công ty", []),
+    ("vệ sinh", ["dịch tễ"]),
+    ("công ty", ["bệnh viện"]),
     ("chăn nuôi", []),
     ("thú y", []),
     ("kiểm nghiệm", []),
+    ("môi trường", []),
+    ("tên lửa", []),
+    ("viện công nghệ", []),
+    ("viện khoa học", []),
+    ("đổi mới", []),
+    ("sáng tạo", []),
+    ("thuốc nổ", []),
+    ("viện hóa học", []),
+    ("trung tâm nhiệt đới", []),
+    ("kinh tế", []),
+    ("lúa", []),
+    ('trung tâm chiếu xạ', []),
+    ('kiểm lâm', []),
+    ("thực vật", []),
+    ("đạn dược", []),
+    ("liên đoàn quy hoạch", []),
+    ("trung tâm công nghệ", []),
+    ("trung tâm dịch vụ", []),
+    ("trung tâm thực nghiệm", []),
+    ("vũ trụ", []),
+    ("viện sinh học", []),
+    ("viện sinh thái", []),
+    ("vật lý", []),
+    ("vũ khí", []),
+
 ]
 
 tu_khoa_luu_lai = [
@@ -1547,6 +1582,9 @@ def extract_additional_info():
     info = {}
     field_map = {
         "mã tbmt": "Mã TBMT",
+        "mã thông báo mời thầu": "Mã TBMT",
+        "số tbmt": "Mã TBMT",
+        "số thông báo mời thầu": "Mã TBMT",
         "ngày đăng tải": "Ngày đăng tải",
         "trạng thái đăng tải kq": "Trạng thái đăng tải KQ",
         "trạng thái kqlcnt": "Trạng thái KQLCNT",
@@ -1648,9 +1686,61 @@ def get_info_card_value(*titles):
     return ""
 
 
+def normalize_tbmt_code(value):
+    codes = extract_tbmt_codes(value)
+    if codes:
+        return codes[0]
+    return _collapse_whitespace(value)
+
+
+def get_current_child_so_qd_from_ui(info_snapshot=None):
+    return (
+        get_info_card_value("Số quyết định phê duyệt")
+        or (info_snapshot or {}).get("Số quyết định phê duyệt")
+        or ""
+    )
+
+
+def get_current_child_version_from_ui():
+    sel = find_khlcnt_result_version_select()
+    if sel:
+        try:
+            return normalize_version_code(Select(sel).first_selected_option.text) or "00"
+        except Exception:
+            pass
+    version = normalize_version_code(get_info_card_value("Phiên bản thay đổi", "Phiên bản KQ"))
+    if version and version != "UNKNOWN":
+        return version
+    return "00"
+
+
+def is_khlcnt_no_bidder_result_text(value):
+    text = normalize_info_label(value).casefold()
+    text_no_accents = "".join(
+        char for char in unicodedata.normalize("NFD", text)
+        if unicodedata.category(char) != "Mn"
+    )
+    return (
+        "không có nhà thầu tham dự" in text
+        or "khong co nha thau tham du" in text_no_accents
+    )
+
+
+def get_current_khlcnt_result_text():
+    return get_info_card_value(
+        "Kết quả lựa chọn nhà thầu",
+        "Kết quả LCNT",
+        "Kết quả lựa chọn nhà thầu/nhà đầu tư",
+    )
+
+
+def current_khlcnt_result_has_no_bidder():
+    return is_khlcnt_no_bidder_result_text(get_current_khlcnt_result_text())
+
+
 def get_khlcnt_detail_signature():
     values = [
-        get_info_card_value("Mã TBMT"),
+        get_info_card_value("Mã TBMT", "Mã thông báo mời thầu", "Số TBMT", "Số thông báo mời thầu"),
         get_info_card_value("Số quyết định phê duyệt"),
         get_info_card_value("Tên gói thầu"),
         get_info_card_value("Phiên bản thay đổi", "Phiên bản KQ"),
@@ -2538,9 +2628,25 @@ def normalize_version_code(raw_text):
     """
     if not raw_text:
         return None
-    txt = " ".join(raw_text.split())  # gộp nhiều space
+    txt = normalize_info_label(raw_text)
+    if not txt:
+        return None
+    txt = re.sub(r"(?i)\b(?:v|version|phiên bản|phien ban)\b", " ", txt)
     txt = txt.replace(" / ", "/").replace(" /", "/").replace("/ ", "/")
-    txt = txt.replace("/", "-")
+
+    separated = re.search(r"(\d{1,3})\s*[-/]\s*(\d{1,3})", txt)
+    if separated:
+        return f"{int(separated.group(1)):02d}-{int(separated.group(2)):02d}"
+
+    compact = re.sub(r"\D", "", txt)
+    if re.fullmatch(r"\d{4,6}", compact):
+        # TextContent của select đôi khi nối các option lại thành "0100".
+        # Với KHLCNT version nghiệp vụ là option đầu đang được chọn.
+        return compact[:2]
+
+    match = re.search(r"\d{1,3}", txt)
+    if match:
+        return f"{int(match.group(0)):02d}"
     return txt
 
 def get_single_version_select_and_codes():
@@ -2764,7 +2870,9 @@ def get_khlcnt_result_version_entries():
         return [(None, current_version if current_version and current_version != "UNKNOWN" else "00")]
 
     try:
-        options = Select(sel).options
+        select_obj = Select(sel)
+        options = select_obj.options
+        selected_index = options.index(select_obj.first_selected_option)
     except Exception:
         return [(None, "00")]
 
@@ -2772,11 +2880,11 @@ def get_khlcnt_result_version_entries():
     for idx, option in enumerate(options):
         version = normalize_version_code((option.text or "").strip())
         if version:
-            entries.append((idx if len(options) > 1 else None, version))
+            entries.append((idx if len(options) > 1 and idx != selected_index else None, version))
     return entries or [(None, "00")]
 
 
-def select_khlcnt_result_version(target_index):
+def select_khlcnt_result_version(target_index, wait_payload=True):
     if target_index is None:
         return None
     select_elem = find_khlcnt_result_version_select()
@@ -2787,27 +2895,98 @@ def select_khlcnt_result_version(target_index):
     clear_performance_logs()
     wait_version_applied(select_elem, target_index)
     try:
-        WebDriverWait(driver, 8).until(
+        WebDriverWait(driver, 2).until(
             lambda d: get_khlcnt_detail_signature() != old_signature
             or get_info_card_value("Số quyết định phê duyệt") != old_so_qd
+            or current_khlcnt_result_has_no_bidder()
         )
     except Exception:
         pass
-    wait_dom_settled(timeout=4)
+    wait_dom_settled(timeout=1)
+    if not wait_payload:
+        return None
     return wait_for_kqlcnt_result_payload(timeout=KHLCNT_RESULTDTO_TIMEOUT)
 
 
-def wait_for_kqlcnt_result_payload(timeout=10):
+def wait_for_kqlcnt_result_payload(timeout=10, expected_so_qd=None):
+    expected_qd = _collapse_whitespace(expected_so_qd)
     end = time.time() + timeout
     last_payload = None
     while time.time() < end:
-        payload = extract_kqlcnt_result_from_performance_logs()
+        payload = extract_kqlcnt_result_from_performance_logs(expected_so_qd=expected_qd)
         if payload:
+            payload_qd = _collapse_whitespace(payload.get("so_qd"))
+            if expected_qd and payload_qd != expected_qd:
+                logger.info("⏭️ Bỏ qua XHR KQLCNT stale: %s != %s", payload_qd or "EMPTY_QD", expected_qd)
+                time.sleep(0.2)
+                continue
             if payload.get("url_goi_thau_con"):
                 return payload
             last_payload = last_payload or payload
         time.sleep(0.35)
     return last_payload
+
+
+def wait_for_current_khlcnt_child_identity(timeout=None, ignore_ui_qd=None, expected_ui_qd=None):
+    timeout = KHLCNT_CHILD_IDENTITY_TIMEOUT if timeout is None else timeout
+    ignored_qd = _collapse_whitespace(ignore_ui_qd)
+    expected_qd = _collapse_whitespace(expected_ui_qd)
+    end = time.time() + timeout
+    payloads = []
+    seen_keys = set()
+    last_ui_qd = ""
+    stable_ui_qd = ""
+    stable_since = None
+
+    while time.time() < end:
+        now = time.time()
+        ui_qd = _collapse_whitespace(get_current_child_so_qd_from_ui())
+        if ui_qd:
+            last_ui_qd = ui_qd
+        if ui_qd != stable_ui_qd:
+            stable_ui_qd = ui_qd
+            stable_since = now if ui_qd else None
+        for payload in extract_kqlcnt_results_from_performance_logs():
+            key = (
+                payload.get("tbmt_code") or "",
+                _collapse_whitespace(payload.get("so_qd")),
+                payload.get("url_goi_thau_con") or "",
+            )
+            if key not in seen_keys:
+                seen_keys.add(key)
+                payloads.append(payload)
+
+        ui_stable_enough = (
+            ui_qd
+            and stable_since is not None
+            and now - stable_since >= KHLCNT_CHILD_UI_STABLE_SECONDS
+        )
+        if ui_stable_enough and ui_qd != ignored_qd and (not expected_qd or ui_qd == expected_qd):
+            for candidate in reversed(payloads):
+                if (
+                    candidate.get("tbmt_code")
+                    and _collapse_whitespace(candidate.get("so_qd")) == ui_qd
+                ):
+                    return candidate, ui_qd
+
+        time.sleep(0.15)
+
+    return None, last_ui_qd
+
+
+def wait_for_ui_so_qd(expected_so_qd, timeout=None):
+    expected_qd = _collapse_whitespace(expected_so_qd)
+    if not expected_qd:
+        return ""
+    timeout = KHLCNT_CHILD_UI_QD_TIMEOUT if timeout is None else timeout
+    end = time.time() + timeout
+    last_ui_qd = ""
+    while time.time() < end:
+        last_ui_qd = _collapse_whitespace(get_current_child_so_qd_from_ui())
+        if last_ui_qd == expected_qd:
+            return last_ui_qd
+        time.sleep(0.12)
+    return last_ui_qd
 
 
 # ========== HÀM TẢI EXCEL/ĐÍNH KÈM CHO QĐ ĐANG CHỌN ==========
@@ -3974,10 +4153,13 @@ def prepare_search_form(search_keyword: str, notice_type: str = DEFAULT_SEARCH_N
 
 
 def go_to_next_results_page():
-    next_button = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button.btn-next:not([disabled])")))
-    next_button.click()
-    time.sleep(3)
-    wait_dom_settled(timeout=15)
+    next_button = wait.until(
+        EC.presence_of_element_located(
+            (By.CSS_SELECTOR, "button.btn-next:not([disabled])")
+        )
+    )
+    driver.execute_script("arguments[0].click();", next_button)
+    wait_dom_settled(timeout=10)
     return True
 
 
@@ -4261,7 +4443,7 @@ def walk_json_objects(data):
 
 
 def build_kqlcnt_url(data: dict, base_url: str = "https://muasamcong.mpi.gov.vn/web/guest/contractor-selection") -> str:
-    result = data.get("resultDTO") or {}
+    result = data.get("resultDTO") or data.get("bideContractorInputResultDTO") or {}
     input_result_id = result.get("id")
     notify_no = result.get("notifyNo")
     plan_no = data.get("planNo") or result.get("planNo")
@@ -4293,23 +4475,87 @@ def build_kqlcnt_url(data: dict, base_url: str = "https://muasamcong.mpi.gov.vn/
     return f"{base_url}?{urlencode(params)}"
 
 
-def find_kqlcnt_result_payload(data):
+def get_kqlcnt_result_dto(obj):
+    if not isinstance(obj, dict):
+        return None, ""
+    result = obj.get("resultDTO")
+    if isinstance(result, dict):
+        return result, "resultDTO"
+    result = obj.get("bideContractorInputResultDTO")
+    if isinstance(result, dict):
+        return result, "bideContractorInputResultDTO"
+    return None, ""
+
+
+def kqlcnt_result_has_no_bidder(result):
+    lots = result.get("lotResultDTO") if isinstance(result, dict) else None
+    if not isinstance(lots, list) or not lots:
+        return False
+
+    saw_no_bidder_marker = False
+    for lot in lots:
+        if not isinstance(lot, dict):
+            continue
+        contractors = lot.get("contractorList")
+        if isinstance(contractors, list) and contractors:
+            return False
+        if lot.get("status") == 3:
+            saw_no_bidder_marker = True
+
+        goods_raw = lot.get("goodsList")
+        goods_items = []
+        if isinstance(goods_raw, str) and goods_raw.strip():
+            try:
+                goods_items = json.loads(goods_raw)
+            except Exception:
+                goods_items = []
+        elif isinstance(goods_raw, list):
+            goods_items = goods_raw
+
+        for item in goods_items:
+            if not isinstance(item, dict):
+                continue
+            if item.get("winContractors"):
+                return False
+            if item.get("status") == 3:
+                saw_no_bidder_marker = True
+
+    return saw_no_bidder_marker
+
+
+def find_kqlcnt_result_payloads(data, expected_so_qd=None):
+    expected_qd = _collapse_whitespace(expected_so_qd)
+    payloads = []
     for obj in walk_json_objects(data):
-        result = obj.get("resultDTO") if isinstance(obj, dict) else None
+        result, result_key = get_kqlcnt_result_dto(obj)
         if not isinstance(result, dict):
+            continue
+        decision_no = _collapse_whitespace(result.get("decisionNo"))
+        if expected_qd and decision_no != expected_qd:
             continue
         notify_codes = extract_tbmt_codes(result.get("notifyNo"))
         if not notify_codes:
             continue
-        return {
+        payload = {
             "data": obj,
             "tbmt_codes": notify_codes,
             "tbmt_code": notify_codes[0],
-            "so_qd": result.get("decisionNo") or "",
+            "so_qd": decision_no,
             "version": result.get("resultVersion") or result.get("notifyVersion") or "",
             "url_goi_thau_con": build_kqlcnt_url(obj),
+            "result_key": result_key,
+            "no_bidder": kqlcnt_result_has_no_bidder(result),
         }
-    return None
+        payloads.append(payload)
+    return payloads
+
+
+def find_kqlcnt_result_payload(data, expected_so_qd=None):
+    payloads = find_kqlcnt_result_payloads(data, expected_so_qd=expected_so_qd)
+    for payload in payloads:
+        if payload.get("url_goi_thau_con"):
+            return payload
+    return payloads[0] if payloads else None
 
 
 def clear_performance_logs():
@@ -4319,12 +4565,13 @@ def clear_performance_logs():
         pass
 
 
-def extract_kqlcnt_result_from_performance_logs():
+def extract_kqlcnt_results_from_performance_logs(expected_so_qd=None):
     try:
         entries = driver.get_log("performance")
     except Exception:
-        return None
-    fallback_payload = None
+        return []
+    found_payloads = []
+    seen_keys = set()
     for entry in entries:
         try:
             message = json.loads(entry.get("message", "{}")).get("message", {})
@@ -4351,13 +4598,25 @@ def extract_kqlcnt_result_from_performance_logs():
                 body = base64.b64decode(body).decode("utf-8", errors="ignore")
             except Exception:
                 continue
-        result_payload = find_kqlcnt_result_payload(body)
-        if not result_payload:
-            continue
-        if result_payload.get("url_goi_thau_con"):
-            return result_payload
-        fallback_payload = fallback_payload or result_payload
-    return fallback_payload
+        for result_payload in find_kqlcnt_result_payloads(body, expected_so_qd=expected_so_qd):
+            key = (
+                result_payload.get("tbmt_code") or "",
+                _collapse_whitespace(result_payload.get("so_qd")),
+                result_payload.get("url_goi_thau_con") or "",
+            )
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            found_payloads.append(result_payload)
+    return found_payloads
+
+
+def extract_kqlcnt_result_from_performance_logs(expected_so_qd=None):
+    payloads = extract_kqlcnt_results_from_performance_logs(expected_so_qd=expected_so_qd)
+    for payload in payloads:
+        if payload.get("url_goi_thau_con"):
+            return payload
+    return payloads[0] if payloads else None
 
 
 def open_url_in_new_tab(url):
@@ -4410,6 +4669,7 @@ def get_khlcnt_package_rows():
             "Giá gói thầu": cells[3].text.strip(),
             "Số thông báo liên kết": cells[4].text.strip(),
         })
+    logger.info("📋 KHLCNT đọc được %s child trong bảng gói thầu", len(parsed_rows))
     return parsed_rows
 
 
@@ -4441,10 +4701,59 @@ def build_khlcnt_child_metadata(plan_record, child_row, extra=None):
     return metadata
 
 
+def get_khlcnt_child_no(child_row, child_index):
+    return child_row.get("STT gói thầu con") or child_index
+
+
+def get_khlcnt_payload_version(payload, fallback="00"):
+    if payload:
+        version = normalize_version_code(payload.get("version"))
+        if version:
+            return version
+    return normalize_version_code(fallback) or "00"
+
+
+def log_khlcnt_child_unit(level, child_row, child_index, tbmt, so_qd, version, message):
+    message_text = str(message or "")
+    icon = "✅"
+    if message_text.startswith(("SAME_VERSION", "OLDER_VERSION", "SKIPPED", "NORMALIZED_DUPLICATE", "Không có")):
+        icon = "⏭️ "
+    logger.log(
+        level,
+        "%s Child %s -> %s / %s / v%s: %s",
+        icon,
+        get_khlcnt_child_no(child_row, child_index),
+        tbmt or "EMPTY_TBMT",
+        so_qd or "EMPTY_QD",
+        version or "00",
+        message_text,
+    )
+
+
+def log_khlcnt_child_no_bidder(child_row, child_index, payload=None, fallback_version="00"):
+    if payload:
+        log_khlcnt_child_unit(
+            logging.INFO,
+            child_row,
+            child_index,
+            payload.get("tbmt_code"),
+            _collapse_whitespace(payload.get("so_qd")),
+            get_khlcnt_payload_version(payload, fallback_version),
+            "Không có nhà thầu tham dự",
+        )
+        return
+    logger.info(
+        "⏭️  Child %s / v%s: Không có nhà thầu tham dự",
+        get_khlcnt_child_no(child_row, child_index),
+        normalize_version_code(fallback_version) or "00",
+    )
+
+
 def click_khlcnt_child_name_detail(child_row):
     row_index = int(child_row.get("Dòng gói thầu con") or 0)
     if row_index <= 0:
         raise ValueError("Thiếu Dòng gói thầu con để click detail.")
+    previous_so_qd = get_current_child_so_qd_from_ui()
     table_xpath = (
         "//table[.//th[contains(normalize-space(),'Tên gói thầu')] "
         "and .//th[contains(normalize-space(),'Số thông báo liên kết')]]"
@@ -4461,7 +4770,7 @@ def click_khlcnt_child_name_detail(child_row):
     if not khlcnt_quick_click(child_link):
         raise TimeoutException("Không click được tên gói thầu con KHLCNT")
     wait_document_ready_quick(timeout=2)
-    return previous_url
+    return previous_url, previous_so_qd
 
 
 def return_to_khlcnt_detail(previous_url):
@@ -4475,16 +4784,43 @@ def return_to_khlcnt_detail(previous_url):
 
 
 def process_khlcnt_no_linked_child(plan_record, child_row, child_index, return_after=True):
-    previous_url = click_khlcnt_child_name_detail(child_row)
     child_state = {"saved": False, "pending": False, "status": "NO_RESULT"}
+    previous_url = None
     try:
-        result_payload = wait_for_kqlcnt_result_payload(timeout=KHLCNT_RESULTDTO_TIMEOUT)
+        previous_url, previous_so_qd = click_khlcnt_child_name_detail(child_row)
+        result_payload, ui_so_qd_seen = wait_for_current_khlcnt_child_identity(
+            ignore_ui_qd=previous_so_qd
+        )
         tbmt_code = result_payload.get("tbmt_code") if result_payload else ""
-        if not tbmt_code:
-            logger.info("⏸️ KHLCNT %s | child %s: chưa có resultDTO", plan_record.get("Mã KHLCNT", ""), child_index)
+        payload_so_qd_initial = _collapse_whitespace(result_payload.get("so_qd")) if result_payload else ""
+        if result_payload and result_payload.get("no_bidder"):
+            log_khlcnt_child_no_bidder(
+                child_row,
+                child_index,
+                result_payload,
+                fallback_version=get_current_child_version_from_ui(),
+            )
+            child_state.update({"saved": True, "status": "SKIPPED_NO_BIDDER"})
+            return child_state
+        if not tbmt_code or not payload_so_qd_initial:
+            if current_khlcnt_result_has_no_bidder():
+                log_khlcnt_child_no_bidder(
+                    child_row,
+                    child_index,
+                    result_payload,
+                    fallback_version=get_current_child_version_from_ui(),
+                )
+                child_state.update({"saved": True, "status": "SKIPPED_NO_BIDDER"})
+                return child_state
+            logger.info(
+                "⏸️  Child %s: chưa bắt được resultDTO TBMT sau click (ui_qd=%s)",
+                get_khlcnt_child_no(child_row, child_index),
+                ui_so_qd_seen or "EMPTY",
+            )
             child_state.update({"pending": True, "status": "PENDING_NO_RESULTDTO"})
             return child_state
 
+        info_snapshot = extract_additional_info()
         saved_any = False
         pending_any = False
         base_kqlcnt_url = result_payload.get("url_goi_thau_con") or ""
@@ -4492,51 +4828,139 @@ def process_khlcnt_no_linked_child(plan_record, child_row, child_index, return_a
 
         for version_index, planned_version in version_entries:
             version_payload = result_payload
+            metadata = build_khlcnt_child_metadata(plan_record, child_row, {"URL gói thầu con": base_kqlcnt_url})
+            if info_snapshot.get("Phân loại gói thầu"):
+                metadata["Phân loại gói thầu"] = info_snapshot.get("Phân loại gói thầu")
+
             if version_index is not None:
                 try:
-                    version_payload = select_khlcnt_result_version(version_index) or {}
+                    select_khlcnt_result_version(version_index, wait_payload=False)
+                    if current_khlcnt_result_has_no_bidder():
+                        no_bidder_payload, _no_bidder_ui_qd = wait_for_current_khlcnt_child_identity(
+                            timeout=min(KHLCNT_CHILD_IDENTITY_TIMEOUT, 3),
+                            expected_ui_qd=_collapse_whitespace(get_current_child_so_qd_from_ui()),
+                        )
+                        log_khlcnt_child_no_bidder(
+                            child_row,
+                            child_index,
+                            no_bidder_payload,
+                            fallback_version=planned_version,
+                        )
+                        saved_any = True
+                        continue
+                    expected_version_qd = _collapse_whitespace(get_current_child_so_qd_from_ui())
+                    version_payload, ui_so_qd_seen = wait_for_current_khlcnt_child_identity(
+                        expected_ui_qd=expected_version_qd
+                    )
+                    if version_payload and version_payload.get("no_bidder"):
+                        log_khlcnt_child_no_bidder(
+                            child_row,
+                            child_index,
+                            version_payload,
+                            fallback_version=planned_version,
+                        )
+                        saved_any = True
+                        continue
                 except Exception as error:
                     logger.info(
-                        "⏸️ KHLCNT %s | child %s version %s lỗi tạm: %s",
-                        plan_record.get("Mã KHLCNT", ""),
-                        child_index,
+                        "⏸️  Child %s / v%s: lỗi khi đổi version (%s)",
+                        get_khlcnt_child_no(child_row, child_index),
                         planned_version or version_index,
                         str(error)[:180],
                     )
                     pending_any = True
                     continue
 
-            effective_tbmt = version_payload.get("tbmt_code") or tbmt_code
-            kqlcnt_url = version_payload.get("url_goi_thau_con") or base_kqlcnt_url
-            wait_dom_settled(timeout=4)
-            info_snapshot = extract_additional_info()
-            so_qd = (
-                version_payload.get("so_qd")
-                or get_info_card_value("Số quyết định phê duyệt")
-                or info_snapshot.get("Số quyết định phê duyệt")
-                or "N/A"
-            )
-            version = normalize_version_code(
-                planned_version
-                or version_payload.get("version")
-                or get_current_ui_version()
-                or "00"
-            ) or "00"
+            if not version_payload:
+                logger.info(
+                    "⏸️  Child %s version %s: chưa bắt được XHR TBMT/QĐ, giữ child để retry sau",
+                    get_khlcnt_child_no(child_row, child_index),
+                    planned_version,
+                )
+                pending_any = True
+                break
 
-            metadata = build_khlcnt_child_metadata(plan_record, child_row, {"URL gói thầu con": kqlcnt_url})
-            if info_snapshot.get("Phân loại gói thầu"):
-                metadata["Phân loại gói thầu"] = info_snapshot.get("Phân loại gói thầu")
+            kqlcnt_url = version_payload.get("url_goi_thau_con") or base_kqlcnt_url
+            if version_index is not None:
+                wait_dom_settled(timeout=1)
+            effective_tbmt = version_payload.get("tbmt_code") or ""
+            payload_so_qd = _collapse_whitespace(version_payload.get("so_qd"))
+            ui_so_qd = wait_for_ui_so_qd(payload_so_qd, timeout=KHLCNT_CHILD_SYNC_RETRY_TIMEOUT)
+            if payload_so_qd and ui_so_qd != payload_so_qd:
+                synced_payload, synced_ui_qd = wait_for_current_khlcnt_child_identity(
+                    timeout=KHLCNT_CHILD_SYNC_RETRY_TIMEOUT,
+                    expected_ui_qd=payload_so_qd,
+                )
+                if synced_payload:
+                    version_payload = synced_payload
+                    effective_tbmt = version_payload.get("tbmt_code") or ""
+                    payload_so_qd = _collapse_whitespace(version_payload.get("so_qd"))
+                    ui_so_qd = synced_ui_qd
+            info_snapshot = extract_additional_info()
+            if not effective_tbmt or not ui_so_qd or payload_so_qd != _collapse_whitespace(ui_so_qd):
+                logger.info(
+                    "⏸️  Child %s: UI chưa đồng bộ xong với XHR TBMT, giữ child để retry sau (xhr_tbmt=%s, xhr_qd=%s, ui_qd=%s)",
+                    get_khlcnt_child_no(child_row, child_index),
+                    effective_tbmt or "EMPTY",
+                    payload_so_qd or "EMPTY",
+                    ui_so_qd or "EMPTY",
+                )
+                pending_any = True
+                break
+            so_qd = ui_so_qd
+            version = get_current_child_version_from_ui()
+
+            metadata["URL gói thầu con"] = kqlcnt_url
 
             should_download, _download_reason = tracker.should_download_unit(effective_tbmt, so_qd, version)
             if not should_download:
                 tracker.save_khlcnt_metadata_for_tbmt(effective_tbmt, metadata)
+                log_khlcnt_child_unit(
+                    logging.INFO,
+                    child_row,
+                    child_index,
+                    effective_tbmt,
+                    so_qd,
+                    version,
+                    _download_reason,
+                )
+                saved_any = True
                 continue
 
             try:
-                target_card, target_card_name = find_target_item_card(timeout=4)
+                target_card, target_card_name = find_target_item_card(timeout=KHLCNT_TARGET_CARD_TIMEOUT)
             except TimeoutException:
-                logger.info("⏸️ KHLCNT %s -> %s / %s / v%s: chưa có card thuốc/hàng hóa", plan_record.get("Mã KHLCNT", ""), effective_tbmt, so_qd, version)
-                pending_any = True
+                logger.info(
+                    "ℹ️ Child %s -> %s / %s / v%s: chưa có card thuốc/hàng hóa, thử tải PDF QĐ",
+                    get_khlcnt_child_no(child_row, child_index),
+                    effective_tbmt,
+                    so_qd,
+                    version,
+                )
+                pdf_ok, pdf_path = download_approval_pdf_if_present(effective_tbmt, so_qd, version, timeout=2)
+                if not pdf_ok:
+                    pending_any = True
+                    continue
+
+                package_info = dict(info_snapshot)
+                package_info.update(metadata)
+                package_info.update({
+                    "Mã TBMT": effective_tbmt,
+                    "Cách thức tải về": "KHLCNT_NO_LINKED_TBMT: PDF_ONLY_NO_CARD",
+                    "File Path": pdf_path,
+                })
+                tracker.save_metadata(effective_tbmt, so_qd, version, package_info)
+                tracker.save_khlcnt_metadata_for_tbmt(effective_tbmt, metadata)
+                log_khlcnt_child_unit(
+                    logging.INFO,
+                    child_row,
+                    child_index,
+                    effective_tbmt,
+                    so_qd,
+                    version,
+                    "PDF_ONLY_NO_CARD",
+                )
+                saved_any = True
                 continue
 
             winner_fact = extract_web_winner_fact()
@@ -4551,7 +4975,13 @@ def process_khlcnt_no_linked_child(plan_record, child_row, child_index, return_a
                 target_card_name=target_card_name,
             )
             if not result_file:
-                logger.info("⏸️ KHLCNT %s -> %s / %s / v%s: không đọc được bảng dữ liệu", plan_record.get("Mã KHLCNT", ""), effective_tbmt, so_qd, version)
+                logger.info(
+                    "⏸️  Child %s -> %s / %s / v%s: không đọc được bảng dữ liệu",
+                    get_khlcnt_child_no(child_row, child_index),
+                    effective_tbmt,
+                    so_qd,
+                    version,
+                )
                 pending_any = True
                 continue
 
@@ -4569,7 +4999,14 @@ def process_khlcnt_no_linked_child(plan_record, child_row, child_index, return_a
                 except Exception:
                     pass
             elif action not in {"INSERT", "UPDATE", "SKIPPED_DUPLICATE", "NORMALIZED_DUPLICATE"}:
-                logger.info("⏸️ KHLCNT %s -> %s / %s / v%s: không lưu được bảng (%s)", plan_record.get("Mã KHLCNT", ""), effective_tbmt, so_qd, version, action)
+                logger.info(
+                    "⏸️  Child %s -> %s / %s / v%s: không lưu được bảng (%s)",
+                    get_khlcnt_child_no(child_row, child_index),
+                    effective_tbmt,
+                    so_qd,
+                    version,
+                    action,
+                )
                 pending_any = True
                 continue
 
@@ -4584,7 +5021,15 @@ def process_khlcnt_no_linked_child(plan_record, child_row, child_index, return_a
             })
             tracker.save_metadata(effective_tbmt, so_qd, version, package_info)
             tracker.save_khlcnt_metadata_for_tbmt(effective_tbmt, metadata)
-            logger.info("✅ KHLCNT %s -> %s / %s / v%s | %s", plan_record.get("Mã KHLCNT", ""), effective_tbmt, so_qd, version, action)
+            log_khlcnt_child_unit(
+                logging.INFO,
+                child_row,
+                child_index,
+                effective_tbmt,
+                so_qd,
+                version,
+                action,
+            )
             saved_any = True
 
         child_state.update({
@@ -4594,11 +5039,16 @@ def process_khlcnt_no_linked_child(plan_record, child_row, child_index, return_a
         })
         return child_state
     except Exception as error:
-        logger.info("⏸️ KHLCNT %s | child %s lỗi tạm: %s", plan_record.get("Mã KHLCNT", ""), child_index, str(error)[:220])
+        previous_url = getattr(error, "previous_url", previous_url)
+        logger.info(
+            "⏸️  Child %s: lỗi xử lý KHLCNT_NO_LINKED_TBMT (%s)",
+            get_khlcnt_child_no(child_row, child_index),
+            str(error)[:220],
+        )
         child_state.update({"pending": True, "status": "PENDING_ERROR"})
         return child_state
     finally:
-        if return_after:
+        if return_after and previous_url:
             return_to_khlcnt_detail(previous_url)
 
 

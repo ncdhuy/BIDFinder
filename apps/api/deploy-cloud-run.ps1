@@ -1,12 +1,15 @@
 param(
     [string]$ServiceName = "bidfinder-api",
     [string]$Region = "asia-southeast1",
-    [string]$Memory = "512Mi",
+    [string]$Memory = "1Gi",
     [string]$Cpu = "1",
     [int]$Concurrency = 10,
     [int]$MinInstances = 0,
-    [int]$MaxInstances = 2,
+    [int]$MaxInstances = 6,
     [string]$Timeout = "120s",
+    [int]$DbPoolMinSize = 0,
+    [int]$DbPoolMaxSize = 4,
+    [int]$DbPoolMaxInactiveConnectionLifetime = 30,
     [string]$DbSecretName = "bidfinder-neon-database-url",
     [string]$GoogleClientIdSecretName = "",
     [string]$ResendApiKeySecretName = "",
@@ -27,12 +30,12 @@ param(
     [string]$SmtpUseSsl = "false",
     [string]$ResendFromName = "BIDFinder",
     [string]$AdminEmails = "admin@bidfinder.vn",
-    [int]$QueryRateLimitPerMinute = 2000,
-    [int]$AutocompleteRateLimitPerMinute = 3000,
-    [int]$PreviewRateLimitPerMinute = 3000,
+    [int]$QueryRateLimitPerMinute = 10000,
+    [int]$AutocompleteRateLimitPerMinute = 10000,
+    [int]$PreviewRateLimitPerMinute = 10000,
     [int]$FilterConfigRateLimitPerMinute = 1000,
     [int]$AuthRateLimitPerMinute = 500,
-    [int]$FeedbackRateLimitPerMinute = 10,
+    [int]$FeedbackRateLimitPerMinute = 10000,
     [int]$FeedbackReadRateLimitPerMinute = 60
 )
 
@@ -47,7 +50,9 @@ $envVars = @(
     "APP_TIMEZONE=$AppTimezone",
     "AUTH_PASSWORD_RESET_URL_BASE=$FrontendUrl",
     "AUTH_SESSION_TOUCH_INTERVAL_SECONDS=300",
-    "DB_POOL_MAX_SIZE=4",
+    "DB_POOL_MIN_SIZE=$DbPoolMinSize",
+    "DB_POOL_MAX_SIZE=$DbPoolMaxSize",
+    "DB_POOL_MAX_INACTIVE_CONNECTION_LIFETIME=$DbPoolMaxInactiveConnectionLifetime",
     "FULL_SEARCH_DAILY_LIMIT=$FullSearchDailyLimit",
     "TRUST_PROXY_HEADERS=true",
     "FRONTEND_URL=$FrontendUrl",
@@ -60,13 +65,18 @@ $envVars = @(
     "FEEDBACK_RATE_LIMIT_PER_MINUTE=$FeedbackRateLimitPerMinute",
     "FEEDBACK_READ_RATE_LIMIT_PER_MINUTE=$FeedbackReadRateLimitPerMinute",
     "ADMIN_EMAILS=$AdminEmails",
-    "RESEND_FROM_NAME=$ResendFromName",
-    "AUTH_SMTP_HOST=$SmtpHost",
-    "AUTH_SMTP_PORT=$SmtpPort",
-    "AUTH_SMTP_FROM_NAME=$SmtpFromName",
-    "AUTH_SMTP_USE_TLS=$SmtpUseTls",
-    "AUTH_SMTP_USE_SSL=$SmtpUseSsl"
+    "RESEND_FROM_NAME=$ResendFromName"
 )
+
+if ($SmtpHost -or $SmtpUsernameSecretName -or $SmtpPasswordSecretName -or $SmtpFromEmailSecretName) {
+    $envVars += @(
+        "AUTH_SMTP_HOST=$SmtpHost",
+        "AUTH_SMTP_PORT=$SmtpPort",
+        "AUTH_SMTP_FROM_NAME=$SmtpFromName",
+        "AUTH_SMTP_USE_TLS=$SmtpUseTls",
+        "AUTH_SMTP_USE_SSL=$SmtpUseSsl"
+    )
+}
 $envVarsArg = "^|^" + ($envVars -join "|")
 $secrets = @("DATABASE_URL=$DbSecretName`:latest")
 
@@ -100,5 +110,5 @@ gcloud run deploy $ServiceName `
     --min-instances $MinInstances `
     --max-instances $MaxInstances `
     --timeout $Timeout `
-    --set-secrets $secretsArg `
+    --update-secrets $secretsArg `
     --update-env-vars $envVarsArg

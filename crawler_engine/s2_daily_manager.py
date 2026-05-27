@@ -17,6 +17,8 @@ from web_winner_facts import (
 from s3_etl_pipeline import (
     analyze_review_column_gaps as etl_analyze_review_column_gaps,
     detect_non_vendor_group_header_manual_reason as etl_detect_non_vendor_group_header_manual_reason,
+    detect_invalid_numeric_cells_manual_reason as etl_detect_invalid_numeric_cells_manual_reason,
+    repair_goods_shifted_price_amount_columns as etl_repair_goods_shifted_price_amount_columns,
     normalize_grouped_rows_generic as etl_normalize_grouped_rows_generic,
     drop_summary_rows as etl_drop_summary_rows,
     autofill_group_header_values as etl_autofill_group_header_values,
@@ -439,6 +441,21 @@ def load_ignored_qd_map(cursor):
     for tbmt, so_qd in cursor.fetchall():
         ignored_map.setdefault(tbmt, set()).add(so_qd)
     return ignored_map
+
+
+def mark_typo_error_manifest_processed(cursor, manifest_date: str) -> int:
+    cursor.execute("""
+        UPDATE daily_manifest m
+        SET status = 'PROCESSED'
+        FROM qd_relations r
+        WHERE m.manifest_date = %s
+          AND m.status IN ('READY', 'PENDING_ETL_REVIEW')
+          AND r.relation_type = 'TYPO_ERROR'
+          AND r.ma_tbmt = m.ma_tbmt
+          AND r.so_qd = m.so_qd
+          AND r.version = m.version
+    """, (manifest_date,))
+    return int(cursor.rowcount or 0)
 
 
 def build_cancelled_unit_key_set(cursor, target_tbmts):
@@ -2632,6 +2649,11 @@ def prepare_schema_validation_frame(df_check: pd.DataFrame, schema_type: str):
     working_df = drop_summary_rows(working_df, post_fill_amount_col)
 
     if schema_type in ("MEDICINE_STANDARD", "GOODS_STANDARD"):
+        if schema_type == "GOODS_STANDARD":
+            working_df, _ = etl_repair_goods_shifted_price_amount_columns(working_df)
+        invalid_numeric_reason = etl_detect_invalid_numeric_cells_manual_reason(working_df, schema_type)
+        if invalid_numeric_reason:
+            structure_issues.append(invalid_numeric_reason)
         working_df = shared_drop_invalid_value_rows(working_df, schema_type)
 
     if working_df.empty:
@@ -2751,7 +2773,7 @@ def validate_manifest_schema(
         )
 
     missing_non_vendor = missing_mandatory - {"Nhà thầu trúng thầu"}
-    should_run_quality = not issues["SCHEMA_FIT"] and not missing_non_vendor
+    should_run_quality = not issues["STRUCTURE"] and not issues["SCHEMA_FIT"] and not missing_non_vendor
 
     if should_run_quality:
         density_cols = [col for col in mandatory if col in working_df.columns]
@@ -2796,6 +2818,7 @@ def load_excel_validation_frame(file_path, validation_scope=VALIDATION_SCOPE_DEC
     return load_excel_with_detected_header(
         file_path,
         sample_rows=sample_rows,
+        dtype=str,
     )
 
 
@@ -4807,6 +4830,10 @@ def finalize_and_generate_manifest(batch_limit=None):
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 ignored_qd_map = load_ignored_qd_map(cursor)
+                typo_processed_count = mark_typo_error_manifest_processed(cursor, TARGET_DATE)
+                if typo_processed_count:
+                    conn.commit()
+                    print(f"ℹ️ Đã bỏ qua {typo_processed_count} manifest TYPO_ERROR và đánh dấu PROCESSED.")
                 cursor.execute("""
                     SELECT ma_tbmt, so_qd, version
                     FROM daily_manifest

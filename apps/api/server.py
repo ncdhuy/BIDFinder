@@ -1623,22 +1623,7 @@ def build_total_count_query(scope_name: str, filters: Optional[FilterRequest]):
     return query, params
 
 
-async def fetch_scope_total_count(
-    conn: asyncpg.Connection,
-    scope_name: str,
-    filters: Optional[FilterRequest],
-) -> int:
-    query, params = build_total_count_query(scope_name, filters)
-    return int(await conn.fetchval(query, *params) or 0)
-
-
-def allocate_full_search_limits(
-    *,
-    scope: str,
-    total_limit: int,
-    medicine_count: Optional[int] = None,
-    goods_count: Optional[int] = None,
-) -> Dict[str, int]:
+def allocate_probe_full_search_limits(*, scope: str, total_limit: int) -> Dict[str, int]:
     safe_total_limit = max(1, int(total_limit))
 
     if scope == "medicine":
@@ -1646,36 +1631,10 @@ def allocate_full_search_limits(
     if scope == "goods":
         return {"goods": safe_total_limit}
 
-    med_count = max(0, int(medicine_count or 0))
-    goods_count = max(0, int(goods_count or 0))
-    base_split = max(1, safe_total_limit // 2)
-    total_available = med_count + goods_count
-
-    if total_available <= safe_total_limit:
-        return {
-            "medicine": med_count,
-            "goods": goods_count,
-        }
-
-    if med_count <= base_split and goods_count > base_split:
-        med_limit = med_count
-        goods_limit = min(goods_count, safe_total_limit - med_limit)
-        return {
-            "medicine": med_limit,
-            "goods": goods_limit,
-        }
-
-    if goods_count <= base_split and med_count > base_split:
-        goods_limit = goods_count
-        med_limit = min(med_count, safe_total_limit - goods_limit)
-        return {
-            "medicine": med_limit,
-            "goods": goods_limit,
-        }
-
+    medicine_limit = max(1, safe_total_limit // 2)
     return {
-        "medicine": base_split,
-        "goods": safe_total_limit - base_split,
+        "medicine": medicine_limit,
+        "goods": safe_total_limit - medicine_limit,
     }
 
 
@@ -2885,11 +2844,9 @@ async def query_data(request: Request, payload: QueryRequest):
                 if quota_snapshot["remaining"] <= 0:
                     raise HTTPException(status_code=429, detail=FULL_SEARCH_LIMIT_MESSAGE)
 
-                allocation = allocate_full_search_limits(
+                allocation = allocate_probe_full_search_limits(
                     scope=payload.scope,
                     total_limit=requested_total_limit,
-                    medicine_count=await fetch_scope_total_count(conn, "medicine", filters) if payload.scope in ("all", "medicine") else None,
-                    goods_count=await fetch_scope_total_count(conn, "goods", filters) if payload.scope in ("all", "goods") else None,
                 )
             else:
                 allocation = {
@@ -2905,7 +2862,7 @@ async def query_data(request: Request, payload: QueryRequest):
                     sort_rules,
                     allocation["medicine"],
                     diversify_prices=False,
-                    exact_count_enabled=is_full_search or STANDARD_QUERY_EXACT_COUNT_ENABLED,
+                    exact_count_enabled=STANDARD_QUERY_EXACT_COUNT_ENABLED and not is_full_search,
                 )
                 result["df1"] = page
                 count_parts.append({
@@ -2921,7 +2878,7 @@ async def query_data(request: Request, payload: QueryRequest):
                     sort_rules,
                     allocation["goods"],
                     diversify_prices=False,
-                    exact_count_enabled=is_full_search or STANDARD_QUERY_EXACT_COUNT_ENABLED,
+                    exact_count_enabled=STANDARD_QUERY_EXACT_COUNT_ENABLED and not is_full_search,
                 )
                 result["df2"] = page
                 count_parts.append({
@@ -2930,6 +2887,49 @@ async def query_data(request: Request, payload: QueryRequest):
                 })
 
             if is_full_search:
+                if payload.scope == "all":
+                    medicine_page = result.get("df1")
+                    goods_page = result.get("df2")
+                    medicine_unused = max(0, int(allocation.get("medicine", 0)) - int(medicine_page.get("displayed", 0))) if medicine_page else 0
+                    goods_unused = max(0, int(allocation.get("goods", 0)) - int(goods_page.get("displayed", 0))) if goods_page else 0
+
+                    if medicine_page and goods_page and medicine_page.get("has_more") and goods_unused > 0:
+                        allocation["medicine"] = int(allocation.get("medicine", 0)) + goods_unused
+                        allocation["goods"] = int(goods_page.get("displayed", 0))
+                        result["df1"] = await fetch_result_page(
+                            conn,
+                            "medicine",
+                            filters,
+                            sort_rules,
+                            allocation["medicine"],
+                            diversify_prices=False,
+                            exact_count_enabled=False,
+                        )
+                    elif medicine_page and goods_page and goods_page.get("has_more") and medicine_unused > 0:
+                        allocation["goods"] = int(allocation.get("goods", 0)) + medicine_unused
+                        allocation["medicine"] = int(medicine_page.get("displayed", 0))
+                        result["df2"] = await fetch_result_page(
+                            conn,
+                            "goods",
+                            filters,
+                            sort_rules,
+                            allocation["goods"],
+                            diversify_prices=False,
+                            exact_count_enabled=False,
+                        )
+
+                    medicine_page = result.get("df1")
+                    goods_page = result.get("df2")
+                    if medicine_page and not medicine_page.get("has_more"):
+                        allocation["medicine"] = int(medicine_page.get("displayed", 0))
+                    if goods_page and not goods_page.get("has_more"):
+                        allocation["goods"] = int(goods_page.get("displayed", 0))
+
+                    count_parts = [
+                        {"count": result["df1"]["count"], "exact": result["df1"]["count_exact"]},
+                        {"count": result["df2"]["count"], "exact": result["df2"]["count_exact"]},
+                    ]
+
                 quota = await consume_full_search_usage(request, current_user)
                 result["full_search_daily_used"] = quota["used"]
                 result["full_search_daily_remaining"] = quota["remaining"]
