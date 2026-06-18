@@ -1311,7 +1311,7 @@ loai_tu_gian_giao_thau = [
     "máy chiết xơ", "nội độc tố", "dung môi", "chất chuẩn", "chuẩn hóa", "độ hòa tan", "bình phun thuốc",
     "tư vấn", "thi công", "gia công", "giám sát", "lắp đặt", "điều hòa", "đề tài", "bể bơi", "công cụ dụng cụ", "quan trắc","thông cống",
     "nông thôn", "du lịch", "vật tư hóa chất phục vụ chuyên ngành", "dịch hại", "canh tác", "thẩm định hồ sơ", "lập hồ sơ", "E-HSMT", "HSMT"
-    "rượu", "hoa, quả", "công trình", "kiểm toán","hút hầm cầu",
+    "rượu", "hoa, quả", "công trình", "kiểm toán","hút hầm cầu", "gạo", "gas", "nước giải khát", "đặc sản", "trái cây"
 
 ]
  
@@ -2195,6 +2195,10 @@ def has_legacy_lot_selection_card():
         return False
 
 
+def is_legacy_lot_winner_status(value):
+    return _collapse_whitespace(value).casefold() == "có nhà thầu trúng thầu"
+
+
 def ensure_select_lot_with_winner():
     """
     Với giao diện cũ có card 'Thông tin phần/lô', mặc định web có thể đang chọn
@@ -2227,8 +2231,8 @@ def ensure_select_lot_with_winner():
             if len(cells) < 6:
                 continue
 
-            winner_text = " ".join((cells[4].text or "").split()).lower()
-            if "có nhà thầu trúng thầu" not in winner_text:
+            winner_text = cells[4].text
+            if not is_legacy_lot_winner_status(winner_text):
                 continue
 
             radio = cells[5].find_element(By.XPATH, ".//input[@type='radio' and not(@disabled)]")
@@ -3463,7 +3467,7 @@ def _process_one_qd_flow(ma_tbmt, box_index, dia_diem, qd_text_raw, qd_element_p
 def finalize_one_qd_result(ma_tbmt, box_index, dia_diem, so_qd, ver_code, any_dl, any_excel, dest_qd, info_snapshot=None, winner_fact=None, download_skipped_reason=None):
     if download_skipped_reason:
         logger.info(
-            f"✅ Đã check version, bỏ qua tải file cho {ma_tbmt} / {so_qd} / v{ver_code}: {download_skipped_reason}"
+            f"🤗 Đã check version, bỏ qua tải file cho {ma_tbmt} / {so_qd} / v{ver_code}: {download_skipped_reason}"
         )
         return
 

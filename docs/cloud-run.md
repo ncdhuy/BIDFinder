@@ -197,6 +197,12 @@ Inspect env and secret mappings:
 ```powershell
 gcloud run services describe bidfinder-api-staging `
   --region asia-southeast1 `
+  --format="yaml(spec.template.metadata.annotations)"
+```
+
+```powershell
+gcloud run services describe bidfinder-api-staging `
+  --region asia-southeast1 `
   --format="yaml(spec.template.spec.containers[0].env)"
 ```
 
