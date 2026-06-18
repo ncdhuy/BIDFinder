@@ -1802,7 +1802,10 @@ function showPanel(panelId) {
     if (panelId === 'filter-panel') {
         const searchForm = document.querySelector('custom-search-form');
         if (typeof searchForm?.activatePane === 'function') {
-            searchForm.activatePane('active-ing', { focus: false });
+            const paneKey = typeof searchForm.getPreferredPaneForOpen === 'function'
+                ? searchForm.getPreferredPaneForOpen()
+                : 'active-ing';
+            searchForm.activatePane(paneKey || 'active-ing', { focus: false });
         }
         restoreAppliedFilterPreview(searchForm);
 

@@ -569,6 +569,35 @@
     }
   }
 
+  function resetPasswordVisibility(scope = document) {
+    scope.querySelectorAll?.('[data-password-toggle]').forEach((button) => {
+      const input = document.getElementById(button.dataset.passwordToggle || '');
+      if (!input) return;
+
+      input.type = 'password';
+      button.textContent = 'Hiện mật khẩu';
+      button.setAttribute('aria-pressed', 'false');
+    });
+  }
+
+  function bindPasswordToggles() {
+    document.querySelectorAll('[data-password-toggle]').forEach((button) => {
+      if (button.dataset.bound === '1') return;
+      button.dataset.bound = '1';
+
+      button.addEventListener('click', () => {
+        const input = document.getElementById(button.dataset.passwordToggle || '');
+        if (!input) return;
+
+        const willShow = input.type === 'password';
+        input.type = willShow ? 'text' : 'password';
+        button.textContent = willShow ? 'Ẩn mật khẩu' : 'Hiện mật khẩu';
+        button.setAttribute('aria-pressed', String(willShow));
+        input.focus();
+      });
+    });
+  }
+
   function measurePanelHeight(panel) {
     if (!panel) return 0;
 
@@ -625,6 +654,7 @@
       els['change-password-current'].required = hasPassword;
       els['change-password-current'].value = '';
     }
+    resetPasswordVisibility(els['auth-password-section-detail'] || document);
     if (els['auth-password-title']) {
       els['auth-password-title'].textContent = hasPassword ? 'Đổi mật khẩu' : 'Tạo mật khẩu đăng nhập';
     }
@@ -708,6 +738,7 @@
       ? mode
       : 'register';
 
+    resetPasswordVisibility(els['auth-guest-view'] || document);
     els['auth-modal']?.classList.remove('is-profile');
     if (els['auth-guest-view']) els['auth-guest-view'].hidden = false;
     if (els['auth-profile-view']) els['auth-profile-view'].hidden = true;
@@ -755,6 +786,7 @@
     if (els['auth-profile-view']) els['auth-profile-view'].hidden = false;
     if (els['auth-brand-guest-view']) els['auth-brand-guest-view'].hidden = true;
     if (els['auth-brand-profile-view']) els['auth-brand-profile-view'].hidden = false;
+    resetPasswordVisibility(els['auth-profile-view'] || document);
     renderUserState();
     populateProfileForm();
     setActiveProfileSection(null);
@@ -814,6 +846,7 @@
     els['auth-modal'].classList.remove('show');
     els['auth-modal'].setAttribute('aria-hidden', 'true');
     document.body.classList.remove('auth-modal-open');
+    resetPasswordVisibility(els['auth-modal'] || document);
     setAlert('');
 
     if (clearIntent) {
@@ -1392,6 +1425,7 @@
     });
     els['auth-edit-profile-btn']?.addEventListener('click', () => openAuthModal('profile'));
     els['auth-logout-btn']?.addEventListener('click', handleLogout);
+    bindPasswordToggles();
     ['register-position', 'profile-position'].forEach((fieldId) => {
       els[fieldId]?.addEventListener('change', (event) => {
         syncSelectPlaceholderState(event.currentTarget);

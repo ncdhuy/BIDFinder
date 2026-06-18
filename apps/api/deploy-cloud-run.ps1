@@ -36,7 +36,8 @@ param(
     [int]$FilterConfigRateLimitPerMinute = 1000,
     [int]$AuthRateLimitPerMinute = 500,
     [int]$FeedbackRateLimitPerMinute = 10000,
-    [int]$FeedbackReadRateLimitPerMinute = 60
+    [int]$FeedbackReadRateLimitPerMinute = 60,
+    [string]$StandardQueryExactCountEnabled = "false"
 )
 
 $ErrorActionPreference = "Stop"
@@ -64,6 +65,7 @@ $envVars = @(
     "AUTH_RATE_LIMIT_PER_MINUTE=$AuthRateLimitPerMinute",
     "FEEDBACK_RATE_LIMIT_PER_MINUTE=$FeedbackRateLimitPerMinute",
     "FEEDBACK_READ_RATE_LIMIT_PER_MINUTE=$FeedbackReadRateLimitPerMinute",
+    "STANDARD_QUERY_EXACT_COUNT_ENABLED=$StandardQueryExactCountEnabled",
     "ADMIN_EMAILS=$AdminEmails",
     "RESEND_FROM_NAME=$ResendFromName"
 )

@@ -524,11 +524,14 @@
                                     <input id="register-email" name="email" type="email" autocomplete="email" placeholder="Email" required />
                                 </label>
 
-                                <label class="auth-field">
+                                <div class="auth-field">
                                     <span>Mật khẩu <span class="auth-required">*</span></span>
-                                    <input id="register-password" name="password" type="password" autocomplete="new-password" placeholder="Mật khẩu" required />
+                                    <div class="auth-password-control">
+                                        <input id="register-password" name="password" type="password" autocomplete="new-password" placeholder="Mật khẩu" required />
+                                        <button class="auth-password-toggle" type="button" data-password-toggle="register-password" aria-controls="register-password" aria-pressed="false">Hiện mật khẩu</button>
+                                    </div>
                                     <p class="auth-field-note" id="register-password-note">Mật khẩu phải có ít nhất 9 ký tự, bao gồm ít nhất 1 chữ số và 1 chữ cái in hoa.</p>
-                                </label>
+                                </div>
 
                                 <button class="auth-submit-btn" type="submit">Tạo tài khoản</button>
                             </form>
@@ -547,10 +550,13 @@
                                     <input id="login-email" name="email" type="email" autocomplete="email" placeholder="Email" required />
                                 </label>
 
-                                <label class="auth-field">
+                                <div class="auth-field">
                                     <span>Mật khẩu</span>
-                                    <input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="Mật khẩu" required />
-                                </label>
+                                    <div class="auth-password-control">
+                                        <input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="Mật khẩu" required />
+                                        <button class="auth-password-toggle" type="button" data-password-toggle="login-password" aria-controls="login-password" aria-pressed="false">Hiện mật khẩu</button>
+                                    </div>
+                                </div>
 
                                 <div class="auth-inline-actions">
                                     <button class="auth-text-btn" id="auth-forgot-password-btn" type="button">Quên mật khẩu?</button>
@@ -587,16 +593,22 @@
                             </div>
 
                             <form id="auth-reset-password-form" class="auth-form" novalidate>
-                                <label class="auth-field">
+                                <div class="auth-field">
                                     <span>Mật khẩu mới</span>
-                                    <input id="reset-password-new" name="new_password" type="password" autocomplete="new-password" placeholder="Mật khẩu mới" required />
+                                    <div class="auth-password-control">
+                                        <input id="reset-password-new" name="new_password" type="password" autocomplete="new-password" placeholder="Mật khẩu mới" required />
+                                        <button class="auth-password-toggle" type="button" data-password-toggle="reset-password-new" aria-controls="reset-password-new" aria-pressed="false">Hiện mật khẩu</button>
+                                    </div>
                                     <p class="auth-field-note" id="reset-password-note">Mật khẩu phải có ít nhất 9 ký tự, bao gồm ít nhất 1 chữ số và 1 chữ cái in hoa.</p>
-                                </label>
+                                </div>
 
-                                <label class="auth-field">
+                                <div class="auth-field">
                                     <span>Nhập lại mật khẩu mới</span>
-                                    <input id="reset-password-confirm" name="confirm_password" type="password" autocomplete="new-password" placeholder="Nhập lại mật khẩu mới" required />
-                                </label>
+                                    <div class="auth-password-control">
+                                        <input id="reset-password-confirm" name="confirm_password" type="password" autocomplete="new-password" placeholder="Nhập lại mật khẩu mới" required />
+                                        <button class="auth-password-toggle" type="button" data-password-toggle="reset-password-confirm" aria-controls="reset-password-confirm" aria-pressed="false">Hiện mật khẩu</button>
+                                    </div>
+                                </div>
 
                                 <button class="auth-submit-btn" type="submit">Cập nhật mật khẩu</button>
                             </form>
@@ -667,21 +679,30 @@
 
                                 <div class="auth-account-detail" id="auth-password-section-detail" hidden>
                                     <form id="auth-change-password-form" class="auth-form" novalidate>
-                                        <label class="auth-field" id="change-password-current-field">
+                                        <div class="auth-field" id="change-password-current-field">
                                             <span>Mật khẩu hiện tại</span>
-                                            <input id="change-password-current" name="current_password" type="password" autocomplete="current-password" placeholder="Mật khẩu hiện tại" />
-                                        </label>
+                                            <div class="auth-password-control">
+                                                <input id="change-password-current" name="current_password" type="password" autocomplete="current-password" placeholder="Mật khẩu hiện tại" />
+                                                <button class="auth-password-toggle" type="button" data-password-toggle="change-password-current" aria-controls="change-password-current" aria-pressed="false">Hiện mật khẩu</button>
+                                            </div>
+                                        </div>
 
-                                        <label class="auth-field">
+                                        <div class="auth-field">
                                             <span>Mật khẩu mới</span>
-                                            <input id="change-password-new" name="new_password" type="password" autocomplete="new-password" placeholder="Mật khẩu mới" required />
+                                            <div class="auth-password-control">
+                                                <input id="change-password-new" name="new_password" type="password" autocomplete="new-password" placeholder="Mật khẩu mới" required />
+                                                <button class="auth-password-toggle" type="button" data-password-toggle="change-password-new" aria-controls="change-password-new" aria-pressed="false">Hiện mật khẩu</button>
+                                            </div>
                                             <p class="auth-field-note" id="change-password-note">Mật khẩu phải có ít nhất 9 ký tự, bao gồm ít nhất 1 chữ số và 1 chữ cái in hoa.</p>
-                                        </label>
+                                        </div>
 
-                                        <label class="auth-field">
+                                        <div class="auth-field">
                                             <span>Nhập lại mật khẩu mới</span>
-                                            <input id="change-password-confirm" name="confirm_password" type="password" autocomplete="new-password" placeholder="Nhập lại mật khẩu mới" required />
-                                        </label>
+                                            <div class="auth-password-control">
+                                                <input id="change-password-confirm" name="confirm_password" type="password" autocomplete="new-password" placeholder="Nhập lại mật khẩu mới" required />
+                                                <button class="auth-password-toggle" type="button" data-password-toggle="change-password-confirm" aria-controls="change-password-confirm" aria-pressed="false">Hiện mật khẩu</button>
+                                            </div>
+                                        </div>
 
                                         <div class="auth-profile-actions">
                                             <button class="auth-submit-btn" type="submit">Lưu mật khẩu</button>
@@ -881,6 +902,7 @@
                     </div>
                 </div>
                 <div class="bulk-field-columns">
+                    <span class="bulk-field-columns-title">Cột tham chiếu tìm kiếm</span>
                     <div class="bulk-field-panel" data-bulk-fields="medicine">
                         <span class="bulk-section-title">Thuốc</span>
                         <div class="bulk-field-options">
@@ -930,6 +952,7 @@
                             </button>
                             <span class="bulk-import-hint">hoặc kéo thả file Excel vào đây</span>
                         </div>
+                        <span class="bulk-import-requirement">File Excel phải có đủ các cột tham chiếu đã chọn</span>
                         <div class="bulk-import-selected" id="bulk-import-selected" hidden>
                             <span class="bulk-import-file-name" id="bulk-import-file-name">Chưa chọn file</span>
                             <button class="btn-feedback-secondary bulk-excel-action" id="download-bulk-excel" type="button" disabled hidden>

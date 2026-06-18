@@ -1155,6 +1155,7 @@ class CustomSearchForm extends HTMLElement {
                                 <p>2. Nhấn Enter để tạo một thẻ từ khóa</p>
                                 <p>3. Nếu có nhiều điều kiện, lặp lại bước 1 và 2</p>
                                 <p>4. Điều chỉnh bằng cách click OR AND NOT để tạo điều kiện</p>
+                                <p>5. Lưu ý vùng <strong>"Đang lọc theo"</strong> ở trên cùng để quản lý điều kiện lọc</p>
                                 <p><span class="pane-help-prefix">Xem </span><button class="pane-help-link" type="button" data-open-filter-help>Mẹo tìm kiếm</button></p>
                             </div>
                         </div>
@@ -2005,6 +2006,50 @@ class CustomSearchForm extends HTMLElement {
         if (focus) {
             this.queueFocusActiveField();
         }
+    }
+
+    getPreferredPaneForOpen() {
+        const root = this.shadowRoot;
+        if (!root) return 'active-ing';
+
+        const filterPaneById = new Map();
+        const addPane = (id, pane) => {
+            if (id && pane) filterPaneById.set(id, pane);
+        };
+
+        addPane('date', 'date');
+        (this.dynamicFieldMeta || new Map()).forEach(meta => addPane(meta.hiddenId, meta.pane));
+        addPane('filter-selection-method', 'method');
+        addPane('filter-place', 'place');
+        addPane('filter-drug-group', 'group');
+        addPane('filter-validity', 'validity');
+
+        const payload = this.collectFilterPayload?.() || {};
+        const filters = payload.filters || {};
+        const hasValueById = new Map();
+
+        if (filters.dateFrom || filters.dateTo) hasValueById.set('date', true);
+
+        (this.advancedFilterManagers || []).forEach(manager => {
+            const meta = this.dynamicFieldMeta?.get(manager.fieldName);
+            if (!meta) return;
+            const normalized = filters[manager.fieldName];
+            hasValueById.set(meta.hiddenId, Boolean(normalized?.tokens?.length));
+        });
+
+        hasValueById.set('filter-selection-method', Array.isArray(filters.selectionMethod) && filters.selectionMethod.length > 0);
+        hasValueById.set('filter-place', Array.isArray(filters.place) && filters.place.length > 0);
+        hasValueById.set('filter-drug-group', Array.isArray(filters.drugGroup) && filters.drugGroup.length > 0);
+        hasValueById.set('filter-validity', Boolean(filters.validity));
+
+        const ordered = Array.isArray(this.filterOrder) ? this.filterOrder : [];
+        for (let i = ordered.length - 1; i >= 0; i -= 1) {
+            const id = ordered[i];
+            const pane = filterPaneById.get(id);
+            if (pane && hasValueById.get(id)) return pane;
+        }
+
+        return 'active-ing';
     }
 
     setPreviewResult({ idle = false, loading = false, warming = false, total = null, totalLabel = '', exact = true, error = false, errorMessage = '' } = {}) {
