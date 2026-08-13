@@ -1,11 +1,31 @@
 {
+  "Kế hoạch lựa chọn nhà thầu||thiết bị y tế||any-1||2025||2026||nồi giường xe lá liệu bvtv chăn nuôi diệt": {
+    "exclude_key": "nồi giường xe lá liệu bvtv chăn nuôi diệt",
+    "keyword": "thiết bị y tế",
+    "last_completed_page": 1,
+    "match_mode": "any-1",
+    "notice_type": "Kế hoạch lựa chọn nhà thầu",
+    "updated_at": "2026-08-12 11:10:13",
+    "year_from": 2025,
+    "year_to": 2026
+  },
   "Kế hoạch lựa chọn nhà thầu||thuốc||any-1||2025||2026||nồi bơm máy giường xe túi nghiệm lá liệu bvtv chăn nuôi diệt": {
     "exclude_key": "nồi bơm máy giường xe túi nghiệm lá liệu bvtv chăn nuôi diệt",
     "keyword": "thuốc",
-    "last_completed_page": 177,
+    "last_completed_page": 22,
     "match_mode": "any-1",
     "notice_type": "Kế hoạch lựa chọn nhà thầu",
     "updated_at": "2026-05-25 11:35:51",
+    "year_from": 2025,
+    "year_to": 2026
+  },
+  "Kế hoạch lựa chọn nhà thầu||thuốc||any-1||2025||2026||nồi giường xe lá liệu bvtv chăn nuôi diệt": {
+    "exclude_key": "nồi giường xe lá liệu bvtv chăn nuôi diệt",
+    "keyword": "thuốc",
+    "last_completed_page": 33,
+    "match_mode": "any-1",
+    "notice_type": "Kế hoạch lựa chọn nhà thầu",
+    "updated_at": "2026-08-12 10:48:06",
     "year_from": 2025,
     "year_to": 2026
   },
