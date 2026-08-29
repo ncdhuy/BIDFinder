@@ -430,3 +430,55 @@ Future Phase 1 validation must include:
 
 - Add only after search/API contracts are stable.
 - Use FastAPI read APIs and existing access policy; no write actions, agents, analytics, or independent data store.
+
+## Phase 1A — contract discovery, fixtures, and schema freeze
+
+Status: complete for seven source-contract discovery and offline fixture infrastructure; not Phase 1 complete. No production crawler, historical backfill, Typesense connection, FastAPI runtime change, frontend change, deployment, database write, or push was performed.
+
+Evidence locations:
+
+- Seven per-source fixtures: `docs/msc-contracts/{goods-general,medical-devices,medicine-generic,medicine-originator,medicine-herbal,herbal-material,traditional-medicine}/`.
+- Reproducible read-only probe: `tools/msc_contract_probe.py`.
+- Documentation-only collection schema: `docs/msc-typesense-schema-v1.md`.
+
+The official winning-bid-data page's inline Vue definitions resolved the exact source contracts:
+
+| Source | `data_group` | `type` | `tab` | Special filter | `matchFields` |
+| --- | --- | --- | --- | --- | --- |
+| Hàng hóa ngoài thuốc, thiết bị, vật tư y tế | `goods` | `HANG_HOA` | `HANG_HOA` | none | `danh_muc_hang_hoa`, `ma_hs`, `xuat_xu`, `ma_tbmt`, `ky_ma_hieu`, `nhan_hieu`, `hang_san_xuat` |
+| Thiết bị, vật tư y tế | `goods` | `HANG_HOA` | `THIET_BI_VAT_TU_Y_TE` | none | `ten_thiet_bi`, `ma_hs`, `xuat_xu`, `ma_tbmt`, `ky_ma_hieu`, `nhan_hieu`, `hang_san_xuat` |
+| Gói thầu thuốc Generic | `medicines` | `HANG_HOA` | `THUOC_TAN_DUOC` | `medicines=["0"]` | `ten_thuoc`, `ten_hoat_chat`, `ma_tbmt` |
+| Gói thầu thuốc biệt dược gốc | `medicines` | `HANG_HOA` | `THUOC_TAN_DUOC` | `medicines=["1"]` | `ten_thuoc`, `ten_hoat_chat`, `ma_tbmt` |
+| Gói thầu thuốc dược liệu | `medicines` | `HANG_HOA` | `THUOC_TAN_DUOC` | `medicines=["2"]` | `ten_thuoc`, `ten_hoat_chat`, `ma_tbmt` |
+| Dược liệu | `traditional_medicine` | `HANG_HOA` | `DUOC_LIEU` | `medicine_type=[0,null]` | `ten_duoc_lieu`, `ten_khoa_hoc`, `ten_san_pham`, `ma_tbmt` |
+| Vị thuốc cổ truyền | `traditional_medicine` | `HANG_HOA` | `VI_THUOC_CO_TRUYEN` | `medicine_type=[0,null]` | `ten_duoc_lieu`, `ten_khoa_hoc`, `ten_san_pham`, `ma_tbmt` |
+
+Search responses use `page.content` and count `agg[0].buckets[0].docCount`. Export responses use `resultList`. The official page sends export `pageNumber=0` with `pageSize=10000`; the known hard ceiling remains 30,000. The probe refuses completeness when expected count is at least 30,000, rejects malformed envelopes and count mismatches, detects duplicate UUIDs, and retries only transient network/429/5xx failures. It writes no response or request state.
+
+### Phase 1A findings and remaining risks
+
+- Daily request bounds remain exactly `T00:00:00.000Z` through `T23:59:59.059Z`; `.059Z` was not changed. Response timestamps are naive strings without timezone markers. The page's helper adds seven hours. Adjacent sampled sets did not overlap, but no exact boundary record was available, so timezone and inclusive/exclusive semantics remain unresolved.
+- Repeating one goods query returned the same UUID and timestamp. One UUID appeared per committed sample, and sampled UUIDs across seven source tabs are distinct. This is not universal export-wide uniqueness proof.
+- Numeric values remain numeric. Quantity maps from `khoiLuongDouble` or `soLuong`; prices map from the verified source price field; fractional `soNhaThauThamDu` makes canonical bidder count `float`; descriptive production-year strings remain nullable rather than coerced.
+- Text normalization is limited to future NFC normalization, whitespace collapse, trim, and safe null handling. Legacy Excel inference is excluded.
+- Intended collections are `bidfinder_goods`, `bidfinder_medicines`, and `bidfinder_traditional`; no collection was created. High-cardinality values are searchable without unnecessary facets. Raw source dates remain strings until timezone proof supports a new typed field.
+- Anonymous live export probing returned HTTP 200 with an empty body because export is gated by the official page's login check. Fixture export envelopes therefore exercise the verified `resultList` parser and are not live completeness proof. A signed-in Network capture is still required before production ingestion.
+
+### Three-group FastAPI compatibility decision
+
+This is a documentation decision only; endpoints remain unchanged in Phase 1A.
+
+Request vocabulary for the future API:
+
+- `all`: default; searches all three logical groups.
+- `goods`: goods collection only.
+- `medicines`: medicines collection only.
+- `traditional`: traditional-medicine collection only.
+
+Keep accepting legacy `medicine` as a temporary alias for `medicines`; keep `goods` and `all` unchanged. Do not expose MSC tab enums as browser scope values. The existing browser-facing FastAPI boundary remains the only search boundary.
+
+For response compatibility, retain current `df1` (medicine) and `df2` (goods) objects with their current pagination/count shape for existing `all`, `medicine`, and `goods` callers. Add a canonical `groups` object keyed by `medicines`, `goods`, and `traditional`; for `all`, populate all applicable groups, while retaining `df1`/`df2` as transitional aliases. A `traditional` scope returns its group under `groups.traditional` and may expose a same-named transitional top-level alias; no traditional data is forced into `df1` or `df2`.
+
+MSC does not supply legacy package joins, `qd_display`, version/approval/expiry/validity fields, duplicate-warning flags, goods `Search blob`, old medicine filter classifications, or Excel-only columns. Future responses must omit or return null for these fields and retire unsupported filters/sorts. Verified-but-optional MSC fields, including medical-device model/registration, shelf life, bidder count, location, and production year, remain nullable during transition. Auth, sessions, feedback/forum state, quotas, and control-plane Postgres behavior remain separate and unchanged.
+
+Phase 1A must not be used as approval to start Phase 2. Before production ingestion, capture authenticated export responses, prove boundary behavior, and complete export-wide UUID duplicate/stability validation.

@@ -1,12 +1,12 @@
 # MSC Source Schema V1 Baseline
 
-Status: Phase 0 design baseline. This is a normalized contract proposal, not an implementation and not a claim that all fields have already been verified in every MSC tab export.
+Status: Phase 1A schema/contract freeze. This remains documentation and fixture infrastructure, not a production ingestion implementation.
 
 Source scope is limited to the seven HÀNG HÓA tabs listed below. Dịch vụ tư vấn and Dịch vụ phi tư vấn are excluded.
 
 ## 1. Naming and provenance rules
 
-Normalized field keys use stable English `snake_case` names. `source_tab_label` preserves the exact official tab label. `source_tab` preserves the exact MSC request discriminator discovered during contract discovery; its value is intentionally `TBD` for all seven sources in this Phase 0 document. Do not replace it with a guessed enum.
+Normalized field keys use stable English `snake_case` names. `source_tab_label` preserves the official human-readable label. `source_tab` preserves the exact MSC request discriminator discovered during Phase 1A contract discovery; all seven values are now fixture-backed. Do not replace them with a guessed enum.
 
 Every document carries these provenance fields:
 
@@ -33,15 +33,15 @@ Rules for all groups:
 
 | `data_group` | Exact source-tab label | `source_tab` |
 | --- | --- | --- |
-| `goods` | Hàng hóa ngoài thuốc, thiết bị, vật tư y tế | TBD — discover exact MSC discriminator |
-| `goods` | Thiết bị, vật tư y tế | TBD — discover exact MSC discriminator |
-| `medicines` | Gói thầu thuốc Generic | TBD — discover exact MSC discriminator |
-| `medicines` | Gói thầu thuốc biệt dược gốc | TBD — discover exact MSC discriminator |
-| `medicines` | Gói thầu thuốc dược liệu | TBD — discover exact MSC discriminator |
-| `traditional_medicine` | Dược liệu | TBD — discover exact MSC discriminator |
-| `traditional_medicine` | Vị thuốc cổ truyền | TBD — discover exact MSC discriminator |
+| `goods` | Hàng hóa ngoài thuốc, thiết bị, vật tư y tế | `HANG_HOA` |
+| `goods` | Thiết bị, vật tư y tế | `THIET_BI_VAT_TU_Y_TE` |
+| `medicines` | Gói thầu thuốc Generic | `THUOC_TAN_DUOC` + `medicines=["0"]` |
+| `medicines` | Gói thầu thuốc biệt dược gốc | `THUOC_TAN_DUOC` + `medicines=["1"]` |
+| `medicines` | Gói thầu thuốc dược liệu | `THUOC_TAN_DUOC` + `medicines=["2"]` |
+| `traditional_medicine` | Dược liệu | `DUOC_LIEU` + `medicine_type=[0,null]` |
+| `traditional_medicine` | Vị thuốc cổ truyền | `VI_THUOC_CO_TRUYEN` + `medicine_type=[0,null]` |
 
-Known observations are recorded separately from this source map: `HANG_HOA` was observed for a generic-goods request; `THUOC_TAN_DUOC` and `medicines=["0"]` were observed for one medicine request. Neither observation is promoted to a complete seven-tab enum.
+Phase 1A fixture-backed evidence for exact request contracts is recorded under `docs/msc-contracts/`. The outer `type` is `HANG_HOA` for all seven sources; the table records each exact `tab` and special discriminator.
 
 ## 3. Group A — `goods`
 
@@ -171,7 +171,7 @@ Physical collection names must be versioned and later switched through aliases a
 - Facets: only fields with stable source semantics, such as group/provenance, selection method, location, country, and verified category/group fields.
 - Sort fields: only typed fields with deterministic null ordering, such as result-posted time, decision-issued time, quantity, and winning unit price.
 
-This document does not freeze the final Typesense `fields` array, typo tolerance, ranking, facet list, or `query_by` ordering. Those depend on the seven verified export contracts and the existing API's golden query behavior.
+Phase 1A freezes the documentation-only field matrices, facet choices, and evidence-based `query_by` order in [`docs/msc-typesense-schema-v1.md`](msc-typesense-schema-v1.md). Typo tolerance, ranking, and runtime collection aliases remain later-phase decisions.
 
 ## 7. Legacy compatibility boundaries
 
@@ -228,3 +228,134 @@ The partition fails closed if:
 - source UUIDs are missing, duplicated unexpectedly, or unstable.
 
 No Phase 0 code enforces this invariant. It is the acceptance contract for the future ingestion implementation.
+
+## 10. Phase 1A contract freeze
+
+Phase 1A evidence lives under [`docs/msc-contracts/`](msc-contracts/README.md). All seven source contracts are verified from the official page's inline Vue definitions plus small read-only `/search_prc` captures. Export request shape is verified from the same page; the endpoint's `resultList` envelope and 30,000 ceiling remain the Phase 0 verified behavior. The anonymous research environment returned an empty export body, so export sample files are parser fixtures, not live completeness proof.
+
+| Data group | Source label | Exact `type` | Exact `tab` | Special filter |
+| --- | --- | --- | --- | --- |
+| `goods` | Hàng hóa ngoài thuốc, thiết bị, vật tư y tế | `HANG_HOA` | `HANG_HOA` | none |
+| `goods` | Thiết bị, vật tư y tế | `HANG_HOA` | `THIET_BI_VAT_TU_Y_TE` | none |
+| `medicines` | Gói thầu thuốc Generic | `HANG_HOA` | `THUOC_TAN_DUOC` | `medicines=["0"]` |
+| `medicines` | Gói thầu thuốc biệt dược gốc | `HANG_HOA` | `THUOC_TAN_DUOC` | `medicines=["1"]` |
+| `medicines` | Gói thầu thuốc dược liệu | `HANG_HOA` | `THUOC_TAN_DUOC` | `medicines=["2"]` |
+| `traditional_medicine` | Dược liệu | `HANG_HOA` | `DUOC_LIEU` | `medicine_type=[0,null]` when official `medicineType=0` |
+| `traditional_medicine` | Vị thuốc cổ truyền | `HANG_HOA` | `VI_THUOC_CO_TRUYEN` | `medicine_type=[0,null]` when official `medicineType=0` |
+
+The first label is rendered by current page markup as `Hàng hóa ngoài thuốc,thiết bị, vật tư y tế` without a space after the comma. Repository metadata keeps the Phase 0 human label with spacing; this punctuation difference does not alter the exact MSC discriminator.
+
+Every request uses index `es-smart-pricing`, `matchType=all-1`, empty `keyWordNotMatch`, a source-specific `matchFields` list, and the official date filter when partitioned. Search records are under `page.content`; count is `agg[0].buckets[0].docCount`; export records are under `resultList`.
+
+### 10.1 Source-to-canonical mapping
+
+Mapping policy values: `text` means NFC Unicode normalization, whitespace collapse, and trim; `number` means preserve JSON numbers and parse numeric-looking strings only where the source fixture proves that field representation; `date-raw` means preserve the source string; `array` means preserve all array members; `location-join` means deterministic source-order display joining of `diaDiem` components.
+
+#### Goods
+
+| Canonical key | Source JSON field: general / device | Source type(s) | Canonical type | Null/blank policy | Normalization | Search | Facet | Sort | Sources / optional |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `item_name` | `danhMucHangHoa` / `tenThietBi` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
+| `unit` | `donViTinh` / `donViTinh` | string | string | absent/blank -> null | text | yes | yes | no | both / yes |
+| `quantity` | `khoiLuongDouble` / `khoiLuongDouble` | JSON number | float | absent/invalid -> null | number | no | no | yes | both / yes |
+| `country_of_origin` | `xuatXu` / `xuatXu` | string | string | absent/blank -> null | text | yes | yes | no | both / yes |
+| `hs_code` | `maHs` / `maHs` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
+| `model_mark` | `kyMaHieu` / `kyMaHieu` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
+| `brand` | `nhanHieu` / `nhanHieu` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
+| `production_year` | `namSanXuat` / `namSanXuat` | string | int32 | non-four-digit -> null | strict year | no | no | yes | both / yes |
+| `manufacturer` | `hangSanXuat` / `hangSanXuat` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
+| `technical_specification` | `cauHinh` / `cauHinh` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
+| `model` | absent / `chungLoai` | string or absent | string | absent/blank -> null | text | yes | no | no | device / yes |
+| `registration_or_import_permit_number` | absent / `soLuuHanh` | string or absent | string | absent/blank -> null | text | yes | no | no | device / yes |
+| `winning_unit_price` | `donGiaDuThau` / `donGia` | JSON number | float | absent/invalid -> null | number | no | no | yes | both / yes |
+| `winning_bidder_id` | `winningCode` / `winningCode` | string[] | string[] | absent/empty -> null | array + text | yes | no | no | both / yes |
+| `winning_bidder_name` | `winningName` / `winningName` | string[] | string[] | absent/empty -> null | array + text | yes | no | no | both / yes |
+| `bid_invitation_code` | `maTbmt` / `maTbmt` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
+| `procuring_entity_id` | `maCdt` / `maCdt` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
+| `procuring_entity_name` | `tenCdtBmt` / `tenCdtBmt` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
+| `selection_method` | `bidForm` / `bidForm` | string | string | absent/blank -> null | text | yes | yes | no | both / yes |
+| `result_posted_at` | `ngayDangTaiKqlcnt` / `ngayDangTaiKqlcnt` | date string | string | absent -> null | date-raw | no | no | no | both / yes |
+| `decision_number` | `soQuyetDinh` / `soQuyetDinh` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
+| `decision_issued_at` | `ngayBanHanhQuyetDinh` / `ngayBanHanhQuyetDinh` | date string | string | absent -> null | date-raw | no | no | no | both / yes |
+| `bidder_count` | `soNhaThauThamDu` / `soNhaThauThamDu` | JSON number, often absent | float | absent/invalid -> null | number | no | no | yes | both / yes |
+| `location` | `diaDiem` / `diaDiem` | object[] | string | absent/empty -> null | location-join | yes | no | no | both / yes |
+
+#### Medicines
+
+| Canonical key | Source JSON field | Source type | Canonical type | Null/blank policy | Normalization | Search | Facet | Sort | Sources / optional |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `medicine_name` | `tenThuoc` | string or absent | string | absent/blank -> null | text | yes | no | no | all / yes |
+| `active_ingredient_or_herbal_component` | `tenHoatChat` | string | string | absent/blank -> null | text | yes | no | no | all / yes |
+| `strength` | `nongDo` | string | string | absent/blank -> null | text | yes | no | no | all / yes |
+| `marketing_authorization_or_import_permit` | `gdklh_GPNK` | string | string | absent/blank -> null | text | yes | no | no | all / yes |
+| `route_of_administration` | `duongDung` | string | string | absent/blank -> null | text | yes | yes | no | all / yes |
+| `dosage_form` | `dangBaoChe` | string | string | absent/blank -> null | text | yes | yes | no | all / yes |
+| `shelf_life` | `hanDung` | string or absent | string | absent/blank -> null | text | yes | no | no | all / yes |
+| `manufacturer` | `tenCoSoSanXuat` | string | string | absent/blank -> null | text | yes | no | no | all / yes |
+| `production_country` | `nuocSanXuat` | string | string | absent/blank -> null | text | yes | yes | no | all / yes |
+| `packaging` | `quyCachDongGoi` | string | string | absent/blank -> null | text | yes | no | no | all / yes |
+| `unit` | `donViTinh` | string | string | absent/blank -> null | text | yes | yes | no | all / yes |
+| `quantity` | `soLuong` | JSON number | float | absent/invalid -> null | number | no | no | yes | all / yes |
+| `winning_unit_price` | `donGia` | JSON number | float | absent/invalid -> null | number | no | no | yes | all / yes |
+| `winning_bidder_id` | `winningCode` | string[] | string[] | absent/empty -> null | array + text | yes | no | no | all / yes |
+| `winning_bidder_name` | `winningName` | string[] | string[] | absent/empty -> null | array + text | yes | no | no | all / yes |
+| `medicine_group` | `nhomThuoc` | string | string | absent/blank -> null | text | yes | yes | no | all / yes |
+| `bid_invitation_code` | `maTbmt` | string | string | absent/blank -> null | text | yes | no | no | all / yes |
+| `procuring_entity_id` | `maCdt` | string | string | absent/blank -> null | text | yes | no | no | all / yes |
+| `procuring_entity_name` | `tenCdtBmt` | string | string | absent/blank -> null | text | yes | no | no | all / yes |
+| `selection_method` | `bidForm` | string | string | absent/blank -> null | text | yes | yes | no | all / yes |
+| `result_posted_at` | `ngayDangTaiKqlcnt` | date string | string | absent -> null | date-raw | no | no | no | all / yes |
+| `decision_number` | `soQuyetDinh` | string | string | absent/blank -> null | text | yes | no | no | all / yes |
+| `decision_issued_at` | `ngayBanHanhQuyetDinh` | date string | string | absent -> null | date-raw | no | no | no | all / yes |
+| `bidder_count` | `soNhaThauThamDu` | JSON number or absent | float | absent/invalid -> null | number | no | no | yes | all / yes |
+| `location` | `diaDiem` | object[] | string | absent/empty -> null | location-join | yes | no | no | all / yes |
+
+#### Traditional medicine
+
+| Canonical key | Source JSON field: Dược liệu / Vị thuốc | Source type(s) | Canonical type | Null/blank policy | Normalization | Search | Facet | Sort | Sources / optional |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `item_name` | `tenDuocLieu` / `tenViThuocCoTruyen` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
+| `used_part` | `boPhanDung` / `boPhanDung` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
+| `scientific_name` | `tenKhoaHoc` / `tenKhoaHoc` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
+| `origin` | `nguonGoc` / `nguonGoc` | string | string | absent/blank -> null | text | yes | yes | no | both / yes |
+| `processing_method` | `phuongPhapCheBien` / `phuongPhapCheBien` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
+| `registration_or_import_permit_number` | `gdklh_GPNK` / `gdklh_GPNK` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
+| `manufacturer` | `tenCoSoSanXuat` / `tenCoSoSanXuat` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
+| `production_country` | `nuocSanXuat` / `nuocSanXuat` | string | string | absent/blank -> null | text | yes | yes | no | both / yes |
+| `packaging` | `quyCachDongGoi` / `quyCachDongGoi` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
+| `unit` | `donViTinh` / `donViTinh` | string | string | absent/blank -> null | text | yes | yes | no | both / yes |
+| `quantity` | `soLuong` / `soLuong` | JSON number | float | absent/invalid -> null | number | no | no | yes | both / yes |
+| `winning_unit_price` | `donGia` / `donGia` | JSON number | float | absent/invalid -> null | number | no | no | yes | both / yes |
+| `winning_bidder_id` | `winningCode` / `winningCode` | string[] | string[] | absent/empty -> null | array + text | yes | no | no | both / yes |
+| `winning_bidder_name` | `winningName` / `winningName` | string[] | string[] | absent/empty -> null | array + text | yes | no | no | both / yes |
+| `technical_group` | `nhomTCKT` / `nhomTCKT` | string | string | absent/blank -> null | text | yes | yes | no | both / yes |
+| `bid_invitation_code` | `maTbmt` / `maTbmt` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
+| `procuring_entity_id` | `maCdt` / `maCdt` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
+| `procuring_entity_name` | `tenCdtBmt` / `tenCdtBmt` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
+| `selection_method` | `bidForm` / `bidForm` | string | string | absent/blank -> null | text | yes | yes | no | both / yes |
+| `result_posted_at` | `ngayDangTaiKqlcnt` / `ngayDangTaiKqlcnt` | date string | string | absent -> null | date-raw | no | no | no | both / yes |
+| `decision_number` | `soQuyetDinh` / `soQuyetDinh` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
+| `decision_issued_at` | `ngayBanHanhQuyetDinh` / `ngayBanHanhQuyetDinh` | date string | string | absent -> null | date-raw | no | no | no | both / yes |
+| `bidder_count` | `soNhaThauThamDu` / `soNhaThauThamDu` | JSON number or absent | float | absent/invalid -> null | number | no | no | yes | both / yes |
+| `location` | `diaDiem` / `diaDiem` | object[] | string | absent/empty -> null | location-join | yes | no | no | both / yes |
+
+Source-only classifier and display fields (`medicines`, `medicineType`, `dangBaoChe`, and observed duplicate price aliases) remain provenance, not fabricated canonical columns. They may be retained in raw evidence/control metadata later.
+
+### 10.2 Numeric and text rules
+
+- `khoiLuongDouble`, `soLuong`, `donGia`, `donGiaDuThau`, and `medicineType` are JSON numbers in fixtures. Keep them numeric. `soNhaThauThamDu` is a fractional JSON number in device and traditional samples, so canonical `bidder_count` is `float`, not integer.
+- `namSanXuat` is a string. Strict four-digit values may become `production_year`; values such as `2025 trở về sau` stay raw-only and canonical `production_year` remains null. No numeric-looking string is silently coerced elsewhere.
+- Missing fields and empty strings become null during future normalization. Invalid numeric/date values become validation failures or null by field policy, never zero.
+- Reuse only narrow future primitives from `crawler_engine/schema_normalization_shared.py`: NFC Unicode normalization, whitespace cleanup, and safe null handling. Do not import the Excel pipeline or its inference rules.
+
+### 10.3 Date and UUID findings
+
+The official page defines `convertDateFrom`/`convertDateTo` and emits the observed range form `T00:00:00.000Z` through `T23:59:59.059Z`; V1 reproduces this byte-for-byte and does not change `.059Z` to `.999Z`. Response values are strings such as `2026-08-28T23:57:28` with no timezone marker. The page adds seven hours in its date helper, but the server's timezone interpretation cannot be proven from these small captures.
+
+A repeated goods query for `IB2600498667` on `2026-08-28` returned the same UUID `4a38103c-8b82-4e18-9dad-4b46b615916a` and timestamp both times. The same code queried for `2026-08-27` returned zero rows; sampled adjacent day sets had no overlap. This is evidence for sampled stability/disjointness only, not universal uniqueness. One UUID appeared per committed sample and the seven committed sample UUIDs are distinct; export-wide duplicate proof remains a future live-export gate.
+
+Boundary fixture limitation: no record exactly at `23:59:59.059Z` or `00:00:00.000Z` was available, so inclusive/exclusive behavior and timezone meaning remain unresolved. Daily official ranges are retained exactly for V1; do not start production ingestion until a boundary capture proves the missing edge cases.
+
+## 11. Phase 1A status
+
+All seven source request contracts are resolved and fixture-backed for exact type/tab/match fields/special filters, search envelope, count path, source field names, and export request shape. Phase 1A is complete for contract discovery and offline infrastructure. Live export response capture without an authenticated page session, exact timestamp boundary semantics, and export-wide UUID uniqueness remain explicit validation risks; they do not authorize production crawler or backfill work.

@@ -1,0 +1,39 @@
+{
+  "source_tab_label": "Thiết bị, vật tư y tế",
+  "data_group": "goods",
+  "source_tab": "THIET_BI_VAT_TU_Y_TE",
+  "type": "HANG_HOA",
+  "tab": "THIET_BI_VAT_TU_Y_TE",
+  "request_index": "es-smart-pricing",
+  "match_fields": ["ten_thiet_bi", "ma_hs", "xuat_xu", "ma_tbmt", "ky_ma_hieu", "nhan_hieu", "hang_san_xuat"],
+  "fixed_filters": [
+    {"fieldName": "type", "searchType": "in", "fieldValues": ["HANG_HOA"]},
+    {"fieldName": "tab", "searchType": "in", "fieldValues": ["THIET_BI_VAT_TU_Y_TE"]}
+  ],
+  "special_filters": [],
+  "optional_filters": ["ngay_dang_tai_kqlcnt range"],
+  "search_endpoint": "https://muasamcong.mpi.gov.vn/o/egp-portal-winning-bid-data/services/smart/search_prc",
+  "export_endpoint": "https://muasamcong.mpi.gov.vn/o/egp-portal-winning-bid-data/services/smart/search_prc/export",
+  "aggregation_path": "agg[0].buckets[0].docCount",
+  "export_result_path": "resultList",
+  "search_envelope_keys": ["page", "agg"],
+  "export_envelope_keys": ["resultList"],
+  "observed_source_field_names": ["bidForm", "cauHinh", "chungLoai", "diaDiem", "donGia", "donGiaDuThau", "donViTinh", "hangSanXuat", "id", "khoiLuongDouble", "kyMaHieu", "maCdt", "maHs", "maTbmt", "namSanXuat", "ngayBanHanhQuyetDinh", "ngayDangTaiKqlcnt", "nhanHieu", "soLuuHanh", "soNhaThauThamDu", "soQuyetDinh", "tab", "tenCdtBmt", "tenThietBi", "type", "winningCode", "winningName", "xuatXu"],
+  "known_null_forms": ["field absent", "empty string"],
+  "known_numeric_representations": {"khoiLuongDouble": "JSON number", "donGia": "JSON number", "donGiaDuThau": "JSON number", "soNhaThauThamDu": "JSON number and may be fractional", "namSanXuat": "JSON string; descriptive values observed"},
+  "known_date_representations": ["JSON string YYYY-MM-DDTHH:mm:ss without explicit timezone"],
+  "contract_evidence_status": "VERIFIED",
+  "fixture_date": "2026-08-28",
+  "fixture_range": {"from": "2026-08-28T00:00:00.000Z", "to": "2026-08-28T23:59:59.059Z"},
+  "preflight_doc_count": 1727,
+  "sample_query": {"keyword": "IB2600314746", "search_doc_count": 96, "export_expected_count": 96, "export_fixture_result_count": 1, "export_fixture_truncated": true},
+  "export_capture_note": "Request shape is verified from the official page and export resultList envelope is the Phase 0 verified behavior. Anonymous live export returned HTTP 200 with zero body; sample record mirrors the live search record for offline parser tests.",
+  "export_ceiling": 30000,
+  "response_behavior": {"search_zero_result": "HTTP 200 with page.content=[] and docCount=0", "search_nonzero_result": "HTTP 200 with records under page.content", "export_zero_result": "expected resultList=[]", "export_nonzero_result": "resultList array", "relevant_errors": ["HTTP 400 for deep search pagination", "HTTP 400 for export pageNumber=1", "HTTP 429/5xx are transient"]},
+  "zero_result_evidence": {"keyword": "__bidfinder_contract_zero_20260829__", "http": 200, "docCount": 0, "page_content_length": 0},
+  "provenance_fields": ["id", "source_tab", "source_tab_label", "data_group", "partition_date"],
+  "canonical_mapping": [
+    {"canonical_key": "item_name", "source_field": "tenThietBi", "optional": true}, {"canonical_key": "unit", "source_field": "donViTinh", "optional": true}, {"canonical_key": "quantity", "source_field": "khoiLuongDouble", "optional": true}, {"canonical_key": "country_of_origin", "source_field": "xuatXu", "optional": true}, {"canonical_key": "hs_code", "source_field": "maHs", "optional": true}, {"canonical_key": "model_mark", "source_field": "kyMaHieu", "optional": true}, {"canonical_key": "brand", "source_field": "nhanHieu", "optional": true}, {"canonical_key": "production_year", "source_field": "namSanXuat", "optional": true}, {"canonical_key": "manufacturer", "source_field": "hangSanXuat", "optional": true}, {"canonical_key": "technical_specification", "source_field": "cauHinh", "optional": true}, {"canonical_key": "model", "source_field": "chungLoai", "optional": true}, {"canonical_key": "registration_or_import_permit_number", "source_field": "soLuuHanh", "optional": true}, {"canonical_key": "winning_unit_price", "source_field": "donGia", "optional": true}, {"canonical_key": "winning_bidder_id", "source_field": "winningCode", "optional": true}, {"canonical_key": "winning_bidder_name", "source_field": "winningName", "optional": true}, {"canonical_key": "bid_invitation_code", "source_field": "maTbmt", "optional": true}, {"canonical_key": "procuring_entity_id", "source_field": "maCdt", "optional": true}, {"canonical_key": "procuring_entity_name", "source_field": "tenCdtBmt", "optional": true}, {"canonical_key": "selection_method", "source_field": "bidForm", "optional": true}, {"canonical_key": "result_posted_at", "source_field": "ngayDangTaiKqlcnt", "optional": true}, {"canonical_key": "decision_number", "source_field": "soQuyetDinh", "optional": true}, {"canonical_key": "decision_issued_at", "source_field": "ngayBanHanhQuyetDinh", "optional": true}, {"canonical_key": "bidder_count", "source_field": "soNhaThauThamDu", "optional": true}, {"canonical_key": "location", "source_field": "diaDiem", "optional": true}
+  ],
+  "verification_notes": ["Official page markup uses THIET_BI_VAT_TU_Y_TE as typeHH under outer HANG_HOA.", "Medical-only model and registration concepts are stable optional goods fields.", "soNhaThauThamDu was observed as a fractional JSON number; do not coerce to integer."]
+}

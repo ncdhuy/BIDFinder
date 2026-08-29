@@ -1,0 +1,40 @@
+{
+  "source_tab_label": "Gói thầu thuốc Generic",
+  "data_group": "medicines",
+  "source_tab": "THUOC_TAN_DUOC",
+  "type": "HANG_HOA",
+  "tab": "THUOC_TAN_DUOC",
+  "request_index": "es-smart-pricing",
+  "match_fields": ["ten_thuoc", "ten_hoat_chat", "ma_tbmt"],
+  "fixed_filters": [
+    {"fieldName": "medicines", "searchType": "in", "fieldValues": ["0"]},
+    {"fieldName": "type", "searchType": "in", "fieldValues": ["HANG_HOA"]},
+    {"fieldName": "tab", "searchType": "in", "fieldValues": ["THUOC_TAN_DUOC"]}
+  ],
+  "special_filters": ["medicines=[\"0\"]"],
+  "optional_filters": ["ngay_dang_tai_kqlcnt range"],
+  "search_endpoint": "https://muasamcong.mpi.gov.vn/o/egp-portal-winning-bid-data/services/smart/search_prc",
+  "export_endpoint": "https://muasamcong.mpi.gov.vn/o/egp-portal-winning-bid-data/services/smart/search_prc/export",
+  "aggregation_path": "agg[0].buckets[0].docCount",
+  "export_result_path": "resultList",
+  "search_envelope_keys": ["page", "agg"],
+  "export_envelope_keys": ["resultList"],
+  "observed_source_field_names": ["bidForm", "dangBaoChe", "diaDiem", "donGia", "donViTinh", "duongDung", "gdklh_GPNK", "hanDung", "id", "maCdt", "maTbmt", "medicines", "ngayBanHanhQuyetDinh", "ngayDangTaiKqlcnt", "nhomThuoc", "nongDo", "nuocSanXuat", "quyCachDongGoi", "soLuong", "soQuyetDinh", "tab", "tenCdtBmt", "tenCoSoSanXuat", "tenHoatChat", "tenThuoc", "type", "winningCode", "winningName"],
+  "known_null_forms": ["field absent", "empty string"],
+  "known_numeric_representations": {"donGia": "JSON number", "soLuong": "JSON number", "soNhaThauThamDu": "JSON number when present"},
+  "known_date_representations": ["JSON string YYYY-MM-DDTHH:mm:ss without explicit timezone"],
+  "contract_evidence_status": "VERIFIED",
+  "fixture_date": "2026-08-28",
+  "fixture_range": {"from": "2026-08-28T00:00:00.000Z", "to": "2026-08-28T23:59:59.059Z"},
+  "preflight_doc_count": 125,
+  "sample_query": {"keyword": "IB2600498574", "search_doc_count": 7, "export_expected_count": 7, "export_fixture_result_count": 1, "export_fixture_truncated": true},
+  "export_capture_note": "Request shape is verified from the official page and export resultList envelope is the Phase 0 verified behavior. Anonymous live export returned HTTP 200 with zero body; sample record mirrors the live search record for offline parser tests.",
+  "export_ceiling": 30000,
+  "response_behavior": {"search_zero_result": "HTTP 200 with page.content=[] and docCount=0", "search_nonzero_result": "HTTP 200 with records under page.content", "export_zero_result": "expected resultList=[]", "export_nonzero_result": "resultList array", "relevant_errors": ["HTTP 400 for deep search pagination", "HTTP 400 for export pageNumber=1", "HTTP 429/5xx are transient"]},
+  "zero_result_evidence": {"keyword": "__bidfinder_contract_zero_20260829__", "http": 200, "docCount": 0, "page_content_length": 0},
+  "provenance_fields": ["id", "source_tab", "source_tab_label", "data_group", "partition_date"],
+  "canonical_mapping": [
+    {"canonical_key": "medicine_name", "source_field": "tenThuoc", "optional": true}, {"canonical_key": "active_ingredient_or_herbal_component", "source_field": "tenHoatChat", "optional": true}, {"canonical_key": "strength", "source_field": "nongDo", "optional": true}, {"canonical_key": "marketing_authorization_or_import_permit", "source_field": "gdklh_GPNK", "optional": true}, {"canonical_key": "route_of_administration", "source_field": "duongDung", "optional": true}, {"canonical_key": "dosage_form", "source_field": "dangBaoChe", "optional": true}, {"canonical_key": "shelf_life", "source_field": "hanDung", "optional": true}, {"canonical_key": "manufacturer", "source_field": "tenCoSoSanXuat", "optional": true}, {"canonical_key": "production_country", "source_field": "nuocSanXuat", "optional": true}, {"canonical_key": "packaging", "source_field": "quyCachDongGoi", "optional": true}, {"canonical_key": "unit", "source_field": "donViTinh", "optional": true}, {"canonical_key": "quantity", "source_field": "soLuong", "optional": true}, {"canonical_key": "winning_unit_price", "source_field": "donGia", "optional": true}, {"canonical_key": "winning_bidder_id", "source_field": "winningCode", "optional": true}, {"canonical_key": "winning_bidder_name", "source_field": "winningName", "optional": true}, {"canonical_key": "medicine_group", "source_field": "nhomThuoc", "optional": true}, {"canonical_key": "bid_invitation_code", "source_field": "maTbmt", "optional": true}, {"canonical_key": "procuring_entity_id", "source_field": "maCdt", "optional": true}, {"canonical_key": "procuring_entity_name", "source_field": "tenCdtBmt", "optional": true}, {"canonical_key": "selection_method", "source_field": "bidForm", "optional": true}, {"canonical_key": "result_posted_at", "source_field": "ngayDangTaiKqlcnt", "optional": true}, {"canonical_key": "decision_number", "source_field": "soQuyetDinh", "optional": true}, {"canonical_key": "decision_issued_at", "source_field": "ngayBanHanhQuyetDinh", "optional": true}, {"canonical_key": "bidder_count", "source_field": "soNhaThauThamDu", "optional": true}, {"canonical_key": "location", "source_field": "diaDiem", "optional": true}
+  ],
+  "verification_notes": ["Official page uses outer type=HANG_HOA, tab=THUOC_TAN_DUOC, medicines=0.", "Medicine-specific match fields are separate from the goods/device match fields.", "Export result is not inferred from a different medicine category."]
+}
