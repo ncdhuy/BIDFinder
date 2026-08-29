@@ -4,7 +4,7 @@
   "authentication_required": false,
   "cookies_or_session_required": false,
   "search_result_window": 10000,
-  "max_safe_daily_results": 9500,
+  "max_safe_search_results": 9500,
   "selected_page_size": 1000,
   "page_size_probe": [
     {"requested": 100, "http": 200, "returned": 100, "content_length": 100, "doc_count": 16248, "latency_ms": 310},

@@ -1,0 +1,169 @@
+{
+  "phase": "Phase 1C",
+  "source": "goods-general",
+  "source_tab": "HANG_HOA",
+  "endpoint": "https://muasamcong.mpi.gov.vn/o/egp-portal-winning-bid-data/services/smart/search_prc",
+  "search_result_window": 10000,
+  "max_safe_search_results": 9500,
+  "page_size": 1000,
+  "overlap_policy": {
+    "duration": "PT1S",
+    "children": "left=[start, midpoint+1s], right=[midpoint, end]",
+    "reason": "Observed source timestamps are second-level, but one second also protects millisecond-valued records at a split boundary. UUID union deduplicates intentional overlap."
+  },
+  "intraday_range_proof": {
+    "date": "2026-08-28",
+    "parent_count": 16248,
+    "ranges_cover_parent": true,
+    "ranges": [
+      {
+        "from": "2026-08-28T00:00:00.000Z",
+        "to": "2026-08-28T16:00:00.000Z",
+        "http": 200,
+        "agg_doc_count": 8993,
+        "pages": 9,
+        "fetched": 8993,
+        "min_ngayDangTaiKqlcnt": "2026-08-28T01:03:41",
+        "max_ngayDangTaiKqlcnt": "2026-08-28T15:59:51",
+        "records_at_exact_split_second": 0
+      },
+      {
+        "from": "2026-08-28T16:00:00.000Z",
+        "to": "2026-08-28T23:59:59.059Z",
+        "http": 200,
+        "agg_doc_count": 7255,
+        "pages": 8,
+        "fetched": 7255,
+        "min_ngayDangTaiKqlcnt": "2026-08-28T16:00:53",
+        "max_ngayDangTaiKqlcnt": "2026-08-28T23:57:28",
+        "records_after_split_boundary": 2
+      }
+    ],
+    "union_uuid_count": 16248,
+    "boundary_duplicate_uuid_count": 0,
+    "status": "PASS"
+  },
+  "overlap_boundary_probe": {
+    "parent_range": "2026-08-28T00:00:00.000Z..2026-08-28T23:59:59.059Z",
+    "left_range": "2026-08-28T00:00:00.000Z..2026-08-28T16:00:54.000Z",
+    "right_range": "2026-08-28T16:00:53.000Z..2026-08-28T23:59:59.059Z",
+    "left_http": 200,
+    "right_http": 200,
+    "left_count": 8995,
+    "right_count": 7255,
+    "raw_fetched_count": 16250,
+    "unique_uuid_count": 16248,
+    "duplicate_uuid_occurrences": 2,
+    "duplicate_uuid_examples": [
+      {
+        "id": "e8470cd3-2573-413d-8148-9fe99a830da3",
+        "ngayDangTaiKqlcnt": "2026-08-28T16:00:53"
+      },
+      {
+        "id": "6eff414d-4343-44dd-9d48-0643072e3a30",
+        "ngayDangTaiKqlcnt": "2026-08-28T16:00:53"
+      }
+    ],
+    "same_uuid_content_conflicts": 0,
+    "status": "PASS"
+  },
+  "overflow_days": [
+    {
+      "date": "2026-08-28",
+      "parent_count": 16248,
+      "leaves": [
+        {"from": "2026-08-28T00:00:00.000Z", "to": "2026-08-28T12:00:00.529Z", "count": 3608, "pages": 4, "fetched": 3608},
+        {"from": "2026-08-28T11:59:59.529Z", "to": "2026-08-28T15:00:00.911Z", "count": 2676, "pages": 3, "fetched": 2676},
+        {"from": "2026-08-28T14:59:59.911Z", "to": "2026-08-28T18:00:00.294Z", "count": 7267, "pages": 8, "fetched": 7267},
+        {"from": "2026-08-28T17:59:59.294Z", "to": "2026-08-28T23:59:59.059Z", "count": 2697, "pages": 3, "fetched": 2697}
+      ],
+      "split_diagnostics": [
+        {"parent": 16248, "left": 3608, "right": 12640, "child_sum": 16248, "overlap_surplus": 0},
+        {"parent": 12640, "left": 9943, "right": 2697, "child_sum": 12640, "overlap_surplus": 0},
+        {"parent": 9943, "left": 2676, "right": 7267, "child_sum": 9943, "overlap_surplus": 0}
+      ],
+      "raw_fetched_count": 16248,
+      "boundary_duplicate_uuid_occurrences": 0,
+      "unique_uuid_count": 16248,
+      "pre_count": 16248,
+      "post_count": 16248,
+      "same_uuid_content_conflicts": 0,
+      "status": "PASS"
+    },
+    {
+      "date": "2026-08-27",
+      "parent_count": 13971,
+      "leaves": [
+        {"from": "2026-08-27T00:00:00.000Z", "to": "2026-08-27T12:00:00.529Z", "count": 4045, "pages": 5, "fetched": 4045},
+        {"from": "2026-08-27T11:59:59.529Z", "to": "2026-08-27T18:00:00.294Z", "count": 7302, "pages": 8, "fetched": 7302},
+        {"from": "2026-08-27T17:59:59.294Z", "to": "2026-08-27T23:59:59.059Z", "count": 2624, "pages": 3, "fetched": 2624}
+      ],
+      "split_diagnostics": [
+        {"parent": 13971, "left": 4045, "right": 9926, "child_sum": 13971, "overlap_surplus": 0},
+        {"parent": 9926, "left": 7302, "right": 2624, "child_sum": 9926, "overlap_surplus": 0}
+      ],
+      "raw_fetched_count": 13971,
+      "boundary_duplicate_uuid_occurrences": 0,
+      "unique_uuid_count": 13971,
+      "pre_count": 13971,
+      "post_count": 13971,
+      "same_uuid_content_conflicts": 0,
+      "status": "PASS"
+    },
+    {
+      "date": "2026-08-26",
+      "parent_count": 15605,
+      "leaves": [
+        {"from": "2026-08-26T00:00:00.000Z", "to": "2026-08-26T12:00:00.529Z", "count": 5628, "pages": 6, "fetched": 5628},
+        {"from": "2026-08-26T11:59:59.529Z", "to": "2026-08-26T18:00:00.294Z", "count": 7951, "pages": 8, "fetched": 7951},
+        {"from": "2026-08-26T17:59:59.294Z", "to": "2026-08-26T23:59:59.059Z", "count": 2026, "pages": 3, "fetched": 2026}
+      ],
+      "split_diagnostics": [
+        {"parent": 15605, "left": 5628, "right": 9977, "child_sum": 15605, "overlap_surplus": 0},
+        {"parent": 9977, "left": 7951, "right": 2026, "child_sum": 9977, "overlap_surplus": 0}
+      ],
+      "raw_fetched_count": 15605,
+      "boundary_duplicate_uuid_occurrences": 0,
+      "unique_uuid_count": 15605,
+      "pre_count": 15605,
+      "post_count": 15605,
+      "same_uuid_content_conflicts": 0,
+      "status": "PASS"
+    },
+    {
+      "date": "2026-08-21",
+      "parent_count": 10251,
+      "leaves": [
+        {"from": "2026-08-21T00:00:00.000Z", "to": "2026-08-21T12:00:00.529Z", "count": 2572, "pages": 3, "fetched": 2572},
+        {"from": "2026-08-21T11:59:59.529Z", "to": "2026-08-21T23:59:59.059Z", "count": 7679, "pages": 8, "fetched": 7679}
+      ],
+      "split_diagnostics": [
+        {"parent": 10251, "left": 2572, "right": 7679, "child_sum": 10251, "overlap_surplus": 0}
+      ],
+      "raw_fetched_count": 10251,
+      "boundary_duplicate_uuid_occurrences": 0,
+      "unique_uuid_count": 10251,
+      "pre_count": 10251,
+      "post_count": 10251,
+      "same_uuid_content_conflicts": 0,
+      "status": "PASS"
+    }
+  ],
+  "normal_day": {
+    "date": "2026-08-25",
+    "parent_count": 9257,
+    "leaf_count": 1,
+    "leaf": {
+      "from": "2026-08-25T00:00:00.000Z",
+      "to": "2026-08-25T23:59:59.059Z",
+      "count": 9257,
+      "pages": 10,
+      "fetched": 9257
+    },
+    "raw_fetched_count": 9257,
+    "unique_uuid_count": 9257,
+    "pre_count": 9257,
+    "post_count": 9257,
+    "status": "PASS"
+  }
+}

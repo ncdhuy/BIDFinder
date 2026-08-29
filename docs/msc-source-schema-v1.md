@@ -1,6 +1,6 @@
 # MSC Source Schema V1 Baseline
 
-Status: Phase 1B public-search field and pagination contract. This remains documentation and fixture infrastructure, not a production ingestion implementation.
+Status: Phase 1C public-search field, pagination, and overflow time-partition proof. This remains documentation and fixture infrastructure, not a production ingestion implementation.
 
 Source scope is limited to the seven HÀNG HÓA tabs listed below. Dịch vụ tư vấn and Dịch vụ phi tư vấn are excluded.
 
@@ -209,26 +209,30 @@ All seven records now exist under [`docs/msc-contracts/`](msc-contracts/README.m
 
 ## 9. Search-only completeness invariant
 
-For every successful `partition_date × source_tab`:
+For every successful daily parent `partition_date × source_tab`:
 
 ```text
-search agg[0].buckets[0].docCount
-= collected page.content length
-= unique UUID count
+pre-count of full parent `agg[0].buckets[0].docCount`
+= post-count of full parent
+= unique UUID count from all safe leaves
 ```
 
 The partition fails closed if:
 
-- expected count reaches `MAX_SAFE_DAILY_RESULTS=9500`;
+- any safe leaf count exceeds `MAX_SAFE_SEARCH_RESULTS=9500`;
+- an overflowing parent cannot be reduced to safe leaves within maximum depth or minimum granularity;
 - any required search page returns a non-200 response or malformed envelope/metadata;
 - a page offset reaches the 10,000-result search window;
-- collected `page.content` length differs from the search aggregation count;
-- a UUID is missing, duplicated within a page, or overlaps another page;
+- the UUID union differs from the full-parent count;
+- the pre-count and post-count differ for a mutable/current parent;
+- a UUID is missing, duplicated within a leaf, or overlaps with different content;
 - normalization drops, duplicates, or produces a different row count;
 - Typesense reports fewer successful upserts than normalized rows;
 - source UUIDs are missing, duplicated unexpectedly, or unstable.
 
-Phase 1B validates the search-only portion with a pure offline helper and a public live probe. Normalization and Typesense import checks remain future-phase gates.
+The daily parent is the natural source partition; safe leaf search intervals, not whole days, must fit below `MAX_SAFE_SEARCH_RESULTS`. Deliberate one-second sibling overlap protects unknown range inclusivity and possible millisecond timestamps. Same-content duplicate UUIDs are deduplicated only at the parent union layer; same UUID with different content fails closed.
+
+Phase 1C validates this search-only strategy with a pure offline helper and a public live probe. Normalization and Typesense import checks remain future-phase gates.
 
 ## 10. Phase 1A contract freeze, finalized by Phase 1B
 
@@ -353,12 +357,12 @@ Source-only classifier and display fields (`medicines`, `medicineType`, `dangBao
 
 ### 10.3 Date and UUID findings
 
-The official page defines `convertDateFrom`/`convertDateTo` and emits the observed range form `T00:00:00.000Z` through `T23:59:59.059Z`; V1 reproduces this byte-for-byte and does not change `.059Z` to `.999Z`. Response values are strings such as `2026-08-28T23:57:28` with no timezone marker. The page adds seven hours in its date helper, but the server's timezone interpretation cannot be proven from these small captures.
+The official page defines `convertDateFrom`/`convertDateTo` and emits the observed range form `T00:00:00.000Z` through `T23:59:59.059Z`; V1 reproduces this byte-for-byte and does not change `.059Z` to `.999Z`. Public search accepted arbitrary sub-day ranges on 2026-08-28, including two safe ranges that covered the full day. Response values are strings such as `2026-08-28T23:57:28` with no timezone marker. The page adds seven hours in its date helper, but the server's timezone interpretation cannot be proven from these captures.
 
-A repeated public goods query returned the same UUID and timestamp. Phase 1B full controlled partitions had no duplicate UUIDs or page overlap, and repeated page 0 returned the same UUID order. This is sampled stability evidence only, not universal cross-day uniqueness proof.
+A repeated public goods query returned the same UUID and timestamp. Phase 1B full controlled partitions had no duplicate UUIDs or page overlap, and repeated page 0 returned the same UUID order. Phase 1C's one-second overlap probe returned two identical UUID/content pairs at `2026-08-28T16:00:53`, with no content conflicts; the parent UUID union remained exact. This is sampled stability evidence only, not universal cross-day uniqueness proof.
 
-Boundary fixture limitation: no record exactly at `23:59:59.059Z` or `00:00:00.000Z` was available, so inclusive/exclusive behavior and timezone meaning remain unresolved. Daily official ranges are retained exactly for V1; do not start production ingestion until a boundary capture proves the missing edge cases.
+Boundary policy: inclusive/exclusive behavior remains unspecified, so production must use deterministic one-second sibling overlap and UUID union rather than assume non-overlapping mathematical intervals. No record exactly at `23:59:59.059Z` or `00:00:00.000Z` was available; daily official bounds remain byte-for-byte unchanged.
 
 ## 11. Phase 1A status
 
-All seven source request contracts are resolved and fixture-backed for exact type/tab/match fields/special filters, public search envelope, count path, source field names, and pagination evidence. Phase 1A is complete for contract discovery and offline infrastructure. Phase 1B is partial: safe representative partitions pass, but overflow days require a future secondary strategy; exact timestamp boundary semantics remain unresolved. No authenticated MSC session is required for the proven search path.
+All seven source request contracts are resolved and fixture-backed for exact type/tab/match fields/special filters, public search envelope, count path, source field names, and pagination evidence. Phase 1A is complete for contract discovery and offline infrastructure. Phase 1B safe representative partitions pass. Phase 1C proves adaptive time partitioning, public leaf pagination, UUID union parity, overlap handling, and pre/post stability for four overflow goods-general days plus the 9,257-row normal day. No authenticated MSC session is required for the proven search path.

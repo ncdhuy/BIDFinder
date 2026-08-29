@@ -15,6 +15,7 @@ import re
 import ssl
 import sys
 import time
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -23,21 +24,35 @@ from urllib.request import Request, urlopen
 try:
     from tools.msc_search_pagination import (
         DEFAULT_SEARCH_PAGE_SIZE,
-        MAX_SAFE_DAILY_RESULTS,
+        DEFAULT_PARTITION_OVERLAP,
+        MAX_SAFE_SEARCH_RESULTS,
+        MIN_PARTITION_GRANULARITY,
         SEARCH_RESULT_WINDOW,
+        SearchInterval,
         SearchPaginationError,
+        SearchPartitionError,
         calculate_required_pages,
         parse_search_count as _parse_search_count,
+        plan_partition,
+        union_partition_records,
+        validate_partition_completeness,
         validate_search_pages,
     )
 except ModuleNotFoundError:  # direct `python tools/msc_contract_probe.py` execution
     from msc_search_pagination import (
         DEFAULT_SEARCH_PAGE_SIZE,
-        MAX_SAFE_DAILY_RESULTS,
+        DEFAULT_PARTITION_OVERLAP,
+        MAX_SAFE_SEARCH_RESULTS,
+        MIN_PARTITION_GRANULARITY,
         SEARCH_RESULT_WINDOW,
+        SearchInterval,
         SearchPaginationError,
+        SearchPartitionError,
         calculate_required_pages,
         parse_search_count as _parse_search_count,
+        plan_partition,
+        union_partition_records,
+        validate_partition_completeness,
         validate_search_pages,
     )
 
@@ -347,7 +362,7 @@ def run_probe(
     ids = [record["id"] for record in records]
     print(f"expected_count={result.expected_count}")
     print(f"page_size={page_size}")
-    print(f"max_safe_daily_results={MAX_SAFE_DAILY_RESULTS}")
+    print(f"max_safe_search_results={MAX_SAFE_SEARCH_RESULTS}")
     print(f"search_result_window={SEARCH_RESULT_WINDOW}")
     print(f"page_count={request_pages}")
     print(
@@ -389,6 +404,201 @@ def run_probe(
     return 0
 
 
+def _count_search_interval(
+    payload: list[dict[str, Any]],
+    interval: SearchInterval,
+    *,
+    page_size: int,
+    timeout: float,
+    ssl_context: ssl.SSLContext | None,
+) -> int:
+    ranged = with_date_range(payload, interval.from_value, interval.to_value)
+    status, response, byte_count = _request_json(
+        SEARCH_ENDPOINT,
+        with_page(ranged, 0, page_size),
+        timeout,
+        ssl_context=ssl_context,
+    )
+    if status != 200 or response is None:
+        raise SearchPartitionError(
+            f"count interval HTTP {status} or malformed response bytes={byte_count}: "
+            f"{interval.from_value}..{interval.to_value}"
+        )
+    count = parse_search_count(response)
+    parse_search_records(response)
+    page = response.get("page") if isinstance(response, dict) else None
+    if not isinstance(page, dict):
+        raise SearchPartitionError("count interval missing page envelope")
+    if page.get("currentPage") != 0 or page.get("pageSize") != page_size:
+        raise SearchPartitionError("count interval page metadata does not match page 0 request")
+    if page.get("totalElements") != count and not (
+        count > MAX_SAFE_SEARCH_RESULTS
+        and page.get("totalElements") == SEARCH_RESULT_WINDOW
+    ):
+        raise SearchPartitionError(
+            f"count interval totalElements {page.get('totalElements')} does not match agg {count}"
+        )
+    return count
+
+
+def _leaf_records_for_child(
+    leaf_results: list[tuple[SearchInterval, Any]], child: SearchInterval
+) -> list[dict[str, Any]]:
+    records = []
+    for leaf, result in leaf_results:
+        if child.from_value <= leaf.from_value and leaf.to_value <= child.to_value:
+            records.extend(result.records)
+    return records
+
+
+def _observed_child_overlap(
+    leaf_results: list[tuple[SearchInterval, Any]],
+    diagnostic: Any,
+) -> int:
+    left_ids = {record["id"] for record in _leaf_records_for_child(leaf_results, diagnostic.left)}
+    right_ids = {record["id"] for record in _leaf_records_for_child(leaf_results, diagnostic.right)}
+    return len(left_ids & right_ids)
+
+
+def run_partitioned_probe(
+    payload: list[dict[str, Any]],
+    *,
+    source: str,
+    source_label: str | None,
+    data_group: str | None,
+    source_tab: str | None,
+    parent_from: str,
+    parent_to: str,
+    timeout: float,
+    page_size: int,
+    post_count: bool,
+    overlap: timedelta = DEFAULT_PARTITION_OVERLAP,
+    minimum_span: timedelta = MIN_PARTITION_GRANULARITY,
+    max_depth: int = 16,
+    ssl_context: ssl.SSLContext | None,
+) -> int:
+    validate_payload(payload)
+    payload = with_empty_keyword(payload)
+    parent = SearchInterval(parent_from, parent_to)
+
+    print(f"source={source}")
+    if source_label:
+        print(f"source_label={source_label}")
+    if data_group:
+        print(f"data_group={data_group}")
+    if source_tab:
+        print(f"source_tab={source_tab}")
+    print(f"parent_range={parent_from}..{parent_to}")
+    print(f"safe_threshold={MAX_SAFE_SEARCH_RESULTS}")
+    print(f"page_size={page_size}")
+    print(f"overlap_ms={round(overlap.total_seconds() * 1000)}")
+
+    try:
+        plan = plan_partition(
+            parent,
+            lambda interval: _count_search_interval(
+                payload,
+                interval,
+                page_size=page_size,
+                timeout=timeout,
+                ssl_context=ssl_context,
+            ),
+            max_safe_results=MAX_SAFE_SEARCH_RESULTS,
+            overlap=overlap,
+            minimum_span=minimum_span,
+            max_depth=max_depth,
+        )
+        parent_count = plan.parent_interval.expected_count
+        if parent_count is None:
+            raise SearchPartitionError("partition plan missing parent count")
+        print(f"parent_count={parent_count}")
+        print(f"leaf_count={len(plan.safe_leaves)}")
+
+        leaf_results: list[tuple[SearchInterval, Any]] = []
+        total_pages = 0
+        for index, leaf in enumerate(plan.safe_leaves, start=1):
+            expected_count = leaf.expected_count
+            if expected_count is None:
+                raise SearchPartitionError(f"leaf {index} missing expected count")
+            ranged = with_date_range(payload, leaf.from_value, leaf.to_value)
+            required = calculate_required_pages(expected_count, page_size)
+            responses = []
+            for page_number in range(max(1, required)):
+                status, response, byte_count = _request_json(
+                    SEARCH_ENDPOINT,
+                    with_page(ranged, page_number, page_size),
+                    timeout,
+                    ssl_context=ssl_context,
+                )
+                if status != 200 or response is None:
+                    raise SearchPartitionError(
+                        f"leaf {index} page {page_number} HTTP {status} or malformed response "
+                        f"bytes={byte_count}"
+                    )
+                responses.append(response)
+            actual_count = parse_search_count(responses[0])
+            if actual_count != expected_count:
+                raise SearchPartitionError(
+                    f"leaf {index} count changed after planning expected={expected_count} "
+                    f"actual={actual_count}"
+                )
+            result = validate_search_pages(responses, page_size=page_size)
+            leaf_results.append((leaf, result))
+            total_pages += result.required_pages or 1
+            print(
+                f"leaf_{index}={leaf.from_value}..{leaf.to_value} "
+                f"count={result.expected_count} pages={result.required_pages or 1} "
+                f"fetched={len(result.records)}"
+            )
+
+        union = union_partition_records(
+            [result.records for _, result in leaf_results],
+            expected_count=parent_count,
+            leaf_intervals=[leaf for leaf, _ in leaf_results],
+        )
+        validate_partition_completeness(
+            parent_count,
+            union.unique_uuid_count,
+        )
+        print(f"raw_fetched_count={union.raw_record_count}")
+        print(f"pages_required={total_pages}")
+        print(f"boundary_duplicate_uuid_count={len(union.duplicate_uuids)}")
+        print(f"boundary_duplicate_uuid_occurrences={union.duplicate_uuid_occurrences}")
+        print("uuid_content_conflict_count=0")
+        for split_index, diagnostic in enumerate(plan.diagnostics, start=1):
+            print(
+                f"split_{split_index}="
+                f"parent={diagnostic.parent_count} left={diagnostic.left_count} "
+                f"right={diagnostic.right_count} child_sum={diagnostic.child_count_sum} "
+                f"overlap_surplus={diagnostic.overlap_surplus} "
+                f"observed_child_overlap_uuid_count={_observed_child_overlap(leaf_results, diagnostic)}"
+            )
+        if post_count:
+            post = _count_search_interval(
+                payload,
+                plan.parent_interval,
+                page_size=page_size,
+                timeout=timeout,
+                ssl_context=ssl_context,
+            )
+            validate_partition_completeness(
+                parent_count,
+                union.unique_uuid_count,
+                post_count=post,
+            )
+            print(f"pre_count={parent_count}")
+            print(f"post_count={post}")
+        else:
+            print(f"pre_count={parent_count}")
+            print("post_count=not_requested")
+        print(f"unique_uuid_count={union.unique_uuid_count}")
+        print("completeness=PASS")
+        return 0
+    except (ContractProbeError, SearchPaginationError) as exc:
+        print(f"completeness=FAIL: {exc}")
+        return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--request", type=Path, help="raw MSC search request JSON file")
@@ -402,6 +612,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--from", dest="from_value", help="explicit range start, ISO UTC")
     parser.add_argument("--to", dest="to_value", help="explicit range end, ISO UTC")
     parser.add_argument("--page-size", type=int, default=DEFAULT_SEARCH_PAGE_SIZE)
+    parser.add_argument(
+        "--validate-partitioned-search",
+        action="store_true",
+        help="developer-only adaptive intraday overflow validation; never production ingestion",
+    )
+    parser.add_argument(
+        "--post-count",
+        action="store_true",
+        help="re-count parent interval after leaf retrieval",
+    )
+    parser.add_argument("--max-depth", type=int, default=16)
+    parser.add_argument("--overlap-seconds", type=float, default=1.0)
+    parser.add_argument("--minimum-span-milliseconds", type=int, default=1)
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--no-repeat", action="store_true", help="skip repeat page-0 stability check")
     parser.add_argument(
@@ -434,6 +657,29 @@ def main(argv: list[str] | None = None) -> int:
             payload = with_date_range(payload, from_value, to_value)
         elif date_range == "request payload":
             date_range = payload_date_range(payload)
+        if args.validate_partitioned_search:
+            if not from_value or not to_value:
+                raise ContractProbeError(
+                    "--validate-partitioned-search requires --date or --from/--to"
+                )
+            if args.overlap_seconds <= 0 or args.minimum_span_milliseconds <= 0:
+                raise ContractProbeError("partition overlap and minimum span must be positive")
+            return run_partitioned_probe(
+                payload,
+                source=source,
+                source_label=contract.get("source_tab_label") if contract else None,
+                data_group=contract.get("data_group") if contract else None,
+                source_tab=contract.get("source_tab") if contract else None,
+                parent_from=from_value,
+                parent_to=to_value,
+                timeout=args.timeout,
+                page_size=args.page_size,
+                post_count=args.post_count,
+                overlap=timedelta(seconds=args.overlap_seconds),
+                minimum_span=timedelta(milliseconds=args.minimum_span_milliseconds),
+                max_depth=args.max_depth,
+                ssl_context=weak_msc_tls_context() if args.allow_weak_tls else None,
+            )
         payload = with_page(payload, 0, args.page_size)
         return run_probe(
             payload,

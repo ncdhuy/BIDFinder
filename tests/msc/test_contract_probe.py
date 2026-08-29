@@ -7,6 +7,7 @@ from tools.msc_contract_probe import (
     ALLOWED_ENDPOINTS,
     ContractProbeError,
     EXPORT_CEILING,
+    build_parser,
     check_completeness,
     detect_duplicate_ids,
     parse_export_records,
@@ -196,6 +197,20 @@ class ContractFixtureTest(unittest.TestCase):
 
 
 class ContractParserTest(unittest.TestCase):
+    def test_partition_validation_mode_is_explicit(self):
+        args = build_parser().parse_args(
+            [
+                "--contract",
+                "contract.json",
+                "--date",
+                "2026-08-28",
+                "--validate-partitioned-search",
+                "--post-count",
+            ]
+        )
+        self.assertTrue(args.validate_partitioned_search)
+        self.assertTrue(args.post_count)
+
     def test_endpoint_allow_list_is_fixed(self):
         self.assertEqual(1, len(ALLOWED_ENDPOINTS))
         self.assertTrue(all(endpoint.startswith("https://muasamcong.mpi.gov.vn/") for endpoint in ALLOWED_ENDPOINTS))

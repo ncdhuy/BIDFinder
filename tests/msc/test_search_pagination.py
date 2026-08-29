@@ -5,7 +5,7 @@ from pathlib import Path
 
 from tools.msc_search_pagination import (
     DEFAULT_SEARCH_PAGE_SIZE,
-    MAX_SAFE_DAILY_RESULTS,
+    MAX_SAFE_SEARCH_RESULTS,
     SearchPaginationError,
     calculate_required_pages,
     validate_search_pages,
@@ -93,10 +93,26 @@ class SearchPaginationTest(unittest.TestCase):
                 page_size=2,
             )
 
-    def test_unsafe_expected_count_fails_closed(self):
-        with self.assertRaisesRegex(SearchPaginationError, "safe daily threshold"):
+    def test_threshold_is_safe_and_count_above_it_fails_closed(self):
+        result = validate_search_pages(
+            [
+                response(
+                    MAX_SAFE_SEARCH_RESULTS,
+                    page,
+                    DEFAULT_SEARCH_PAGE_SIZE,
+                    [f"id-{page}-{index}" for index in range(
+                        DEFAULT_SEARCH_PAGE_SIZE
+                        if page < 9
+                        else MAX_SAFE_SEARCH_RESULTS - 9 * DEFAULT_SEARCH_PAGE_SIZE
+                    )],
+                )
+                for page in range(10)
+            ],
+        )
+        self.assertEqual(MAX_SAFE_SEARCH_RESULTS, result.expected_count)
+        with self.assertRaisesRegex(SearchPaginationError, "safe search threshold"):
             validate_search_pages(
-                [response(MAX_SAFE_DAILY_RESULTS, 0, DEFAULT_SEARCH_PAGE_SIZE, [])],
+                [response(MAX_SAFE_SEARCH_RESULTS + 1, 0, DEFAULT_SEARCH_PAGE_SIZE, [])],
             )
 
     def test_fixture_covers_all_seven_sources_without_secrets(self):
@@ -126,7 +142,7 @@ class SearchPaginationTest(unittest.TestCase):
             self.assertEqual(item["uuid_count"], item["unique_uuid_count"])
             self.assertEqual(0, item["duplicate_uuid_count"])
             self.assertEqual(0, item["page_overlap_uuid_count"])
-            self.assertLess(item["expected_count"], fixture["max_safe_daily_results"])
+            self.assertLess(item["expected_count"], fixture["max_safe_search_results"])
             self.assertEqual(
                 {mapping["canonical_key"] for mapping in contract["canonical_mapping"]},
                 set(item["canonical_field_types"]),

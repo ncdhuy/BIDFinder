@@ -1,10 +1,10 @@
 # BIDFinder MSC-to-Typesense Migration Plan
 
-Status: Phase 1B search-only ingestion proof complete for safe representative partitions; production crawler remains blocked by observed overflow partitions.
+Status: Phase 1C overflow time-partition proof complete; Phase 2 production crawler implementation has not started.
 
 Baseline reviewed: `refactor-phase-0-7` at `0dcab303bdb4cf23d661b6e53802057705afff49` (`Change UI`, 2026-08-29).
 
-This document records the smallest viable migration path from the current Selenium/Postgres procurement-data path to the MuaSamCong (MSC) winning-bid APIs, a deterministic crawler/normalizer, Typesense, and the existing FastAPI/static-web product. Phase 1B adds proof tooling only; it does not authorize or implement a production crawler.
+This document records the smallest viable migration path from the current Selenium/Postgres procurement-data path to the MuaSamCong (MSC) winning-bid APIs, a deterministic crawler/normalizer, Typesense, and the existing FastAPI/static-web product. Phases 1A-1C add proof tooling only; they do not implement a production crawler.
 
 ## 1. Scope and non-goals
 
@@ -284,7 +284,7 @@ MuaSamCong winning-bid API
 - Preserve `data_group`, exact `source_tab`, and exact `source_tab_label` on every document.
 - Use idempotent bulk upsert. Re-running a successful partition must not create duplicate documents.
 - Keep checkpoint state per `date × source_tab` with status, expected count, search page count, normalized count, imported count, contract version, and failure reason. Candidate storage is a small durable control-plane record, not a query collection.
-- Refuse a partition when expected count reaches `MAX_SAFE_DAILY_RESULTS=9500`; do not ingest a partial day or attempt a secondary split in V1.
+- Treat the daily partition as the parent; recursively split only by `ngay_dang_tai_kqlcnt` until every safe leaf is at or below `MAX_SAFE_SEARCH_RESULTS=9500`, then fail closed if time granularity or depth prevents a safe leaf.
 - Refuse a partition when any equality in the search-count/page/normalize/import invariant fails.
 - Preserve each source's original discriminator; group normalization must not erase provenance.
 
@@ -313,11 +313,11 @@ The existing static UI remains the product shell. The later UI change is a data-
 ## 10. Recorded design decisions
 
 1. Use source MSC UUID as Typesense document `id`.
-2. Use one natural daily partition per source tab.
+2. Use one natural daily parent per source tab, with adaptive intraday safe leaves when needed.
 3. Count with `/search_prc`.
 4. Fetch with paginated `/search_prc` only.
-5. Fail closed if expected count reaches `MAX_SAFE_DAILY_RESULTS=9500` or any page offset reaches 10,000.
-6. Fail closed if collected `page.content` count differs from `agg[0].buckets[0].docCount`.
+5. Keep every safe leaf at or below `MAX_SAFE_SEARCH_RESULTS=9500`; fail closed if a leaf cannot be made safe or any page offset reaches 10,000.
+6. Fail closed if the UUID union differs from the full-parent `agg[0].buckets[0].docCount`, or if pre/post parent counts differ.
 7. Use idempotent Typesense bulk upsert.
 8. Keep ingestion checkpoint state per `date × source_tab`.
 9. Keep each source's exact original discriminator.
@@ -335,9 +335,9 @@ The existing static UI remains the product shell. The later UI change is a data-
 | Risk | Consequence | Required gate/mitigation |
 | --- | --- | --- |
 | Undiscovered per-tab request contract | Empty, mixed, or wrong source data | Seven contract fixtures and tab-by-tab approval before crawler code |
-| Search result window near 10,000 | Silent data loss | `MAX_SAFE_DAILY_RESULTS=9500`, daily preflight, page/count/UUID validation, fail-closed overflow |
+| Search result window near 10,000 | Silent data loss | `MAX_SAFE_SEARCH_RESULTS=9500`, adaptive time leaves, page/count/UUID validation, fail-closed unsplittable overflow |
 | Count path changes or has multiple aggregation buckets | Incorrect completeness proof | Store raw count evidence and validate aggregation interpretation per tab |
-| Date timezone/boundary mismatch | Missing or duplicated days | Confirm official timestamp semantics with boundary fixtures; use one documented timezone rule |
+| Date timezone/boundary mismatch | Missing or duplicated days | Preserve official day bounds; use deterministic one-second sibling overlap and UUID union; keep timezone meaning explicit until separately proven |
 | UUID collision or instability | Upsert overwrites unrelated rows | Verify UUID uniqueness/stability across tabs and partitions before index design |
 | Legacy fields absent in MSC | UI/API compatibility lies | Field-by-field source mapping; return null/missing and retire unsupported filters/sorts |
 | Three groups forced through two-scope UI | Traditional data becomes hidden or mislabelled | Decide response/UI compatibility contract before endpoint implementation |
@@ -458,7 +458,7 @@ Search responses use `page.content` and count `agg[0].buckets[0].docCount`. The 
 
 ### Phase 1A findings and remaining risks
 
-- Daily request bounds remain exactly `T00:00:00.000Z` through `T23:59:59.059Z`; `.059Z` was not changed. Response timestamps are naive strings without timezone markers. The page's helper adds seven hours. Adjacent sampled sets did not overlap, but no exact boundary record was available, so timezone and inclusive/exclusive semantics remain unresolved.
+- Daily parent request bounds remain exactly `T00:00:00.000Z` through `T23:59:59.059Z`; `.059Z` was not changed. Response timestamps are naive strings without timezone markers. The page's helper adds seven hours. Phase 1C proved arbitrary sub-day filtering and uses a one-second sibling overlap because inclusive/exclusive semantics remain unspecified.
 - Repeating one goods query returned the same UUID and timestamp. One UUID appeared per committed sample, and sampled UUIDs across seven source tabs are distinct. This is not universal export-wide uniqueness proof.
 - Numeric values remain numeric. Quantity maps from `khoiLuongDouble` or `soLuong`; prices map from the verified source price field; fractional `soNhaThauThamDu` makes canonical bidder count `float`; descriptive production-year strings remain nullable rather than coerced.
 - Text normalization is limited to future NFC normalization, whitespace collapse, trim, and safe null handling. Legacy Excel inference is excluded.
@@ -482,20 +482,21 @@ For response compatibility, retain current `df1` (medicine) and `df2` (goods) ob
 
 MSC does not supply legacy package joins, `qd_display`, version/approval/expiry/validity fields, duplicate-warning flags, goods `Search blob`, old medicine filter classifications, or Excel-only columns. Future responses must omit or return null for these fields and retire unsupported filters/sorts. Verified-but-optional MSC fields, including medical-device model/registration, shelf life, bidder count, location, and production year, remain nullable during transition. Auth, sessions, feedback/forum state, quotas, and control-plane Postgres behavior remain separate and unchanged.
 
-Phase 1A and Phase 1B must not be used as approval to start production ingestion. Phase 2 remains blocked until a safe, approved strategy exists for partitions at or above the Phase 1B threshold; V1 does not implement hour/filter sub-partitioning.
+Phase 1A and Phase 1B did not approve production ingestion. Phase 1C now provides an approved search-retrieval strategy for overflow parents; Phase 2 remains a separate implementation task and is not started by this change.
 
 ## Phase 1B — Search-only ingestion proof and contract finalization
 
-Status: `PARTIAL`. Public search pagination and field parity pass for seven controlled nonzero daily partitions. Production ingestion is not approved because live `goods-general` partitions exceeded the conservative safe threshold and V1 has no secondary partition strategy.
+Status: `PARTIAL` as historical evidence. Public search pagination and field parity pass for seven controlled nonzero daily partitions. Phase 1C adds the secondary time-partition strategy for overflow parents.
 
 ### Authoritative production path
 
 ```text
 MSC /search_prc
-  -> one date × source_tab partition
-  -> read agg[0].buckets[0].docCount
-  -> paginate page.content
-  -> validate page metadata, UUID uniqueness, overlap, and exact count
+  -> source tab
+  -> official day parent range and agg[0].buckets[0].docCount
+  -> adaptive intraday safe leaves when parent exceeds MAX_SAFE_SEARCH_RESULTS
+  -> paginate each safe leaf's page.content
+  -> UUID union, pre/post full-parent count validation
   -> normalize
   -> later Typesense upsert
 ```
@@ -518,7 +519,7 @@ V1 selects `pageSize=1000`: server accepted it without clamping, while keeping r
 
 The confirmed operational result window is 10,000 records. A page is admissible only when `pageNumber × pageSize < 10000`; deep pagination at or beyond that boundary has returned HTTP 400. Phase 1B fetched only offsets 0 through 9000 and did not issue a boundary-crossing request.
 
-`MAX_SAFE_DAILY_RESULTS=9500` is the selected fail-closed threshold. It is below 10,000 and below the largest safe controlled sample (9435 observed in a separate goods daily count probe). A partition with `expected_count >= 9500` is quarantined; it is never partially ingested. The observed 16248-row `goods-general` day proves this guard is needed. V1 does not split overflow days by hour or another filter.
+`MAX_SAFE_SEARCH_RESULTS=9500` is the selected conservative leaf threshold. It is below the 10,000-record result window and leaves headroom for safe page offsets; 9,500 is safe at page size 1,000 because the last offset is 9,000. A safe leaf with `expected_count <= 9500` may be paginated; a leaf above it fails closed. The daily partition is the natural parent, not the required search-window-sized leaf.
 
 ### Seven-source pagination result
 
@@ -602,4 +603,56 @@ Phase 1B makes no UI runtime change. Future UI work must not expose general-good
 
 ### Phase 1B gate
 
-Public search proves all seven verified tabs, safe representative pagination, exact counts, UUID uniqueness/overlap, and availability of all production-required canonical mappings without authenticated MSC state. Overall status remains `PARTIAL` because observed daily counts can exceed the selected safe threshold. Future overflow behavior is fail closed: record a contract violation, quarantine the `date × source_tab` partition, stop that partition, and require a separately approved secondary strategy. No partial day is normalized or imported.
+Public search proves all seven verified tabs, safe representative pagination, exact counts, UUID uniqueness/overlap, and availability of all production-required canonical mappings without authenticated MSC state. Phase 1B status remains historical `PARTIAL`; Phase 1C closes its overflow retrieval gate below without starting production ingestion.
+
+## Phase 1C — Overflow time-partition proof
+
+Status: `PASS`. This phase proves public retrieval for overflowing daily parents using only the existing `ngay_dang_tai_kqlcnt` range filter. It adds no crawler, database, Typesense, FastAPI, frontend, deployment, authentication, or `/export` behavior.
+
+### Approved retrieval strategy
+
+The daily source partition remains the natural parent:
+
+```text
+MSC public /search_prc
+  -> source tab and official full-day parent range
+  -> pre-count agg[0].buckets[0].docCount
+  -> if count <= MAX_SAFE_SEARCH_RESULTS, fetch one safe leaf
+  -> otherwise split time range at midpoint and recurse
+  -> count every child; fail on unexplained child deficit
+  -> fetch every safe leaf with pageSize=1000
+  -> reject page/within-leaf UUID duplicates and metadata drift
+  -> union records by UUID; accept only identical cross-leaf overlap
+  -> require unique UUID union == parent pre-count
+  -> post-count parent again before completion
+  -> later normalize and upsert to Typesense
+```
+
+`MAX_SAFE_SEARCH_RESULTS=9500` remains conservative: the confirmed public search window is 10,000 records, and a 1,000-row leaf's final offset is 9,000. The threshold is generic because it applies to every safe search interval, not only a day.
+
+Sibling intervals intentionally overlap by one second: `left=[start, midpoint+1s]`, `right=[midpoint, end]`. This protects records at unknown inclusive/exclusive boundaries and possible millisecond precision. Overlap is never counted as missing or failure by itself; same UUID with different content is a source consistency failure. An interval that cannot make positive progress because of maximum depth, minimum span, or overlap granularity fails closed. No province, brand, bidder, TBMT, or other business-field fallback is approved.
+
+### Live validation
+
+The complete sanitized evidence is [partition-evidence.json](msc-contracts/partition-evidence.json). All rows below used verified `goods-general` / `HANG_HOA`, anonymous public `/search_prc`, the official day bounds, page size 1,000, and post-count validation.
+
+| Date | Parent `agg.docCount` | Safe leaves | Leaf counts | Pages | Raw fetched | Unique UUIDs | Pre=Post | Result |
+| --- | ---: | ---: | --- | ---: | ---: | ---: | --- | --- |
+| 2026-08-28 | 16,248 | 4 | 3,608; 2,676; 7,267; 2,697 | 18 | 16,248 | 16,248 | 16,248=16,248 | PASS |
+| 2026-08-27 | 13,971 | 3 | 4,045; 7,302; 2,624 | 16 | 13,971 | 13,971 | 13,971=13,971 | PASS |
+| 2026-08-26 | 15,605 | 3 | 5,628; 7,951; 2,026 | 17 | 15,605 | 15,605 | 15,605=15,605 | PASS |
+| 2026-08-21 | 10,251 | 2 | 2,572; 7,679 | 11 | 10,251 | 10,251 | 10,251=10,251 | PASS |
+
+Child-count sums equaled parent counts in all four live runs; overlap surplus was zero, and no boundary duplicate was needed at planner-selected split points. A deliberate boundary probe at `2026-08-28T16:00:53` returned two same-content UUID duplicates across the one-second overlap; raw count was 16,250 and UUID union was 16,248. No same-UUID content conflict occurred.
+
+The two-range arbitrary intraday proof for 2026-08-28 also passed: `[00:00:00.000Z,16:00:00.000Z]` counted/fetched 8,993 and `[16:00:00.000Z,23:59:59.059Z]` counted/fetched 7,255, both HTTP 200, with union 16,248. The first range's maximum observed timestamp was `15:59:51`; the second range's minimum was `16:00:53` and contained two records near the boundary.
+
+The safe 9,257-row normal day 2026-08-25 remained one leaf, fetched 9,257 rows in 10 pages, and passed 9,257 pre-count, post-count, and unique UUID checks.
+
+### Mutable/current partition policy
+
+For a future production synchronization, count the full parent as `pre_count`, fetch and union all safe leaves, then count the same parent as `post_count`. Completion requires `pre_count == post_count == unique_union_count`. A count change must not publish or upsert a partial partition as complete; future bounded retry policy may retry later and eventually quarantine an unstable partition. Historical closed days should normally be stable.
+
+Production daily synchronization should not declare the actively changing current source day complete. A later Phase 2 design must distinguish closed historical partitions from current/open partitions; current-day ingestion requires revalidation before checkpoint completion. This phase does not invent a cron time or implement retry scheduling.
+
+`/search_prc/export` remains non-production because it requires interactive authentication, reCAPTCHA, MFA, and expiring session state. The Phase 1C helper and probe remain developer-only, pure/read-only validation infrastructure. Phase 2 production crawler implementation is a separate follow-up and was not started here.
