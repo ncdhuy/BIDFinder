@@ -1,10 +1,10 @@
 # BIDFinder MSC-to-Typesense Migration Plan
 
-Status: Phase 0 audit and design baseline only.
+Status: Phase 1B search-only ingestion proof complete for safe representative partitions; production crawler remains blocked by observed overflow partitions.
 
 Baseline reviewed: `refactor-phase-0-7` at `0dcab303bdb4cf23d661b6e53802057705afff49` (`Change UI`, 2026-08-29).
 
-This document records the smallest viable migration path from the current Selenium/Postgres procurement-data path to the MuaSamCong (MSC) winning-bid APIs, a deterministic crawler/normalizer, Typesense, and the existing FastAPI/static-web product. It does not authorize or implement Phase 1 ingestion.
+This document records the smallest viable migration path from the current Selenium/Postgres procurement-data path to the MuaSamCong (MSC) winning-bid APIs, a deterministic crawler/normalizer, Typesense, and the existing FastAPI/static-web product. Phase 1B adds proof tooling only; it does not authorize or implement a production crawler.
 
 ## 1. Scope and non-goals
 
@@ -12,14 +12,14 @@ This document records the smallest viable migration path from the current Seleni
 
 - Searchable winning-bid data from the seven HÀNG HÓA source tabs.
 - Three logical data groups: `goods`, `medicines`, and `traditional_medicine`.
-- MSC search-count and export-count validation.
+- Public MSC search-count and paginated completeness validation.
 - Versioned Typesense collections with stable logical aliases.
 - Adaptation seams for the existing FastAPI routes and static UI.
 - A later read-only chatbot that uses the same search/read path.
 
 ### Out of scope
 
-- Crawler implementation, MSC contract discovery execution, normalization code, Typesense provisioning, or Typesense imports.
+- Production crawler implementation, normalization code, Typesense provisioning, or Typesense imports.
 - Dịch vụ tư vấn and Dịch vụ phi tư vấn.
 - Analytics warehouse, data lake, Parquet, ClickHouse, reports, dashboards, alerts, agents, and event bus/orchestrator work.
 - Authentication, sessions, password reset, feedback, or forum data in Typesense.
@@ -88,7 +88,7 @@ These files are project artifacts and remain in place. They were inspected but n
 | `repair_processed_relations.py` | Deletes/updates `processed_medicines` and `processed_goods` based on legacy relation state | Obsolete for MSC; no equivalent inferred without a source contract |
 | `repair_numeric_x10_bug.py` | Updates legacy processed tables and writes a repair backup table | Obsolete for MSC; source numeric parsing must be deterministic before import |
 | `temp_repair_mismatch_units_from_audit.py` | Deletes/reinserts processed rows and updates manifest/issues | Obsolete for MSC; fail the partition instead of repairing silently |
-| `repair_missing_local_files.py` | Reads/updates `daily_manifest` paths and may recover local assets | Obsolete for API/export ingestion |
+| `repair_missing_local_files.py` | Reads/updates `daily_manifest` paths and may recover local assets | Obsolete for public-search ingestion |
 | `archive_to_r2.py`, `merge_extracted_excels.py`, temporary CSV/TXT/XLSX/Notebook files | Archive or inspect legacy assets and analysis outputs | Keep as legacy artifacts; do not duplicate or fold into V1 |
 
 The legacy repair scripts make broad Postgres changes. Phase 0 did not connect to Postgres, write to files outside the requested documentation, or run any repair/backfill/crawler workflow.
@@ -154,15 +154,15 @@ Current frontend assumptions that must change later:
 
 | Logical group | MSC source-tab label | Exact `source_tab` value |
 | --- | --- | --- |
-| `goods` | Hàng hóa ngoài thuốc, thiết bị, vật tư y tế | Unknown; discover from the official request contract |
-| `goods` | Thiết bị, vật tư y tế | Unknown; discover from the official request contract |
-| `medicines` | Gói thầu thuốc Generic | Unknown; discover from the official request contract |
-| `medicines` | Gói thầu thuốc biệt dược gốc | Unknown; discover from the official request contract |
-| `medicines` | Gói thầu thuốc dược liệu | Unknown; discover from the official request contract |
-| `traditional_medicine` | Dược liệu | Unknown; discover from the official request contract |
-| `traditional_medicine` | Vị thuốc cổ truyền | Unknown; discover from the official request contract |
+| `goods` | Hàng hóa ngoài thuốc, thiết bị, vật tư y tế | `HANG_HOA` |
+| `goods` | Thiết bị, vật tư y tế | `THIET_BI_VAT_TU_Y_TE` |
+| `medicines` | Gói thầu thuốc Generic | `THUOC_TAN_DUOC` (`medicines=0`) |
+| `medicines` | Gói thầu thuốc biệt dược gốc | `THUOC_TAN_DUOC` (`medicines=1`) |
+| `medicines` | Gói thầu thuốc dược liệu | `THUOC_TAN_DUOC` (`medicines=2`) |
+| `traditional_medicine` | Dược liệu | `DUOC_LIEU` (`medicine_type=[0,null]`) |
+| `traditional_medicine` | Vị thuốc cổ truyền | `VI_THUOC_CO_TRUYEN` (`medicine_type=[0,null]`) |
 
-`source_tab_label` is the exact human-readable label above. `source_tab` must preserve the exact MSC discriminator discovered for that source. No enum is invented in Phase 0. The full canonical field contract is in [msc-source-schema-v1.md](msc-source-schema-v1.md).
+`source_tab_label` is the exact human-readable label above. `source_tab` preserves the verified MSC discriminator for that source. The full canonical field contract is in [msc-source-schema-v1.md](msc-source-schema-v1.md).
 
 ## 7. Known MSC API contract
 
@@ -207,12 +207,12 @@ Observed date filter:
 Verified behavior:
 
 - The real match count is `agg[0].buckets[0].docCount`.
-- Normal search pagination is effectively bounded near 10,000 results.
-- Deep pagination beyond that returns HTTP 400.
-- Daily partitions tested so far remain below the export ceiling; observed peak is approximately 9,000.
+- Normal search pagination is bounded by a 10,000-result window.
+- A page is safe only when `pageNumber × pageSize < 10000`; deep pagination at or beyond that boundary has returned HTTP 400.
+- Phase 1B selected `pageSize=1000`: requests for 100, 500, and 1000 all returned HTTP 200 without clamping on a public full-day probe.
 - The source document `id` is a UUID and is the planned stable Typesense document ID.
 
-### Export
+### Export — historical/manual reference only
 
 ```text
 POST https://muasamcong.mpi.gov.vn/o/egp-portal-winning-bid-data/services/smart/search_prc/export
@@ -225,9 +225,10 @@ Verified behavior:
 - A sample export returned 25,545 rows in one response.
 - Export hard-truncates at exactly 30,000 rows; a known 33,543-row query returned 30,000.
 - `pageNumber=1` returns HTTP 400.
-- Daily partitioning is therefore mandatory.
+- These findings remain historical reference evidence only. MSC export requires interactive username/password login, reCAPTCHA, Google Authenticator OTP/MFA, and an expiring authenticated session.
+- Production ingestion must not automate login, reCAPTCHA, MFA, copied cookies, or a human-authenticated browser session. `/export` is not a production dependency.
 
-The count/export/normalize/import invariant for every successful partition is:
+The historical count/export/normalize/import invariant was:
 
 ```text
 search agg docCount
@@ -236,11 +237,11 @@ search agg docCount
 = successful Typesense imports
 ```
 
-Any mismatch fails closed. This invariant is recorded here only; it is not implemented in Phase 0.
+Any mismatch fails closed. It is retained as manual/reference evidence and is not a production ingestion contract.
 
-## 8. MSC contracts still requiring discovery
+## 8. Historical MSC contract discovery checklist
 
-Before Phase 1 implementation, record one executable request/response fixture per source tab and freeze the discovered contract. At minimum, resolve:
+Phase 1A recorded one executable request/response fixture per source tab and froze the discovered contract. The original checklist was:
 
 - Exact `tab` discriminator for all seven source tabs. Do not assume the labels or `HANG_HOA`/`THUOC_TAN_DUOC` observations cover every tab.
 - Exact `type` and `tab` filters required for each source, including whether both are required, optional, or different.
@@ -282,9 +283,9 @@ MuaSamCong winning-bid API
 - Version physical collection names so a complete reindex can be validated before an atomic alias switch.
 - Preserve `data_group`, exact `source_tab`, and exact `source_tab_label` on every document.
 - Use idempotent bulk upsert. Re-running a successful partition must not create duplicate documents.
-- Keep checkpoint state per `date × source_tab` with status, expected count, export count, normalized count, imported count, contract version, and failure reason. Candidate storage is a small durable control-plane record, not a query collection.
-- Refuse a partition when expected count is at least 30,000; do not attempt to recover truncated exports by increasing `pageSize`.
-- Refuse a partition when any equality in the count/export/normalize/import invariant fails.
+- Keep checkpoint state per `date × source_tab` with status, expected count, search page count, normalized count, imported count, contract version, and failure reason. Candidate storage is a small durable control-plane record, not a query collection.
+- Refuse a partition when expected count reaches `MAX_SAFE_DAILY_RESULTS=9500`; do not ingest a partial day or attempt a secondary split in V1.
+- Refuse a partition when any equality in the search-count/page/normalize/import invariant fails.
 - Preserve each source's original discriminator; group normalization must not erase provenance.
 
 ### FastAPI seam
@@ -314,9 +315,9 @@ The existing static UI remains the product shell. The later UI change is a data-
 1. Use source MSC UUID as Typesense document `id`.
 2. Use one natural daily partition per source tab.
 3. Count with `/search_prc`.
-4. Fetch with `/search_prc/export`.
-5. Fail closed if expected count is at least 30,000.
-6. Fail closed if export count differs from expected count.
+4. Fetch with paginated `/search_prc` only.
+5. Fail closed if expected count reaches `MAX_SAFE_DAILY_RESULTS=9500` or any page offset reaches 10,000.
+6. Fail closed if collected `page.content` count differs from `agg[0].buckets[0].docCount`.
 7. Use idempotent Typesense bulk upsert.
 8. Keep ingestion checkpoint state per `date × source_tab`.
 9. Keep each source's exact original discriminator.
@@ -334,7 +335,7 @@ The existing static UI remains the product shell. The later UI change is a data-
 | Risk | Consequence | Required gate/mitigation |
 | --- | --- | --- |
 | Undiscovered per-tab request contract | Empty, mixed, or wrong source data | Seven contract fixtures and tab-by-tab approval before crawler code |
-| Export truncation at 30,000 | Silent data loss | Daily partitions, preflight count, hard ceiling, fail-closed invariant |
+| Search result window near 10,000 | Silent data loss | `MAX_SAFE_DAILY_RESULTS=9500`, daily preflight, page/count/UUID validation, fail-closed overflow |
 | Count path changes or has multiple aggregation buckets | Incorrect completeness proof | Store raw count evidence and validate aggregation interpretation per tab |
 | Date timezone/boundary mismatch | Missing or duplicated days | Confirm official timestamp semantics with boundary fixtures; use one documented timezone rule |
 | UUID collision or instability | Upsert overwrites unrelated rows | Verify UUID uniqueness/stability across tabs and partitions before index design |
@@ -347,7 +348,7 @@ The existing static UI remains the product shell. The later UI change is a data-
 | Legacy repair assumptions leak into V1 | Silent row fabrication or deletion | No legacy repair calls from MSC adapter; fail closed on validation error |
 | Typesense operational failure | Search outage or incomplete cutover | Keep aliases on last known-good collection; rollback is alias switch, not data rewrite |
 
-Phase 1 cannot start implementation until the seven request contracts, field mappings, date semantics, ID behavior, and the three-group API compatibility decision are recorded.
+Production crawler implementation cannot start until Phase 1B overflow handling is resolved in addition to the seven request contracts, field mappings, date semantics, ID behavior, and the three-group API compatibility decision.
 
 ## 12. Validation strategy
 
@@ -363,7 +364,7 @@ Future Phase 1 validation must include:
 
 1. Contract fixtures for all seven tabs, including zero-result, one-result, date-boundary, and near-ceiling partitions.
 2. Normalization unit tests for each canonical field and every source-tab mapping.
-3. Count/export/normalize/import equality tests, with deliberate mismatch tests that fail closed.
+3. Search-count/page/normalize/import equality tests, with deliberate mismatch tests that fail closed.
 4. Duplicate UUID and idempotent-upsert tests.
 5. Typesense schema/search/sort/facet tests per collection.
 6. Golden API tests for standard search, full search, preview, autocomplete, bulk query, all-scope multi-search, auth gating, rate limiting, and feedback/forum behavior.
@@ -400,7 +401,7 @@ Future Phase 1 validation must include:
 
 - Add a narrow MSC API adapter under the existing crawler area without moving or duplicating the legacy crawler.
 - Implement daily `date × source_tab` partitioning, deterministic normalization, validation, and durable checkpoints.
-- Test export completeness without importing production data.
+- Test public-search completeness without importing production data.
 
 ### Phase 3 — versioned Typesense indexing
 
@@ -453,7 +454,7 @@ The official winning-bid-data page's inline Vue definitions resolved the exact s
 | Dược liệu | `traditional_medicine` | `HANG_HOA` | `DUOC_LIEU` | `medicine_type=[0,null]` | `ten_duoc_lieu`, `ten_khoa_hoc`, `ten_san_pham`, `ma_tbmt` |
 | Vị thuốc cổ truyền | `traditional_medicine` | `HANG_HOA` | `VI_THUOC_CO_TRUYEN` | `medicine_type=[0,null]` | `ten_duoc_lieu`, `ten_khoa_hoc`, `ten_san_pham`, `ma_tbmt` |
 
-Search responses use `page.content` and count `agg[0].buckets[0].docCount`. Export responses use `resultList`. The official page sends export `pageNumber=0` with `pageSize=10000`; the known hard ceiling remains 30,000. The probe refuses completeness when expected count is at least 30,000, rejects malformed envelopes and count mismatches, detects duplicate UUIDs, and retries only transient network/429/5xx failures. It writes no response or request state.
+Search responses use `page.content` and count `agg[0].buckets[0].docCount`. The Phase 1B probe paginates public search, validates page metadata, rejects duplicate UUIDs and count mismatches, and retries only transient network/429/5xx failures. Historical export responses use `resultList` only in offline fixture parsing; no export request is made by the probe.
 
 ### Phase 1A findings and remaining risks
 
@@ -462,7 +463,7 @@ Search responses use `page.content` and count `agg[0].buckets[0].docCount`. Expo
 - Numeric values remain numeric. Quantity maps from `khoiLuongDouble` or `soLuong`; prices map from the verified source price field; fractional `soNhaThauThamDu` makes canonical bidder count `float`; descriptive production-year strings remain nullable rather than coerced.
 - Text normalization is limited to future NFC normalization, whitespace collapse, trim, and safe null handling. Legacy Excel inference is excluded.
 - Intended collections are `bidfinder_goods`, `bidfinder_medicines`, and `bidfinder_traditional`; no collection was created. High-cardinality values are searchable without unnecessary facets. Raw source dates remain strings until timezone proof supports a new typed field.
-- Anonymous live export probing returned HTTP 200 with an empty body because export is gated by the official page's login check. Fixture export envelopes therefore exercise the verified `resultList` parser and are not live completeness proof. A signed-in Network capture is still required before production ingestion.
+- Anonymous export probing is not part of Phase 1B. Interactive MSC export requires username/password, reCAPTCHA, Google Authenticator OTP/MFA, and an expiring session; it remains manual/reference-only and is not a production prerequisite.
 
 ### Three-group FastAPI compatibility decision
 
@@ -481,4 +482,124 @@ For response compatibility, retain current `df1` (medicine) and `df2` (goods) ob
 
 MSC does not supply legacy package joins, `qd_display`, version/approval/expiry/validity fields, duplicate-warning flags, goods `Search blob`, old medicine filter classifications, or Excel-only columns. Future responses must omit or return null for these fields and retire unsupported filters/sorts. Verified-but-optional MSC fields, including medical-device model/registration, shelf life, bidder count, location, and production year, remain nullable during transition. Auth, sessions, feedback/forum state, quotas, and control-plane Postgres behavior remain separate and unchanged.
 
-Phase 1A must not be used as approval to start Phase 2. Before production ingestion, capture authenticated export responses, prove boundary behavior, and complete export-wide UUID duplicate/stability validation.
+Phase 1A and Phase 1B must not be used as approval to start production ingestion. Phase 2 remains blocked until a safe, approved strategy exists for partitions at or above the Phase 1B threshold; V1 does not implement hour/filter sub-partitioning.
+
+## Phase 1B — Search-only ingestion proof and contract finalization
+
+Status: `PARTIAL`. Public search pagination and field parity pass for seven controlled nonzero daily partitions. Production ingestion is not approved because live `goods-general` partitions exceeded the conservative safe threshold and V1 has no secondary partition strategy.
+
+### Authoritative production path
+
+```text
+MSC /search_prc
+  -> one date × source_tab partition
+  -> read agg[0].buckets[0].docCount
+  -> paginate page.content
+  -> validate page metadata, UUID uniqueness, overlap, and exact count
+  -> normalize
+  -> later Typesense upsert
+```
+
+`/search_prc/export` is an authenticated manual/reference endpoint only. It requires interactive username/password login, reCAPTCHA, Google Authenticator OTP/MFA, and a session that expires after inactivity. Production must not automate login, bypass reCAPTCHA, automate MFA, copy browser cookies, or depend on a human-authenticated browser session. Historical export findings and fixtures remain only for occasional human validation and offline parser tests.
+
+### Live evidence
+
+Sanitized evidence is committed in [search-only-validation.json](msc-contracts/search-only-validation.json). Requests used no credentials, cookies, or authenticated session. The probe used empty `keyWord` with each verified source contract and the official daily range.
+
+Page-size probe on `goods-general`, 2026-08-28:
+
+| Requested | HTTP | Returned `pageSize` | `page.content` | `agg docCount` | Qualitative latency |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 100 | 200 | 100 | 100 | 16248 | 310 ms |
+| 500 | 200 | 500 | 500 | 16248 | 287 ms |
+| 1000 | 200 | 1000 | 1000 | 16248 | 462 ms |
+
+V1 selects `pageSize=1000`: server accepted it without clamping, while keeping request count low enough for controlled proof. Reliability still depends on the safe count gate, not page size alone.
+
+The confirmed operational result window is 10,000 records. A page is admissible only when `pageNumber × pageSize < 10000`; deep pagination at or beyond that boundary has returned HTTP 400. Phase 1B fetched only offsets 0 through 9000 and did not issue a boundary-crossing request.
+
+`MAX_SAFE_DAILY_RESULTS=9500` is the selected fail-closed threshold. It is below 10,000 and below the largest safe controlled sample (9435 observed in a separate goods daily count probe). A partition with `expected_count >= 9500` is quarantined; it is never partially ingested. The observed 16248-row `goods-general` day proves this guard is needed. V1 does not split overflow days by hour or another filter.
+
+### Seven-source pagination result
+
+All rows below came from public `/search_prc`; all requested pages returned HTTP 200, page numbers were zero-based and correct, server `totalElements` matched `docCount`, UUIDs were unique, and no page overlap was found.
+
+| Source | `data_group` | Exact `tab` | Date | `docCount` | Pages / lengths | Collected | Unique UUIDs | Overlap | Repeat page 0 | Result |
+| --- | --- | --- | --- | ---: | --- | ---: | ---: | ---: | --- | --- |
+| Hàng hóa ngoài thuốc, thiết bị, vật tư y tế | `goods` | `HANG_HOA` | 2026-08-25 | 9257 | 10 / 1000×9 + 257 | 9257 | 9257 | 0 | same | PASS |
+| Thiết bị, vật tư y tế | `goods` | `THIET_BI_VAT_TU_Y_TE` | 2026-08-28 | 1727 | 2 / 1000 + 727 | 1727 | 1727 | 0 | same | PASS |
+| Gói thầu thuốc Generic | `medicines` | `THUOC_TAN_DUOC`, `medicines=0` | 2026-08-28 | 125 | 1 / 125 | 125 | 125 | 0 | same | PASS |
+| Gói thầu thuốc biệt dược gốc | `medicines` | `THUOC_TAN_DUOC`, `medicines=1` | 2026-08-27 | 17 | 1 / 17 | 17 | 17 | 0 | same | PASS |
+| Gói thầu thuốc dược liệu | `medicines` | `THUOC_TAN_DUOC`, `medicines=2` | 2026-08-28 | 30 | 1 / 30 | 30 | 30 | 0 | same | PASS |
+| Dược liệu | `traditional_medicine` | `DUOC_LIEU`, `medicine_type=[0,null]` | 2026-08-22 | 25 | 1 / 25 | 25 | 25 | 0 | same | PASS |
+| Vị thuốc cổ truyền | `traditional_medicine` | `VI_THUOC_CO_TRUYEN`, `medicine_type=[0,null]` | 2026-08-27 | 62 | 1 / 62 | 62 | 62 | 0 | same | PASS |
+
+Completeness invariant for this phase:
+
+```text
+agg[0].buckets[0].docCount
+= collected page.content row count
+= unique UUID count
+```
+
+Normalization and Typesense import counts are intentionally not tested or implemented in Phase 1B.
+
+### Public-search field-parity gate
+
+The matrix below uses only the full live `page.content` unions recorded in the evidence fixture. It does not infer availability from Excel or export data.
+
+Status meanings:
+
+- `AVAILABLE_IN_SEARCH`: direct field observed and required for the canonical identity or provenance mapping.
+- `OPTIONAL_AND_AVAILABLE_WHEN_PRESENT`: direct field observed in public search; individual records may omit it or return an empty value.
+- `NOT_AVAILABLE_IN_SEARCH`: no public-search field supports the canonical field.
+- `UNKNOWN`: a similarly named field was observed, but its canonical meaning is not frozen by the verified mapping.
+
+Common provenance:
+
+| Canonical field | Goods | Medicines | Traditional | Basis |
+| --- | --- | --- | --- | --- |
+| `id` | AVAILABLE_IN_SEARCH | AVAILABLE_IN_SEARCH | AVAILABLE_IN_SEARCH | Direct `id` string |
+| `data_group` | AVAILABLE_IN_SEARCH* | AVAILABLE_IN_SEARCH* | AVAILABLE_IN_SEARCH* | Derived from verified contract |
+| `source_tab` | AVAILABLE_IN_SEARCH* | AVAILABLE_IN_SEARCH* | AVAILABLE_IN_SEARCH* | Derived from verified `tab` filter |
+| `source_tab_label` | AVAILABLE_IN_SEARCH* | AVAILABLE_IN_SEARCH* | AVAILABLE_IN_SEARCH* | Verified contract label |
+| `partition_date` | AVAILABLE_IN_SEARCH* | AVAILABLE_IN_SEARCH* | AVAILABLE_IN_SEARCH* | Derived from requested daily range |
+
+`*` These four values are deterministic ingestion provenance, not fabricated source-record fields.
+
+Goods canonical fields:
+
+| Canonical field | Hàng hóa ngoài thuốc | Thiết bị, vật tư y tế |
+| --- | --- | --- |
+| `item_name`, `unit`, `quantity`, `country_of_origin`, `hs_code`, `model_mark`, `brand`, `production_year`, `manufacturer`, `technical_specification`, `winning_unit_price`, `winning_bidder_id`, `winning_bidder_name`, `bid_invitation_code`, `procuring_entity_id`, `procuring_entity_name`, `selection_method`, `result_posted_at`, `decision_number`, `decision_issued_at`, `bidder_count`, `location` | OPTIONAL_AND_AVAILABLE_WHEN_PRESENT | OPTIONAL_AND_AVAILABLE_WHEN_PRESENT |
+| `model` | UNKNOWN; no verified goods-general canonical mapping | OPTIONAL_AND_AVAILABLE_WHEN_PRESENT (`chungLoai`) |
+| `registration_or_import_permit_number` | UNKNOWN; no verified goods-general canonical mapping | OPTIONAL_AND_AVAILABLE_WHEN_PRESENT (`soLuuHanh`) |
+
+Medicine canonical fields:
+
+| Canonical fields | Generic | Biệt dược gốc | Dược liệu |
+| --- | --- | --- | --- |
+| `medicine_name`, `active_ingredient_or_herbal_component`, `strength`, `marketing_authorization_or_import_permit`, `route_of_administration`, `dosage_form`, `shelf_life`, `manufacturer`, `production_country`, `packaging`, `unit`, `quantity`, `winning_unit_price`, `winning_bidder_id`, `winning_bidder_name`, `medicine_group`, `bid_invitation_code`, `procuring_entity_id`, `procuring_entity_name`, `selection_method`, `result_posted_at`, `decision_number`, `decision_issued_at`, `bidder_count`, `location` | OPTIONAL_AND_AVAILABLE_WHEN_PRESENT | OPTIONAL_AND_AVAILABLE_WHEN_PRESENT | OPTIONAL_AND_AVAILABLE_WHEN_PRESENT |
+
+Traditional-medicine canonical fields:
+
+| Canonical fields | Dược liệu | Vị thuốc cổ truyền |
+| --- | --- | --- |
+| `item_name`, `used_part`, `scientific_name`, `origin`, `processing_method`, `registration_or_import_permit_number`, `manufacturer`, `production_country`, `packaging`, `unit`, `quantity`, `winning_unit_price`, `winning_bidder_id`, `winning_bidder_name`, `technical_group`, `bid_invitation_code`, `procuring_entity_id`, `procuring_entity_name`, `selection_method`, `result_posted_at`, `decision_number`, `decision_issued_at`, `location` | OPTIONAL_AND_AVAILABLE_WHEN_PRESENT | OPTIONAL_AND_AVAILABLE_WHEN_PRESENT |
+| `bidder_count` | UNKNOWN; `soNhaThauThamDu` absent from the selected full Dược liệu partition | OPTIONAL_AND_AVAILABLE_WHEN_PRESENT (`soNhaThauThamDu`) |
+
+`herbal-material.bidder_count` was absent from the selected full partition, so its status is `UNKNOWN` until a public-search record for that tab supplies the mapped field. It remains optional and is not a production-required field.
+
+No mapped canonical field was classified `NOT_AVAILABLE_IN_SEARCH`. `model` and `registration_or_import_permit_number` for general goods remain `UNKNOWN`, not silently retained as required fields. The current Typesense design does not require either field. Source-only fields such as `decisions`, `medicines`, `medicineType`, and `tenSanPham` are not fabricated canonical fields.
+
+Observed source JSON types across the full controlled partitions are recorded per canonical mapping in the evidence fixture: `id` is a string; quantity, price, and bidder count are JSON numbers; bidder IDs/names and `diaDiem` are arrays; date fields are strings without an explicit timezone; `namSanXuat` is a string; nullable/omitted fields remain nullable. No numeric-looking string is coerced without a documented normalization rule.
+
+### Schema and UI impact
+
+The three logical collections remain `bidfinder_goods`, `bidfinder_medicines`, and `bidfinder_traditional`. `id` remains the only required source identity field; canonical data fields stay optional because public records can omit them. No Typesense server call or schema creation was made. The V1 schema document now treats public search as the production source and marks general-goods device model/registration concepts as unknown/optional rather than required.
+
+Phase 1B makes no UI runtime change. Future UI work must not expose general-goods device model/registration filters as guaranteed fields, and must retire or mark missing legacy package, approval, validity, and Excel-only columns. Traditional-medicine results, advanced filters, result columns, and bulk-search mappings require the later UI contract adaptation; none is implemented here.
+
+### Phase 1B gate
+
+Public search proves all seven verified tabs, safe representative pagination, exact counts, UUID uniqueness/overlap, and availability of all production-required canonical mappings without authenticated MSC state. Overall status remains `PARTIAL` because observed daily counts can exceed the selected safe threshold. Future overflow behavior is fail closed: record a contract violation, quarantine the `date × source_tab` partition, stop that partition, and require a separately approved secondary strategy. No partial day is normalized or imported.

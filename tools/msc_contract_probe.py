@@ -1,7 +1,9 @@
-"""Read-only probe for the official MSC winning-bid-data contract.
+"""Read-only, public-search-only probe for the official MSC contract.
 
-This is research tooling, not an ingestion client. It accepts a raw MSC
-request payload and never persists response data, cookies, or credentials.
+This is research tooling, not an ingestion client. It sends anonymous public
+``/search_prc`` requests and never persists response data, cookies, or
+credentials. The old ``resultList`` parser remains for offline historical
+fixture checks only; this probe never calls ``/search_prc/export``.
 """
 
 from __future__ import annotations
@@ -10,6 +12,7 @@ import argparse
 import copy
 import json
 import re
+import ssl
 import sys
 import time
 from pathlib import Path
@@ -17,13 +20,33 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+try:
+    from tools.msc_search_pagination import (
+        DEFAULT_SEARCH_PAGE_SIZE,
+        MAX_SAFE_DAILY_RESULTS,
+        SEARCH_RESULT_WINDOW,
+        SearchPaginationError,
+        calculate_required_pages,
+        parse_search_count as _parse_search_count,
+        validate_search_pages,
+    )
+except ModuleNotFoundError:  # direct `python tools/msc_contract_probe.py` execution
+    from msc_search_pagination import (
+        DEFAULT_SEARCH_PAGE_SIZE,
+        MAX_SAFE_DAILY_RESULTS,
+        SEARCH_RESULT_WINDOW,
+        SearchPaginationError,
+        calculate_required_pages,
+        parse_search_count as _parse_search_count,
+        validate_search_pages,
+    )
+
 
 SEARCH_ENDPOINT = (
     "https://muasamcong.mpi.gov.vn/"
     "o/egp-portal-winning-bid-data/services/smart/search_prc"
 )
-EXPORT_ENDPOINT = SEARCH_ENDPOINT + "/export"
-ALLOWED_ENDPOINTS = frozenset({SEARCH_ENDPOINT, EXPORT_ENDPOINT})
+ALLOWED_ENDPOINTS = frozenset({SEARCH_ENDPOINT})
 USER_AGENT = "BIDFinder-msc-contract-research/1.0"
 DATE_FILTER = "ngay_dang_tai_kqlcnt"
 EXPORT_CEILING = 30_000
@@ -33,6 +56,14 @@ _ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
 
 class ContractProbeError(ValueError):
     """Invalid contract payload or an unusable MSC response."""
+
+
+def weak_msc_tls_context() -> ssl.SSLContext:
+    """Compatibility context for MSC's currently weak public TLS parameters."""
+
+    context = ssl.create_default_context()
+    context.set_ciphers("DEFAULT:@SECLEVEL=1")
+    return context
 
 
 def _is_non_negative_int(value: Any) -> bool:
@@ -97,6 +128,24 @@ def with_date_range(payload: list[dict[str, Any]], from_value: str, to_value: st
     return updated
 
 
+def with_page(payload: list[dict[str, Any]], page_number: int, page_size: int) -> list[dict[str, Any]]:
+    if page_number < 0 or page_size <= 0:
+        raise ContractProbeError("page number must be non-negative and page size must be positive")
+    updated = copy.deepcopy(payload)
+    for envelope in updated:
+        envelope["pageNumber"] = page_number
+        envelope["pageSize"] = page_size
+    return updated
+
+
+def with_empty_keyword(payload: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    updated = copy.deepcopy(payload)
+    for envelope in updated:
+        for query in envelope["query"]:
+            query["keyWord"] = ""
+    return updated
+
+
 def date_range_from_args(args: argparse.Namespace) -> tuple[str | None, str | None, str]:
     if args.date and (args.from_value or args.to_value):
         raise ContractProbeError("use --date or --from/--to, not both")
@@ -132,12 +181,9 @@ def payload_date_range(payload: list[dict[str, Any]]) -> str:
 
 def parse_search_count(response: Any) -> int:
     try:
-        count = response["agg"][0]["buckets"][0]["docCount"]
-    except (KeyError, IndexError, TypeError) as exc:
-        raise ContractProbeError("missing search aggregation agg[0].buckets[0].docCount") from exc
-    if not _is_non_negative_int(count):
-        raise ContractProbeError("search docCount must be a non-negative integer")
-    return count
+        return _parse_search_count(response)
+    except SearchPaginationError as exc:
+        raise ContractProbeError(str(exc)) from exc
 
 
 def parse_search_records(response: Any) -> list[dict[str, Any]]:
@@ -151,10 +197,12 @@ def parse_search_records(response: Any) -> list[dict[str, Any]]:
 
 
 def parse_export_records(response: Any) -> list[dict[str, Any]]:
+    """Parse historical export fixtures; never used for production probing."""
+
     if not isinstance(response, dict) or not isinstance(response.get("resultList"), list):
-        raise ContractProbeError("missing export result path resultList")
+        raise ContractProbeError("missing historical export result path resultList")
     if not all(isinstance(record, dict) for record in response["resultList"]):
-        raise ContractProbeError("export resultList must be an object array")
+        raise ContractProbeError("historical export resultList must be an object array")
     return response["resultList"]
 
 
@@ -171,6 +219,8 @@ def detect_duplicate_ids(records: list[dict[str, Any]]) -> list[str]:
 
 
 def check_completeness(expected_count: int, exported_count: int) -> str:
+    """Historical export comparison retained for offline fixture tests only."""
+
     if expected_count >= EXPORT_CEILING:
         return f"REFUSED: expected count {expected_count} reaches export ceiling {EXPORT_CEILING}"
     if expected_count != exported_count:
@@ -178,9 +228,15 @@ def check_completeness(expected_count: int, exported_count: int) -> str:
     return f"PASS: expected={expected_count} export={exported_count}"
 
 
-def _request_json(url: str, payload: list[dict[str, Any]], timeout: float, retries: int = 3) -> tuple[int, Any, int]:
+def _request_json(
+    url: str,
+    payload: list[dict[str, Any]],
+    timeout: float,
+    retries: int = 3,
+    ssl_context: ssl.SSLContext | None = None,
+) -> tuple[int, Any, int]:
     if url not in ALLOWED_ENDPOINTS:
-        raise ContractProbeError("endpoint is outside the official MSC allow-list")
+        raise ContractProbeError("only the public MSC search endpoint is allowed")
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     for attempt in range(retries + 1):
         request = Request(
@@ -194,7 +250,7 @@ def _request_json(url: str, payload: list[dict[str, Any]], timeout: float, retri
             },
         )
         try:
-            with urlopen(request, timeout=timeout) as response:
+            with urlopen(request, timeout=timeout, context=ssl_context) as response:
                 raw = response.read()
                 status = response.status
         except HTTPError as exc:
@@ -224,91 +280,172 @@ def run_probe(
     payload: list[dict[str, Any]],
     *,
     source: str,
+    source_label: str | None,
+    data_group: str | None,
+    source_tab: str | None,
     date_range: str,
     timeout: float,
-    with_export: bool,
+    page_size: int,
+    repeat_first_page: bool,
+    ssl_context: ssl.SSLContext | None,
 ) -> int:
     validate_payload(payload)
-    status, search_response, byte_count = _request_json(SEARCH_ENDPOINT, payload, timeout)
+    payload = with_empty_keyword(payload)
+    first_payload = with_page(payload, 0, page_size)
+    started = time.monotonic()
+    status, first_response, byte_count = _request_json(
+        SEARCH_ENDPOINT, first_payload, timeout, ssl_context=ssl_context
+    )
     print(f"source={source}")
+    if source_label:
+        print(f"source_label={source_label}")
+    if data_group:
+        print(f"data_group={data_group}")
+    if source_tab:
+        print(f"source_tab={source_tab}")
     print(f"date_range={date_range}")
     print(f"search_http={status}")
-    if search_response is None:
+    if status != 200 or first_response is None:
         print(f"search_response_bytes={byte_count}")
-        print("completeness=FAIL: malformed or non-JSON search response")
+        print("completeness=FAIL: malformed or non-200 public search response")
         return 1
+
     try:
-        expected_count = parse_search_count(search_response)
-        records = parse_search_records(search_response)
+        expected_count = parse_search_count(first_response)
+        required = calculate_required_pages(expected_count, page_size)
+    except SearchPaginationError as exc:
+        print("agg_docCount=ERROR")
+        print(f"completeness=FAIL: {exc}")
+        return 1
     except ContractProbeError as exc:
         print(f"completeness=FAIL: {exc}")
         return 1
-    ids = [record.get("id") for record in records if isinstance(record.get("id"), str)]
-    print(f"agg_docCount={expected_count}")
-    print(f"search_record_count={len(records)}")
+
+    responses = [first_response]
+    request_pages = max(1, required)
+    for page_number in range(1, request_pages):
+        page_status, response, page_bytes = _request_json(
+            SEARCH_ENDPOINT,
+            with_page(payload, page_number, page_size),
+            timeout,
+            ssl_context=ssl_context,
+        )
+        if page_status != 200 or response is None:
+            print(f"page_{page_number}_http={page_status}")
+            print(f"page_{page_number}_response_bytes={page_bytes}")
+            print("completeness=FAIL: required page was not a valid HTTP 200 JSON response")
+            return 1
+        responses.append(response)
+
+    try:
+        result = validate_search_pages(responses, page_size=page_size)
+    except SearchPaginationError as exc:
+        print(f"completeness=FAIL: {exc}")
+        return 1
+
+    records = list(result.records)
+    ids = [record["id"] for record in records]
+    print(f"expected_count={result.expected_count}")
+    print(f"page_size={page_size}")
+    print(f"max_safe_daily_results={MAX_SAFE_DAILY_RESULTS}")
+    print(f"search_result_window={SEARCH_RESULT_WINDOW}")
+    print(f"page_count={request_pages}")
+    print(
+        "page_metadata="
+        + json.dumps(
+            [
+                {
+                    "currentPage": page.get("currentPage"),
+                    "pageSize": page.get("pageSize"),
+                    "totalElements": page.get("totalElements"),
+                    "totalPages": page.get("totalPages"),
+                    "content_length": len(page.get("content", [])),
+                }
+                for page in result.page_metadata
+            ],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    )
+    print(f"collected_row_count={len(records)}")
+    print(f"unique_uuid_count={len(result.uuids)}")
+    print("duplicate_uuid_count=0")
+    print("page_overlap_uuid_count=0")
     print(f"first_uuid={ids[0] if ids else None}")
     print(f"last_uuid={ids[-1] if ids else None}")
     print(f"field_names={','.join(_field_names(records))}")
-    duplicates = detect_duplicate_ids(records)
-    print(f"search_duplicate_uuid_count={len(duplicates)}")
-    if not with_export:
-        print("completeness=NOT_REQUESTED: export not requested")
-        return 0
-    if expected_count >= EXPORT_CEILING:
-        print(f"export_http=REFUSED (expected count >= {EXPORT_CEILING})")
-        print(f"completeness={check_completeness(expected_count, 0)}")
-        return 1
-    export_status, export_response, export_bytes = _request_json(EXPORT_ENDPOINT, payload, timeout)
-    print(f"export_http={export_status}")
-    if export_response is None:
-        print(f"export_response_bytes={export_bytes}")
-        print("export_result_count=ERROR")
-        print("completeness=FAIL: malformed or non-JSON export response")
-        return 1
-    try:
-        exported = parse_export_records(export_response)
-    except ContractProbeError as exc:
-        print(f"export_result_count=ERROR")
-        print(f"completeness=FAIL: {exc}")
-        return 1
-    print(f"export_result_count={len(exported)}")
-    export_ids = [record.get("id") for record in exported if isinstance(record.get("id"), str)]
-    print(f"export_first_uuid={export_ids[0] if export_ids else None}")
-    print(f"export_last_uuid={export_ids[-1] if export_ids else None}")
-    print(f"export_duplicate_uuid_count={len(detect_duplicate_ids(exported))}")
-    result = check_completeness(expected_count, len(exported))
-    print(f"completeness={result}")
-    return 0 if result.startswith("PASS") else 1
+    if repeat_first_page:
+        repeat_status, repeat_response, _ = _request_json(
+            SEARCH_ENDPOINT, first_payload, timeout, ssl_context=ssl_context
+        )
+        repeat_ids = []
+        if repeat_status == 200 and repeat_response is not None:
+            repeat_ids = [record.get("id") for record in parse_search_records(repeat_response)]
+        same = repeat_status == 200 and repeat_ids == [record["id"] for record in responses[0]["page"]["content"]]
+        print(f"repeat_page0_http={repeat_status}")
+        print(f"repeat_page0_same_uuid_order={same}")
+    print(f"latency_ms={round((time.monotonic() - started) * 1000)}")
+    print("completeness=PASS")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--request", required=True, type=Path, help="raw MSC request JSON file")
+    parser.add_argument("--request", type=Path, help="raw MSC search request JSON file")
+    parser.add_argument(
+        "--contract",
+        type=Path,
+        help="verified source contract; sibling search-request.json is used by default",
+    )
     parser.add_argument("--source", default="unknown", help="source identifier for summary output")
     parser.add_argument("--date", help="official calendar day, YYYY-MM-DD")
     parser.add_argument("--from", dest="from_value", help="explicit range start, ISO UTC")
     parser.add_argument("--to", dest="to_value", help="explicit range end, ISO UTC")
-    parser.add_argument("--with-export", action="store_true", help="run search then export")
+    parser.add_argument("--page-size", type=int, default=DEFAULT_SEARCH_PAGE_SIZE)
     parser.add_argument("--timeout", type=float, default=30.0)
+    parser.add_argument("--no-repeat", action="store_true", help="skip repeat page-0 stability check")
+    parser.add_argument(
+        "--allow-weak-tls",
+        action="store_true",
+        help="research-only compatibility for MSC weak DH TLS parameters; never use in production",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        payload = json.loads(args.request.read_text(encoding="utf-8"))
+        if not args.request and not args.contract:
+            raise ContractProbeError("one of --contract or --request is required")
+        contract = None
+        if args.contract:
+            contract = json.loads(args.contract.read_text(encoding="utf-8"))
+            if contract.get("contract_evidence_status") != "VERIFIED":
+                raise ContractProbeError("source contract must have VERIFIED evidence status")
+            request_path = args.request or args.contract.with_name("search-request.json")
+            source = args.source if args.source != "unknown" else args.contract.parent.name
+        else:
+            request_path = args.request
+            source = args.source
+        payload = json.loads(request_path.read_text(encoding="utf-8"))
         validate_payload(payload)
         from_value, to_value, date_range = date_range_from_args(args)
         if from_value and to_value:
             payload = with_date_range(payload, from_value, to_value)
         elif date_range == "request payload":
             date_range = payload_date_range(payload)
+        payload = with_page(payload, 0, args.page_size)
         return run_probe(
             payload,
-            source=args.source,
+            source=source,
+            source_label=contract.get("source_tab_label") if contract else None,
+            data_group=contract.get("data_group") if contract else None,
+            source_tab=contract.get("source_tab") if contract else None,
             date_range=date_range,
             timeout=args.timeout,
-            with_export=args.with_export,
+            page_size=args.page_size,
+            repeat_first_page=not args.no_repeat,
+            ssl_context=weak_msc_tls_context() if args.allow_weak_tls else None,
         )
     except (OSError, json.JSONDecodeError, ContractProbeError) as exc:
         print(f"probe_error={exc}", file=sys.stderr)

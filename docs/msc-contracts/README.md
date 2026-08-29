@@ -1,26 +1,32 @@
 # MSC contract fixtures
 
-Phase 1A evidence for seven source partitions behind the official winning-bid-data page.
+Phase 1A request contracts and Phase 1B public-search proof for seven source partitions behind the official winning-bid-data page.
 
-Directory names are repository slugs only. They are not MSC discriminator values.
-
-Each source directory contains:
+Directory names are repository slugs only. They are not MSC discriminator values. Each source directory contains:
 
 - `contract.json`: verified request, response, mapping, and normalization metadata.
-- `search-request.json` / `search-response-sample.json`: one small live search capture.
-- `export-request.json` / `export-response-sample.json`: export request shape and a one-record parser sample.
+- `search-request.json` / `search-response-sample.json`: sanitized public-search request and representative response.
+- `export-request.json` / `export-response-sample.json`: historical/manual request shape and one-record parser sample only.
 
-`zero-result-search-response.json` is the shared live zero-result envelope. The same HTTP 200, empty `page.content`, and zero aggregation count were verified with the reserved no-match keyword against all seven source filter combinations.
+`search-only-validation.json` is the sanitized Phase 1B evidence record. It captures the selected page size, result-window rule, seven nonzero daily pagination probes, page metadata, counts, UUID summaries, field-name unions, and observed types without storing thousands of rows.
 
-Search samples were captured without authentication. The public endpoint returned exact `page.content` and aggregation envelopes. In this environment, export requests returned HTTP 200 with an empty body because the page gates export behind login. Export envelopes in these fixtures use the Phase 0 verified `resultList` shape and the corresponding complete search record solely to exercise offline parsing; they are not live completeness evidence.
+Production path:
 
-No fixture stores request headers, response headers, transient session material, or credentials.
-
-The probe accepts these raw payload fixtures and optionally overrides the date filter:
-
-```powershell
-python tools/msc_contract_probe.py --request docs/msc-contracts/goods-general/search-request.json --source goods-general --date 2026-08-28
-python tools/msc_contract_probe.py --request docs/msc-contracts/goods-general/export-request.json --source goods-general --date 2026-08-28 --with-export
+```text
+MSC /search_prc -> date × source_tab partition -> page.content pagination
+-> exact count and UUID validation -> later normalization -> later Typesense upsert
 ```
 
-Normal tests never call the network. The second command is an explicit research action and fails closed when the anonymous endpoint returns no JSON export body.
+`/search_prc/export` is not a production ingestion dependency. Interactive export requires username/password login, reCAPTCHA, Google Authenticator OTP/MFA, and an expiring session. BIDFinder must not automate login, bypass reCAPTCHA, automate MFA, copy browser cookies, or depend on a human-authenticated browser session. Historical export findings remain only for occasional human validation and offline parser coverage.
+
+The public-search probe accepts one verified contract and applies a date:
+
+```powershell
+python tools/msc_contract_probe.py --contract docs/msc-contracts/goods-general/contract.json --date 2026-08-25 --allow-weak-tls
+```
+
+The probe uses empty `keyWord`, reads `agg[0].buckets[0].docCount`, paginates `page.content`, validates page metadata and UUID uniqueness/overlap, and fails closed when the expected count reaches `MAX_SAFE_DAILY_RESULTS=9500`. It does not persist responses, cookies, or credentials.
+
+`--allow-weak-tls` is a research-only compatibility flag for the official endpoint's currently weak DH parameters. It does not enable authentication and must not be carried into production code.
+
+Normal tests never call the network. `export-response-sample.json` is parsed offline only to preserve historical Phase 1A parser coverage; no test requires authenticated MSC state.

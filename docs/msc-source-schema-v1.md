@@ -1,6 +1,6 @@
 # MSC Source Schema V1 Baseline
 
-Status: Phase 1A schema/contract freeze. This remains documentation and fixture infrastructure, not a production ingestion implementation.
+Status: Phase 1B public-search field and pagination contract. This remains documentation and fixture infrastructure, not a production ingestion implementation.
 
 Source scope is limited to the seven HÀNG HÓA tabs listed below. Dịch vụ tư vấn and Dịch vụ phi tư vấn are excluded.
 
@@ -27,7 +27,7 @@ Rules for all groups:
 - Empty/unknown source values remain empty/null according to the API serializer. They must not become `0`, `UNKNOWN`, a copied neighboring row, or a fabricated legacy value.
 - Text fields remain text. Numeric fields are parsed only with a documented deterministic rule; parse failure is a validation error or null according to the field's Phase 1 policy, never an implicit zero.
 - Source date fields retain their source meaning. Typesense may store a typed epoch value for filtering/sorting, but the API must render the documented user-facing date consistently.
-- The exact export field name and alias for every canonical key must be recorded in the seven-tab contract fixtures before implementation.
+- The exact public-search field name and alias for every canonical key must be recorded in the seven-tab contract fixtures before implementation.
 
 ## 2. Seven source tabs and three logical groups
 
@@ -50,7 +50,7 @@ Sources:
 - Hàng hóa ngoài thuốc, thiết bị, vật tư y tế
 - Thiết bị, vật tư y tế
 
-| Canonical key | Official/export concept | Proposed type |
+| Canonical key | Public-search source concept | Proposed type |
 | --- | --- | --- |
 | `item_name` | Danh mục hàng hóa | string, searchable |
 | `unit` | Đơn vị tính | string, facet/searchable |
@@ -74,10 +74,10 @@ Sources:
 | `result_posted_at` | Ngày đăng tải KQLCNT | date/time, sortable/filterable |
 | `decision_number` | Số quyết định | string, searchable |
 | `decision_issued_at` | Ngày ban hành quyết định | date/time, sortable/filterable |
-| `bidder_count` | Số nhà thầu tham dự | integer, sortable |
+| `bidder_count` | Số nhà thầu tham dự | float, sortable |
 | `location` | Địa điểm | string, facet/searchable |
 
-`model` and `registration_or_import_permit_number` are optional because the non-medical-device goods source may not provide them. The medical-device source may use the same concepts under different export labels; that mapping must be fixture-backed.
+`model` and `registration_or_import_permit_number` remain optional. Their device mappings are verified for medical devices; their canonical meaning for general goods is `UNKNOWN` and must not become a production dependency.
 
 ## 4. Group B — `medicines`
 
@@ -87,7 +87,7 @@ Sources:
 - Gói thầu thuốc biệt dược gốc
 - Gói thầu thuốc dược liệu
 
-| Canonical key | Official/export concept | Proposed type |
+| Canonical key | Public-search source concept | Proposed type |
 | --- | --- | --- |
 | `medicine_name` | Tên thuốc | string, searchable |
 | `active_ingredient_or_herbal_component` | Tên hoạt chất / thành phần dược liệu | string, searchable |
@@ -112,7 +112,7 @@ Sources:
 | `result_posted_at` | Ngày đăng tải KQLCNT | date/time, sortable/filterable |
 | `decision_number` | Số quyết định | string, searchable |
 | `decision_issued_at` | Ngày ban hành quyết định | date/time, sortable/filterable |
-| `bidder_count` | Số nhà thầu tham dự | integer, sortable |
+| `bidder_count` | Số nhà thầu tham dự | float, sortable |
 | `location` | Địa điểm | string, facet/searchable |
 
 `medicine_group` is a source-backed field, not automatically the legacy `BDG`/`N1`-`N5` classification. The old `drug_group_parser.py` may be considered only after exports prove equivalent values.
@@ -124,7 +124,7 @@ Sources:
 - Dược liệu
 - Vị thuốc cổ truyền
 
-| Canonical key | Official/export concept | Proposed type |
+| Canonical key | Public-search source concept | Proposed type |
 | --- | --- | --- |
 | `item_name` | Common item-name field representing either Tên dược liệu or Tên vị thuốc cổ truyền | string, searchable |
 | `used_part` | Bộ phận dùng | string, searchable |
@@ -148,7 +148,7 @@ Sources:
 | `result_posted_at` | Ngày đăng tải KQLCNT | date/time, sortable/filterable |
 | `decision_number` | Số quyết định | string, searchable |
 | `decision_issued_at` | Ngày ban hành quyết định | date/time, sortable/filterable |
-| `bidder_count` | Số nhà thầu tham dự | integer, sortable |
+| `bidder_count` | Số nhà thầu tham dự | float, sortable |
 | `location` | Địa điểm | string, facet/searchable |
 
 The two traditional-medicine source tabs share one logical collection but retain their exact `source_tab` and `source_tab_label`. The common `item_name` key is the normalized search surface; the original concept distinction remains in the provenance label and tab discriminator.
@@ -182,7 +182,7 @@ The current backend/UI uses fields that do not appear in this V1 source contract
 - approval/expiry/validity display fields;
 - `qd_display`, version, legacy QĐ relations, duplicate-warning flags, and goods `Search blob`;
 - legacy medicine `nhom_thuoc_filter` values;
-- Excel-derived fields such as `Mã phần/lô`, `Tên phần/lô`, `Mặt hàng dự thầu`, and `Thành tiền` where not present in the MSC export contract.
+- Excel-derived fields such as `Mã phần/lô`, `Tên phần/lô`, `Mặt hàng dự thầu`, and `Thành tiền` where not present in the public MSC search contract.
 
 These are not silently added to this schema. Phase 1 must produce one of:
 
@@ -192,46 +192,47 @@ These are not silently added to this schema. Phase 1 must produce one of:
 
 No compatibility field may be populated from a guessed package join or copied neighboring row.
 
-## 8. Required contract-discovery record
+## 8. Phase 1B public-search evidence record
 
-Before writing the MSC adapter, create fixture-backed evidence for each source tab containing:
+Before writing the MSC adapter, fixture-backed evidence for each source tab must contain:
 
 - exact request body, including `index`, `tab`, `type`, `medicines`, `matchFields`, filters, date range, page size, and page number;
-- exact response body shape for search and export, with sensitive/nonessential values minimized but field names retained;
+- exact public search response body shape, with sensitive/nonessential values minimized but field names retained;
 - aggregation path and count interpretation;
-- export record path and truncation/empty behavior;
+- page metadata, safe page offsets, required-page calculation, and pagination result;
 - source field-to-canonical-key mapping, aliases, null markers, numeric/date parsing rules;
 - UUID stability and duplicate behavior;
 - accepted errors, retry rules, and rate-limit observations;
 - proof that the request selects only one of the seven in-scope tabs.
 
-Until this record exists, `source_tab` values, medicine filter values, tab-specific match fields, and per-tab field assumptions remain unresolved.
+All seven records now exist under [`docs/msc-contracts/`](msc-contracts/README.md). The seven source request contracts are verified; do not rediscover or rename their discriminators without contradictory official evidence.
 
-## 9. Completeness invariant
+## 9. Search-only completeness invariant
 
 For every successful `partition_date × source_tab`:
 
 ```text
 search agg[0].buckets[0].docCount
-= export resultList.length
-= normalized row count
-= successful Typesense import count
+= collected page.content length
+= unique UUID count
 ```
 
 The partition fails closed if:
 
-- expected count is greater than or equal to 30,000;
-- export returns HTTP failure or a malformed `resultList`;
-- export length differs from the search aggregation count;
+- expected count reaches `MAX_SAFE_DAILY_RESULTS=9500`;
+- any required search page returns a non-200 response or malformed envelope/metadata;
+- a page offset reaches the 10,000-result search window;
+- collected `page.content` length differs from the search aggregation count;
+- a UUID is missing, duplicated within a page, or overlaps another page;
 - normalization drops, duplicates, or produces a different row count;
 - Typesense reports fewer successful upserts than normalized rows;
 - source UUIDs are missing, duplicated unexpectedly, or unstable.
 
-No Phase 0 code enforces this invariant. It is the acceptance contract for the future ingestion implementation.
+Phase 1B validates the search-only portion with a pure offline helper and a public live probe. Normalization and Typesense import checks remain future-phase gates.
 
-## 10. Phase 1A contract freeze
+## 10. Phase 1A contract freeze, finalized by Phase 1B
 
-Phase 1A evidence lives under [`docs/msc-contracts/`](msc-contracts/README.md). All seven source contracts are verified from the official page's inline Vue definitions plus small read-only `/search_prc` captures. Export request shape is verified from the same page; the endpoint's `resultList` envelope and 30,000 ceiling remain the Phase 0 verified behavior. The anonymous research environment returned an empty export body, so export sample files are parser fixtures, not live completeness proof.
+Phase 1A evidence lives under [`docs/msc-contracts/`](msc-contracts/README.md). All seven source contracts are verified from the official page's inline Vue definitions plus read-only `/search_prc` captures. The public-search pagination and field-parity evidence is recorded in [`search-only-validation.json`](msc-contracts/search-only-validation.json). Export request shape and historical `resultList` behavior remain reference metadata only; interactive login, reCAPTCHA, Google Authenticator OTP/MFA, and expiring sessions make `/export` unsuitable as a production dependency.
 
 | Data group | Source label | Exact `type` | Exact `tab` | Special filter |
 | --- | --- | --- | --- | --- |
@@ -245,7 +246,7 @@ Phase 1A evidence lives under [`docs/msc-contracts/`](msc-contracts/README.md). 
 
 The first label is rendered by current page markup as `Hàng hóa ngoài thuốc,thiết bị, vật tư y tế` without a space after the comma. Repository metadata keeps the Phase 0 human label with spacing; this punctuation difference does not alter the exact MSC discriminator.
 
-Every request uses index `es-smart-pricing`, `matchType=all-1`, empty `keyWordNotMatch`, a source-specific `matchFields` list, and the official date filter when partitioned. Search records are under `page.content`; count is `agg[0].buckets[0].docCount`; export records are under `resultList`.
+Every request uses index `es-smart-pricing`, `matchType=all-1`, empty `keyWordNotMatch`, a source-specific `matchFields` list, and the official date filter when partitioned. Search records are under `page.content`; count is `agg[0].buckets[0].docCount`. The production proof uses public search only; `resultList` remains an offline historical parser shape.
 
 ### 10.1 Source-to-canonical mapping
 
@@ -339,11 +340,13 @@ Mapping policy values: `text` means NFC Unicode normalization, whitespace collap
 | `bidder_count` | `soNhaThauThamDu` / `soNhaThauThamDu` | JSON number or absent | float | absent/invalid -> null | number | no | no | yes | both / yes |
 | `location` | `diaDiem` / `diaDiem` | object[] | string | absent/empty -> null | location-join | yes | no | no | both / yes |
 
+Phase 1B field-parity evidence classifies `herbal-material.bidder_count` as `UNKNOWN`: the mapped field was absent from its selected full public-search partition. Keep it optional; do not fabricate zero.
+
 Source-only classifier and display fields (`medicines`, `medicineType`, `dangBaoChe`, and observed duplicate price aliases) remain provenance, not fabricated canonical columns. They may be retained in raw evidence/control metadata later.
 
 ### 10.2 Numeric and text rules
 
-- `khoiLuongDouble`, `soLuong`, `donGia`, `donGiaDuThau`, and `medicineType` are JSON numbers in fixtures. Keep them numeric. `soNhaThauThamDu` is a fractional JSON number in device and traditional samples, so canonical `bidder_count` is `float`, not integer.
+- `khoiLuongDouble`, `soLuong`, `donGia`, `donGiaDuThau`, and `medicineType` are JSON numbers in public-search evidence. Keep them numeric. `soNhaThauThamDu` is a fractional JSON number in device and traditional samples, while absent in the selected Dược liệu partition; canonical `bidder_count` is `float` when present, otherwise null.
 - `namSanXuat` is a string. Strict four-digit values may become `production_year`; values such as `2025 trở về sau` stay raw-only and canonical `production_year` remains null. No numeric-looking string is silently coerced elsewhere.
 - Missing fields and empty strings become null during future normalization. Invalid numeric/date values become validation failures or null by field policy, never zero.
 - Reuse only narrow future primitives from `crawler_engine/schema_normalization_shared.py`: NFC Unicode normalization, whitespace cleanup, and safe null handling. Do not import the Excel pipeline or its inference rules.
@@ -352,10 +355,10 @@ Source-only classifier and display fields (`medicines`, `medicineType`, `dangBao
 
 The official page defines `convertDateFrom`/`convertDateTo` and emits the observed range form `T00:00:00.000Z` through `T23:59:59.059Z`; V1 reproduces this byte-for-byte and does not change `.059Z` to `.999Z`. Response values are strings such as `2026-08-28T23:57:28` with no timezone marker. The page adds seven hours in its date helper, but the server's timezone interpretation cannot be proven from these small captures.
 
-A repeated goods query for `IB2600498667` on `2026-08-28` returned the same UUID `4a38103c-8b82-4e18-9dad-4b46b615916a` and timestamp both times. The same code queried for `2026-08-27` returned zero rows; sampled adjacent day sets had no overlap. This is evidence for sampled stability/disjointness only, not universal uniqueness. One UUID appeared per committed sample and the seven committed sample UUIDs are distinct; export-wide duplicate proof remains a future live-export gate.
+A repeated public goods query returned the same UUID and timestamp. Phase 1B full controlled partitions had no duplicate UUIDs or page overlap, and repeated page 0 returned the same UUID order. This is sampled stability evidence only, not universal cross-day uniqueness proof.
 
 Boundary fixture limitation: no record exactly at `23:59:59.059Z` or `00:00:00.000Z` was available, so inclusive/exclusive behavior and timezone meaning remain unresolved. Daily official ranges are retained exactly for V1; do not start production ingestion until a boundary capture proves the missing edge cases.
 
 ## 11. Phase 1A status
 
-All seven source request contracts are resolved and fixture-backed for exact type/tab/match fields/special filters, search envelope, count path, source field names, and export request shape. Phase 1A is complete for contract discovery and offline infrastructure. Live export response capture without an authenticated page session, exact timestamp boundary semantics, and export-wide UUID uniqueness remain explicit validation risks; they do not authorize production crawler or backfill work.
+All seven source request contracts are resolved and fixture-backed for exact type/tab/match fields/special filters, public search envelope, count path, source field names, and pagination evidence. Phase 1A is complete for contract discovery and offline infrastructure. Phase 1B is partial: safe representative partitions pass, but overflow days require a future secondary strategy; exact timestamp boundary semantics remain unresolved. No authenticated MSC session is required for the proven search path.

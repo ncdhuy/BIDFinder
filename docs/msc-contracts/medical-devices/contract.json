@@ -18,7 +18,7 @@
   "export_result_path": "resultList",
   "search_envelope_keys": ["page", "agg"],
   "export_envelope_keys": ["resultList"],
-  "observed_source_field_names": ["bidForm", "cauHinh", "chungLoai", "diaDiem", "donGia", "donGiaDuThau", "donViTinh", "hangSanXuat", "id", "khoiLuongDouble", "kyMaHieu", "maCdt", "maHs", "maTbmt", "namSanXuat", "ngayBanHanhQuyetDinh", "ngayDangTaiKqlcnt", "nhanHieu", "soLuuHanh", "soNhaThauThamDu", "soQuyetDinh", "tab", "tenCdtBmt", "tenThietBi", "type", "winningCode", "winningName", "xuatXu"],
+  "observed_source_field_names": ["bidForm", "cauHinh", "chungLoai", "decisions", "diaDiem", "donGia", "donGiaDuThau", "donViTinh", "hangSanXuat", "id", "khoiLuongDouble", "kyMaHieu", "maCdt", "maHs", "maTbmt", "namSanXuat", "ngayBanHanhQuyetDinh", "ngayDangTaiKqlcnt", "nhanHieu", "soLuuHanh", "soNhaThauThamDu", "soQuyetDinh", "tab", "tenCdtBmt", "tenThietBi", "type", "winningCode", "winningName", "xuatXu"],
   "known_null_forms": ["field absent", "empty string"],
   "known_numeric_representations": {"khoiLuongDouble": "JSON number", "donGia": "JSON number", "donGiaDuThau": "JSON number", "soNhaThauThamDu": "JSON number and may be fractional", "namSanXuat": "JSON string; descriptive values observed"},
   "known_date_representations": ["JSON string YYYY-MM-DDTHH:mm:ss without explicit timezone"],

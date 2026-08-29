@@ -1,8 +1,10 @@
-# BIDFinder Typesense schema V1 (Phase 1A freeze)
+# BIDFinder Typesense schema V1 (Phase 1B public-search freeze)
 
 Status: documentation/configuration only. No Typesense server or collection was contacted or created.
 
 Physical collections must be versioned later and switched through aliases only after full count, normalization, search, sort, and facet validation. Future Typesense `id` is the MSC UUID. The `source_tab` values below are opaque MSC values, not repository directory names.
+
+Phase 1B field parity is based only on public MSC `/search_prc` `page.content`. No Typesense field may be required unless its source mapping is available from that response or it is deterministic ingestion provenance. See [`search-only-validation.json`](msc-contracts/search-only-validation.json) for the seven-source field unions and observed JSON types. `/search_prc/export` is not a production source.
 
 ## Common fields
 
@@ -30,8 +32,8 @@ Dates remain raw strings in V1 because response timestamps have no explicit time
 | `production_year` | int32 | yes | no | yes | no | strict four-digit source value only |
 | `manufacturer` | string | yes | no | no | yes | |
 | `technical_specification` | string | yes | no | no | yes | |
-| `model` | string | yes | no | no | yes | medical-device optional concept |
-| `registration_or_import_permit_number` | string | yes | no | no | yes | medical-device optional concept |
+| `model` | string | yes | no | no | yes | public-search mapping verified for medical devices; unknown for general goods |
+| `registration_or_import_permit_number` | string | yes | no | no | yes | public-search mapping verified for medical devices; unknown for general goods |
 | `winning_unit_price` | float | yes | no | yes | no | |
 | `winning_bidder_id` | string[] | yes | no | no | yes | preserve all returned IDs |
 | `winning_bidder_name` | string[] | yes | no | no | yes | preserve all returned names |
@@ -116,3 +118,6 @@ Dates remain raw strings in V1 because response timestamps have no explicit time
 - Numeric JSON values stay numeric. Arrays remain arrays until an explicit API presentation rule is chosen.
 - Unsupported legacy fields (`df1`/`df2` names, package joins, validity/approval fields, Excel-only columns) are absent or nullable; no guessed compatibility values enter these collections.
 - `result_posted_at` and `decision_issued_at` keep raw source strings in V1. A future typed date field requires a new schema version and proven timezone handling.
+- All canonical data fields are optional in V1. `id` is required; `data_group`, `source_tab`, `source_tab_label`, and `partition_date` are deterministic provenance derived from the verified contract and requested date.
+- General-goods `model` and `registration_or_import_permit_number` remain optional/unknown and are not production-required filters or columns. No unavailable field is fabricated.
+- Logical collections remain `bidfinder_goods`, `bidfinder_medicines`, and `bidfinder_traditional`.

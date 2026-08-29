@@ -197,13 +197,14 @@ class ContractFixtureTest(unittest.TestCase):
 
 class ContractParserTest(unittest.TestCase):
     def test_endpoint_allow_list_is_fixed(self):
-        self.assertEqual(2, len(ALLOWED_ENDPOINTS))
+        self.assertEqual(1, len(ALLOWED_ENDPOINTS))
         self.assertTrue(all(endpoint.startswith("https://muasamcong.mpi.gov.vn/") for endpoint in ALLOWED_ENDPOINTS))
 
     def test_aggregation_and_export_parsers(self):
         response = {"agg": [{"buckets": [{"docCount": 2}]}], "page": {"content": [{"id": "a"}]}}
         self.assertEqual(2, parse_search_count(response))
         self.assertEqual([{"id": "a"}], parse_search_records(response))
+        # Historical export shape stays parser-tested offline; probe never calls it.
         self.assertEqual([{"id": "a"}], parse_export_records({"resultList": [{"id": "a"}]}))
 
     def test_malformed_response_rejected(self):
