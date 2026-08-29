@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://accounts.google.com https://cdn.jsdelivr.net https://cdn.sheetjs.com https://us-assets.i.posthog.com https://eu-assets.i.posthog.com https://app-assets.i.posthog.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com data:; connect-src 'self' http://127.0.0.1:8000 https://bidfinder-api-staging-774667987564.asia-southeast1.run.app https://bidfinder.onrender.com https://accounts.google.com https://us.i.posthog.com https://eu.i.posthog.com https://app.posthog.com; frame-src https://accounts.google.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self' https://accounts.google.com;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://accounts.google.com https://cdn.jsdelivr.net https://cdn.sheetjs.com https://us-assets.i.posthog.com https://eu-assets.i.posthog.com https://app-assets.i.posthog.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com data:; connect-src 'self' http://127.0.0.1:8001 https://bidfinder-api-staging-774667987564.asia-southeast1.run.app https://bidfinder.onrender.com https://accounts.google.com https://us.i.posthog.com https://eu.i.posthog.com https://app.posthog.com; frame-src https://accounts.google.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self' https://accounts.google.com;">
     <meta name="referrer" content="strict-origin-when-cross-origin">
     <title>BIDFinder - Hệ thống quản lý dữ liệu đấu thầu y tế</title>
     <link rel="stylesheet" href="style.css">
@@ -125,11 +125,17 @@
                     </div>
 
                     <div class="app-header-links">
-                        <button class="app-auth-btn" id="open-product-journey" type="button">Hướng dẫn</button>
-                        <button class="app-auth-btn" id="open-feedback-modal" type="button">Diễn đàn</button>
+                        <button class="app-auth-btn app-icon-btn app-icon-btn-help" id="open-product-journey" type="button" aria-label="Hướng dẫn" title="Hướng dẫn">
+                            <i data-feather="help-circle" aria-hidden="true"></i>
+                        </button>
                         <div class="app-auth-shell is-hidden" id="app-auth-shell">
-                            <button class="app-auth-btn" id="auth-edit-profile-btn" type="button">Tài khoản</button>
+                            <button class="app-auth-btn app-icon-btn app-icon-btn-account" id="auth-edit-profile-btn" type="button" aria-label="Tài khoản" title="Tài khoản">
+                                <i data-feather="user" aria-hidden="true"></i>
+                            </button>
                         </div>
+                        <button class="app-auth-btn app-icon-btn app-icon-btn-forum" id="open-feedback-modal" type="button" aria-label="Diễn đàn" title="Diễn đàn">
+                            <i data-feather="bell" aria-hidden="true"></i>
+                        </button>
                         <button class="app-auth-btn" id="open-register-app" type="button">Đăng ký</button>
                         <button class="app-auth-btn" id="open-login-app" type="button">Đăng nhập</button>
                         
@@ -139,20 +145,27 @@
                 <!-- DATA TABLES -->
                 <div id="data-tab" class="tab-content active">
                     <div class="result-table-tabs" id="data-view-switcher">
-                        <div class="result-table-tab-list" role="tablist" aria-label="Chọn bảng kết quả">
-                            <button class="scope-btn result-table-tab active" type="button" data-view="df1-panel" aria-selected="true" role="tab">
-                                <span class="scope-icon" aria-hidden="true">
-                                    💊
-                                </span>
-                                <span class="scope-text">Thuốc</span>
-                                <span class="scope-count" id="df1-count-switcher">0</span>
-                            </button>
-                            <button class="scope-btn result-table-tab" type="button" data-view="df2-panel" aria-selected="false" role="tab">
-                                <span class="scope-icon" aria-hidden="true">
-                                    📦
-                                </span>
-                                <span class="scope-text">Hàng hóa</span>
-                                <span class="scope-count" id="df2-count-switcher">0</span>
+                        <div class="result-table-tab-list">
+                            <div class="result-table-tab-choice" role="tablist" aria-label="Chọn bảng kết quả">
+                                <button class="scope-btn result-table-tab active" type="button" data-view="df1-panel" aria-selected="true" role="tab">
+                                    <span class="scope-icon" aria-hidden="true">
+                                        💊
+                                    </span>
+                                    <span class="scope-text">Thuốc</span>
+                                    <span class="scope-count" id="df1-count-switcher">0/0</span>
+                                </button>
+                                <button class="scope-btn result-table-tab" type="button" data-view="df2-panel" aria-selected="false" role="tab">
+                                    <span class="scope-icon" aria-hidden="true">
+                                        📦
+                                    </span>
+                                    <span class="scope-text">Hàng hóa</span>
+                                    <span class="scope-count" id="df2-count-switcher">0/0</span>
+                                </button>
+                            </div>
+                            <button id="insight-full-search" class="full-search-credit" type="button" aria-label="Tìm kiếm toàn bộ">
+                                <i data-feather="zap" aria-hidden="true"></i>
+                                <span aria-hidden="true">×</span>
+                                <strong id="insight-full-search-label">0</strong>
                             </button>
                         </div>
                         <div class="workspace-status">
@@ -162,25 +175,32 @@
                             </div>
                         </div>
                         <div class="workspace-actions">
-                            <button class="btn-meta-simple" id="open-run-history" aria-label="Lịch sử cập nhật dữ liệu">
+                            <button class="btn-meta-simple action-tone-history" id="open-run-history" aria-label="Lịch sử cập nhật dữ liệu">
                                 <i data-feather="refresh-ccw"></i>
                                 <span class="action-btn-label action-btn-label-stacked">
                                     <span>Lịch sử</span>
                                     <span>cập nhật</span>
                                 </span>
                             </button>
-                            <button class="btn-meta-simple bulk-search-action-btn" id="open-bulk-search-modal" type="button" aria-label="Tra cứu hàng loạt">
+                            <button class="btn-meta-simple bulk-search-action-btn action-tone-bulk" id="open-bulk-search-modal" type="button" aria-label="Tìm kiếm hàng loạt">
                                 <i data-feather="list"></i>
                                 <span class="action-btn-label action-btn-label-stacked">
-                                    <span>Tra cứu</span>
+                                    <span>Tìm kiếm</span>
                                     <span>hàng loạt</span>
                                 </span>
                             </button>
-                            <button class="action-btn" id="open-filter-panel" aria-label="Tra cứu nâng cao">
+                            <button class="action-btn action-tone-advanced" id="open-filter-panel" aria-label="Tìm kiếm nâng cao">
                                 <i data-feather="search"></i>
                                 <span class="action-btn-label action-btn-label-stacked">
-                                    <span>Tra cứu</span>
+                                    <span>Tìm kiếm</span>
                                     <span>nâng cao</span>
+                                </span>
+                            </button>
+                            <button id="open-insight-drawer" class="btn-meta-simple action-tone-insight" type="button" aria-label="Phân tích trực quan" aria-controls="insight-drawer" aria-expanded="false">
+                                <i data-feather="bar-chart-2"></i>
+                                <span class="action-btn-label action-btn-label-stacked">
+                                    <span>Phân tích</span>
+                                    <span>trực quan</span>
                                 </span>
                             </button>
                         </div>
@@ -325,27 +345,6 @@
         <footer class="app-footer">
             © 2026 Hệ thống quản lý dữ liệu đấu thầu y tế
         </footer>
-    </div>
-
-    <div id="insight-dock" class="insight-dock">
-        <div class="insight-dock-panel">
-            <span class="insight-dock-icon" aria-hidden="true">
-                <i data-feather="bar-chart-2"></i>
-            </span>
-            <span class="insight-dock-copy">
-                <strong id="insight-result-line">Thuốc: 0/0; Hàng hóa: 0/0</strong>
-                <span id="insight-quota-line">Bạn còn 0/0 lượt full search hôm nay</span>
-            </span>
-            <span class="insight-dock-actions">
-                <button id="insight-full-search" class="insight-dock-action insight-dock-action-secondary" type="button">
-                    Full search
-                </button>
-                <button id="open-insight-drawer" class="insight-dock-action insight-dock-action-primary" type="button" aria-controls="insight-drawer" aria-expanded="false">
-                    <span>Insight</span>
-                    <i data-feather="chevrons-up"></i>
-                </button>
-            </span>
-        </div>
     </div>
 
     <div id="insight-drawer" class="insight-drawer" aria-hidden="true">

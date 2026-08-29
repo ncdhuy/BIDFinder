@@ -125,7 +125,6 @@ def _get_env_bool(name, default=False):
 
 # Cấu hình logic skip
 SKIP_DAYS = _get_env_int("SKIP_DAYS", 7)
-KHLCNT_LINKED_PENDING_SKIP_DAYS = _get_env_int("KHLCNT_LINKED_PENDING_SKIP_DAYS", 30)
 KHLCNT_RESULTDTO_TIMEOUT = _get_env_float("KHLCNT_RESULTDTO_TIMEOUT", 10)
 KHLCNT_CHILD_UI_QD_TIMEOUT = _get_env_float("KHLCNT_CHILD_UI_QD_TIMEOUT", 4)
 KHLCNT_CHILD_IDENTITY_TIMEOUT = _get_env_float("KHLCNT_CHILD_IDENTITY_TIMEOUT", max(KHLCNT_RESULTDTO_TIMEOUT, 5))
@@ -874,31 +873,6 @@ class CrawlerDB:
         ))
         self.conn.commit()
 
-    def log_khlcnt_linked_pending(self, plan_record, linked_notice, child_row=None):
-        linked_tbmt = str(linked_notice or "").strip()
-        if not linked_tbmt:
-            return False
-        self._safe_execute("""
-            INSERT INTO scan_logs (
-                run_id, ma_tbmt, so_qd, version,
-                ma_khlcnt, ma_khlcnt_full, khlcnt_version,
-                action_type, reason, created_at
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, 'KHLCNT_LINKED_PENDING', %s, %s)
-        """, (
-            CURRENT_RUN_ID or 0,
-            linked_tbmt,
-            "N/A",
-            plan_record.get("Phiên bản KHLCNT") or "N/A",
-            plan_record.get("Mã KHLCNT") or "",
-            plan_record.get("Mã KHLCNT đầy đủ") or "",
-            plan_record.get("Phiên bản KHLCNT") or "",
-            "TBMT_LINKED_PENDING",
-            self._now_str(),
-        ))
-        self.conn.commit()
-        return True
-
     def log_khlcnt_manual_decision(self, plan_record, child_row, search_keyword, decision, reason="", operator_note=""):
         decision_text = _collapse_whitespace(decision).upper()
         if decision_text not in {"ACCEPT", "REJECT"}:
@@ -935,35 +909,6 @@ class CrawlerDB:
         ))
         self.conn.commit()
         return True
-
-    def should_skip_khlcnt_linked_pending(self, plan_record, linked_notice, skip_days=KHLCNT_LINKED_PENDING_SKIP_DAYS):
-        khlcnt = str((plan_record or {}).get("Mã KHLCNT") or "").strip()
-        linked_tbmt = str(linked_notice or "").strip()
-        if not khlcnt or not linked_tbmt:
-            return False, ""
-
-        self._safe_execute("""
-            SELECT MAX(created_at) AS last_pending_at
-            FROM scan_logs
-            WHERE ma_khlcnt=%s
-              AND ma_tbmt=%s
-              AND action_type='KHLCNT_LINKED_PENDING'
-        """, (khlcnt, linked_tbmt))
-        row = self.cursor.fetchone() or {}
-        last_date_value = row.get("last_pending_at")
-        if not last_date_value:
-            return False, ""
-
-        try:
-            if isinstance(last_date_value, datetime):
-                last_date = last_date_value
-            else:
-                last_date = datetime.strptime(str(last_date_value)[:19], "%Y-%m-%d %H:%M:%S")
-            if (datetime.now() - last_date).days < skip_days:
-                return True, f"LINKED_PENDING_WITHIN_{skip_days}_DAYS"
-        except Exception:
-            return False, ""
-        return False, ""
 
     def should_skip_khlcnt_plan(self, ma_khlcnt, skip_days=SKIP_DAYS):
         khlcnt = str(ma_khlcnt or "").strip()
@@ -1483,17 +1428,6 @@ def get_linh_vuc(box):
     except Exception:
         return ""
 
-
-def build_box_metadata_snapshot(box, ma_tbmt, dia_diem, box_name_text, ngay_phe_duyet):
-    snapshot = {
-        "Mã TBMT": ma_tbmt,
-        "Chủ đầu tư": get_chu_dau_tu(box),
-        "Tên gói thầu": box_name_text or get_ten_goi_thau(box),
-        "Lĩnh vực": get_linh_vuc(box),
-        "Địa điểm": dia_diem,
-        "Ngày phê duyệt": ngay_phe_duyet.strftime("%d/%m/%Y") if ngay_phe_duyet else None,
-    }
-    return {k: v for k, v in snapshot.items() if v not in (None, "")}
 
 # ================== LỌC BOX ==================
 def is_luu_lai_theo_ten_goi_thau(ten_goi_thau):
@@ -3492,7 +3426,7 @@ def finalize_one_qd_result(ma_tbmt, box_index, dia_diem, so_qd, ver_code, any_dl
         )
         logger.warning(f"⚠️ Đã log NO_ATTACHMENTS cho {ma_tbmt} / {so_qd} / v{ver_code}")
 
-def handle_quyet_dinh_phe_duyet_all(ma_tbmt, box_index, box_name_text, ngay_phe_duyet, dia_diem, khlcnt_metadata=None):
+def handle_quyet_dinh_phe_duyet_all(ma_tbmt, box_index, dia_diem, khlcnt_metadata=None):
     any_downloaded = False
     any_excel_for_box = False
     last_qd_path = None
@@ -3804,22 +3738,88 @@ def handle_quyet_dinh_phe_duyet_all(ma_tbmt, box_index, box_name_text, ngay_phe_
     return any_downloaded
 
 
+def process_current_tbmt_detail(ma_tbmt, box_index, dia_diem="", khlcnt_metadata=None):
+    """Xử lý TBMT khi Chrome đang đứng tại trang chi tiết của TBMT đó."""
+    has_any_download = False
+    try:
+        detail_khlcnt_metadata = extract_tbmt_khlcnt_metadata_with_retry(timeout=4)
+        effective_khlcnt_metadata = merge_khlcnt_metadata(detail_khlcnt_metadata, khlcnt_metadata)
+        if effective_khlcnt_metadata.get("Mã KHLCNT"):
+            logger.info("🔗 TBMT %s: KHLCNT %s", ma_tbmt, effective_khlcnt_metadata.get("Mã KHLCNT"))
+        if not dia_diem:
+            dia_diem = extract_additional_info().get("Địa điểm", "")
+
+        # 1) Click tab "Kết quả lựa chọn nhà thầu"
+        try:
+            ket_qua_tab = wait.until(EC.element_to_be_clickable(
+                (By.XPATH, "//a[contains(text(),'Kết quả lựa chọn nhà thầu')]")
+            ))
+            driver.execute_script("arguments[0].scrollIntoView(true);", ket_qua_tab)
+            wait_dom_settled(timeout=15)
+            ket_qua_tab.click()
+            wait_for_qd_content_after_kqlcnt_click(timeout=4)
+        except UnexpectedAlertPresentException:
+            logger.warning(f"⚠️ Box {box_index}: alert trong lúc click tab KQLCNT, xử lý alert rồi click lại.")
+            handle_connection_alert_once(timeout=3, post_wait=3)
+            wait_dom_settled(timeout=6)
+            ket_qua_tab = wait.until(EC.element_to_be_clickable(
+                (By.XPATH, "//a[contains(text(),'Kết quả lựa chọn nhà thầu')]")
+            ))
+            driver.execute_script("arguments[0].scrollIntoView(true);", ket_qua_tab)
+            wait_dom_settled(timeout=15)
+            ket_qua_tab.click()
+            wait_for_qd_content_after_kqlcnt_click(timeout=4)
+            wait_dom_settled(timeout=15)
+
+        logger.info(f"Box {box_index}: {ma_tbmt}")
+
+        # 2) Xử lý quyết định (đơn/đa)
+        try:
+            has_any_download = handle_quyet_dinh_phe_duyet_all(
+                ma_tbmt, box_index, dia_diem,
+                khlcnt_metadata=effective_khlcnt_metadata,
+            )
+        except UnexpectedAlertPresentException:
+            logger.warning(f"⚠️ Box {box_index}: alert trong khi xử lý QĐ, xử lý alert rồi thử lại 1 lần.")
+            handle_connection_alert_once(timeout=20)
+            wait_until_not_loading(driver, 10)
+            try:
+                has_any_download = handle_quyet_dinh_phe_duyet_all(
+                    ma_tbmt, box_index, dia_diem,
+                    khlcnt_metadata=effective_khlcnt_metadata,
+                )
+            except UnexpectedAlertPresentException:
+                logger.warning(f"⚠️ Box {box_index}: alert lặp lại khi retry QĐ, dừng TBMT này.")
+                handle_connection_alert_once(timeout=20)
+                raise TempCrawlAbort(ma_tbmt, f"Alert lặp lại khi xử lý QĐ ở box {box_index}")
+
+    except TempCrawlAbort:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Lỗi xử lý box {box_index}: {e}")
+        raise TempCrawlAbort(ma_tbmt, f"PROCESSING_ERROR ở box {box_index}: {str(e)[:300]}")
+
+    if has_any_download and tracker is not None:
+        tracker._safe_execute("""
+            UPDATE packages
+            SET status='DONE'
+            WHERE ma_tbmt=%s AND is_latest=1
+        """, (ma_tbmt,))
+        tracker.conn.commit()
+
+    return has_any_download
+
+
 # ================== PROCESS BOX ==================
 def process_box(box, index):
     """
     Trả về True nếu box này có ít nhất 1 file tải được (PDF/Excel).
     """
-    if index == 1:
-        wait_dom_settled(timeout=15)
-    else:
-        wait_dom_settled(timeout=15)
-
+    wait_dom_settled(timeout=15)
     clear_raw_downloads()
     ma_tbmt = get_ma_tbmt(box)
     dia_diem = get_dia_diem(box)
-    box_name_text = ""
-    basic_snapshot = {}
-    
+
     ngay_phe_duyet = get_ngay_phe_duyet_kqlcnt(box)
     if not ngay_phe_duyet:
         logger.error(f"❌ Không lấy được ngày phê duyệt KQLCNT box {index}, bỏ qua")
@@ -3833,115 +3833,20 @@ def process_box(box, index):
         logger.info("=" * 30)
         return False
 
-    # tên box
     try:
-        box_name_text = get_ten_goi_thau(box)
-    except Exception:
-        box_name_text = "❌ Không lấy được tên box"
-
-    basic_snapshot = build_box_metadata_snapshot(
-        box=box,
-        ma_tbmt=ma_tbmt,
-        dia_diem=dia_diem,
-        box_name_text=box_name_text,
-        ngay_phe_duyet=ngay_phe_duyet
-    )
-
-    # link chi tiết
-    try:
-        link_element = box.find_element(
+        url = box.find_element(
             By.XPATH,
             ".//a[h5[contains(@class,'content__body__left__item__infor__contract__name')]]"
-        )
+        ).get_attribute("href")
     except Exception as e:
         raise TempCrawlAbort(ma_tbmt, f"Lỗi lấy link chi tiết ở box {index}: {str(e)[:300]}")
 
-    main_window = driver.window_handles[0]
-
-    url = link_element.get_attribute("href")
-    driver.execute_script("window.open(arguments[0]);", url)
-    driver.switch_to.window(driver.window_handles[-1])
-
-    has_any_download = False
-    khlcnt_metadata = {}
-
+    main_window = open_url_in_new_tab(url)
     try:
-        khlcnt_metadata = extract_tbmt_khlcnt_metadata_with_retry(timeout=4)
-        if khlcnt_metadata.get("Mã KHLCNT"):
-            logger.info("🔗 TBMT %s: KHLCNT %s", ma_tbmt, khlcnt_metadata.get("Mã KHLCNT"))
-
-        # 1) Click tab "Kết quả lựa chọn nhà thầu"
-        try:
-            ket_qua_tab = wait.until(EC.element_to_be_clickable(
-                (By.XPATH, "//a[contains(text(),'Kết quả lựa chọn nhà thầu')]")
-            ))
-            driver.execute_script("arguments[0].scrollIntoView(true);", ket_qua_tab)
-            wait_dom_settled(timeout=15)
-            ket_qua_tab.click()
-            wait_for_qd_content_after_kqlcnt_click(timeout=4)
-        except UnexpectedAlertPresentException:
-            logger.warning(f"⚠️ Box {index}: alert trong lúc click tab KQLCNT, xử lý alert rồi click lại.")
-            handle_connection_alert_once(timeout=3, post_wait=3)
-            wait_dom_settled(timeout=6)
-            ket_qua_tab = wait.until(EC.element_to_be_clickable(
-                (By.XPATH, "//a[contains(text(),'Kết quả lựa chọn nhà thầu')]")
-            ))
-            driver.execute_script("arguments[0].scrollIntoView(true);", ket_qua_tab)
-            wait_dom_settled(timeout=15)
-            ket_qua_tab.click()
-            wait_for_qd_content_after_kqlcnt_click(timeout=4)
-            wait_dom_settled(timeout=15)
-
-        logger.info(f"Box {index}: {ma_tbmt}")
-
-        # 2) Xử lý quyết định (đơn/đa)
-        try:
-            has_any_download = handle_quyet_dinh_phe_duyet_all(
-                ma_tbmt, index, box_name_text, ngay_phe_duyet, dia_diem,
-                khlcnt_metadata=khlcnt_metadata,
-            )
-        except UnexpectedAlertPresentException:
-            logger.warning(f"⚠️ Box {index}: alert trong khi xử lý QĐ, xử lý alert rồi thử lại 1 lần.")
-            handle_connection_alert_once(timeout=20)
-            wait_until_not_loading(driver, 10)
-            try:
-                has_any_download = handle_quyet_dinh_phe_duyet_all(
-                    ma_tbmt, index, box_name_text, ngay_phe_duyet, dia_diem,
-                    khlcnt_metadata=khlcnt_metadata,
-                )
-            except UnexpectedAlertPresentException:
-                logger.warning(f"⚠️ Box {index}: alert lặp lại khi retry QĐ, dừng TBMT này.")
-                handle_connection_alert_once(timeout=20)
-                raise TempCrawlAbort(ma_tbmt, f"Alert lặp lại khi xử lý QĐ ở box {index}")
-
-    except TempCrawlAbort:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Lỗi xử lý box {index}: {e}")
-        raise TempCrawlAbort(ma_tbmt, f"PROCESSING_ERROR ở box {index}: {str(e)[:300]}")
-
+        return process_current_tbmt_detail(ma_tbmt, index, dia_diem=dia_diem)
     finally:
-        try:
-            logger.info("=" * 30)
-            driver.close()
-        except Exception:
-            pass
-        try:
-            driver.switch_to.window(main_window)
-        except Exception:
-            pass
-        if driver is not None:
-            wait_dom_settled(timeout=15)
-
-    if has_any_download and tracker is not None:
-        tracker._safe_execute("""
-            UPDATE packages
-            SET status='DONE'
-            WHERE ma_tbmt=%s AND is_latest=1
-        """, (ma_tbmt,))
-        tracker.conn.commit()
-
-    return has_any_download
+        logger.info("=" * 30)
+        close_current_tab_and_return(main_window)
 
 
 # ================== TRY PROCESS BOX ==================
@@ -4113,7 +4018,16 @@ def prepare_search_form(search_keyword: str, notice_type: str = DEFAULT_SEARCH_N
     except (TimeoutException, NoSuchElementException):
         logger.warning("⚠️  Không có hộp thông báo cần đóng hoặc đã tự đóng.")
 
-    driver.find_element(By.XPATH, "//button[contains(text(), 'Tìm kiếm nâng cao')]").click()
+    advanced_search = wait.until(
+        EC.element_to_be_clickable(
+            (
+                By.XPATH,
+                "//button[contains(normalize-space(.), 'Tìm kiếm nâng cao')]"
+                " | //a[normalize-space(.)='Tìm kiếm nâng cao' or .//*[normalize-space(.)='Tìm kiếm nâng cao']]",
+            )
+        )
+    )
+    driver.execute_script("arguments[0].click();", advanced_search)
     requested_notice_type = _resolve_search_notice_type_label(notice_type)
     active_notice_type = DEFAULT_SEARCH_NOTICE_TYPE
     if requested_notice_type != DEFAULT_SEARCH_NOTICE_TYPE:
@@ -4143,7 +4057,17 @@ def prepare_search_form(search_keyword: str, notice_type: str = DEFAULT_SEARCH_N
         if not goods_checkbox.is_selected():
             goods_checkbox.click()
 
-    driver.find_element(By.XPATH, "//button[contains(text(), 'Tìm kiếm')]").click()
+    search_button = wait.until(
+        EC.element_to_be_clickable(
+            (
+                By.XPATH,
+                "//div[contains(concat(' ', normalize-space(@class), ' '), ' content__footer ')]"
+                "//button[normalize-space(.)='Tìm kiếm']",
+            )
+        )
+    )
+    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", search_button)
+    driver.execute_script("arguments[0].click();", search_button)
     time.sleep(1)
     apply_post_search_filters(active_notice_type)
     time.sleep(2)
@@ -4627,20 +4551,107 @@ def open_url_in_new_tab(url):
     main_window = driver.current_window_handle
     current_handles = set(driver.window_handles)
     driver.execute_script("window.open(arguments[0], '_blank');", url)
-    WebDriverWait(driver, 10).until(lambda d: len(set(d.window_handles) - current_handles) == 1)
-    new_window = list(set(driver.window_handles) - current_handles)[0]
-    driver.switch_to.window(new_window)
-    wait_document_ready_quick(timeout=5)
-    return main_window
+    try:
+        WebDriverWait(driver, 10).until(lambda d: len(set(d.window_handles) - current_handles) == 1)
+        new_window = list(set(driver.window_handles) - current_handles)[0]
+        driver.switch_to.window(new_window)
+        wait_document_ready_quick(timeout=5)
+        return main_window
+    except Exception:
+        for window_handle in list(set(driver.window_handles) - current_handles):
+            try:
+                driver.switch_to.window(window_handle)
+                driver.close()
+            except Exception:
+                pass
+        if main_window in driver.window_handles:
+            driver.switch_to.window(main_window)
+        raise
 
 
 def close_current_tab_and_return(main_window):
     try:
-        driver.close()
-    finally:
+        if driver.current_window_handle != main_window:
+            driver.close()
+    except Exception:
+        pass
+    try:
         if main_window in driver.window_handles:
             driver.switch_to.window(main_window)
             wait_dom_settled(timeout=15)
+    except Exception:
+        pass
+
+
+def open_khlcnt_linked_tbmt_in_new_tab(child_row):
+    """Mở TBMT liên kết trong tab mới, giữ nguyên tab KHLCNT hiện tại."""
+    linked_url = _collapse_whitespace(child_row.get("URL TBMT liên kết"))
+    if linked_url.startswith(("http://", "https://")):
+        return open_url_in_new_tab(linked_url)
+
+    row_index = int(child_row.get("Dòng gói thầu con") or 0)
+    if row_index <= 0:
+        raise ValueError("Thiếu Dòng gói thầu con để mở TBMT liên kết.")
+
+    parent_window = driver.current_window_handle
+    existing_handles = set(driver.window_handles)
+    plan_url = driver.current_url
+    open_url_in_new_tab(plan_url)
+    staging_window = driver.current_window_handle
+
+    try:
+        click_khlcnt_package_tab()
+        table_xpath = (
+            "//table[.//th[contains(normalize-space(),'Tên gói thầu')] "
+            "and .//th[contains(normalize-space(),'Số thông báo liên kết')]]"
+        )
+        linked_cell_xpath = f"({table_xpath}//tbody/tr)[{row_index}]//td[5]"
+        target_xpaths = [
+            f"{linked_cell_xpath}//a[normalize-space()]",
+            f"{linked_cell_xpath}//span[normalize-space()]",
+            linked_cell_xpath,
+        ]
+        last_error = None
+
+        for target_xpath in target_xpaths:
+            try:
+                target = wait_clickable(driver, By.XPATH, target_xpath, timeout=3)
+                handles_before_click = set(driver.window_handles)
+                previous_url = driver.current_url
+                if not khlcnt_quick_click(target):
+                    continue
+                WebDriverWait(driver, 8).until(
+                    lambda d: len(set(d.window_handles) - handles_before_click) > 0
+                    or d.current_url != previous_url
+                    or bool(d.find_elements(By.XPATH, "//a[contains(normalize-space(),'Kết quả lựa chọn nhà thầu')]"))
+                )
+                break
+            except Exception as error:
+                last_error = error
+        else:
+            raise TimeoutException(
+                f"Không mở được TBMT liên kết ở dòng gói thầu con {row_index}"
+            ) from last_error
+
+        opened_by_click = list(set(driver.window_handles) - handles_before_click)
+        if opened_by_click:
+            detail_window = opened_by_click[0]
+            driver.switch_to.window(staging_window)
+            driver.close()
+            driver.switch_to.window(detail_window)
+        wait_document_ready_quick(timeout=5)
+        return parent_window
+    except Exception:
+        for window_handle in list(set(driver.window_handles) - existing_handles):
+            try:
+                driver.switch_to.window(window_handle)
+                driver.close()
+            except Exception:
+                pass
+        if parent_window in driver.window_handles:
+            driver.switch_to.window(parent_window)
+            wait_dom_settled(timeout=15)
+        raise
 
 
 def click_khlcnt_package_tab(timeout=8, ready_timeout=4):
@@ -4665,6 +4676,11 @@ def get_khlcnt_package_rows():
         cells = row.find_elements(By.XPATH, "./td")
         if len(cells) < 5:
             continue
+        linked_url = ""
+        try:
+            linked_url = cells[4].find_element(By.XPATH, ".//a[@href]").get_attribute("href") or ""
+        except Exception:
+            pass
         parsed_rows.append({
             "STT gói thầu con": cells[0].text.strip(),
             "Dòng gói thầu con": row_position,
@@ -4672,6 +4688,7 @@ def get_khlcnt_package_rows():
             "Dự toán gói thầu sau KHLCNT": cells[2].text.strip(),
             "Giá gói thầu": cells[3].text.strip(),
             "Số thông báo liên kết": cells[4].text.strip(),
+            "URL TBMT liên kết": linked_url,
         })
     logger.info("📋 KHLCNT đọc được %s child trong bảng gói thầu", len(parsed_rows))
     return parsed_rows
@@ -5130,18 +5147,64 @@ def process_khlcnt_plan_detail(plan_record, search_keyword):
             linked_notice = _collapse_whitespace(child_row.get("Số thông báo liên kết"))
             if linked_notice:
                 linked_child_count += 1
-                skip_linked_pending, linked_pending_reason = tracker.should_skip_khlcnt_linked_pending(
+                linked_tbmt, _linked_version = split_notice_code(linked_notice)
+                if not linked_tbmt:
+                    pending_child_count += 1
+                    linked_missing_metadata_count += 1
+                    logger.info("⏸️ KHLCNT %s child %s: không tách được mã TBMT liên kết", plan_record.get("Mã KHLCNT", ""), get_khlcnt_child_no(child_row, child_index))
+                    continue
+                linked_metadata = build_khlcnt_child_metadata(
                     plan_record,
-                    linked_notice,
-                    skip_days=KHLCNT_LINKED_PENDING_SKIP_DAYS,
+                    child_row,
+                    {"URL gói thầu con": child_row.get("URL TBMT liên kết", "")},
                 )
-                if skip_linked_pending:
-                    logger.info("⏩ KHLCNT %s -> %s: skip pending linked (%s)", plan_record.get("Mã KHLCNT", ""), linked_notice, linked_pending_reason)
-                else:
-                    tracker.log_khlcnt_linked_pending(plan_record, linked_notice, child_row)
-                    logger.info("⏸️ KHLCNT %s -> %s: chờ crawl từ TBMT", plan_record.get("Mã KHLCNT", ""), linked_notice)
-                pending_child_count += 1
-                linked_missing_metadata_count += 1
+                child_no = get_khlcnt_child_no(child_row, child_index)
+
+                if linked_tbmt in ABORTED_TBMTS_THIS_RUN:
+                    pending_child_count += 1
+                    logger.info("⏩ KHLCNT %s -> %s: TBMT đã TEMP_ABORT trong run hiện tại", plan_record.get("Mã KHLCNT", ""), linked_tbmt)
+                    continue
+                if not FORCE_FULL_SCAN and tracker.should_skip_level_1(linked_tbmt, skip_days=SKIP_DAYS):
+                    tracker.save_khlcnt_metadata_for_tbmt(linked_tbmt, linked_metadata)
+                    logger.info("⏩ KHLCNT %s -> %s: TBMT mới check gần đây", plan_record.get("Mã KHLCNT", ""), linked_tbmt)
+                    continue
+
+                parent_window = None
+                try:
+                    logger.info("🔗 KHLCNT %s child %s: xử lý trực tiếp TBMT %s", plan_record.get("Mã KHLCNT", ""), child_no, linked_tbmt)
+                    parent_window = open_khlcnt_linked_tbmt_in_new_tab(child_row)
+                    linked_detail_info = extract_additional_info()
+                    actual_tbmt, _actual_version = split_notice_code(linked_detail_info.get("Mã TBMT", ""))
+                    if actual_tbmt and actual_tbmt != linked_tbmt:
+                        raise TempCrawlAbort(
+                            linked_tbmt,
+                            f"TBMT liên kết mở sai trang: expected={linked_tbmt}, actual={actual_tbmt}",
+                        )
+                    linked_metadata["URL gói thầu con"] = driver.current_url
+                    has_download = process_current_tbmt_detail(
+                        linked_tbmt,
+                        f"KHLCNT {plan_record.get('Mã KHLCNT', '')} child {child_no}",
+                        dia_diem=linked_detail_info.get("Địa điểm", ""),
+                        khlcnt_metadata=linked_metadata,
+                    )
+                    if has_download:
+                        saved_count += 1
+                    else:
+                        pending_child_count += 1
+                        linked_missing_metadata_count += 1
+                        logger.info("⏸️ KHLCNT %s -> %s: xử lý TBMT chưa tải được file", plan_record.get("Mã KHLCNT", ""), linked_tbmt)
+                except TempCrawlAbort as error:
+                    register_temp_abort(linked_tbmt, error.reason)
+                    pending_child_count += 1
+                    linked_missing_metadata_count += 1
+                    logger.info("⏸️ KHLCNT %s -> %s: lỗi tạm khi xử lý TBMT (%s)", plan_record.get("Mã KHLCNT", ""), linked_tbmt, error.reason[:180])
+                except Exception as error:
+                    pending_child_count += 1
+                    linked_missing_metadata_count += 1
+                    logger.info("⏸️ KHLCNT %s -> %s: không xử lý được TBMT (%s)", plan_record.get("Mã KHLCNT", ""), linked_tbmt, str(error)[:180])
+                finally:
+                    if parent_window is not None:
+                        close_current_tab_and_return(parent_window)
                 continue
             child_state = process_khlcnt_no_linked_child(
                 plan_record,

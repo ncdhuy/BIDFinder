@@ -128,6 +128,8 @@ AUTH_REQUIRED_FOR_FULL_QUERY = ANONYMOUS_ACCESS_LEVEL != "full"
 db_ssl_config = build_db_ssl_config()
 
 DEFAULT_ALLOWED_ORIGINS = [
+    # A frontend opened directly as file:// sends the opaque Origin "null".
+    "null",
     "https://bidfinder.vn",
     "https://www.bidfinder.vn",
     "https://bidfinder.netlify.app",
@@ -135,6 +137,8 @@ DEFAULT_ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",
     "http://localhost:5500",
     "http://127.0.0.1:5500",
+    "http://localhost:5501",
+    "http://127.0.0.1:5501",
     "http://localhost:8000",
     "http://127.0.0.1:8000",
 ]

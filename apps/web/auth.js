@@ -5,7 +5,7 @@
     ((window.location.protocol === 'file:' ||
         window.location.hostname === 'localhost' ||
         window.location.hostname === '127.0.0.1')
-      ? 'http://127.0.0.1:8000'
+      ? 'http://127.0.0.1:8001'
       : 'https://bidfinder-api-staging-774667987564.asia-southeast1.run.app');
   const AUTH_API_CANDIDATE_URLS = Array.from(new Set([
     API_BASE_URL,
@@ -307,7 +307,8 @@
     if (isAuthenticated()) {
       const user = state.user || {};
       if (els['auth-edit-profile-btn']) {
-        els['auth-edit-profile-btn'].textContent = 'Tài khoản';
+        els['auth-edit-profile-btn'].setAttribute('aria-label', 'Tài khoản');
+        els['auth-edit-profile-btn'].title = 'Tài khoản';
       }
       if (els['account-sidebar-name']) {
         els['account-sidebar-name'].textContent = user.full_name || 'Người dùng BIDFinder';

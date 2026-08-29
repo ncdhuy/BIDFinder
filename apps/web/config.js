@@ -1,5 +1,5 @@
 (function () {
-  const LOCAL_API_BASE_URL = 'http://127.0.0.1:8000';
+  const LOCAL_API_BASE_URL = 'http://127.0.0.1:8001';
   const CLOUD_RUN_API_BASE_URL = 'https://bidfinder-api-staging-774667987564.asia-southeast1.run.app'; //https://bidfinder.onrender.com
   const RENDER_BACKUP_API_BASE_URL = 'https://bidfinder.onrender.com';
 

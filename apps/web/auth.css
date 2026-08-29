@@ -93,6 +93,68 @@ body.auth-state-guest #open-login-app {
   color: #0f5b77;
 }
 
+.app-header-links .app-icon-btn {
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 1px solid #d4e1e8;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #496777;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 44px;
+  box-shadow: 0 5px 14px rgba(23, 56, 74, 0.06);
+  transition:
+    color 200ms ease,
+    background-color 200ms ease,
+    border-color 200ms ease,
+    transform 200ms ease,
+    box-shadow 200ms ease;
+}
+
+.app-header-links .app-icon-btn svg {
+  width: 19px;
+  height: 19px;
+  stroke-width: 2;
+  pointer-events: none;
+}
+
+.app-header-links .app-icon-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(23, 56, 74, 0.1);
+}
+
+.app-header-links .app-icon-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 3px 8px rgba(23, 56, 74, 0.08);
+}
+
+.app-header-links .app-icon-btn:focus-visible {
+  outline: 2px solid #127495;
+  outline-offset: 2px;
+}
+
+.app-header-links .app-icon-btn-help:hover {
+  border-color: #a9cfe0;
+  background: #eff8fb;
+  color: #176d8b;
+}
+
+.app-header-links .app-icon-btn-account:hover {
+  border-color: #add9cd;
+  background: #eff9f6;
+  color: #24715d;
+}
+
+.app-header-links .app-icon-btn-forum:hover {
+  border-color: #e9c896;
+  background: #fff7e9;
+  color: #a46318;
+}
+
 .app-auth-btn-danger {
   color: var(--auth-danger);
   border-color: #edcfcd;
@@ -1208,8 +1270,8 @@ body.auth-state-guest #open-login-app {
   }
 
   .app-auth-shell {
-    width: 100%;
-    flex-wrap: wrap;
+    width: auto;
+    flex-wrap: nowrap;
   }
 
   .app-auth-btn {

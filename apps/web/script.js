@@ -4,7 +4,7 @@ const API_BASE_URL =
   ((window.location.protocol === 'file:' ||
       window.location.hostname === 'localhost' ||
       window.location.hostname === '127.0.0.1')
-    ? 'http://127.0.0.1:8000'
+    ? 'http://127.0.0.1:8001'
     : 'https://bidfinder-api-staging-774667987564.asia-southeast1.run.app');
 
 window.API_BASE_URL = API_BASE_URL;
@@ -253,7 +253,7 @@ let extendedTbody;
 const wrappedColumnsState = loadPersistentColumnSets(STORAGE_KEYS.wrappedColumns);
 const frozenColumnsState = loadPersistentColumnSets(STORAGE_KEYS.frozenColumns);
 const hiddenColumnsState = loadPersistentColumnSets(STORAGE_KEYS.hiddenColumns);
-const miniFilterState = {
+const columnValueFilterState = {
     'standard-table': {},
     'extended-table': {}
 };
@@ -1441,7 +1441,10 @@ function handleQuerySuccess(result, options = {}) {
         appliedTotalLimit: normalized.appliedTotalLimit
     };
 
-    updateResults(nextDf1, nextDf2, { resetMiniFilters: options.resetMiniFilters !== false });
+    updateResults(nextDf1, nextDf2, {
+        resetMiniFilters: options.resetMiniFilters !== false,
+        resetScroll: options.resetScroll !== false
+    });
 }
 
 
@@ -1506,7 +1509,8 @@ async function triggerFullSearch() {
     const dockFullSearchButton = document.getElementById('insight-full-search');
     if (dockFullSearchButton) {
         dockFullSearchButton.disabled = true;
-        dockFullSearchButton.textContent = 'Đang tải...';
+        const dockFullSearchLabel = document.getElementById('insight-full-search-label');
+        if (dockFullSearchLabel) dockFullSearchLabel.textContent = '…';
     }
 
     if (currentQueryMeta.searchMode === 'bulk' && lastBulkSearchPayloads?.length) {
@@ -1591,39 +1595,44 @@ function resetQueryResultMeta() {
 
 // Helper: Update results and render
 function applyMiniFiltersToRows(tableId, rows) {
-    const filters = miniFilterState[tableId] || {};
-    const activeFilters = Object.entries(filters)
-        .map(([columnName, rawValue]) => [columnName, String(rawValue || '').trim().toLowerCase()])
-        .filter(([, value]) => value);
+    const activeValueFilters = Object.entries(columnValueFilterState[tableId] || {})
+        .filter(([, values]) => values instanceof Set);
 
-    if (!activeFilters.length) return rows;
+    if (!activeValueFilters.length) return rows;
 
     const configKey = getTableScopeKey(tableId);
     const config = TABLE_CONFIGS[configKey];
     if (!config) return rows;
 
-    return rows.filter(row => (
-        activeFilters.every(([columnName, keyword]) => {
-            const displayValue = String(mapField(row, columnName, config.fieldMappers) ?? '').toLowerCase();
-            return displayValue.includes(keyword);
-        })
-    ));
+    return rows.filter(row => {
+        return activeValueFilters.every(([columnName, values]) => {
+            const displayValue = String(mapField(row, columnName, config.fieldMappers) ?? '');
+            return values.has(displayValue);
+        });
+    });
 }
 
 function resetMiniFilters(tableId = null) {
     if (tableId) {
-        miniFilterState[tableId] = {};
+        columnValueFilterState[tableId] = {};
         syncHeaderDecorations(tableId);
         return;
     }
 
-    Object.keys(miniFilterState).forEach(key => {
-        miniFilterState[key] = {};
+    Object.keys(columnValueFilterState).forEach(key => {
+        columnValueFilterState[key] = {};
         syncHeaderDecorations(key);
     });
 }
 
 function refreshRenderedTables({ resetScroll = true, redrawCharts = true } = {}) {
+    const preservedScrollPositions = resetScroll
+        ? []
+        : Array.from(
+            document.querySelectorAll('#df1-panel .table-scroll, #df2-panel .table-scroll'),
+            container => ({ container, top: container.scrollTop, left: container.scrollLeft })
+        );
+
     currentDisplayedDf1 = applyMiniFiltersToRows('standard-table', currentFilteredDf1);
     currentDisplayedDf2 = applyMiniFiltersToRows('extended-table', currentFilteredDf2);
 
@@ -1636,6 +1645,11 @@ function refreshRenderedTables({ resetScroll = true, redrawCharts = true } = {})
 
     if (resetScroll) {
         resetTableScrollPositions();
+    } else {
+        preservedScrollPositions.forEach(({ container, top, left }) => {
+            container.scrollTop = top;
+            container.scrollLeft = left;
+        });
     }
 
     if (redrawCharts) {
@@ -1645,22 +1659,27 @@ function refreshRenderedTables({ resetScroll = true, redrawCharts = true } = {})
 
 function updateScopeSwitcherCounts(df1Count, df2Count) {
     const counts = {
-        'df1-panel': Number(df1Count || 0),
-        'df2-panel': Number(df2Count || 0)
+        'df1-panel': Number(currentQueryMeta.df1Displayed || df1Count || 0),
+        'df2-panel': Number(currentQueryMeta.df2Displayed || df2Count || 0)
+    };
+    const totalLabels = {
+        'df1-panel': String(currentQueryMeta.df1TotalLabel || counts['df1-panel'].toLocaleString('vi-VN')),
+        'df2-panel': String(currentQueryMeta.df2TotalLabel || counts['df2-panel'].toLocaleString('vi-VN'))
     };
 
     const df1CountEl = document.getElementById('df1-count-switcher');
     const df2CountEl = document.getElementById('df2-count-switcher');
-    if (df1CountEl) df1CountEl.textContent = counts['df1-panel'].toLocaleString('vi-VN');
-    if (df2CountEl) df2CountEl.textContent = counts['df2-panel'].toLocaleString('vi-VN');
+    if (df1CountEl) df1CountEl.textContent = `${counts['df1-panel'].toLocaleString('vi-VN')}/${totalLabels['df1-panel']}`;
+    if (df2CountEl) df2CountEl.textContent = `${counts['df2-panel'].toLocaleString('vi-VN')}/${totalLabels['df2-panel']}`;
 
     document.querySelectorAll('.scope-btn').forEach(button => {
         const view = button.getAttribute('data-view');
         const count = counts[view] || 0;
+        const countLabel = `${count.toLocaleString('vi-VN')}/${totalLabels[view] || count.toLocaleString('vi-VN')}`;
         button.classList.toggle('has-results', count > 0);
         button.classList.toggle('is-empty', count <= 0);
         button.dataset.count = String(count);
-        button.setAttribute('aria-label', `${button.querySelector('.scope-text')?.textContent || ''}: ${count.toLocaleString('vi-VN')} kết quả`);
+        button.setAttribute('aria-label', `${button.querySelector('.scope-text')?.textContent || ''}: ${countLabel} kết quả`);
     });
 }
 
@@ -2491,7 +2510,7 @@ function applyClientSideSort({ preserveMiniFilters = true } = {}) {
     }
 
     refreshRenderedTables({
-        resetScroll: true,
+        resetScroll: false,
         redrawCharts: true
     });
     syncAllHeaderDecorations();
@@ -2514,7 +2533,12 @@ function positionFloatingLayer(wrapper, anchor, floating) {
     const anchorRect = anchor.getBoundingClientRect();
     const floatingWidth = floating.offsetWidth || 260;
     const maxLeft = Math.max(12, wrapper.clientWidth - floatingWidth - 12);
-    const preferredLeft = anchorRect.right - wrapperRect.left - floatingWidth;
+    const columnHeaderRect = floating.classList.contains('column-menu-popover')
+        ? anchor.closest('th')?.getBoundingClientRect()
+        : null;
+    const preferredLeft = columnHeaderRect
+        ? columnHeaderRect.left - wrapperRect.left
+        : anchorRect.right - wrapperRect.left - floatingWidth;
     const left = Math.max(12, Math.min(preferredLeft, maxLeft));
     const top = Math.max(54, anchorRect.bottom - wrapperRect.top + 8);
 
@@ -2535,14 +2559,13 @@ function syncHeaderDecorations(tableId) {
     const table = document.getElementById(tableId);
     if (!table) return;
 
-    const miniFilters = miniFilterState[tableId] || {};
     const wrappedColumns = wrappedColumnsState[tableId] || new Set();
     const pinnedColumns = frozenColumnsState[tableId] || new Set();
 
     table.querySelectorAll('thead th[data-col-name]').forEach(th => {
         const columnName = th.dataset.colName;
         const sortState = getSortStateForColumn(tableId, columnName);
-        const hasMiniFilter = Boolean(String(miniFilters[columnName] || '').trim());
+        const hasMiniFilter = columnValueFilterState[tableId]?.[columnName] instanceof Set;
         const isWrapped = wrappedColumns.has(columnName);
         const isPinned = pinnedColumns.has(columnName);
 
@@ -2595,7 +2618,10 @@ async function applyActiveSortRule({ preserveMiniFilters = true } = {}) {
             { searchMode: currentQueryMeta.searchMode }
         );
         if (result.success) {
-            handleQuerySuccess(result, { resetMiniFilters: !preserveMiniFilters });
+            handleQuerySuccess(result, {
+                resetMiniFilters: !preserveMiniFilters,
+                resetScroll: false
+            });
         } else {
             throw new Error(result.error || 'Sort failed');
         }
@@ -2622,22 +2648,6 @@ async function clearActiveSortRule() {
     persistSortRule(null);
     syncAllHeaderDecorations();
     await applyActiveSortRule({ preserveMiniFilters: true });
-}
-
-function setTableMiniFilter(tableId, columnName, rawValue) {
-    const nextValue = String(rawValue || '');
-    if (!miniFilterState[tableId]) {
-        miniFilterState[tableId] = {};
-    }
-
-    if (nextValue.trim()) {
-        miniFilterState[tableId][columnName] = nextValue;
-    } else {
-        delete miniFilterState[tableId][columnName];
-    }
-
-    syncHeaderDecorations(tableId);
-    refreshRenderedTables({ resetScroll: false, redrawCharts: false });
 }
 
 function toggleWrappedColumn(tableId, columnName) {
@@ -2734,8 +2744,35 @@ function createColumnMenuActionButton({
     return button;
 }
 
+function getDistinctColumnValues(tableId, columnName) {
+    const configKey = getTableScopeKey(tableId);
+    const config = TABLE_CONFIGS[configKey];
+    const rows = tableId === 'standard-table' ? currentFilteredDf1 : currentFilteredDf2;
+    if (!config || !Array.isArray(rows)) return [];
+
+    return Array.from(new Set(rows.map(row => (
+        String(mapField(row, columnName, config.fieldMappers) ?? '')
+    )))).sort((a, b) => a.localeCompare(b, 'vi', { numeric: true, sensitivity: 'base' }));
+}
+
+function applyColumnValueFilterFromMenu(menu, tableId, columnName) {
+    const distinctValues = getDistinctColumnValues(tableId, columnName);
+    const selectedValues = new Set(Array.from(
+        menu.querySelectorAll('.column-value-filter-checkbox:not([data-role="all"]):checked')
+    ).map(checkbox => decodeColumnName(checkbox.dataset.value)));
+
+    if (selectedValues.size === distinctValues.length) {
+        delete columnValueFilterState[tableId][columnName];
+    } else {
+        columnValueFilterState[tableId][columnName] = selectedValues;
+    }
+
+    syncHeaderDecorations(tableId);
+    closeColumnMenu();
+    refreshRenderedTables({ resetScroll: false, redrawCharts: false });
+}
+
 function renderColumnMenu(tableId, columnName) {
-    const miniFilterValue = miniFilterState[tableId]?.[columnName] || '';
     const sortState = getSortStateForColumn(tableId, columnName);
     const isWrapped = wrappedColumnsState[tableId]?.has(columnName);
     const isPinned = frozenColumnsState[tableId]?.has(columnName);
@@ -2749,29 +2786,12 @@ function renderColumnMenu(tableId, columnName) {
     const primarySection = document.createElement('div');
     primarySection.className = 'column-menu-section';
 
-    const field = document.createElement('div');
-    field.className = 'column-menu-field';
-    const inputWrap = document.createElement('div');
-    inputWrap.className = 'column-menu-input-wrap';
-    inputWrap.appendChild(createFeatherIconElement('search', 'column-menu-icon'));
-
-    const input = document.createElement('input');
-    input.className = 'column-mini-filter-input';
-    input.type = 'text';
-    input.value = miniFilterValue;
-    input.dataset.tableId = tableId;
-    input.dataset.columnName = encodeColumnName(columnName);
-    input.placeholder = '';
-    inputWrap.appendChild(input);
-    field.appendChild(inputWrap);
-    primarySection.appendChild(field);
-
     primarySection.appendChild(createColumnMenuActionButton({
         action: 'sort-asc',
         tableId,
         columnName,
         icon: 'arrow-up',
-        label: 'Sort ascending',
+        label: 'Sắp xếp tăng dần',
         isActive: sortState === 'asc'
     }));
     primarySection.appendChild(createColumnMenuActionButton({
@@ -2779,7 +2799,7 @@ function renderColumnMenu(tableId, columnName) {
         tableId,
         columnName,
         icon: 'arrow-down',
-        label: 'Sort descending',
+        label: 'Sắp xếp giảm dần',
         isActive: sortState === 'desc'
     }));
     if (sortState) {
@@ -2805,14 +2825,14 @@ function renderColumnMenu(tableId, columnName) {
         tableId,
         columnName,
         icon: 'code',
-        label: 'Autosize'
+        label: 'Tự căn độ rộng'
     }));
     secondarySection.appendChild(createColumnMenuActionButton({
         action: 'toggle-wrap',
         tableId,
         columnName,
         icon: 'corner-down-right',
-        label: 'Wrap text',
+        label: 'Ngắt dòng',
         isActive: isWrapped
     }));
     secondarySection.appendChild(createColumnMenuActionButton({
@@ -2820,7 +2840,7 @@ function renderColumnMenu(tableId, columnName) {
         tableId,
         columnName,
         icon: 'tag',
-        label: 'Pin column',
+        label: 'Ghim cột',
         isActive: isPinned
     }));
     secondarySection.appendChild(createColumnMenuActionButton({
@@ -2828,10 +2848,98 @@ function renderColumnMenu(tableId, columnName) {
         tableId,
         columnName,
         icon: 'eye-off',
-        label: 'Hide column',
+        label: 'Ẩn cột',
         isDanger: true
     }));
     fragment.appendChild(secondarySection);
+
+    const filterDivider = document.createElement('hr');
+    filterDivider.className = 'column-menu-divider';
+    fragment.appendChild(filterDivider);
+
+    const filterSection = document.createElement('div');
+    filterSection.className = 'column-value-filter-section';
+    const field = document.createElement('div');
+    field.className = 'column-menu-field';
+    const inputWrap = document.createElement('div');
+    inputWrap.className = 'column-menu-input-wrap';
+    inputWrap.appendChild(createFeatherIconElement('search', 'column-menu-icon'));
+
+    const input = document.createElement('input');
+    input.className = 'column-mini-filter-input';
+    input.type = 'search';
+    input.dataset.tableId = tableId;
+    input.dataset.columnName = encodeColumnName(columnName);
+    input.placeholder = 'Tìm kiếm';
+    input.setAttribute('aria-label', `Tìm trong các giá trị của cột ${columnName}`);
+    inputWrap.appendChild(input);
+    field.appendChild(inputWrap);
+    filterSection.appendChild(field);
+
+    const distinctValues = getDistinctColumnValues(tableId, columnName);
+    const selectedValues = columnValueFilterState[tableId]?.[columnName];
+    const valueList = document.createElement('div');
+    valueList.className = 'column-value-list';
+
+    const selectAll = document.createElement('label');
+    selectAll.className = 'column-value-option is-select-all';
+    const selectAllCheckbox = document.createElement('input');
+    selectAllCheckbox.type = 'checkbox';
+    selectAllCheckbox.className = 'column-value-filter-checkbox';
+    selectAllCheckbox.dataset.role = 'all';
+    selectAllCheckbox.dataset.tableId = tableId;
+    selectAllCheckbox.dataset.columnName = encodeColumnName(columnName);
+    selectAllCheckbox.checked = !selectedValues || selectedValues.size === distinctValues.length;
+    selectAllCheckbox.indeterminate = Boolean(
+        selectedValues && selectedValues.size > 0 && selectedValues.size < distinctValues.length
+    );
+    const selectAllLabel = document.createElement('span');
+    selectAllLabel.textContent = '(Chọn tất cả)';
+    selectAll.append(selectAllCheckbox, selectAllLabel);
+    valueList.appendChild(selectAll);
+
+    distinctValues.forEach(value => {
+        const option = document.createElement('label');
+        option.className = 'column-value-option';
+        option.dataset.searchValue = (value || '(Trống)').toLocaleLowerCase('vi');
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'column-value-filter-checkbox';
+        checkbox.dataset.tableId = tableId;
+        checkbox.dataset.columnName = encodeColumnName(columnName);
+        checkbox.dataset.value = encodeColumnName(value);
+        checkbox.checked = !selectedValues || selectedValues.has(value);
+        const label = document.createElement('span');
+        label.textContent = value || '(Trống)';
+        label.title = label.textContent;
+        option.append(checkbox, label);
+        valueList.appendChild(option);
+    });
+
+    if (!distinctValues.length) {
+        const empty = document.createElement('div');
+        empty.className = 'column-value-empty';
+        empty.textContent = 'Không có giá trị';
+        valueList.appendChild(empty);
+    }
+
+    filterSection.appendChild(valueList);
+    fragment.appendChild(filterSection);
+
+    const footer = document.createElement('div');
+    footer.className = 'column-value-filter-footer';
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.className = 'column-filter-cancel';
+    cancelButton.textContent = 'Hủy';
+    const applyButton = document.createElement('button');
+    applyButton.type = 'button';
+    applyButton.className = 'column-filter-apply';
+    applyButton.dataset.tableId = tableId;
+    applyButton.dataset.columnName = encodeColumnName(columnName);
+    applyButton.textContent = 'OK';
+    footer.append(cancelButton, applyButton);
+    fragment.appendChild(footer);
 
     return fragment;
 }
@@ -3094,6 +3202,26 @@ function initTableWorkspaceControls() {
             return;
         }
 
+        const applyFilterButton = e.target.closest('.column-filter-apply');
+        if (applyFilterButton) {
+            e.preventDefault();
+            e.stopPropagation();
+            applyColumnValueFilterFromMenu(
+                applyFilterButton.closest('.column-menu-popover'),
+                applyFilterButton.dataset.tableId,
+                decodeColumnName(applyFilterButton.dataset.columnName)
+            );
+            return;
+        }
+
+        const cancelFilterButton = e.target.closest('.column-filter-cancel');
+        if (cancelFilterButton) {
+            e.preventDefault();
+            e.stopPropagation();
+            closeColumnMenu();
+            return;
+        }
+
         const toolButton = e.target.closest('.table-tool-btn');
         if (toolButton) {
             e.preventDefault();
@@ -3140,14 +3268,37 @@ function initTableWorkspaceControls() {
         const input = e.target.closest('.column-mini-filter-input');
         if (!input) return;
 
-        setTableMiniFilter(
-            input.dataset.tableId,
-            decodeColumnName(input.dataset.columnName),
-            input.value
-        );
+        const keyword = input.value.trim().toLocaleLowerCase('vi');
+        input.closest('.column-value-filter-section')
+            ?.querySelectorAll('.column-value-option:not(.is-select-all)')
+            .forEach(option => {
+                option.hidden = !String(option.dataset.searchValue || '').includes(keyword);
+            });
     });
 
     document.addEventListener('change', (e) => {
+        const valueCheckbox = e.target.closest('.column-value-filter-checkbox');
+        if (valueCheckbox) {
+            const valueList = valueCheckbox.closest('.column-value-list');
+
+            if (valueCheckbox.dataset.role === 'all') {
+                valueList?.querySelectorAll('.column-value-filter-checkbox:not([data-role="all"])')
+                    .forEach(checkbox => { checkbox.checked = valueCheckbox.checked; });
+                valueCheckbox.indeterminate = false;
+            } else {
+                const valueCheckboxes = Array.from(
+                    valueList?.querySelectorAll('.column-value-filter-checkbox:not([data-role="all"])') || []
+                );
+                const selectAllCheckbox = valueList?.querySelector('[data-role="all"]');
+                if (selectAllCheckbox) {
+                    const checkedCount = valueCheckboxes.filter(checkbox => checkbox.checked).length;
+                    selectAllCheckbox.checked = checkedCount === valueCheckboxes.length;
+                    selectAllCheckbox.indeterminate = checkedCount > 0 && checkedCount < valueCheckboxes.length;
+                }
+            }
+            return;
+        }
+
         const checkbox = e.target.closest('.table-columns-checkbox');
         if (!checkbox) return;
 
@@ -4082,27 +4233,13 @@ function scheduleInsightEntryPointUpdate(totalRecords = null) {
     });
 }
 
-function setDockLayoutReserve(enabled) {
-    const hasClass = document.body.classList.contains('data-dock-visible');
-    if (enabled && !hasClass) {
-        document.body.classList.add('data-dock-visible');
-    } else if (!enabled && hasClass) {
-        document.body.classList.remove('data-dock-visible');
-    }
-}
-
 function updateInsightEntryPoint(totalRecords = getInsightResultCounts().total) {
-    const dock = document.getElementById('insight-dock');
-    const dockResultLine = document.getElementById('insight-result-line');
-    const dockQuotaLine = document.getElementById('insight-quota-line');
     const dockFullSearchButton = document.getElementById('insight-full-search');
+    const dockFullSearchLabel = document.getElementById('insight-full-search-label');
     const openButton = document.getElementById('open-insight-drawer');
-    if (!dock) return;
+    if (!dockFullSearchButton && !openButton) return;
 
     if (!isDataDockContextAllowed()) {
-        if (dock.classList.contains('is-visible')) dock.classList.remove('is-visible');
-        if (!dock.hidden) dock.hidden = true;
-        setDockLayoutReserve(false);
         if (isInsightDrawerOpen()) closeInsightDrawer();
         return;
     }
@@ -4111,24 +4248,19 @@ function updateInsightEntryPoint(totalRecords = getInsightResultCounts().total) 
     const hasData = Number(totalRecords || counts.total) > 0;
     const quota = getFullSearchQuotaState();
 
-    if (dock.hidden) dock.hidden = false;
-    setDockLayoutReserve(true);
-    if (!dock.classList.contains('is-visible')) {
-        requestAnimationFrame(() => dock.classList.add('is-visible'));
-    }
-    if (dockResultLine) dockResultLine.textContent = formatDockResultLine();
-    if (dockQuotaLine) dockQuotaLine.textContent = formatDockQuotaLine(quota);
     if (dockFullSearchButton) {
         dockFullSearchButton.disabled = !canRunDockFullSearch(quota);
-        dockFullSearchButton.textContent = currentQueryMeta.searchMode === 'full'
-            || (currentQueryMeta.searchMode === 'bulk' && currentQueryMeta.bulkSearchMode === 'full')
-            ? 'Đã full search'
-            : 'Full search';
+        dockFullSearchButton.classList.toggle('is-empty', !quota.enabled || quota.remaining <= 0);
+        if (dockFullSearchLabel) dockFullSearchLabel.textContent = Number(quota.remaining || 0).toLocaleString('vi-VN');
+        const quotaText = formatDockQuotaLine(quota);
+        dockFullSearchButton.title = `Tìm kiếm toàn bộ. ${quotaText}`;
+        dockFullSearchButton.setAttribute('aria-label', `Tìm kiếm toàn bộ. ${quotaText}`);
     }
     if (openButton) {
         openButton.disabled = !hasData;
         openButton.classList.toggle('is-disabled', !hasData);
         openButton.classList.toggle('is-open', isInsightDrawerOpen());
+        openButton.title = hasData ? `${formatDockResultLine()}. Mở phân tích trực quan` : 'Chưa có dữ liệu để phân tích';
     }
 
     if (!hasData) {
@@ -4759,6 +4891,62 @@ function initTableRangeSelect(tableId){
     });
 }
 
+function clearCopiedCellRange() {
+    document.querySelectorAll('.table-copy-outline').forEach(outline => outline.remove());
+}
+
+function showCopiedCellRange(tableId) {
+    clearCopiedCellRange();
+
+    const table = document.getElementById(tableId);
+    const state = tableSel[tableId];
+    if (!table || !state?.start || !state?.end) return;
+
+    const rows = table.tBodies?.[0]?.rows || [];
+    const rowStart = Math.min(state.start.rowIndex, state.end.rowIndex);
+    const rowEnd = Math.max(state.start.rowIndex, state.end.rowIndex);
+    const colStart = Math.min(state.start.colIndex, state.end.colIndex);
+    const colEnd = Math.max(state.start.colIndex, state.end.colIndex);
+    const firstCell = rows[rowStart]?.cells?.[colStart];
+    const lastCell = rows[rowEnd]?.cells?.[colEnd];
+    const scrollContainer = table.closest('.table-scroll');
+    if (!firstCell || !lastCell || !scrollContainer) return;
+
+    const firstRect = firstCell.getBoundingClientRect();
+    const lastRect = lastCell.getBoundingClientRect();
+    const containerRect = scrollContainer.getBoundingClientRect();
+    const pixelRatio = window.devicePixelRatio || 1;
+    const snapToDevicePixel = value => Math.round(value * pixelRatio) / pixelRatio;
+    const left = snapToDevicePixel(firstRect.left - containerRect.left + scrollContainer.scrollLeft);
+    const top = snapToDevicePixel(firstRect.top - containerRect.top + scrollContainer.scrollTop);
+    const right = snapToDevicePixel(lastRect.right - containerRect.left + scrollContainer.scrollLeft);
+    const bottom = snapToDevicePixel(lastRect.bottom - containerRect.top + scrollContainer.scrollTop);
+    const width = Math.max(0, right - left);
+    const height = Math.max(0, bottom - top);
+    const strokeWidth = 1 / pixelRatio;
+    const outline = document.createElement('div');
+    outline.className = 'table-copy-outline';
+    outline.setAttribute('aria-hidden', 'true');
+    outline.style.left = `${left}px`;
+    outline.style.top = `${top}px`;
+    outline.style.width = `${width}px`;
+    outline.style.height = `${height}px`;
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.setAttribute('preserveAspectRatio', 'none');
+    const border = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    border.setAttribute('class', 'table-copy-outline-border');
+    border.setAttribute('x', String(strokeWidth / 2));
+    border.setAttribute('y', String(strokeWidth / 2));
+    border.setAttribute('width', String(Math.max(0, width - strokeWidth)));
+    border.setAttribute('height', String(Math.max(0, height - strokeWidth)));
+    border.setAttribute('stroke-width', String(strokeWidth));
+    svg.appendChild(border);
+    outline.appendChild(svg);
+    scrollContainer.appendChild(outline);
+}
+
 function initRangeCopy() {
     // ✅ FIX BUG 1: Copy table được select gần nhất
     document.addEventListener("copy", (e) => {
@@ -4776,6 +4964,11 @@ function initRangeCopy() {
 
         e.clipboardData.setData("text/plain", text);
         e.preventDefault();
+        showCopiedCellRange(activeTable);
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') clearCopiedCellRange();
     });
 }
 
@@ -4855,6 +5048,7 @@ function getTopLeftCellText(tableId) {
 }
 
 function resetCellSelection() {
+    clearCopiedCellRange();
     document.querySelectorAll('.cell-selected, .cell-range, .cell-active')
         .forEach(el => el.classList.remove('cell-selected', 'cell-range', 'cell-active'));
     document.querySelectorAll('.row-selected')
@@ -6688,7 +6882,7 @@ function initResultViewSwitching() {
     viewButtons.forEach(button => {
         button.addEventListener('click', () => {
             const targetId = button.getAttribute('data-view');
-            activateResultView(targetId, { animate: false });
+            activateResultView(targetId);
         });
     });
 }
@@ -6715,7 +6909,8 @@ function activateResultView(targetId, { animate = true } = {}) {
     syncScopeSwitcherSlider();
 
     if (!targetPanel) return;
-    if (!animate || !currentPanel || currentPanel === targetPanel) {
+    const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (!animate || prefersReducedMotion || !currentPanel || currentPanel === targetPanel) {
         resultPanels.forEach(panel => panel.classList.remove('active'));
         targetPanel.classList.add('active');
         return;

@@ -3166,7 +3166,7 @@ class AdvancedFilterManager {
             window.location.hostname === '127.0.0.1';
 
         return isLocal
-            ? 'http://127.0.0.1:8000'
+            ? 'http://127.0.0.1:8001'
             : 'https://bidfinder-api-staging-774667987564.asia-southeast1.run.app';
     }
 

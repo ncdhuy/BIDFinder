@@ -59,7 +59,7 @@ Run the backend locally:
 
 ```powershell
 cd apps\api
-uvicorn server:app --reload --host 127.0.0.1 --port 8000
+uvicorn server:app --reload --host 127.0.0.1 --port 8001
 ```
 
 Open the frontend locally:
@@ -180,4 +180,3 @@ Before finishing, report:
 - Do not revert user changes unless explicitly asked.
 - Do not use destructive commands such as `git reset --hard` or broad deletes unless the user explicitly approves.
 - A dirty worktree may contain intentional user work; inspect before editing touched files.
-

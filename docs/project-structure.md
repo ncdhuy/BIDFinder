@@ -32,7 +32,7 @@ Run backend locally:
 
 ```powershell
 cd apps\api
-uvicorn server:app --reload --host 127.0.0.1 --port 8000
+uvicorn server:app --reload --host 127.0.0.1 --port 8001
 ```
 
 Open frontend locally:
