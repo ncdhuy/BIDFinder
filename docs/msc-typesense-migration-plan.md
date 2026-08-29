@@ -1,10 +1,10 @@
 # BIDFinder MSC-to-Typesense Migration Plan
 
-Status: Phase 1C overflow time-partition proof complete; Phase 2 production crawler implementation has not started.
+Status: Phase 2 secure verified MSC ingestion complete; Phase 3 Typesense integration has not started.
 
 Baseline reviewed: `refactor-phase-0-7` at `0dcab303bdb4cf23d661b6e53802057705afff49` (`Change UI`, 2026-08-29).
 
-This document records the smallest viable migration path from the current Selenium/Postgres procurement-data path to the MuaSamCong (MSC) winning-bid APIs, a deterministic crawler/normalizer, Typesense, and the existing FastAPI/static-web product. Phases 1A-1C add proof tooling only; they do not implement a production crawler.
+This document records the smallest viable migration path from the current Selenium/Postgres procurement-data path to the MuaSamCong (MSC) winning-bid APIs, a deterministic crawler/normalizer, Typesense, and the existing FastAPI/static-web product. Phases 1A-1C add proof tooling; Phase 2 adds the production MSC crawler core.
 
 ## 1. Scope and non-goals
 
@@ -482,7 +482,10 @@ For response compatibility, retain current `df1` (medicine) and `df2` (goods) ob
 
 MSC does not supply legacy package joins, `qd_display`, version/approval/expiry/validity fields, duplicate-warning flags, goods `Search blob`, old medicine filter classifications, or Excel-only columns. Future responses must omit or return null for these fields and retire unsupported filters/sorts. Verified-but-optional MSC fields, including medical-device model/registration, shelf life, bidder count, location, and production year, remain nullable during transition. Auth, sessions, feedback/forum state, quotas, and control-plane Postgres behavior remain separate and unchanged.
 
-Phase 1A and Phase 1B did not approve production ingestion. Phase 1C now provides an approved search-retrieval strategy for overflow parents; Phase 2 remains a separate implementation task and is not started by this change.
+Phase 1A and Phase 1B did not approve production ingestion. Phase 1C provided
+the approved search-retrieval strategy for overflow parents; Phase 2 now
+promotes that strategy through the dedicated production MSC engine described
+below.
 
 ## Phase 1B — Search-only ingestion proof and contract finalization
 
@@ -649,10 +652,41 @@ The two-range arbitrary intraday proof for 2026-08-28 also passed: `[00:00:00.00
 
 The safe 9,257-row normal day 2026-08-25 remained one leaf, fetched 9,257 rows in 10 pages, and passed 9,257 pre-count, post-count, and unique UUID checks.
 
+## Phase 2 — Production MSC ingestion engine core
+
+Status: `PASS`: the production engine and its actual MSC client transport pass
+the live smoke gates. The MSC endpoint's default finite-field DHE path can fail
+with `DH_KEY_TOO_SMALL`; the MSC-scoped verified context selects ECDHE instead.
+The isolated
+`crawler_engine/msc/` package promotes the Phase 1C retrieval algorithm into a
+sequential production crawler core:
+
+```text
+public /search_prc
+  -> verified source contract and official date parent
+  -> pre-count and adaptive time leaves
+  -> bounded page.content pagination
+  -> page metadata and UUID validation
+  -> identical-overlap UUID union
+  -> parent pre/post parity
+  -> deterministic canonical normalization
+  -> pluggable sink
+  -> SQLite checkpoint completion
+```
+
+Phase 2 has no Typesense sink, application/Postgres dependency, Selenium,
+authentication, `/export` call, historical backfill, or FastAPI/frontend change.
+The default validation sink is in-memory; the optional JSONL sink is local
+staging only. See [msc-ingestion-runbook.md](msc-ingestion-runbook.md) for
+operator usage, TLS troubleshooting, and failure handling. Phase 2 uses
+`ssl.CERT_REQUIRED`, hostname verification, TLS 1.2+, and normal OpenSSL
+security level; it does not use `verify=False`, `CERT_NONE`, or a security-level
+downgrade.
+
 ### Mutable/current partition policy
 
-For a future production synchronization, count the full parent as `pre_count`, fetch and union all safe leaves, then count the same parent as `post_count`. Completion requires `pre_count == post_count == unique_union_count`. A count change must not publish or upsert a partial partition as complete; future bounded retry policy may retry later and eventually quarantine an unstable partition. Historical closed days should normally be stable.
+The production engine counts the full parent as `pre_count`, fetches and unions all safe leaves, then counts the same parent as `post_count`. Completion requires `pre_count == post_count == unique_union_count` before the sink can complete the checkpoint. A count change must not publish or upsert a partial partition as complete; the failed checkpoint can be retried later and eventually quarantined if it remains unstable. Historical closed days should normally be stable.
 
-Production daily synchronization should not declare the actively changing current source day complete. A later Phase 2 design must distinguish closed historical partitions from current/open partitions; current-day ingestion requires revalidation before checkpoint completion. This phase does not invent a cron time or implement retry scheduling.
+Production daily synchronization should not declare the actively changing current source day complete. The Phase 2 engine distinguishes closed historical partitions from current/open partitions; current-day ingestion requires explicit opt-in and ends in `VALIDATED`, never permanent `COMPLETED`. This phase does not invent a cron time or implement retry scheduling.
 
-`/search_prc/export` remains non-production because it requires interactive authentication, reCAPTCHA, MFA, and expiring session state. The Phase 1C helper and probe remain developer-only, pure/read-only validation infrastructure. Phase 2 production crawler implementation is a separate follow-up and was not started here.
+`/search_prc/export` remains non-production because it requires interactive authentication, reCAPTCHA, MFA, and expiring session state. The Phase 1C helper and probe remain developer-only, pure/read-only validation infrastructure. Phase 2 production crawler implementation is now present, but no Typesense integration or historical import was started here.

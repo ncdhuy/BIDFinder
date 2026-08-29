@@ -20,3 +20,7 @@ crawler_engine/.env
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Phase 2 local MSC operational state and validation output
+crawler_engine/.msc_state/
+crawler_engine/msc-output/

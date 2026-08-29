@@ -32,3 +32,9 @@ The probe uses empty `keyWord`, reads `agg[0].buckets[0].docCount`, paginates `p
 `--allow-weak-tls` is a research-only compatibility flag for the official endpoint's currently weak DH parameters. It does not enable authentication and must not be carried into production code.
 
 Normal tests never call the network. `export-response-sample.json` is parsed offline only to preserve historical Phase 1A parser coverage; no test requires authenticated MSC state.
+
+Phase 2 runtime registry keys are `goods_general`, `medical_devices`,
+`medicine_generic`, `medicine_originator`, `medicine_herbal`,
+`herbal_material`, and `traditional_medicine`. Offline tests compare each
+definition to its committed `contract.json`; production code uses only the
+verified `/search_prc` contract fields.

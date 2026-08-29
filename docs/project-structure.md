@@ -15,6 +15,25 @@ crawler_engine/     Existing crawler/data pipeline, not reorganized yet
 tmp_storage/        Local temporary storage
 ```
 
+Phase 2 MSC ingestion is isolated under `crawler_engine/msc/`. It uses only
+anonymous public search, local SQLite operational checkpoints, and optional
+canonical JSONL validation output. The legacy crawler remains unchanged.
+
+```text
+crawler_engine/msc/
+  config.py          Safe request, retry, pacing, and partition defaults
+  models.py          Contracts, intervals, metrics, and checkpoint value objects
+  contracts.py       Seven frozen verified source definitions
+  client.py          POST /search_prc transport and request builder
+  partitioning.py    Adaptive one-second-overlap time partitioning
+  validation.py      Envelope, pagination, UUID, drift, and count gates
+  normalize.py       Pure seven-source to three-group normalization
+  checkpoint.py      Local SQLite source/date state
+  sink.py            Sink protocol, in-memory sink, and JSONL sink
+  engine.py          Sequential parent-partition orchestration
+  cli.py             Explicit validate/crawl operator commands
+```
+
 ## Common Commands
 
 Deploy backend to Cloud Run:
