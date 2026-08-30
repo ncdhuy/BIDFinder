@@ -1,4 +1,4 @@
-# Historical backfill runbook (Phase 3B-R)
+# Historical backfill runbook (Phase 3B-R / Phase 3B-S)
 
 Phase 3B-R makes the 2023-to-present bootstrap measurable and resumable. It
 does not run the bootstrap. There is no FastAPI/UI cutover, chatbot, deploy,
@@ -71,25 +71,88 @@ Current V1 indexed-field review finds no safe obvious index removal:
 Removing a searchable field to save RAM would change intended BIDFinder search
 behavior, so no schema optimization is proposed in Phase 3B-R.
 
-## Production target starting point
+## Empirical sizing result (Phase 3B-S — 2026-08-30)
 
-The fixture projection is approximately 11.40 GB raw canonical data and 7.61
-GB indexed fields. The 2x–3x rule yields 15.22–22.83 GB keyword-search RAM
-before headroom. A reasonable self-hosted starting shape is three HA nodes,
-each with at least 32 GB RAM, 4–8 vCPU, and 200 GB persistent SSD. This is a
-starting capacity, not a guarantee; measure the actual generation and scale
-before RAM stays above the chosen operating threshold or SSD free space falls
-below 40%.
+Phase 3B-S passed against a fresh disposable Typesense `30.2` physical
+generation. It used the production MSC partitioner, pagination validation,
+canonical normalizer, `TypesenseSink`, default 500-document batches, and a
+one-second MSC request delay. The sample stopped at 500,013 documents; it did
+not start the full historical range and did not write to Neon/Postgres.
 
-Typesense recommends HA multi-node operation for self-hosted production
-([system requirements](https://typesense.org/docs/guide/system-requirements.html),
-[HA guidance](https://typesense.org/docs/guide/high-availability.html)). Use
-persistent SSD and a tested restore path. Typesense Cloud is the preferred
-operational choice for BIDFinder's expected search workload when managed HA,
-backups, and lower operator burden outweigh provider cost and sizing control.
-Self-hosting is reasonable when data residency, network control, or predictable
-infrastructure ownership matters. Keep host, port, protocol, and API key
-configuration provider-neutral.
+| Source contract | Sample documents |
+| --- | ---: |
+| `goods_general` | 391,435 |
+| `medical_devices` | 35,408 |
+| `medicine_generic` | 40,332 |
+| `medicine_originator` | 5,013 |
+| `medicine_herbal` | 10,002 |
+| `herbal_material` | 9,554 |
+| `traditional_medicine` | 8,269 |
+| **Total** | **500,013** |
+
+Dates were selected deterministically from monthly day-15 anchors, additional
+day 01/04/08/12/20/22/26/28 anchors, then a daily fallback for sparse sources.
+Every contract contributed records from 2023, 2024, 2025, and 2026. Milestone
+RSS delta / `/data` delta were `50k: 200,744,960 / 117,593,620`,
+`100k: 246,554,624 / 220,767,449`, `250k: 436,113,408 / 564,214,374`, and
+`500k: 561,414,144 / 1,111,889,208` bytes. Typesense-specific memory metrics
+were unavailable from this disposable endpoint; OS RSS and filesystem usage
+are the authoritative empirical measurements in
+[`typesense-sizing-report.json`](../typesense-sizing-report.json).
+
+After graceful stop/start of the same data directory, all 500,013 documents
+reloaded and group counts remained `goods=426,843`, `medicines=55,347`, and
+`traditional_medicine=17,823`. Restart RSS delta was 597,524,480 bytes and
+`/data` delta was 1,140,740,603 bytes. The expected UUID union equaled actual
+Typesense counts for every group; all 1,569 import batches accepted all
+500,013 documents with zero rejects.
+
+The largest-sample empirical slopes were 1,122.824 RSS bytes/document and
+2,223.721 data-directory bytes/document. Regression slopes were 960.567 and
+2,229.868 bytes/document. At 9,801,385 documents, the largest-sample
+projection is 11.01 GB RAM and 21.80 GB data directory; the regression RAM
+projection is 9.52 GB. The actual-sample analytical comparison is 14.86–22.29
+GB at 2x–3x indexed input; the earlier 7-document fixture estimate was
+15.22–22.83 GB. The empirical result is therefore not relying on the small
+fixture estimate.
+
+The 32 GB/node decision is **PASS**: the conservative largest-sample RAM
+projection is 32.0% of 32 GiB, below the 70% steady-state target. Growth
+planning is approximately:
+
+| Scenario | Documents | RAM | Data directory |
+| --- | ---: | ---: | ---: |
+| Current | 9,801,385 | 11.01 GB | 21.80 GB |
+| +20% | 11,761,662 | 13.21 GB | 26.15 GB |
+| +50% | 14,702,078 | 16.51 GB | 32.69 GB |
+
+### Recommended production shape
+
+Preferred: Typesense Cloud HA, 3 nodes, 32 GB RAM and 8 vCPU per node, with
+provider disk allocation of at least 200 GB per node plus the provider's
+backup policy. Self-hosted alternative: Typesense `30.2`, 3 nodes, 32 GB RAM,
+8 vCPU, and at least 200 GB persistent SSD per node. Cloud remains preferred
+for managed HA, replacement, upgrades, and backups; ingestion remains
+provider-neutral.
+
+The single-generation empirical disk projection is 21.80 GB and two physical
+generations require 43.59 GB before snapshots and free-space margin. Keep at
+least 50% free before creating another generation, warn below 35% free, and
+block new generation creation below 20% free. Do not automatically delete a
+rollback generation. The 200 GB recommendation provides useful room for
+active, staging, rollback, snapshot, and growth needs.
+
+The largest indexed-field contributions were goods `winning_bidder_name`
+(3.72%), `source_tab_label` (3.62%), `technical_specification` (3.43%), and
+`procuring_entity_name` (3.41%), plus medicines active ingredient (3.52%) and
+authorization/permit (3.29%). No single field dominated the empirical input;
+no schema field is removed in this phase.
+
+Full-backfill authorization remains a separate decision. Before starting it,
+create a new named physical generation, regenerate and approve the exact
+closed-range manifest, verify target capacity and backups, run the final
+source/UUID/count/search audits, and explicitly acknowledge the historical
+write. Alias activation and application cutover require a later approval.
 
 ## Start, resume, and interruption
 

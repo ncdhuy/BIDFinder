@@ -747,7 +747,8 @@ over the main import window, 51.20 ms mean / 51.07 ms median batch latency,
 15.07 ms multi-search latency, and 82.413 seconds total gate time. These are
 disposable development measurements, not production capacity guarantees.
 
-Phase 3B remains explicitly pending. No historical backfill or application
+Phase 3B-S sizing is now `PASS`; the full historical backfill and application
+cutover remain explicitly pending. No historical backfill or application
 cutover was performed.
 
 ## Phase 3B-R — historical backfill readiness
@@ -808,3 +809,70 @@ count parity, deterministic sample parity, and search benchmark pass.
 
 See [`historical-backfill-runbook.md`](historical-backfill-runbook.md) for
 operator controls, capacity safety, backup, monitoring, and recovery.
+
+## Phase 3B-S — empirical Typesense sizing — 2026-08-30
+
+Status: `PASS`. A fresh disposable Typesense `30.2` generation indexed
+500,013 real canonical documents through the existing MSC adaptive partition,
+pagination-validation, canonical-normalization, checkpoint, UUID-audit, and
+`TypesenseSink` path. The run used deterministic multi-year date anchors plus
+a daily fallback for sparse contracts; all seven source contracts contributed
+records from 2023, 2024, 2025, and 2026. It used 500-document Typesense
+batches and a one-second MSC request delay.
+
+| Source contract | Sample documents |
+| --- | ---: |
+| `goods_general` | 391,435 |
+| `medical_devices` | 35,408 |
+| `medicine_generic` | 40,332 |
+| `medicine_originator` | 5,013 |
+| `medicine_herbal` | 10,002 |
+| `herbal_material` | 9,554 |
+| `traditional_medicine` | 8,269 |
+| **Total** | **500,013** |
+
+Milestone OS RSS deltas were 200,744,960 B at 55,741 documents,
+246,554,624 B at 100,467, 436,113,408 B at 253,253, and 561,414,144 B at
+500,013. `/data` deltas were 117,593,620 B, 220,767,449 B, 564,214,374 B,
+and 1,111,889,208 B respectively. Restarting the same data directory restored
+all counts: `goods=426,843`, `medicines=55,347`, and
+`traditional_medicine=17,823`; the expected UUID union equaled the actual
+physical collection counts and all 1,569 batches had zero rejects.
+
+The largest-sample empirical projection for the current 9,801,385-document
+dataset is 11.01 GB steady-state process RSS and 21.80 GB Typesense data
+directory. Regression gives 9.52 GB RSS and 21.85 GB data directory. The
+analytical comparison is 14.86–22.29 GB from the actual sample's indexed input
+at 2x–3x (the earlier fixture estimate was 15.22–22.83 GB). Growth projections are 13.21/26.15 GB at +20% and 16.51/32.69 GB
+at +50% for RAM/data directory. Therefore 32 GB/node passes the 70% target
+with projected utilization of 32.0%.
+
+Recommended starting target is Typesense Cloud HA, three nodes, 32 GB RAM and
+8 vCPU per node, with at least 200 GB provider disk allocation per node.
+Self-hosted remains valid as three Typesense `30.2` nodes with the same RAM,
+CPU, and persistent SSD. Keep 50% disk free before creating a new generation,
+warn below 35%, and block below 20%; do not automatically delete rollback
+generations. Cloud remains preferred for managed HA, node replacement,
+upgrades, and backups.
+
+The largest indexed-field contributions were goods
+`winning_bidder_name` (3.72%), `source_tab_label` (3.62%),
+`technical_specification` (3.43%), and `procuring_entity_name` (3.41%), plus
+medicines active ingredient (3.52%) and authorization/permit (3.29%). No
+field is removed based on this recommendation-only review.
+
+Observed active ingestion was 3,586 documents/second at 500-document batches;
+the order-of-magnitude full run is about 51,142 MSC requests and 19,603
+Typesense batches, excluding pacing pauses, retries, and source availability.
+Keep the one-second MSC delay and batch size 500; add Typesense write
+throttling only if production read-during-write monitoring shows material
+latency degradation. Full-backfill authorization still requires a new
+physical generation, regenerated closed-range manifest, capacity/backups
+approval, final source/UUID/count/search audits, and a separate alias/cutover
+approval.
+
+Detailed evidence is in
+[`typesense-sizing-report.json`](../typesense-sizing-report.json) and
+[`typesense-sizing-report.md`](../typesense-sizing-report.md). The disposable
+generation was stopped after the experiment; no FastAPI/UI change, alias
+activation, full historical backfill, or Neon/Postgres write occurred.

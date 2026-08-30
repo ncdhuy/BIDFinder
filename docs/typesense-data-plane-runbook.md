@@ -218,6 +218,47 @@ Live evidence summary:
 See [`typesense-integration-report.json`](../typesense-integration-report.json)
 for structured metrics. Keep it free of API keys and full procurement rows.
 
+## Phase 3B-S empirical sizing result — 2026-08-30
+
+The bounded sizing gate passed using a fresh disposable Typesense `30.2`
+generation and the existing MSC ingestion path. It indexed 500,013 real
+canonical documents across all seven source contracts, with deterministic
+dates spanning 2023–2026, zero failed partitions, zero rejected documents,
+and exact UUID/count parity across the three physical collections:
+`goods=426,843`, `medicines=55,347`, and `traditional_medicine=17,823`.
+
+The milestone OS measurements were:
+
+| Milestone | Documents | RSS delta | `/data` delta |
+| --- | ---: | ---: | ---: |
+| Baseline | 0 | 0 B | 0 B |
+| 50k | 55,741 | 200,744,960 B | 117,593,620 B |
+| 100k | 100,467 | 246,554,624 B | 220,767,449 B |
+| 250k | 253,253 | 436,113,408 B | 564,214,374 B |
+| 500k | 500,013 | 561,414,144 B | 1,111,889,208 B |
+
+After a graceful restart of the same data directory, all counts restored;
+restart RSS delta was 597,524,480 B and `/data` delta was 1,140,740,603 B.
+The largest-sample slopes were 1,122.824 RSS B/document and 2,223.721 data
+directory B/document. Projection to 9,801,385 documents is 11.01 GB RAM and
+21.80 GB data directory, with 13.21/26.15 GB at +20% and 16.51/32.69 GB at
++50%. `/metrics.json` did not expose usable memory counters in this runtime;
+the report keeps those fields unavailable rather than substituting estimates.
+
+Decision: 32 GB/node is sufficient under the 70% steady-state target
+(conservative projected utilization 32.0%). Recommended starting shape is
+Typesense Cloud HA, 3 nodes, 32 GB RAM and 8 vCPU per node, with at least
+200 GB provider disk allocation per node. Self-hosted alternative is three
+Typesense `30.2` nodes with 32 GB RAM, 8 vCPU, and at least 200 GB persistent
+SSD each. Keep 50% free before creating a new generation, warn below 35%, and
+block below 20%; retain rollback generations.
+
+The final sizing evidence is in
+[`typesense-sizing-report.json`](../typesense-sizing-report.json) and the
+readable [`typesense-sizing-report.md`](../typesense-sizing-report.md). This
+run did not perform the full historical backfill, activate aliases, change
+FastAPI/frontend routing, or write Neon/Postgres.
+
 ## Troubleshooting
 
 - `TYPESENSE_CONNECT_ERROR`: check server health, host/port/protocol, firewall,
