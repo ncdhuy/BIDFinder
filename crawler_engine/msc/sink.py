@@ -15,11 +15,12 @@ from .typesense_client import (
     TYPESENSE_IDENTITY_CONFLICT,
     TYPESENSE_IMPORT_ERROR,
     TYPESENSE_SCHEMA_ERROR,
+    TypesenseCollectionManager,
     TypesenseClient,
     TypesenseError,
     validate_identity_union,
 )
-from .typesense_schema import canonical_to_typesense_document, collection_schema, physical_collection_name, schema_signature, validate_generation_id
+from .typesense_schema import canonical_to_typesense_document, collection_schema, physical_collection_name, validate_generation_id
 
 
 class Sink(Protocol):
@@ -118,7 +119,7 @@ class TypesenseSink:
         try:
             actual = self.client.get_collection(collection)
             expected = collection_schema(context.contract.data_group, self.generation_id)
-            if actual is None or schema_signature(actual) != schema_signature(expected):
+            if actual is None or not TypesenseCollectionManager._compatible(actual, expected):
                 return self._failure(0, (f"physical collection {collection} is missing or incompatible",), TYPESENSE_SCHEMA_ERROR, elapsed=perf_counter() - started)
             validate_identity_union((records,))
             ids = [record.get("id") for record in records]

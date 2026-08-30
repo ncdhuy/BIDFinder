@@ -306,6 +306,27 @@ class LifecycleTest(unittest.TestCase):
         with self.assertRaises(TypesenseError):
             TypesenseCollectionManager(Admin()).create_generation("dev1")
 
+    def test_typesense_implicit_id_field_is_compatible(self):
+        class Admin:
+            def __init__(self):
+                expected = collection_schema("goods", "dev1")
+                self.collections = {
+                    expected["name"]: {
+                        **expected,
+                        "fields": [field for field in expected["fields"] if field["name"] != "id"],
+                    }
+                }
+
+            def get_collection(self, name):
+                return self.collections.get(name)
+
+            def create_collection(self, schema):
+                self.collections[schema["name"]] = schema
+                return schema
+
+        created = TypesenseCollectionManager(Admin()).create_generation("dev1")
+        self.assertEqual(3, len(created))
+
 
 class CheckpointGenerationTest(unittest.TestCase):
     def test_phase2_rows_migrate_and_typesense_target_is_distinct(self):

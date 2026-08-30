@@ -335,7 +335,19 @@ class TypesenseCollectionManager:
 
     @staticmethod
     def _compatible(actual: Mapping[str, Any], expected: Mapping[str, Any]) -> bool:
-        return schema_signature(actual) == schema_signature(expected)
+        actual_signature = schema_signature(actual)
+        expected_signature = schema_signature(expected)
+        if actual_signature == expected_signature:
+            return True
+        # Typesense v30 stores the document id as an implicit field and omits
+        # it from GET /collections/{name}; canonical IDs remain fully usable.
+        actual_fields = {field["name"] for field in actual_signature["fields"]}
+        if "id" not in actual_fields:
+            expected_signature = {
+                **expected_signature,
+                "fields": [field for field in expected_signature["fields"] if field["name"] != "id"],
+            }
+        return actual_signature == expected_signature
 
     def create_generation(self, generation_id: str) -> dict[str, str]:
         validate_generation_id(generation_id)

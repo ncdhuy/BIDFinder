@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 from datetime import date, timedelta
 from io import BytesIO
+from http.client import IncompleteRead
 import json
 from pathlib import Path
 import tempfile
@@ -120,6 +121,11 @@ class ClientTest(unittest.TestCase):
         self.assertEqual(1, client.stats.request_count)
 
         opener = FakeOpener([OSError("offline"), FakeResponse(response(0, []))])
+        client = MSCClient(MSCConfig(request_delay_seconds=0, retry_backoff_seconds=0), opener=opener, sleep=lambda _: None)
+        self.assertEqual(0, client.count_interval(self.contract, self.interval))
+        self.assertEqual(2, client.stats.request_count)
+
+        opener = FakeOpener([IncompleteRead(b"partial", 5), FakeResponse(response(0, []))])
         client = MSCClient(MSCConfig(request_delay_seconds=0, retry_backoff_seconds=0), opener=opener, sleep=lambda _: None)
         self.assertEqual(0, client.count_interval(self.contract, self.interval))
         self.assertEqual(2, client.stats.request_count)

@@ -176,6 +176,48 @@ Do not activate aliases until all selected partitions, counts, UUID samples,
 schema checks, idempotent rerun checks, and search smoke checks pass. Do not
 run the full historical backfill or switch FastAPI in this phase.
 
+## Phase 3A-L live proof evidence
+
+The bounded live gate passed on 2026-08-30 against a real disposable
+Typesense `30.2` server started in WSL2 from the official Linux binary. Docker
+and Podman were unavailable on the validation host, so no container workflow
+was added. The proof used generation `live_gate_20260830g`; its physical
+collections and aliases remain disposable and must not be treated as
+production state.
+
+Run the reusable gate only with a disposable local server and a fresh
+generation:
+
+```powershell
+$env:TYPESENSE_HOST = "127.0.0.1"
+$env:TYPESENSE_PORT = "8108"
+$env:TYPESENSE_PROTOCOL = "http"
+$env:TYPESENSE_API_KEY = "<disposable-local-key>"
+python tools/typesense_live_integration.py --generation live_gate_<run-id> `
+  --report typesense-integration-report.json
+```
+
+The gate creates a dedicated temporary SQLite checkpoint DB, calls only the
+public MSC `/search_prc` endpoint, indexes the seven frozen representative
+partitions plus `goods_general / 2026-08-28`, and records the complete proof
+in the report. It does not connect to Postgres/Neon, use `/export`, use
+cookies, run historical backfill, or change FastAPI/frontend routing.
+
+Live evidence summary:
+
+| Check | Result |
+| --- | --- |
+| Health/schema/collections | Typesense `30.2` healthy; three physical A collections created, inspected, and schema-validated |
+| Seven sources | 27,491 accepted documents, 61 import batches, 0 rejects; all exact count/UUID/checkpoint invariants passed |
+| Overflow | 16,248 rows, 4 adaptive leaves, 26 MSC page requests, 33 import batches, 0 rejects, completed checkpoint |
+| Collections | Expected UUID union equaled actual counts: goods 27,232; medicines 172; traditional 87 |
+| Alias/checkpoint proof | Activation, B switch, rollback to A, forced upsert, skip, generation separation, and legacy checkpoint separation passed |
+| Query proof | Full-text, configured filters, ascending/descending price sort, and three-way multi-search passed |
+| Partial import | Real HTTP 200 mixed fixture produced parser-detected 1 accepted/1 rejected; production sink remained fail-closed |
+
+See [`typesense-integration-report.json`](../typesense-integration-report.json)
+for structured metrics. Keep it free of API keys and full procurement rows.
+
 ## Troubleshooting
 
 - `TYPESENSE_CONNECT_ERROR`: check server health, host/port/protocol, firewall,

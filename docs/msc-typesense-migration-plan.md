@@ -1,6 +1,6 @@
 # BIDFinder MSC-to-Typesense Migration Plan
 
-Status: Phase 2 secure verified MSC ingestion complete; Phase 3 Typesense integration has not started.
+Status: Phase 3A-L live Typesense integration PASS; Phase 3B historical backfill pending.
 
 Baseline reviewed: `refactor-phase-0-7` at `0dcab303bdb4cf23d661b6e53802057705afff49` (`Change UI`, 2026-08-29).
 
@@ -722,3 +722,30 @@ contracts, with the known 2026-08-28 goods overflow day included when local
 resources permit. It does not start the 2023-to-present backfill, change
 FastAPI search behavior, expose Typesense to the browser, or activate aliases
 for user traffic. See [typesense-data-plane-runbook.md](typesense-data-plane-runbook.md).
+
+### Phase 3A-L live gate — 2026-08-30
+
+Status: `PASS` against a real disposable Typesense `30.2` server running from
+the official WSL2 Linux binary. The run used generation
+`live_gate_20260830g`, a dedicated SQLite checkpoint database, public MSC
+`/search_prc`, and no Postgres/Neon connection.
+
+| Proof | Result |
+| --- | --- |
+| Seven source partitions | 27,491 documents; every `pre_count`, `post_count`, unique source count, normalized count, and Typesense accepted count matched; 61 import batches; 0 rejects |
+| Overflow `goods_general / 2026-08-28` | 16,248 pre/post/unique/normalized/accepted; 4 adaptive leaves; 26 MSC page requests; 33 Typesense batches; 0 rejects; `COMPLETED` checkpoint |
+| Physical count parity | `goods=27,232`, `medicines=172`, `traditional_medicine=87`; each equaled its expected UUID union |
+| Idempotency/checkpoints | Forced same-generation upsert preserved counts and sample IDs; next run skipped; generation B did not skip; old `validation-jsonl` state did not suppress Typesense ingestion |
+| Search/filter/sort/multi-search | All configured smoke checks passed; all three groups returned from one `/multi_search` request; ascending/descending price order verified programmatically |
+| Alias lifecycle | A activated, goods temporarily pointed to B, then rolled back to A; searches worked before and after rollback |
+| Partial import | Real fixture returned HTTP 200 with 1 accepted and 1 rejected line; parser returned `TYPESENSE_PARTIAL_IMPORT`; production sink rejected invalid canonical input fail-closed and left checkpoint `RUNNING` |
+
+Detailed redacted evidence is in
+[`typesense-integration-report.json`](../typesense-integration-report.json).
+Development observations: 500-document batches, 5,664 accepted documents/sec
+over the main import window, 51.20 ms mean / 51.07 ms median batch latency,
+15.07 ms multi-search latency, and 82.413 seconds total gate time. These are
+disposable development measurements, not production capacity guarantees.
+
+Phase 3B remains explicitly pending. No historical backfill or application
+cutover was performed.

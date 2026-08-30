@@ -8,6 +8,7 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from http.client import IncompleteRead
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -154,7 +155,7 @@ class MSCClient:
                     raise MSCHttpError(status, f"MSC HTTP {status} after bounded retries") from None
                 self._retry_wait(attempt, status)
                 continue
-            except (TimeoutError, URLError, OSError) as exc:
+            except (IncompleteRead, TimeoutError, URLError, OSError) as exc:
                 last_network_error = f"{type(exc).__name__}: {exc}"
                 if attempt >= self.config.max_retries:
                     detail = f" ({last_network_error})" if last_network_error else ""
