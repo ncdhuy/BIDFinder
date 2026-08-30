@@ -131,6 +131,9 @@ class SinkWriteResult:
     accepted_count: int
     rejected_count: int
     errors: tuple[str, ...] = ()
+    error_code: str | None = None
+    batch_count: int = 0
+    elapsed_seconds: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -146,6 +149,7 @@ class PartitionContext:
     normalized_count: int
     leaf_count: int
     drift: DriftDiagnostic = field(default_factory=lambda: DriftDiagnostic(()))
+    sink_target: str = "validation-jsonl"
 
 
 @dataclass(frozen=True)
@@ -167,6 +171,10 @@ class PartitionResult:
     error_code: str | None = None
     error_message: str | None = None
     skipped: bool = False
+    sink_target: str = "validation-jsonl"
+    sink_attempted_count: int = 0
+    sink_batch_count: int = 0
+    sink_elapsed_seconds: float = 0.0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -187,6 +195,10 @@ class PartitionResult:
             "error_code": self.error_code,
             "error_message": self.error_message,
             "skipped": self.skipped,
+            "sink_target": self.sink_target,
+            "sink_attempted_count": self.sink_attempted_count,
+            "sink_batch_count": self.sink_batch_count,
+            "sink_elapsed_seconds": round(self.sink_elapsed_seconds, 3),
         }
 
 

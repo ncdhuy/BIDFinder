@@ -690,3 +690,35 @@ The production engine counts the full parent as `pre_count`, fetches and unions 
 Production daily synchronization should not declare the actively changing current source day complete. The Phase 2 engine distinguishes closed historical partitions from current/open partitions; current-day ingestion requires explicit opt-in and ends in `VALIDATED`, never permanent `COMPLETED`. This phase does not invent a cron time or implement retry scheduling.
 
 `/search_prc/export` remains non-production because it requires interactive authentication, reCAPTCHA, MFA, and expiring session state. The Phase 1C helper and probe remain developer-only, pure/read-only validation infrastructure. Phase 2 production crawler implementation is now present, but no Typesense integration or historical import was started here.
+
+### Phase 3A — Typesense data-plane integration and controlled indexing proof
+
+Phase 3A adds the first crawler-to-Typesense path without changing FastAPI,
+the frontend, production routing, or Postgres procurement reads. The runtime
+promotes the frozen three-collection schemas from
+[`msc-typesense-schema-v1.md`](msc-typesense-schema-v1.md), uses versioned
+physical collections, and keeps stable logical aliases for a later cutover.
+
+The operator workflow is explicit:
+
+```text
+create-generation -> controlled crawl to physical generation
+-> validate schemas/counts/searches -> activate aliases explicitly
+```
+
+The Typesense sink uses sequential, deterministic NDJSON batches with
+`documents/import?action=upsert`. It parses every import response line and
+requires one successful result per attempted document; HTTP 200 alone never
+completes a partition. A failed or partial batch remains retryable through the
+stable MSC UUID.
+
+Checkpoint identity is now `source_key × partition_date × sink_target`.
+Existing Phase 2 state is preserved as `validation-jsonl`; Typesense writes
+use `typesense:<generation>`. This prevents a completion in one destination
+generation from skipping the same partition in another.
+
+Phase 3A is limited to a small controlled proof covering all seven MSC source
+contracts, with the known 2026-08-28 goods overflow day included when local
+resources permit. It does not start the 2023-to-present backfill, change
+FastAPI search behavior, expose Typesense to the browser, or activate aliases
+for user traffic. See [typesense-data-plane-runbook.md](typesense-data-plane-runbook.md).

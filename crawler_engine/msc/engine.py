@@ -74,10 +74,11 @@ class MSCIngestionEngine:
         open_day = day == today
         if open_day and not allow_open_day:
             raise EngineError("MSC_CONTRACT_ERROR", "current/open day requires explicit allow_open_day")
-        current = self.checkpoint_store.get(source_key, day.isoformat())
+        sink_target = getattr(self.sink, "sink_target", "validation-jsonl")
+        current = self.checkpoint_store.get(source_key, day.isoformat(), sink_target)
         if current and current.status == IngestionStatus.COMPLETED and not force and not open_day:
-            return PartitionResult(source_key, day.isoformat(), IngestionStatus.COMPLETED, skipped=True)
-        self.checkpoint_store.start(source_key, day.isoformat(), force=force)
+            return PartitionResult(source_key, day.isoformat(), IngestionStatus.COMPLETED, skipped=True, sink_target=sink_target)
+        self.checkpoint_store.start(source_key, day.isoformat(), force=force, sink_target=sink_target)
         started = time.monotonic()
         request_before = self.client.stats.request_count
         retry_before = self.client.stats.retry_count
@@ -88,6 +89,9 @@ class MSCIngestionEngine:
         unique_source_count = 0
         normalized_count = 0
         sink_accepted_count = 0
+        sink_attempted_count = 0
+        sink_batch_count = 0
+        sink_elapsed_seconds = 0.0
         try:
             parent = official_day_interval(day)
             pre_count = self.client.count_interval(contract, parent)
@@ -142,28 +146,33 @@ class MSCIngestionEngine:
                 )
             context = PartitionContext(
                 source_key, day.isoformat(), contract, parent, pre_count, post_count,
-                union.raw_record_count, union.unique_uuid_count, len(canonical), len(plan.safe_leaves), drift,
+                union.raw_record_count, union.unique_uuid_count, len(canonical), len(plan.safe_leaves), drift, sink_target,
             )
             write_result = self.sink.write_partition(context, canonical)
+            sink_attempted_count = write_result.attempted_count
             sink_accepted_count = write_result.accepted_count
+            sink_batch_count = write_result.batch_count
+            sink_elapsed_seconds = write_result.elapsed_seconds
             if write_result.accepted_count != len(canonical) or write_result.rejected_count:
                 raise EngineError(
-                    "SINK_INCOMPLETE",
+                    write_result.error_code or "SINK_INCOMPLETE",
                     f"sink accepted={write_result.accepted_count} rejected={write_result.rejected_count} normalized={len(canonical)}"
                     + (f" errors={'; '.join(write_result.errors)}" if write_result.errors else ""),
                 )
             status = IngestionStatus.VALIDATED if open_day else IngestionStatus.COMPLETED
             self.checkpoint_store.finish(
                 source_key, day.isoformat(), status,
+                sink_target=sink_target,
                 parent_pre_count=pre_count, parent_post_count=post_count,
                 raw_fetched_count=union.raw_record_count, unique_uuid_count=union.unique_uuid_count,
                 normalized_count=len(canonical), sink_accepted_count=write_result.accepted_count,
             )
             LOGGER.info(
                 "msc_partition_completed source_key=%s partition_date=%s status=%s pre_count=%s post_count=%s "
-                "leaf_count=%s raw_fetched=%s unique_source=%s normalized=%s sink_accepted=%s requests=%s retries=%s elapsed_seconds=%.3f",
+                "leaf_count=%s raw_fetched=%s unique_source=%s normalized=%s sink_accepted=%s sink_attempted=%s sink_batches=%s sink_elapsed_seconds=%.3f requests=%s retries=%s elapsed_seconds=%.3f",
                 source_key, day, status.value, pre_count, post_count, len(plan.safe_leaves),
                 union.raw_record_count, union.unique_uuid_count, len(canonical), write_result.accepted_count,
+                write_result.attempted_count, write_result.batch_count, write_result.elapsed_seconds,
                 self.client.stats.request_count - request_before, self.client.stats.retry_count - retry_before,
                 time.monotonic() - started,
             )
@@ -172,7 +181,9 @@ class MSCIngestionEngine:
                 union.raw_record_count, union.unique_uuid_count, len(canonical),
                 write_result.accepted_count, len(plan.safe_leaves),
                 self.client.stats.request_count - request_before, self.client.stats.retry_count - retry_before,
-                time.monotonic() - started, drift,
+                time.monotonic() - started, drift, sink_target=sink_target,
+                sink_attempted_count=write_result.attempted_count, sink_batch_count=write_result.batch_count,
+                sink_elapsed_seconds=write_result.elapsed_seconds,
             )
         except KeyboardInterrupt:
             raise
@@ -185,6 +196,7 @@ class MSCIngestionEngine:
                 code,
                 str(exc),
                 quarantine=quarantine,
+                sink_target=sink_target,
                 parent_pre_count=pre_count,
                 parent_post_count=post_count,
                 raw_fetched_count=raw_fetched_count,
@@ -198,7 +210,9 @@ class MSCIngestionEngine:
                 request_count=self.client.stats.request_count - request_before,
                 retry_count=self.client.stats.retry_count - retry_before,
                 elapsed_seconds=time.monotonic() - started, drift=drift,
-                error_code=code, error_message=str(exc),
+                error_code=code, error_message=str(exc), sink_target=sink_target,
+                sink_accepted_count=sink_accepted_count, sink_attempted_count=sink_attempted_count,
+                sink_batch_count=sink_batch_count, sink_elapsed_seconds=sink_elapsed_seconds,
             )
 
     def crawl_range(

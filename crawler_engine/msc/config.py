@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import os
 from pathlib import Path
 
 MSC_SEARCH_ENDPOINT = (
@@ -19,6 +20,11 @@ DEFAULT_RETRY_BACKOFF_SECONDS = 1.0
 DEFAULT_MAX_PARTITION_DEPTH = 16
 DEFAULT_PARTITION_OVERLAP_SECONDS = 1.0
 DEFAULT_MINIMUM_PARTITION_SPAN_MILLISECONDS = 1
+DEFAULT_TYPESENSE_HOST = "localhost"
+DEFAULT_TYPESENSE_PORT = 8108
+DEFAULT_TYPESENSE_PROTOCOL = "http"
+DEFAULT_TYPESENSE_TIMEOUT_SECONDS = 10.0
+DEFAULT_TYPESENSE_BATCH_SIZE = 500
 ENGINE_VERSION = "msc-ingestion-v1"
 SCHEMA_VERSION = "msc-source-schema-v1"
 
@@ -64,3 +70,46 @@ class MSCConfig:
             raise ValueError("partition_overlap_seconds must be positive")
         if self.minimum_partition_span_milliseconds <= 0:
             raise ValueError("minimum_partition_span_milliseconds must be positive")
+
+
+@dataclass(frozen=True)
+class TypesenseConfig:
+    """Standard Typesense transport settings; never shares MSC TLS settings."""
+
+    host: str = DEFAULT_TYPESENSE_HOST
+    port: int = DEFAULT_TYPESENSE_PORT
+    protocol: str = DEFAULT_TYPESENSE_PROTOCOL
+    api_key: str = field(default="", repr=False)
+    timeout_seconds: float = DEFAULT_TYPESENSE_TIMEOUT_SECONDS
+    batch_size: int = DEFAULT_TYPESENSE_BATCH_SIZE
+
+    def __post_init__(self) -> None:
+        if not self.host or "://" in self.host or "/" in self.host:
+            raise ValueError("TYPESENSE_HOST must be a hostname or IP address without a scheme or path")
+        if not isinstance(self.port, int) or isinstance(self.port, bool) or not 1 <= self.port <= 65535:
+            raise ValueError("TYPESENSE_PORT must be between 1 and 65535")
+        if self.protocol not in {"http", "https"}:
+            raise ValueError("TYPESENSE_PROTOCOL must be http or https")
+        if not self.api_key:
+            raise ValueError("TYPESENSE_API_KEY is required for Typesense operations")
+        if self.timeout_seconds <= 0:
+            raise ValueError("TYPESENSE_TIMEOUT_SECONDS must be positive")
+        if self.batch_size <= 0:
+            raise ValueError("TYPESENSE_IMPORT_BATCH_SIZE must be positive")
+
+    @property
+    def base_url(self) -> str:
+        return f"{self.protocol}://{self.host}:{self.port}"
+
+    @classmethod
+    def from_env(cls) -> "TypesenseConfig":
+        """Load only Typesense variables; no Postgres or MSC settings are reused."""
+
+        return cls(
+            host=os.getenv("TYPESENSE_HOST", DEFAULT_TYPESENSE_HOST),
+            port=int(os.getenv("TYPESENSE_PORT", str(DEFAULT_TYPESENSE_PORT))),
+            protocol=os.getenv("TYPESENSE_PROTOCOL", DEFAULT_TYPESENSE_PROTOCOL).lower(),
+            api_key=os.getenv("TYPESENSE_API_KEY", ""),
+            timeout_seconds=float(os.getenv("TYPESENSE_TIMEOUT_SECONDS", os.getenv("TYPESENSE_CONNECTION_TIMEOUT_SECONDS", str(DEFAULT_TYPESENSE_TIMEOUT_SECONDS)))),
+            batch_size=int(os.getenv("TYPESENSE_IMPORT_BATCH_SIZE", os.getenv("TYPESENSE_BATCH_SIZE", str(DEFAULT_TYPESENSE_BATCH_SIZE)))),
+        )

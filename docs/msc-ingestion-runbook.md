@@ -177,3 +177,48 @@ python -m tools.msc_tls_diagnostic
 It reports runtime versions, effective cipher policy, handshake status, and
 negotiated protocol/cipher without cookies, credentials, or response bodies.
 Research compatibility overrides are not part of the production CLI.
+
+## Typesense data-plane sink (Phase 3A)
+
+Typesense is an optional crawler sink. Configure `TYPESENSE_HOST`,
+`TYPESENSE_PORT`, `TYPESENSE_PROTOCOL`, `TYPESENSE_API_KEY`,
+`TYPESENSE_TIMEOUT_SECONDS`, and `TYPESENSE_IMPORT_BATCH_SIZE`. The API key
+is crawler/admin configuration only and is never sent to the browser. HTTPS
+uses normal certificate and hostname verification; MSC's special TLS context
+is not reused.
+
+Create and validate a physical generation before crawling into it:
+
+```powershell
+python -m crawler_engine.msc.cli typesense create-generation --generation dev1
+python -m crawler_engine.msc.cli typesense validate-generation --generation dev1
+python -m crawler_engine.msc.cli crawl `
+  --from 2026-08-25 --to 2026-08-25 --sources all `
+  --sink typesense --generation dev1 `
+  --checkpoint crawler_engine/.msc_state/phase3a.sqlite3
+```
+
+`--generation` is mandatory for Typesense writes. The sink writes only to
+`bidfinder_<group>_v1_<generation>`, never to the stable aliases. Each batch
+uses `documents/import?action=upsert`; every response line must be successful
+and response count must equal request count. A partial HTTP-200 response fails
+the sink and leaves the checkpoint non-completed.
+
+After the controlled generation passes schema, count, UUID, idempotency, and
+search smoke checks, activate explicitly:
+
+```powershell
+python -m crawler_engine.msc.cli typesense activate-generation --generation dev1
+python -m crawler_engine.msc.cli typesense inspect
+```
+
+Rollback is an alias operation, not a data rewrite:
+
+```powershell
+python -m crawler_engine.msc.cli typesense rollback-alias --group goods --generation previous
+```
+
+For the full lifecycle, search allow-lists, seven-source controlled proof,
+overflow proof, and troubleshooting, see
+[`typesense-data-plane-runbook.md`](typesense-data-plane-runbook.md). Phase 3A
+does not run historical backfill or modify FastAPI/frontend behavior.

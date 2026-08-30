@@ -65,3 +65,20 @@ Run k6:
 ```powershell
 k6 run .\tools\load-tests\bidfinder.k6.js
 ```
+
+Phase 3A adds the isolated Typesense data plane under `crawler_engine/msc/`:
+
+```text
+crawler_engine/msc/
+  typesense_schema.py   Frozen V1 collection schemas and search allow-lists
+  typesense_client.py   Stdlib Typesense HTTP client and generation lifecycle
+  sink.py               TypesenseSink with batched import/upsert semantics
+  checkpoint.py         Sink-target-aware SQLite operational state
+
+infra/typesense/compose.yml  Disposable Typesense 30.2 development service
+docs/typesense-data-plane-runbook.md
+```
+
+The crawler writes only to explicit versioned physical collections. Stable
+aliases are managed by the Typesense CLI and are not used by staging writes.
+FastAPI and `apps/web/` remain unchanged in Phase 3A.
