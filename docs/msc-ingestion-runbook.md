@@ -222,3 +222,22 @@ For the full lifecycle, search allow-lists, seven-source controlled proof,
 overflow proof, and troubleshooting, see
 [`typesense-data-plane-runbook.md`](typesense-data-plane-runbook.md). Phase 3A
 does not run historical backfill or modify FastAPI/frontend behavior.
+
+## Phase 3B-R readiness controls
+
+Historical backfill is not part of normal `crawl`. Use the dedicated
+`backfill` command only after a plan-only manifest and capacity review:
+
+```powershell
+python -m crawler_engine.msc.cli backfill `
+  --from 2023-02-01 --to 2026-08-29 `
+  --sources all --generation hist_2026g1 `
+  --checkpoint crawler_engine/.msc_state/historical.sqlite3 `
+  --manifest backfill-plan.json --plan-only
+```
+
+This command performs seven aggregation counts, creates no Typesense
+collection, imports no records, and never writes an alias. Actual execution
+also requires `--max-partitions` and `--acknowledge-readiness`; it must use a
+fresh physical generation, a dedicated checkpoint database, and the UUID audit
+database. See [`historical-backfill-runbook.md`](historical-backfill-runbook.md).

@@ -232,3 +232,22 @@ for structured metrics. Keep it free of API keys and full procurement rows.
 - `COMPLETED` is missing: inspect checkpoint `sink_target`, accepted/rejected
   counts, and parent pre/post parity. A failed run is retryable; it is not a
   signal to delete state.
+
+## Historical backfill boundary
+
+Phase 3B-R adds readiness tooling only. It does not populate a historical
+generation, change FastAPI/frontend routing, or activate aliases. Historical
+imports must target physical `bidfinder_<group>_v1_<generation>` collections
+through `TypesenseSink`; the dedicated runner never calls alias operations.
+
+Before any future import, inspect the manifest capacity estimate and remote
+`/health` plus `/metrics.json` when available. Pause before disk/RAM exhaustion.
+After import, run source-range coverage, UUID provenance, physical-count,
+sample-parity, and search-benchmark audits before a separately approved alias
+activation.
+
+The bounded search benchmark is explicit and physical-generation scoped:
+
+```powershell
+python -m crawler_engine.msc.cli benchmark --generation hist_2026g1 --repeats 3
+```

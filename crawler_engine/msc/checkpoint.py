@@ -148,6 +148,31 @@ class CheckpointStore:
             engine_version=row["engine_version"], schema_version=row["schema_version"],
         )
 
+    def list(self, sink_target: str | None = None) -> tuple[Checkpoint, ...]:
+        """Return checkpoint rows for read-only audit/reporting."""
+
+        if sink_target is None:
+            rows = self._connection.execute(
+                "SELECT source_key, partition_date, sink_target FROM ingestion_checkpoint ORDER BY partition_date, source_key, sink_target"
+            ).fetchall()
+        else:
+            rows = self._connection.execute(
+                "SELECT source_key, partition_date, sink_target FROM ingestion_checkpoint WHERE sink_target=? ORDER BY partition_date, source_key",
+                (sink_target,),
+            ).fetchall()
+        result = []
+        for row in rows:
+            checkpoint = self.get(row["source_key"], row["partition_date"], row["sink_target"])
+            if checkpoint is not None:
+                result.append(checkpoint)
+        return tuple(result)
+
+    def status_counts(self, sink_target: str | None = None) -> dict[str, int]:
+        counts = {status.value: 0 for status in IngestionStatus}
+        for checkpoint in self.list(sink_target):
+            counts[checkpoint.status.value] += 1
+        return counts
+
     def ensure(self, source_key: str, partition_date: str, sink_target: str = DEFAULT_SINK_TARGET) -> Checkpoint:
         """Create visible PENDING state without claiming the partition."""
 

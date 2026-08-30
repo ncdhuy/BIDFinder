@@ -749,3 +749,62 @@ disposable development measurements, not production capacity guarantees.
 
 Phase 3B remains explicitly pending. No historical backfill or application
 cutover was performed.
+
+## Phase 3B-R — historical backfill readiness
+
+Phase 3B-R prepares, but does not start, the historical bootstrap. The
+readiness range used for the first plan was the explicitly closed Vietnam
+calendar range `2023-02-01` through `2026-08-29`; the active day was excluded.
+The read-only `/search_prc` aggregation preflight made seven requests and did
+not paginate records:
+
+| Source | Group | `agg.docCount` |
+| --- | --- | ---: |
+| `goods_general` | goods | 8,219,252 |
+| `medical_devices` | goods | 964,685 |
+| `medicine_generic` | medicines | 494,698 |
+| `medicine_originator` | medicines | 55,239 |
+| `medicine_herbal` | medicines | 35,489 |
+| `herbal_material` | traditional_medicine | 9,554 |
+| `traditional_medicine` | traditional_medicine | 22,468 |
+| **Total** |  | **9,801,385** |
+
+Group totals are `goods=9,183,937`, `medicines=585,426`, and
+`traditional_medicine=32,022`. These are source aggregation counts, not a
+Typesense count and not a completed-backfill claim.
+
+`crawler_engine.msc.backfill` provides the durable plan/report/audit layer.
+`backfill --plan-only` is the only preparation path: it requires explicit
+`--from`, `--to`, `--generation`, and `--checkpoint`, performs the seven count
+requests, and writes a manifest. The manifest fingerprints all selected
+source contracts, canonical mappings, and Typesense schemas. A changed frozen
+contract or schema rejects an old manifest.
+
+The capacity sample used the seven verified search-response fixtures (one
+document per source). It sampled 7 canonical documents: goods 2, medicines 3,
+traditional medicine 2. Average canonical bytes were 1,160, 1,211, and 1,141;
+average searchable/filterable/sortable bytes were 771, 856.67, and 819. The
+overall projection is approximately 11.40 GB canonical raw data and 7.61 GB
+indexed fields. The official 2x–3x keyword-search RAM rule gives an estimated
+15.22–22.83 GB RAM range. A separate 50% operational disk margin gives
+approximately 17.10 GB raw-data working space. These are estimates, not
+guarantees; a larger bounded live sample and disposable empirical Typesense
+run should precede final provisioning.
+
+The dedicated runner traverses `date ascending -> source registry order`,
+sequentially. It wraps the existing partition engine and Typesense sink,
+uses `typesense:<generation>` checkpoint identity, writes only physical
+collections, and never activates aliases. Actual execution requires a
+manifest, explicit `--max-partitions`, and `--acknowledge-readiness`; plan-only
+has no Typesense writes. Ctrl+C leaves the active checkpoint recoverable and
+atomically marks the report `INTERRUPTED`. V1 stops on the first failed or
+quarantined partition; transient Typesense/source failures remain resumable.
+
+The final audit compares each source broad aggregation count with the sum of
+completed daily parent counts, checks physical Typesense counts against a
+disk-backed SQLite UUID provenance table, and fails on conflicting UUID
+provenance/content. Alias activation remains a separate gate after coverage,
+count parity, deterministic sample parity, and search benchmark pass.
+
+See [`historical-backfill-runbook.md`](historical-backfill-runbook.md) for
+operator controls, capacity safety, backup, monitoring, and recovery.

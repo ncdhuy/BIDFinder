@@ -82,3 +82,15 @@ docs/typesense-data-plane-runbook.md
 The crawler writes only to explicit versioned physical collections. Stable
 aliases are managed by the Typesense CLI and are not used by staging writes.
 FastAPI and `apps/web/` remain unchanged in Phase 3A.
+
+Phase 3B-R adds historical readiness without changing application routing:
+
+```text
+crawler_engine/msc/backfill.py   Manifest, preflight, capacity, runner, reports, UUID audit
+tests/msc/test_backfill_readiness.py
+docs/historical-backfill-runbook.md
+```
+
+The backfill control plane is intentionally layered over `engine.py`,
+`checkpoint.py`, and `sink.py`; it does not duplicate MSC retrieval or
+Typesense import logic.

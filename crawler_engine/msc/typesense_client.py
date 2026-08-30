@@ -172,6 +172,11 @@ class TypesenseClient:
     def health(self) -> dict[str, Any]:
         return self._request_json("GET", "/health", error_code=TYPESENSE_CONNECT_ERROR)
 
+    def metrics(self) -> dict[str, Any]:
+        """Read optional Typesense metrics for capacity preflight."""
+
+        return self._request_json("GET", "/metrics.json", error_code=TYPESENSE_CONNECT_ERROR)
+
     def get_collection(self, name: str) -> dict[str, Any] | None:
         try:
             return self._request_json("GET", f"/collections/{quote(name, safe='')}", error_code=TYPESENSE_SCHEMA_ERROR)
@@ -281,7 +286,7 @@ class TypesenseClient:
             error_code=TYPESENSE_CONNECT_ERROR,
         )
 
-    def multi_search_all(self, query: str, *, filter_by: Mapping[str, str] | None = None, sort_by: Mapping[str, str] | None = None, per_page: int = 20, union: bool = False) -> dict[str, Any]:
+    def multi_search_all(self, query: str, *, filter_by: Mapping[str, str] | None = None, sort_by: Mapping[str, str] | None = None, per_page: int = 20, union: bool = False, generation_id: str | None = None) -> dict[str, Any]:
         if per_page <= 0:
             raise ValueError("per_page must be positive")
         searches = []
@@ -291,7 +296,7 @@ class TypesenseClient:
             self._validate_filter_fields(group, group_filter)
             self._validate_sort_fields(group, group_sort)
             item: dict[str, Any] = {
-                "collection": config.alias,
+                "collection": physical_collection_name(group, generation_id) if generation_id is not None else config.alias,
                 "q": query or "*",
                 "query_by": ",".join(config.query_by),
                 "per_page": per_page,

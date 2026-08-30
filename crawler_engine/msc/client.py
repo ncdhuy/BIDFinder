@@ -193,4 +193,11 @@ class MSCClient:
         return response
 
     def count_interval(self, contract: SourceContract, interval: SearchInterval) -> int:
-        return parse_search_count(self.fetch_page(contract, interval, 0))
+        # The MSC protocol requires a positive page size.  Request only the
+        # first page for its aggregation count, discard any records, and never
+        # paginate during a count preflight.
+        payload = build_search_request(contract, interval.from_value, interval.to_value, 0, 1)
+        response = self._post(payload)
+        if not isinstance(response, dict):
+            raise MSCResponseError("MSC response must be a JSON object")
+        return parse_search_count(response)
