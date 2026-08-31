@@ -42,6 +42,7 @@ from .typesense_client import (
 )
 from .typesense_schema import SEARCH_CONFIGS, canonical_to_typesense_document, physical_collection_name, schema_for_group, validate_generation_id
 from .partitioning import official_day_interval
+from .local_target import FULL_RUN_AUTHORIZATION_PHRASE
 
 BACKFILL_MANIFEST_VERSION = "msc-backfill-plan-v1"
 BACKFILL_REPORT_VERSION = "msc-backfill-report-v1"
@@ -54,6 +55,16 @@ _STALE_RUNNING_SECONDS = 3600
 
 class BackfillControlError(ValueError):
     """Invalid or unsafe backfill control-plane input."""
+
+
+def require_full_run_authorization(value: str | None) -> None:
+    """Require an explicit phrase before any historical write is allowed."""
+
+    if value != FULL_RUN_AUTHORIZATION_PHRASE:
+        raise BackfillControlError(
+            "actual historical backfill requires --authorize-full-run "
+            f"{FULL_RUN_AUTHORIZATION_PHRASE}"
+        )
 
 
 def _jsonable(value: Any) -> Any:

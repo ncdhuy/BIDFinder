@@ -292,3 +292,37 @@ The bounded search benchmark is explicit and physical-generation scoped:
 ```powershell
 python -m crawler_engine.msc.cli benchmark --generation hist_2026g1 --repeats 3
 ```
+
+## Local dogfood / local production-like mode
+
+Use the native Ubuntu/WSL filesystem for persistent Typesense data:
+`~/.local/share/bidfinder/typesense/data`. The operator wrapper uses
+Typesense `30.2`, HTTP, `127.0.0.1:8108`, and a key loaded from the local
+operator environment file; it does not enable CORS or public binding.
+
+```bash
+bash infra/typesense/local-typesense.sh start
+bash infra/typesense/local-typesense.sh health
+bash infra/typesense/local-typesense.sh status
+bash infra/typesense/local-typesense.sh restart
+bash infra/typesense/local-typesense.sh stop
+```
+
+Run the bounded real-MSC proof with
+`python tools/local_typesense_canary.py` from WSL. Its generation-specific
+checkpoint, UUID audit, reports, snapshots, and logs stay outside Git. The
+canary must pass parent pre/post, unique-source, normalized, and accepted
+counts, with zero rejected documents and zero UUID conflicts. Stable aliases
+remain untouched; browsers must not call Typesense directly.
+
+Back up only through `POST /operations/snapshot` (the wrapper's `snapshot`
+operation), storing the result outside `data/`. For restore proof, copy the
+snapshot into a separate disposable data directory, start it on a temporary
+loopback port, validate collection counts and search, then stop it. Never copy
+the live data directory as a backup.
+
+Keep substantial disk headroom beyond the approximately 22 GB full-generation
+estimate, and monitor WSL memory, Typesense RSS, CPU, and swap. Avoid sustained
+swap thrashing and other memory-heavy local workloads. Prevent Windows Sleep or
+Hibernate during backfill or serving. This is a single-node local dogfood
+target; HA is deferred to the later dedicated Linux/Hetzner stage.

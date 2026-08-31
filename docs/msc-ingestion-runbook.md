@@ -241,3 +241,32 @@ collection, imports no records, and never writes an alias. Actual execution
 also requires `--max-partitions` and `--acknowledge-readiness`; it must use a
 fresh physical generation, a dedicated checkpoint database, and the UUID audit
 database. See [`historical-backfill-runbook.md`](historical-backfill-runbook.md).
+
+## Local dogfood / local production-like mode
+
+Start persistent local Typesense from WSL:
+
+```bash
+bash infra/typesense/local-typesense.sh start
+bash infra/typesense/local-typesense.sh health
+```
+
+It binds to private loopback `127.0.0.1:8108`; data is stored in
+`~/.local/share/bidfinder/typesense/data`, while canary checkpoints are stored
+in its separate `checkpoints/` directory. Run
+`python tools/local_typesense_canary.py` for the bounded
+MSCClient-to-adaptive-partition-to-normalization-to-TypesenseSink proof. Keep
+its local canary generation and report for inspection; do not activate aliases.
+
+Use the supported Typesense snapshot operation for backups and restore into a
+separate temporary data directory only. Check disk headroom, WSL RAM, RSS,
+CPU, and swap before writes; do not run large memory-heavy workloads beside a
+backfill and do not allow Windows Sleep/Hibernate during ingestion or serving.
+The same portable engine can later run on Hetzner/Linux; only this operator
+wrapper is WSL-specific.
+
+Actual historical backfill additionally requires the exact authorization
+phrase `AUTHORIZE_PHASE_3B_HISTORICAL_BACKFILL` through
+`--authorize-full-run`, alongside explicit range, generation, checkpoint,
+manifest, readiness acknowledgement, and matching fingerprints. This local
+phase never supplies that authorization.

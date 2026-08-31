@@ -197,6 +197,31 @@ class ImportProtocolTest(unittest.TestCase):
         self.assertIn("/documents/import?action=upsert", opener.request.full_url)
         self.assertEqual("application/jsonl", opener.request.headers["Content-type"])
 
+    def test_snapshot_uses_supported_operation_and_absolute_host_path(self):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self):
+                return b'{"success":true}'
+
+        class Opener:
+            def __init__(self):
+                self.request = None
+
+            def __call__(self, request, **kwargs):
+                self.request = request
+                return Response()
+
+        opener = Opener()
+        result = TypesenseClient(TypesenseConfig(api_key="dev-only"), opener=opener).snapshot("/tmp/bidfinder.snapshot")
+        self.assertTrue(result["success"])
+        self.assertIn("/operations/snapshot?", opener.request.full_url)
+        self.assertIn("snapshot_path=%2Ftmp%2Fbidfinder.snapshot", opener.request.full_url)
+
 
 class FakeTypesenseClient:
     def __init__(self, generation: str = "dev1", results: list[ImportResult] | None = None):

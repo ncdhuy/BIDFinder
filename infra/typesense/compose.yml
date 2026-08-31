@@ -3,9 +3,10 @@ services:
     image: typesense/typesense:30.2
     command: >-
       --data-dir /data
+      --listen-address 127.0.0.1
       --api-key=${TYPESENSE_API_KEY:?Set TYPESENSE_API_KEY for local Typesense}
     ports:
-      - "8108:8108"
+      - "127.0.0.1:8108:8108"
     volumes:
       - typesense-data:/data
 

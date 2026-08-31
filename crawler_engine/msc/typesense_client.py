@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+from pathlib import Path
 import re
 import ssl
 from time import perf_counter
@@ -176,6 +177,18 @@ class TypesenseClient:
         """Read optional Typesense metrics for capacity preflight."""
 
         return self._request_json("GET", "/metrics.json", error_code=TYPESENSE_CONNECT_ERROR)
+
+    def snapshot(self, snapshot_path: str | Path) -> dict[str, Any]:
+        """Create a supported point-in-time snapshot on the Typesense host."""
+
+        path = str(snapshot_path)
+        if not path or not path.startswith("/"):
+            raise ValueError("snapshot_path must be an absolute path on the Typesense host")
+        return self._request_json(
+            "POST",
+            f"/operations/snapshot?{urlencode({'snapshot_path': path})}",
+            error_code=TYPESENSE_CONNECT_ERROR,
+        )
 
     def get_collection(self, name: str) -> dict[str, Any] | None:
         try:

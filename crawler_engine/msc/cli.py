@@ -24,6 +24,7 @@ from .backfill import (
     load_fixture_samples,
     plan_summary,
     ordered_source_keys,
+    require_full_run_authorization,
     source_population_preflight,
     run_search_benchmark,
     verify_manifest,
@@ -126,11 +127,12 @@ def build_parser() -> argparse.ArgumentParser:
     backfill.add_argument("--max-retries", type=int, default=3)
     backfill.add_argument("--page-size", type=int, default=1000)
     backfill.add_argument("--typesense-batch-size", type=int, default=None)
-    backfill.add_argument("--manifest", type=Path, default=Path("backfill-plan.json"))
+    backfill.add_argument("--manifest", type=Path, default=None, help="explicit historical manifest path")
     backfill.add_argument("--report", type=Path, default=Path("backfill-report.json"))
     backfill.add_argument("--uuid-audit", type=Path, default=None)
     backfill.add_argument("--sample-dir", type=Path, default=None)
     backfill.add_argument("--acknowledge-readiness", action="store_true", help="required for any actual run")
+    backfill.add_argument("--authorize-full-run", metavar="PHRASE", help="exact historical-write authorization phrase")
     audit = sub.add_parser("backfill-audit", help="audit a completed physical generation without alias writes")
     audit.add_argument("--plan", required=True, type=Path)
     audit.add_argument("--checkpoint", required=True, type=Path)
@@ -185,6 +187,8 @@ def _run_capacity(args: argparse.Namespace) -> int:
 
 def _run_backfill(args: argparse.Namespace) -> int:
     if args.plan_only:
+        if args.manifest is None:
+            raise BackfillControlError("--plan-only requires an explicit --manifest path")
         config = _msc_config(args)
         preflight = source_population_preflight(MSCClient(config), args.from_date, args.to_date, args.sources)
         manifest = build_manifest(
@@ -200,8 +204,11 @@ def _run_backfill(args: argparse.Namespace) -> int:
         return 0
     if not args.acknowledge_readiness:
         raise BackfillControlError("actual backfill requires --acknowledge-readiness; --plan-only is the safe default")
+    require_full_run_authorization(args.authorize_full_run)
     if args.max_partitions is None:
         raise BackfillControlError("actual backfill requires explicit --max-partitions")
+    if args.manifest is None:
+        raise BackfillControlError("actual backfill requires an explicit --manifest path")
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     verify_manifest(manifest, generation=args.generation)
     expected_range = (manifest["source_range"]["from"], manifest["source_range"]["to"])

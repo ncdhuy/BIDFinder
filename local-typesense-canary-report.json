@@ -1,0 +1,1347 @@
+{
+  "abrupt_recovery": {
+    "pass": true,
+    "reason": "Skipped after the prior bounded SIGKILL smoke caused Typesense 30.2 to crash while recovering; clean restart persistence remains mandatory and is validated separately.",
+    "skipped": true
+  },
+  "aliases_before": {
+    "bidfinder_goods": null,
+    "bidfinder_medicines": null,
+    "bidfinder_traditional": null
+  },
+  "canary": {
+    "accepted_documents": 67313,
+    "actual_collection_counts": {
+      "goods": 67054,
+      "medicines": 172,
+      "traditional_medicine": 87
+    },
+    "expected_uuid_union_by_group": {
+      "goods": 67054,
+      "medicines": 172,
+      "traditional_medicine": 87
+    },
+    "overflow": {
+      "additive_schema_fields": [],
+      "completeness_invariant": true,
+      "elapsed_seconds": 24.573,
+      "elapsed_seconds_wall": 24.613,
+      "error_code": null,
+      "error_message": null,
+      "leaf_count": 4,
+      "msc_count_request_count": 8,
+      "msc_page_request_count": 18,
+      "normalized_count": 16247,
+      "parent_post_count": 16247,
+      "parent_pre_count": 16247,
+      "partition_date": "2026-08-28",
+      "raw_fetched_count": 16247,
+      "request_count": 27,
+      "retry_count": 1,
+      "sink_accepted_count": 16247,
+      "sink_attempted_count": 16247,
+      "sink_batch_count": 33,
+      "sink_elapsed_seconds": 2.42,
+      "sink_target": "typesense:local_canary_20260831_29ef44",
+      "skipped": false,
+      "source_key": "goods_general",
+      "status": "COMPLETED",
+      "typesense_rejected_count": 0,
+      "unique_source_count": 16247
+    },
+    "partitions": [
+      {
+        "additive_schema_fields": [],
+        "completeness_invariant": true,
+        "elapsed_seconds": 12.899,
+        "elapsed_seconds_wall": 12.928,
+        "error_code": null,
+        "error_message": null,
+        "leaf_count": 2,
+        "msc_count_request_count": 4,
+        "msc_page_request_count": 11,
+        "normalized_count": 10249,
+        "parent_post_count": 10249,
+        "parent_pre_count": 10249,
+        "partition_date": "2026-08-21",
+        "raw_fetched_count": 10249,
+        "request_count": 15,
+        "retry_count": 0,
+        "sink_accepted_count": 10249,
+        "sink_attempted_count": 10249,
+        "sink_batch_count": 21,
+        "sink_elapsed_seconds": 1.418,
+        "sink_target": "typesense:local_canary_20260831_29ef44",
+        "skipped": false,
+        "source_key": "goods_general",
+        "status": "COMPLETED",
+        "typesense_rejected_count": 0,
+        "unique_source_count": 10249
+      },
+      {
+        "additive_schema_fields": [],
+        "completeness_invariant": true,
+        "elapsed_seconds": 3.049,
+        "elapsed_seconds_wall": 3.062,
+        "error_code": null,
+        "error_message": null,
+        "leaf_count": 1,
+        "msc_count_request_count": 2,
+        "msc_page_request_count": 2,
+        "normalized_count": 1727,
+        "parent_post_count": 1727,
+        "parent_pre_count": 1727,
+        "partition_date": "2026-08-28",
+        "raw_fetched_count": 1727,
+        "request_count": 4,
+        "retry_count": 0,
+        "sink_accepted_count": 1727,
+        "sink_attempted_count": 1727,
+        "sink_batch_count": 4,
+        "sink_elapsed_seconds": 0.301,
+        "sink_target": "typesense:local_canary_20260831_29ef44",
+        "skipped": false,
+        "source_key": "medical_devices",
+        "status": "COMPLETED",
+        "typesense_rejected_count": 0,
+        "unique_source_count": 1727
+      },
+      {
+        "additive_schema_fields": [],
+        "completeness_invariant": true,
+        "elapsed_seconds": 1.347,
+        "elapsed_seconds_wall": 1.368,
+        "error_code": null,
+        "error_message": null,
+        "leaf_count": 1,
+        "msc_count_request_count": 2,
+        "msc_page_request_count": 1,
+        "normalized_count": 125,
+        "parent_post_count": 125,
+        "parent_pre_count": 125,
+        "partition_date": "2026-08-28",
+        "raw_fetched_count": 125,
+        "request_count": 3,
+        "retry_count": 0,
+        "sink_accepted_count": 125,
+        "sink_attempted_count": 125,
+        "sink_batch_count": 1,
+        "sink_elapsed_seconds": 0.041,
+        "sink_target": "typesense:local_canary_20260831_29ef44",
+        "skipped": false,
+        "source_key": "medicine_generic",
+        "status": "COMPLETED",
+        "typesense_rejected_count": 0,
+        "unique_source_count": 125
+      },
+      {
+        "additive_schema_fields": [],
+        "completeness_invariant": true,
+        "elapsed_seconds": 1.432,
+        "elapsed_seconds_wall": 1.439,
+        "error_code": null,
+        "error_message": null,
+        "leaf_count": 1,
+        "msc_count_request_count": 2,
+        "msc_page_request_count": 1,
+        "normalized_count": 17,
+        "parent_post_count": 17,
+        "parent_pre_count": 17,
+        "partition_date": "2026-08-27",
+        "raw_fetched_count": 17,
+        "request_count": 3,
+        "retry_count": 0,
+        "sink_accepted_count": 17,
+        "sink_attempted_count": 17,
+        "sink_batch_count": 1,
+        "sink_elapsed_seconds": 0.009,
+        "sink_target": "typesense:local_canary_20260831_29ef44",
+        "skipped": false,
+        "source_key": "medicine_originator",
+        "status": "COMPLETED",
+        "typesense_rejected_count": 0,
+        "unique_source_count": 17
+      },
+      {
+        "additive_schema_fields": [],
+        "completeness_invariant": true,
+        "elapsed_seconds": 1.456,
+        "elapsed_seconds_wall": 1.463,
+        "error_code": null,
+        "error_message": null,
+        "leaf_count": 1,
+        "msc_count_request_count": 2,
+        "msc_page_request_count": 1,
+        "normalized_count": 30,
+        "parent_post_count": 30,
+        "parent_pre_count": 30,
+        "partition_date": "2026-08-28",
+        "raw_fetched_count": 30,
+        "request_count": 3,
+        "retry_count": 0,
+        "sink_accepted_count": 30,
+        "sink_attempted_count": 30,
+        "sink_batch_count": 1,
+        "sink_elapsed_seconds": 0.033,
+        "sink_target": "typesense:local_canary_20260831_29ef44",
+        "skipped": false,
+        "source_key": "medicine_herbal",
+        "status": "COMPLETED",
+        "typesense_rejected_count": 0,
+        "unique_source_count": 30
+      },
+      {
+        "additive_schema_fields": [],
+        "completeness_invariant": true,
+        "elapsed_seconds": 1.619,
+        "elapsed_seconds_wall": 1.626,
+        "error_code": null,
+        "error_message": null,
+        "leaf_count": 1,
+        "msc_count_request_count": 2,
+        "msc_page_request_count": 1,
+        "normalized_count": 25,
+        "parent_post_count": 25,
+        "parent_pre_count": 25,
+        "partition_date": "2026-08-22",
+        "raw_fetched_count": 25,
+        "request_count": 3,
+        "retry_count": 0,
+        "sink_accepted_count": 25,
+        "sink_attempted_count": 25,
+        "sink_batch_count": 1,
+        "sink_elapsed_seconds": 0.012,
+        "sink_target": "typesense:local_canary_20260831_29ef44",
+        "skipped": false,
+        "source_key": "herbal_material",
+        "status": "COMPLETED",
+        "typesense_rejected_count": 0,
+        "unique_source_count": 25
+      },
+      {
+        "additive_schema_fields": [],
+        "completeness_invariant": true,
+        "elapsed_seconds": 1.379,
+        "elapsed_seconds_wall": 1.386,
+        "error_code": null,
+        "error_message": null,
+        "leaf_count": 1,
+        "msc_count_request_count": 2,
+        "msc_page_request_count": 1,
+        "normalized_count": 62,
+        "parent_post_count": 62,
+        "parent_pre_count": 62,
+        "partition_date": "2026-08-27",
+        "raw_fetched_count": 62,
+        "request_count": 3,
+        "retry_count": 0,
+        "sink_accepted_count": 62,
+        "sink_attempted_count": 62,
+        "sink_batch_count": 1,
+        "sink_elapsed_seconds": 0.029,
+        "sink_target": "typesense:local_canary_20260831_29ef44",
+        "skipped": false,
+        "source_key": "traditional_medicine",
+        "status": "COMPLETED",
+        "typesense_rejected_count": 0,
+        "unique_source_count": 62
+      },
+      {
+        "additive_schema_fields": [],
+        "completeness_invariant": true,
+        "elapsed_seconds": 11.138,
+        "elapsed_seconds_wall": 11.173,
+        "error_code": null,
+        "error_message": null,
+        "leaf_count": 1,
+        "msc_count_request_count": 2,
+        "msc_page_request_count": 10,
+        "normalized_count": 9257,
+        "parent_post_count": 9257,
+        "parent_pre_count": 9257,
+        "partition_date": "2026-08-25",
+        "raw_fetched_count": 9257,
+        "request_count": 12,
+        "retry_count": 0,
+        "sink_accepted_count": 9257,
+        "sink_attempted_count": 9257,
+        "sink_batch_count": 19,
+        "sink_elapsed_seconds": 1.365,
+        "sink_target": "typesense:local_canary_20260831_29ef44",
+        "skipped": false,
+        "source_key": "goods_general",
+        "status": "COMPLETED",
+        "typesense_rejected_count": 0,
+        "unique_source_count": 9257
+      },
+      {
+        "additive_schema_fields": [],
+        "completeness_invariant": true,
+        "elapsed_seconds": 20.448,
+        "elapsed_seconds_wall": 20.494,
+        "error_code": null,
+        "error_message": null,
+        "leaf_count": 3,
+        "msc_count_request_count": 6,
+        "msc_page_request_count": 17,
+        "normalized_count": 15603,
+        "parent_post_count": 15603,
+        "parent_pre_count": 15603,
+        "partition_date": "2026-08-26",
+        "raw_fetched_count": 15603,
+        "request_count": 23,
+        "retry_count": 0,
+        "sink_accepted_count": 15603,
+        "sink_attempted_count": 15603,
+        "sink_batch_count": 32,
+        "sink_elapsed_seconds": 2.194,
+        "sink_target": "typesense:local_canary_20260831_29ef44",
+        "skipped": false,
+        "source_key": "goods_general",
+        "status": "COMPLETED",
+        "typesense_rejected_count": 0,
+        "unique_source_count": 15603
+      },
+      {
+        "additive_schema_fields": [],
+        "completeness_invariant": true,
+        "elapsed_seconds": 19.467,
+        "elapsed_seconds_wall": 19.502,
+        "error_code": null,
+        "error_message": null,
+        "leaf_count": 3,
+        "msc_count_request_count": 6,
+        "msc_page_request_count": 16,
+        "normalized_count": 13971,
+        "parent_post_count": 13971,
+        "parent_pre_count": 13971,
+        "partition_date": "2026-08-27",
+        "raw_fetched_count": 13971,
+        "request_count": 22,
+        "retry_count": 0,
+        "sink_accepted_count": 13971,
+        "sink_attempted_count": 13971,
+        "sink_batch_count": 28,
+        "sink_elapsed_seconds": 2.127,
+        "sink_target": "typesense:local_canary_20260831_29ef44",
+        "skipped": false,
+        "source_key": "goods_general",
+        "status": "COMPLETED",
+        "typesense_rejected_count": 0,
+        "unique_source_count": 13971
+      },
+      {
+        "additive_schema_fields": [],
+        "completeness_invariant": true,
+        "elapsed_seconds": 24.573,
+        "elapsed_seconds_wall": 24.613,
+        "error_code": null,
+        "error_message": null,
+        "leaf_count": 4,
+        "msc_count_request_count": 8,
+        "msc_page_request_count": 18,
+        "normalized_count": 16247,
+        "parent_post_count": 16247,
+        "parent_pre_count": 16247,
+        "partition_date": "2026-08-28",
+        "raw_fetched_count": 16247,
+        "request_count": 27,
+        "retry_count": 1,
+        "sink_accepted_count": 16247,
+        "sink_attempted_count": 16247,
+        "sink_batch_count": 33,
+        "sink_elapsed_seconds": 2.42,
+        "sink_target": "typesense:local_canary_20260831_29ef44",
+        "skipped": false,
+        "source_key": "goods_general",
+        "status": "COMPLETED",
+        "typesense_rejected_count": 0,
+        "unique_source_count": 16247
+      }
+    ],
+    "rejected_documents": 0,
+    "source_contracts": [
+      "goods_general",
+      "herbal_material",
+      "medical_devices",
+      "medicine_generic",
+      "medicine_herbal",
+      "medicine_originator",
+      "traditional_medicine"
+    ],
+    "source_summary": {
+      "goods_general": {
+        "documents": 65327,
+        "partitions": [
+          "2026-08-21",
+          "2026-08-25",
+          "2026-08-26",
+          "2026-08-27",
+          "2026-08-28"
+        ]
+      },
+      "herbal_material": {
+        "documents": 25,
+        "partitions": [
+          "2026-08-22"
+        ]
+      },
+      "medical_devices": {
+        "documents": 1727,
+        "partitions": [
+          "2026-08-28"
+        ]
+      },
+      "medicine_generic": {
+        "documents": 125,
+        "partitions": [
+          "2026-08-28"
+        ]
+      },
+      "medicine_herbal": {
+        "documents": 30,
+        "partitions": [
+          "2026-08-28"
+        ]
+      },
+      "medicine_originator": {
+        "documents": 17,
+        "partitions": [
+          "2026-08-27"
+        ]
+      },
+      "traditional_medicine": {
+        "documents": 62,
+        "partitions": [
+          "2026-08-27"
+        ]
+      }
+    },
+    "total_unique_documents": 67313,
+    "uuid_conflicts": 0
+  },
+  "canary_plan": [
+    {
+      "logical_group": "goods",
+      "overflow_candidate": false,
+      "partition_date": "2026-08-21",
+      "source_key": "goods_general"
+    },
+    {
+      "logical_group": "goods",
+      "overflow_candidate": false,
+      "partition_date": "2026-08-28",
+      "source_key": "medical_devices"
+    },
+    {
+      "logical_group": "medicines",
+      "overflow_candidate": false,
+      "partition_date": "2026-08-28",
+      "source_key": "medicine_generic"
+    },
+    {
+      "logical_group": "medicines",
+      "overflow_candidate": false,
+      "partition_date": "2026-08-27",
+      "source_key": "medicine_originator"
+    },
+    {
+      "logical_group": "medicines",
+      "overflow_candidate": false,
+      "partition_date": "2026-08-28",
+      "source_key": "medicine_herbal"
+    },
+    {
+      "logical_group": "traditional_medicine",
+      "overflow_candidate": false,
+      "partition_date": "2026-08-22",
+      "source_key": "herbal_material"
+    },
+    {
+      "logical_group": "traditional_medicine",
+      "overflow_candidate": false,
+      "partition_date": "2026-08-27",
+      "source_key": "traditional_medicine"
+    },
+    {
+      "logical_group": "goods",
+      "overflow_candidate": false,
+      "partition_date": "2026-08-25",
+      "source_key": "goods_general"
+    },
+    {
+      "logical_group": "goods",
+      "overflow_candidate": false,
+      "partition_date": "2026-08-26",
+      "source_key": "goods_general"
+    },
+    {
+      "logical_group": "goods",
+      "overflow_candidate": false,
+      "partition_date": "2026-08-27",
+      "source_key": "goods_general"
+    },
+    {
+      "logical_group": "goods",
+      "overflow_candidate": true,
+      "partition_date": "2026-08-28",
+      "source_key": "goods_general"
+    }
+  ],
+  "checkpoint_path": "/home/ncdhuy/.local/share/bidfinder/typesense/checkpoints/local_canary_20260831_29ef44.sqlite3",
+  "checks": {
+    "abrupt_recovery": true,
+    "all_seven_source_contracts": true,
+    "all_three_logical_groups": true,
+    "bounded_concurrency": true,
+    "canary_size": true,
+    "completeness_invariants": true,
+    "future_historical_generation_not_populated": true,
+    "historical_counts_revalidated": true,
+    "idempotent_force_and_checkpoint_skip": true,
+    "interruption_resume": true,
+    "manifest_fingerprints_valid": true,
+    "no_alias_activation": true,
+    "no_fastapi_ui_cutover": true,
+    "no_full_backfill": true,
+    "overflow_adaptive_partitioning": true,
+    "persistent_target_health": true,
+    "portable_core": true,
+    "read_during_write": true,
+    "representative_uuid_parity": true,
+    "restart_cycle_1": true,
+    "restart_cycle_2": true,
+    "schema_validation": true,
+    "search_filter_sort_multi_search": true,
+    "snapshot_created": true,
+    "snapshot_restore": true,
+    "uuid_collection_count_parity": true,
+    "zero_rejected_documents": true,
+    "zero_uuid_conflicts": true
+  },
+  "concurrency": {
+    "1": {
+      "clients": 1,
+      "errors": [],
+      "latency_ms": {
+        "max": 2.093,
+        "p50": 1.099,
+        "p95": 2.093
+      },
+      "pass": true,
+      "requests": 4,
+      "requests_per_client": 4,
+      "requests_per_second": 626.131
+    },
+    "10": {
+      "clients": 10,
+      "errors": [],
+      "latency_ms": {
+        "max": 8.588,
+        "p50": 5.657,
+        "p95": 8.252
+      },
+      "pass": true,
+      "requests": 40,
+      "requests_per_client": 4,
+      "requests_per_second": 1398.572
+    },
+    "25": {
+      "clients": 25,
+      "errors": [],
+      "latency_ms": {
+        "max": 28.869,
+        "p50": 9.27,
+        "p95": 16.39
+      },
+      "pass": true,
+      "requests": 100,
+      "requests_per_client": 4,
+      "requests_per_second": 1438.655
+    }
+  },
+  "full_run_safety_lock": {
+    "authorization_supplied": false,
+    "explicit_authorization_phrase_required": "AUTHORIZE_PHASE_3B_HISTORICAL_BACKFILL",
+    "explicit_checkpoint_required": true,
+    "explicit_from_required": true,
+    "explicit_generation_required": true,
+    "explicit_to_required": true,
+    "full_backfill_invoked": false,
+    "historical_manifest_path_required": true,
+    "manifest_fingerprint_match_required": true,
+    "readiness_acknowledgement_required": true
+  },
+  "future_historical_generation": "hist_v1_20260829",
+  "generated_at": "2026-08-31T05:04:43Z",
+  "generation": "local_canary_20260831_29ef44",
+  "historical_manifest": {
+    "actual_source_totals": {
+      "goods_general": 8219247,
+      "herbal_material": 9554,
+      "medical_devices": 964685,
+      "medicine_generic": 494698,
+      "medicine_herbal": 35489,
+      "medicine_originator": 55239,
+      "traditional_medicine": 22468
+    },
+    "actual_total": 9801380,
+    "deltas": {
+      "goods_general": {
+        "actual": 8219247,
+        "delta": -5,
+        "previous": 8219252,
+        "unchanged": false
+      },
+      "herbal_material": {
+        "actual": 9554,
+        "delta": 0,
+        "previous": 9554,
+        "unchanged": true
+      },
+      "medical_devices": {
+        "actual": 964685,
+        "delta": 0,
+        "previous": 964685,
+        "unchanged": true
+      },
+      "medicine_generic": {
+        "actual": 494698,
+        "delta": 0,
+        "previous": 494698,
+        "unchanged": true
+      },
+      "medicine_herbal": {
+        "actual": 35489,
+        "delta": 0,
+        "previous": 35489,
+        "unchanged": true
+      },
+      "medicine_originator": {
+        "actual": 55239,
+        "delta": 0,
+        "previous": 55239,
+        "unchanged": true
+      },
+      "traditional_medicine": {
+        "actual": 22468,
+        "delta": 0,
+        "previous": 22468,
+        "unchanged": true
+      }
+    },
+    "engine_version": "msc-ingestion-v1",
+    "fingerprints": {
+      "canonical_schema": {
+        "goods": "242edb53deedbe355a983f4c0757a4f9a7e3b3dc38e555b4b57955e090907c8d",
+        "medicines": "66a09d61db93b3cb22dd2da8be112db6286c55a6a5b22f49d54999b2045f0266",
+        "traditional_medicine": "b700e1ecf3e9f201af52dcb4882bad9e8c0a5a98aeeecda95dc1ffe269e3973c"
+      },
+      "source_contracts": {
+        "goods_general": "ffe54f0721997e5154790dbafc14b94c909247dcb655efb880e3d8e538a0b9b4",
+        "herbal_material": "98edfeb2b44fb2a6b57167566f8eb3a359d2ed4cf32fb1b0878e5a1bcb6e3d61",
+        "medical_devices": "a3cf3542572e64f295250fade582596def6cf57fa44d873805c82ae1a591374b",
+        "medicine_generic": "c1020d3d329275e31a7cbaa0d68e4e2e2e95db2eed26855cd53aed9cf57f7baa",
+        "medicine_herbal": "d1261140bd94192e26ed23446dccf75e6dab36809b0ad585ad25393680f2bf7e",
+        "medicine_originator": "0ab43358bbcb647d26f973f6f1e54c941bc589c8907f98cf3c81629a837267c2",
+        "traditional_medicine": "2fe06b17380131603f312d6d4e8b365e2294efaa8ce01d0961e0fc59fbd615e8"
+      },
+      "typesense_schema": {
+        "goods": "bba6ce10a8e7111a4fbf00d3770530e6e7d8dc9c6766d655cdacf87c0bd73f4f",
+        "medicines": "0665733017272dbce60546f09e036688c2a667c5259848f652a39cf8179d1d9d",
+        "traditional_medicine": "e7070d6233cd04796c22640c4f173873a4f5e611f5ffdbc31f0ace05ac8ffeb9"
+      }
+    },
+    "fingerprints_verified": true,
+    "manifest_version": "msc-backfill-plan-v1",
+    "path": "/home/ncdhuy/.local/share/bidfinder/typesense/reports/historical-manifest-hist_v1_20260829.json",
+    "previous_total": 9801385,
+    "range": {
+      "closed": true,
+      "from": "2023-02-01",
+      "to": "2026-08-29"
+    },
+    "schema_version": "msc-source-schema-v1",
+    "total_delta": -5
+  },
+  "idempotency": {
+    "counts_after": {
+      "goods": 67054,
+      "medicines": 172,
+      "traditional_medicine": 87
+    },
+    "counts_before": {
+      "goods": 67054,
+      "medicines": 172,
+      "traditional_medicine": 87
+    },
+    "counts_unchanged": true,
+    "forced_rerun": {
+      "additive_schema_fields": [],
+      "completeness_invariant": true,
+      "elapsed_seconds": 12.663,
+      "elapsed_seconds_wall": 12.705,
+      "error_code": null,
+      "error_message": null,
+      "leaf_count": 2,
+      "msc_count_request_count": 4,
+      "msc_page_request_count": 11,
+      "normalized_count": 10249,
+      "parent_post_count": 10249,
+      "parent_pre_count": 10249,
+      "partition_date": "2026-08-21",
+      "raw_fetched_count": 10249,
+      "request_count": 15,
+      "retry_count": 0,
+      "sink_accepted_count": 10249,
+      "sink_attempted_count": 10249,
+      "sink_batch_count": 21,
+      "sink_elapsed_seconds": 1.403,
+      "sink_target": "typesense:local_canary_20260831_29ef44",
+      "skipped": false,
+      "source_key": "goods_general",
+      "status": "COMPLETED",
+      "typesense_rejected_count": 0,
+      "unique_source_count": 10249
+    },
+    "forced_status": "COMPLETED",
+    "unforced_rerun": {
+      "additive_schema_fields": [],
+      "completeness_invariant": false,
+      "elapsed_seconds": 0.0,
+      "elapsed_seconds_wall": 0.0,
+      "error_code": null,
+      "error_message": null,
+      "leaf_count": 0,
+      "msc_count_request_count": 0,
+      "msc_page_request_count": 0,
+      "normalized_count": 0,
+      "parent_post_count": null,
+      "parent_pre_count": null,
+      "partition_date": "2026-08-21",
+      "raw_fetched_count": 0,
+      "request_count": 0,
+      "retry_count": 0,
+      "sink_accepted_count": 0,
+      "sink_attempted_count": 0,
+      "sink_batch_count": 0,
+      "sink_elapsed_seconds": 0.0,
+      "sink_target": "typesense:local_canary_20260831_29ef44",
+      "skipped": true,
+      "source_key": "goods_general",
+      "status": "COMPLETED",
+      "typesense_rejected_count": 0,
+      "unique_source_count": 0
+    },
+    "unforced_skipped": true
+  },
+  "interruption_resume": {
+    "checkpoint_path": "/home/ncdhuy/.local/share/bidfinder/typesense/checkpoints/local_canary_20260831_29ef44.interruption.sqlite3",
+    "previous_completed_skipped": true,
+    "resume_result": {
+      "additive_schema_fields": [],
+      "elapsed_seconds": 20.114,
+      "error_code": null,
+      "error_message": null,
+      "leaf_count": 4,
+      "normalized_count": 16247,
+      "parent_post_count": 16247,
+      "parent_pre_count": 16247,
+      "partition_date": "2026-08-28",
+      "raw_fetched_count": 16247,
+      "request_count": 26,
+      "retry_count": 0,
+      "sink_accepted_count": 16247,
+      "sink_attempted_count": 16247,
+      "sink_batch_count": 33,
+      "sink_elapsed_seconds": 2.139,
+      "sink_target": "typesense:local_canary_20260831_29ef44",
+      "skipped": false,
+      "source_key": "goods_general",
+      "status": "COMPLETED",
+      "unique_source_count": 16247
+    },
+    "status_before_resume": "RUNNING"
+  },
+  "physical_collections": {
+    "goods": "bidfinder_goods_v1_local_canary_20260831_29ef44",
+    "medicines": "bidfinder_medicines_v1_local_canary_20260831_29ef44",
+    "traditional_medicine": "bidfinder_traditional_v1_local_canary_20260831_29ef44"
+  },
+  "read_during_write": {
+    "baseline_search_p95_ms": 10.204,
+    "errors": [],
+    "latency_ms": {
+      "max": 1.365,
+      "p50": 0.812,
+      "p95": 1.127
+    },
+    "no_severe_latency_collapse": true,
+    "pass": true,
+    "search_requests": 40,
+    "writer_result": {
+      "additive_schema_fields": [],
+      "elapsed_seconds": 19.63,
+      "error_code": null,
+      "error_message": null,
+      "leaf_count": 3,
+      "normalized_count": 15603,
+      "parent_post_count": 15603,
+      "parent_pre_count": 15603,
+      "partition_date": "2026-08-26",
+      "raw_fetched_count": 15603,
+      "request_count": 23,
+      "retry_count": 0,
+      "sink_accepted_count": 15603,
+      "sink_attempted_count": 15603,
+      "sink_batch_count": 32,
+      "sink_elapsed_seconds": 2.07,
+      "sink_target": "typesense:local_canary_20260831_29ef44",
+      "skipped": false,
+      "source_key": "goods_general",
+      "status": "COMPLETED",
+      "unique_source_count": 15603
+    }
+  },
+  "report_path": "/mnt/d/startup/muasamcong/BIDFinder/local-typesense-canary-report.json",
+  "report_version": "msc-local-typesense-canary-v1",
+  "representative_uuid_records": [
+    {
+      "fields_equal": true,
+      "group": "goods",
+      "id": "00037722-5d4e-4f57-9d59-a5df0ac07379",
+      "retrieved": true
+    },
+    {
+      "fields_equal": true,
+      "group": "medicines",
+      "id": "01964663-9d7e-4e6d-8807-44d72bd4d9bf",
+      "retrieved": true
+    },
+    {
+      "fields_equal": true,
+      "group": "traditional_medicine",
+      "id": "19d9090f-28df-42d8-82cb-2c36deaa03b7",
+      "retrieved": true
+    }
+  ],
+  "resource_preflight": {
+    "baseline": {
+      "disk_free_bytes": 1020877975552,
+      "memory_available_bytes": 12197720064,
+      "memory_free_bytes": 8557821952,
+      "memory_total_bytes": 14551773184,
+      "swap_free_bytes": 4294967296,
+      "swap_total_bytes": 4294967296,
+      "typesense": {
+        "alive": true,
+        "cpu_percent": 63.2,
+        "pid": 14237,
+        "rss_bytes": 268345344,
+        "state": "S"
+      }
+    },
+    "cpu_count": 16,
+    "disk": {
+      "critical": false,
+      "decision": "PASS",
+      "free_bytes": 1020877975552,
+      "free_fraction": 0.944295,
+      "new_generation_blocked": false,
+      "operational_free_margin_bytes": 76284396040,
+      "path": "/home/ncdhuy/.local/share/bidfinder/typesense",
+      "policy": {
+        "block_new_generation_below_free_fraction": 0.5,
+        "critical_below_free_fraction": 0.2,
+        "warning_below_free_fraction": 0.35
+      },
+      "projected_full_generation_bytes": 21795541726,
+      "projected_two_generation_bytes": 43591083452,
+      "required_free_bytes_for_new_generation": 119875479492,
+      "total_bytes": 1081101176832,
+      "used_bytes": 5230845952,
+      "warning": false
+    },
+    "swap_file": "/proc/swaps"
+  },
+  "resource_sampler": {
+    "sample_count": 220,
+    "swap_used_bytes": {
+      "last": 0,
+      "maximum": 0
+    },
+    "typesense_cpu_percent": {
+      "last": 24.3,
+      "max": 62.9
+    },
+    "typesense_rss_bytes": {
+      "baseline": 269488128,
+      "last": 404082688,
+      "peak": 434040832
+    },
+    "wsl_memory_available_bytes": {
+      "last": 11841609728,
+      "minimum": 11744411648
+    }
+  },
+  "resources_during_canary": {
+    "sample_count": 220,
+    "swap_used_bytes": {
+      "last": 0,
+      "maximum": 0
+    },
+    "typesense_cpu_percent": {
+      "last": 24.3,
+      "max": 62.9
+    },
+    "typesense_rss_bytes": {
+      "baseline": 269488128,
+      "last": 404082688,
+      "peak": 434040832
+    },
+    "wsl_memory_available_bytes": {
+      "last": 11841609728,
+      "minimum": 11744411648
+    }
+  },
+  "resources_final": {
+    "disk_free_bytes": 1020040355840,
+    "memory_available_bytes": 11930693632,
+    "memory_free_bytes": 7415439360,
+    "memory_total_bytes": 14551773184,
+    "swap_free_bytes": 4294967296,
+    "swap_total_bytes": 4294967296,
+    "typesense": {
+      "alive": true,
+      "cpu_percent": 53.2,
+      "pid": 15963,
+      "rss_bytes": 399523840,
+      "state": "S"
+    }
+  },
+  "restart_cycle_1": {
+    "counts_after": {
+      "goods": 67054,
+      "medicines": 172,
+      "traditional_medicine": 87
+    },
+    "counts_before": {
+      "goods": 67054,
+      "medicines": 172,
+      "traditional_medicine": 87
+    },
+    "counts_exact": true,
+    "cycle": 1,
+    "health_after_start": {
+      "ok": true
+    },
+    "health_after_stop": false,
+    "pass": true,
+    "process_stopped": true
+  },
+  "restart_cycle_2": {
+    "counts_after": {
+      "goods": 67054,
+      "medicines": 172,
+      "traditional_medicine": 87
+    },
+    "counts_before": {
+      "goods": 67054,
+      "medicines": 172,
+      "traditional_medicine": 87
+    },
+    "counts_exact": true,
+    "cycle": 2,
+    "health_after_start": {
+      "ok": true
+    },
+    "health_after_stop": false,
+    "pass": true,
+    "process_stopped": true
+  },
+  "restore": {
+    "counts": {
+      "goods": 67054,
+      "medicines": 172,
+      "traditional_medicine": 87
+    },
+    "counts_exact": true,
+    "pass": true,
+    "restore_data_dir": "/home/ncdhuy/.local/share/bidfinder/typesense/restore-validation/local_canary_20260831_29ef44-data",
+    "sample_checks": [
+      {
+        "fields_equal": true,
+        "group": "goods",
+        "id": "00037722-5d4e-4f57-9d59-a5df0ac07379",
+        "retrieved": true
+      },
+      {
+        "fields_equal": true,
+        "group": "medicines",
+        "id": "01964663-9d7e-4e6d-8807-44d72bd4d9bf",
+        "retrieved": true
+      },
+      {
+        "fields_equal": true,
+        "group": "traditional_medicine",
+        "id": "19d9090f-28df-42d8-82cb-2c36deaa03b7",
+        "retrieved": true
+      }
+    ],
+    "search_found": 67054,
+    "snapshot_path": "/home/ncdhuy/.local/share/bidfinder/typesense/snapshots/local_canary_20260831_29ef44.snapshot",
+    "source_counts": {
+      "goods": 67054,
+      "medicines": 172,
+      "traditional_medicine": 87
+    }
+  },
+  "runtime": {
+    "cors_enabled": false,
+    "filesystem": "native Linux/WSL filesystem (operator-selected path)",
+    "health_before_canary": {
+      "ok": true
+    },
+    "machine": "x86_64",
+    "network_exposure": "loopback-only",
+    "persistent_data_path": "/home/ncdhuy/.local/share/bidfinder/typesense/data",
+    "platform": "Linux-6.18.33.1-microsoft-standard-WSL2-x86_64-with-glibc2.43",
+    "python": "3.14.4",
+    "restore_error": null,
+    "runtime_paths": {
+      "checkpoints_dir": "/home/ncdhuy/.local/share/bidfinder/typesense/checkpoints",
+      "data_dir": "/home/ncdhuy/.local/share/bidfinder/typesense/data",
+      "logs_dir": "/home/ncdhuy/.local/share/bidfinder/typesense/logs",
+      "reports_dir": "/home/ncdhuy/.local/share/bidfinder/typesense/reports",
+      "root": "/home/ncdhuy/.local/share/bidfinder/typesense",
+      "run_dir": "/home/ncdhuy/.local/share/bidfinder/typesense/run",
+      "snapshots_dir": "/home/ncdhuy/.local/share/bidfinder/typesense/snapshots"
+    },
+    "typesense_binary_version": "Typesense 30.2",
+    "typesense_host": "127.0.0.1",
+    "typesense_port": 8108,
+    "typesense_protocol": "http",
+    "typesense_version": "30.2",
+    "typesense_version_expected": "30.2"
+  },
+  "schema_validation_after_write": {
+    "goods": {
+      "collection": "bidfinder_goods_v1_local_canary_20260831_29ef44",
+      "metadata": {
+        "generation_id": "local_canary_20260831_29ef44",
+        "ingestion_engine_version": "msc-ingestion-v1",
+        "logical_group": "goods",
+        "schema_version": "msc-source-schema-v1"
+      },
+      "num_documents": 67054
+    },
+    "medicines": {
+      "collection": "bidfinder_medicines_v1_local_canary_20260831_29ef44",
+      "metadata": {
+        "generation_id": "local_canary_20260831_29ef44",
+        "ingestion_engine_version": "msc-ingestion-v1",
+        "logical_group": "medicines",
+        "schema_version": "msc-source-schema-v1"
+      },
+      "num_documents": 172
+    },
+    "traditional_medicine": {
+      "collection": "bidfinder_traditional_v1_local_canary_20260831_29ef44",
+      "metadata": {
+        "generation_id": "local_canary_20260831_29ef44",
+        "ingestion_engine_version": "msc-ingestion-v1",
+        "logical_group": "traditional_medicine",
+        "schema_version": "msc-source-schema-v1"
+      },
+      "num_documents": 87
+    }
+  },
+  "schema_validation_before_write": {
+    "goods": {
+      "collection": "bidfinder_goods_v1_local_canary_20260831_29ef44",
+      "metadata": {
+        "generation_id": "local_canary_20260831_29ef44",
+        "ingestion_engine_version": "msc-ingestion-v1",
+        "logical_group": "goods",
+        "schema_version": "msc-source-schema-v1"
+      },
+      "num_documents": 0
+    },
+    "medicines": {
+      "collection": "bidfinder_medicines_v1_local_canary_20260831_29ef44",
+      "metadata": {
+        "generation_id": "local_canary_20260831_29ef44",
+        "ingestion_engine_version": "msc-ingestion-v1",
+        "logical_group": "medicines",
+        "schema_version": "msc-source-schema-v1"
+      },
+      "num_documents": 0
+    },
+    "traditional_medicine": {
+      "collection": "bidfinder_traditional_v1_local_canary_20260831_29ef44",
+      "metadata": {
+        "generation_id": "local_canary_20260831_29ef44",
+        "ingestion_engine_version": "msc-ingestion-v1",
+        "logical_group": "traditional_medicine",
+        "schema_version": "msc-source-schema-v1"
+      },
+      "num_documents": 0
+    }
+  },
+  "search": {
+    "field_searches": [
+      {
+        "category": "item name",
+        "field": "item_name",
+        "found": 122,
+        "group": "goods",
+        "latency_ms": 1.838,
+        "pass": true,
+        "query": "Đi ốt"
+      },
+      {
+        "category": "manufacturer",
+        "field": "manufacturer",
+        "found": 148,
+        "group": "goods",
+        "latency_ms": 1.784,
+        "pass": true,
+        "query": "JSC KTC Electronica"
+      },
+      {
+        "category": "bidder",
+        "field": "winning_bidder_name",
+        "found": 689,
+        "group": "goods",
+        "latency_ms": 10.204,
+        "pass": true,
+        "query": "CÔNG TY CỔ PHẦN QUỐC TẾ GREEN VINA"
+      },
+      {
+        "category": "tender code",
+        "field": "bid_invitation_code",
+        "found": 265,
+        "group": "goods",
+        "latency_ms": 1.337,
+        "pass": true,
+        "query": "IB2600427854"
+      },
+      {
+        "category": "medicine name",
+        "field": "medicine_name",
+        "found": 1,
+        "group": "medicines",
+        "latency_ms": 1.089,
+        "pass": true,
+        "query": "Elaria"
+      },
+      {
+        "category": "active ingredient",
+        "field": "active_ingredient_or_herbal_component",
+        "found": 2,
+        "group": "medicines",
+        "latency_ms": 1.728,
+        "pass": true,
+        "query": "Diclofenac Natri"
+      },
+      {
+        "category": "manufacturer",
+        "field": "manufacturer",
+        "found": 1,
+        "group": "medicines",
+        "latency_ms": 1.23,
+        "pass": true,
+        "query": "Medochemie Ltd-Ampoule Injectable Facility"
+      },
+      {
+        "category": "bidder",
+        "field": "winning_bidder_name",
+        "found": 1,
+        "group": "medicines",
+        "latency_ms": 1.314,
+        "pass": true,
+        "query": "CÔNG TY CỔ PHẦN DƯỢC Á CHÂU"
+      },
+      {
+        "category": "tender",
+        "field": "bid_invitation_code",
+        "found": 26,
+        "group": "medicines",
+        "latency_ms": 1.195,
+        "pass": true,
+        "query": "IB2600403053"
+      },
+      {
+        "category": "item name",
+        "field": "item_name",
+        "found": 2,
+        "group": "traditional_medicine",
+        "latency_ms": 1.261,
+        "pass": true,
+        "query": "Đại táo"
+      },
+      {
+        "category": "scientific name",
+        "field": "scientific_name",
+        "found": 2,
+        "group": "traditional_medicine",
+        "latency_ms": 1.105,
+        "pass": true,
+        "query": "Fructus Ziziphi jujubae"
+      },
+      {
+        "category": "manufacturer/source",
+        "field": "manufacturer",
+        "found": 25,
+        "group": "traditional_medicine",
+        "latency_ms": 1.405,
+        "pass": true,
+        "query": "Công ty TNHH Đông Dược Văn Hương"
+      },
+      {
+        "category": "bidder",
+        "field": "winning_bidder_name",
+        "found": 25,
+        "group": "traditional_medicine",
+        "latency_ms": 1.987,
+        "pass": true,
+        "query": "Công ty TNHH Đông Dược Văn Hương"
+      },
+      {
+        "category": "tender",
+        "field": "bid_invitation_code",
+        "found": 25,
+        "group": "traditional_medicine",
+        "latency_ms": 0.898,
+        "pass": true,
+        "query": "IB2600477804"
+      }
+    ],
+    "filters": [
+      {
+        "filter": "source_tab",
+        "found": 65327,
+        "group": "goods",
+        "latency_ms": 7.768,
+        "semantics_ok": true,
+        "value": "HANG_HOA"
+      },
+      {
+        "filter": "winning_unit_price:>0",
+        "found": 66881,
+        "group": "goods",
+        "latency_ms": 15.392,
+        "semantics_ok": true
+      },
+      {
+        "filter": "source_tab",
+        "found": 172,
+        "group": "medicines",
+        "latency_ms": 3.915,
+        "semantics_ok": true,
+        "value": "THUOC_TAN_DUOC"
+      },
+      {
+        "filter": "winning_unit_price:>0",
+        "found": 172,
+        "group": "medicines",
+        "latency_ms": 2.741,
+        "semantics_ok": true
+      },
+      {
+        "filter": "source_tab",
+        "found": 25,
+        "group": "traditional_medicine",
+        "latency_ms": 2.381,
+        "semantics_ok": true,
+        "value": "DUOC_LIEU"
+      },
+      {
+        "filter": "winning_unit_price:>0",
+        "found": 87,
+        "group": "traditional_medicine",
+        "latency_ms": 2.164,
+        "semantics_ok": true
+      }
+    ],
+    "latency_ms": {
+      "errors": [],
+      "max": 10.204,
+      "p50": 1.314,
+      "p95": 10.204,
+      "requests": 14
+    },
+    "multi_search": {
+      "found_counts": [
+        67054,
+        172,
+        87
+      ],
+      "latency_ms": 1.237,
+      "pass": true,
+      "result_count": 3
+    },
+    "pass": true,
+    "sorts": [
+      {
+        "found": 67054,
+        "group": "goods",
+        "latency_ms": 6.732,
+        "numeric_values_checked": 20,
+        "order_ok": true,
+        "sort": "winning_unit_price:asc"
+      },
+      {
+        "found": 67054,
+        "group": "goods",
+        "latency_ms": 5.029,
+        "numeric_values_checked": 20,
+        "order_ok": true,
+        "sort": "winning_unit_price:desc"
+      },
+      {
+        "found": 172,
+        "group": "medicines",
+        "latency_ms": 2.699,
+        "numeric_values_checked": 20,
+        "order_ok": true,
+        "sort": "winning_unit_price:asc"
+      },
+      {
+        "found": 172,
+        "group": "medicines",
+        "latency_ms": 2.767,
+        "numeric_values_checked": 20,
+        "order_ok": true,
+        "sort": "winning_unit_price:desc"
+      },
+      {
+        "found": 87,
+        "group": "traditional_medicine",
+        "latency_ms": 2.913,
+        "numeric_values_checked": 20,
+        "order_ok": true,
+        "sort": "winning_unit_price:asc"
+      },
+      {
+        "found": 87,
+        "group": "traditional_medicine",
+        "latency_ms": 2.585,
+        "numeric_values_checked": 20,
+        "order_ok": true,
+        "sort": "winning_unit_price:desc"
+      }
+    ]
+  },
+  "snapshot": {
+    "location": "/home/ncdhuy/.local/share/bidfinder/typesense/snapshots/local_canary_20260831_29ef44.snapshot",
+    "operation": "POST /operations/snapshot",
+    "result": {
+      "success": true
+    },
+    "size_bytes": 194686419
+  },
+  "snapshot_path": "/home/ncdhuy/.local/share/bidfinder/typesense/snapshots/local_canary_20260831_29ef44.snapshot",
+  "status": "PASS",
+  "uuid_audit_path": "/home/ncdhuy/.local/share/bidfinder/typesense/checkpoints/local_canary_20260831_29ef44.uuid.sqlite3"
+}

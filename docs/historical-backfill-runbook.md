@@ -299,3 +299,40 @@ explicit operation after all gates pass.
 No full historical import ran for Phase 3B-R. No production alias was
 activated. Do not begin Phase 3B until production capacity and target are
 approved from fresh measurements.
+
+## Local dogfood / local production-like mode
+
+The first long-lived Typesense target is a single Typesense `30.2` node in
+native Ubuntu/WSL storage. It is private-only (`127.0.0.1:8108`) and is not an
+HA target. Start it from WSL with:
+
+```bash
+bash infra/typesense/local-typesense.sh start
+bash infra/typesense/local-typesense.sh health
+bash infra/typesense/local-typesense.sh status
+bash infra/typesense/local-typesense.sh restart
+bash infra/typesense/local-typesense.sh stop
+```
+
+Primary data lives at `~/.local/share/bidfinder/typesense/data`; snapshots,
+checkpoints, reports, logs, and run state are separate sibling directories.
+The local canary uses a generation-aware checkpoint and UUID audit database
+under `checkpoints/`; it never uses the sizing or future historical
+checkpoint. Create snapshots with the supported `/operations/snapshot` API,
+never by copying live data. Restore only into a separate disposable data
+directory and validate counts/search before stopping it.
+
+Before a future historical run, verify free disk for the projected generation,
+a snapshot, and a second generation; monitor WSL available memory, Typesense
+RSS, CPU, and swap. Avoid large local LLM or other memory-heavy workloads
+during backfill, and prevent Windows Sleep/Hibernate during ingestion or
+serving. Full historical execution remains locked behind explicit `--from`,
+`--to`, `--generation`, `--checkpoint`, `--manifest`, readiness acknowledgement,
+matching fingerprints, and
+`--authorize-full-run AUTHORIZE_PHASE_3B_HISTORICAL_BACKFILL`. Do not supply
+that authorization during local-target validation.
+
+The intended future local generation is `hist_v1_20260829`; this phase does
+not populate it. Later migration to Hetzner/Linux can use a validated snapshot
+or a fresh historical generation with the same collections, checkpoints, and
+engine; only the operator service wrapper changes.

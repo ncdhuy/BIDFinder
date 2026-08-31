@@ -876,3 +876,28 @@ Detailed evidence is in
 [`typesense-sizing-report.md`](../typesense-sizing-report.md). The disposable
 generation was stopped after the experiment; no FastAPI/UI change, alias
 activation, full historical backfill, or Neon/Postgres write occurred.
+
+## Local dogfood / local production-like mode
+
+Phase 3B-P-L establishes first long-lived target on user's machine: MSC public
+search, existing ingestion engine, and Typesense `30.2` in a single native
+Ubuntu/WSL node. It uses loopback-only HTTP at `127.0.0.1:8108`, no public
+CORS, persistent data at `~/.local/share/bidfinder/typesense/data`, and
+separate sibling locations for snapshots, checkpoints, reports, logs, and run
+state. Start/stop/restart/status/health are provided by
+`infra/typesense/local-typesense.sh`.
+
+The bounded canary uses all seven frozen source contracts, adaptive overflow
+partitioning, generation-aware checkpoints, UUID provenance, exact
+completeness invariants, idempotent upsert/skip, two clean restart cycles,
+interruption/resume, search/concurrency/read-during-write probes, and the
+supported Typesense snapshot/restore flow. Stable aliases and FastAPI/UI
+traffic remain unchanged. Future historical generation is
+`hist_v1_20260829` and is not populated here.
+
+Operate with substantial free-disk and memory headroom; monitor WSL available
+memory, Typesense RSS, CPU, and swap. Prevent Windows Sleep/Hibernate during
+backfill or serving. A later Hetzner/Linux move can restore a validated
+snapshot or build a fresh historical generation using same core engine,
+collections, checkpoints, and fingerprints; only local operator wrapper and
+host paths change. HA remains a future infrastructure decision.
