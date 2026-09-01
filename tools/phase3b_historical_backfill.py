@@ -22,6 +22,7 @@ import subprocess
 import sys
 import time
 from typing import Any, Mapping
+from uuid import uuid4
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -71,6 +72,9 @@ AUTHORITATIVE_SOURCE_TOTALS = {
     "traditional_medicine": 22_468,
 }
 RECOVERY_MILESTONE_DOCUMENTS = 1_000_000
+RECOVERY_SNAPSHOT_ERROR = "RECOVERY_SNAPSHOT_ERROR"
+RECOVERY_COPY_ERROR = "RECOVERY_COPY_ERROR"
+RECOVERY_BUNDLE_VALIDATION_ERROR = "RECOVERY_BUNDLE_VALIDATION_ERROR"
 CRITICAL_MEM_AVAILABLE_BYTES = 2 * 1024**3
 CRITICAL_FREE_FRACTION = 0.20
 WARNING_FREE_FRACTION = 0.35
@@ -191,6 +195,42 @@ def _sqlite_integrity(path: Path) -> str:
         return str(connection.execute("PRAGMA integrity_check").fetchone()[0])
 
 
+class RecoveryError(RuntimeError):
+    """Recovery infrastructure failure; never a source partition failure."""
+
+    def __init__(self, code: str, stage: str, message: str, **details: Any) -> None:
+        self.code = code
+        self.stage = stage
+        self.details = details
+        super().__init__(message)
+
+
+def _recovery_error_record(report: Any, exc: BaseException) -> dict[str, Any]:
+    details = {
+        str(key): str(value)
+        for key, value in getattr(exc, "details", {}).items()
+        if value is not None
+    }
+    return {
+        "stage": getattr(exc, "stage", "recovery"),
+        "code": getattr(exc, "code", "RECOVERY_FINALIZATION_ERROR"),
+        "type": type(exc).__name__,
+        "message": str(exc)[:2000],
+        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "current_partition": report.data.get("current_partition"),
+        "last_completed_partition": report.data.get("last_completed_partition"),
+        **details,
+    }
+
+
+def _record_recovery_error(report: Any, exc: BaseException) -> dict[str, Any]:
+    error = _recovery_error_record(report, exc)
+    report.data["recovery_error"] = error
+    report.data.setdefault("errors", []).append(error)
+    report.write()
+    return error
+
+
 class RecoveryBundleManager:
     """Create and validate coherent Typesense/checkpoint/provenance bundles."""
 
@@ -242,20 +282,78 @@ class RecoveryBundleManager:
                 indices.append(int(match.group(1)))
         next_index = max(indices, default=-1) + 1
         name = f"bundle-{next_index:05d}-{label}"
-        temporary = self.recovery_dir / f".{name}.tmp"
         target = self.recovery_dir / name
-        if temporary.exists():
-            shutil.rmtree(temporary)
+        if target.exists():
+            raise RecoveryError(
+                RECOVERY_BUNDLE_VALIDATION_ERROR,
+                "bundle_publish",
+                f"validated recovery bundle target already exists: {target}",
+                bundle_name=name,
+                recovery_milestone=label,
+            )
+        nonce = uuid4().hex
+        temporary = self.recovery_dir / f".{name}-{nonce}.tmp"
         temporary.mkdir(parents=True)
+        snapshot_staging_root = self.recovery_dir / ".snapshot-staging"
+        snapshot_staging_root.mkdir(parents=True, exist_ok=True)
+        snapshot_staging = snapshot_staging_root / f"{name}-{nonce}"
+        if snapshot_staging.exists():
+            raise RecoveryError(
+                RECOVERY_SNAPSHOT_ERROR,
+                "snapshot",
+                f"snapshot staging destination already exists: {snapshot_staging}",
+                bundle_name=name,
+                recovery_milestone=label,
+                snapshot_staging_path=str(snapshot_staging),
+            )
+        try:
+            self.client.snapshot(snapshot_staging)
+        except TypesenseError as exc:
+            raise RecoveryError(
+                RECOVERY_SNAPSHOT_ERROR,
+                "snapshot",
+                str(exc),
+                bundle_name=name,
+                recovery_milestone=label,
+                snapshot_staging_path=str(snapshot_staging),
+            ) from exc
+        if not snapshot_staging.is_dir() or not any(snapshot_staging.iterdir()):
+            raise RecoveryError(
+                RECOVERY_SNAPSHOT_ERROR,
+                "snapshot",
+                "Typesense snapshot is missing or empty",
+                bundle_name=name,
+                recovery_milestone=label,
+                snapshot_staging_path=str(snapshot_staging),
+            )
         snapshot = temporary / "typesense-snapshot"
-        snapshot.mkdir()
-        self.client.snapshot(snapshot)
-        if not any(snapshot.iterdir()):
-            raise RuntimeError("Typesense snapshot is empty")
-        shutil.copy2(self.checkpoint_path, temporary / "checkpoint.sqlite3")
-        shutil.copy2(self.uuid_path, temporary / "uuid-provenance.sqlite3")
-        shutil.copy2(self.report_path, temporary / "backfill-report.json")
-        shutil.copy2(self.manifest_path, temporary / "manifest.json")
+        try:
+            snapshot_staging.replace(snapshot)
+        except OSError as exc:
+            raise RecoveryError(
+                RECOVERY_COPY_ERROR,
+                "snapshot_stage_move",
+                f"could not move snapshot into bundle staging: {exc}",
+                bundle_name=name,
+                recovery_milestone=label,
+                snapshot_staging_path=str(snapshot_staging),
+            ) from exc
+        try:
+            for source, destination in (
+                (self.checkpoint_path, temporary / "checkpoint.sqlite3"),
+                (self.uuid_path, temporary / "uuid-provenance.sqlite3"),
+                (self.report_path, temporary / "backfill-report.json"),
+                (self.manifest_path, temporary / "manifest.json"),
+            ):
+                shutil.copy2(source, destination)
+        except OSError as exc:
+            raise RecoveryError(
+                RECOVERY_COPY_ERROR,
+                "bundle_copy",
+                f"recovery bundle copy failed: {exc}",
+                bundle_name=name,
+                recovery_milestone=label,
+            ) from exc
         counts = self._counts()
         metadata = {
             "bundle_version": "msc-phase3b-recovery-v1",
@@ -267,11 +365,40 @@ class RecoveryBundleManager:
             "accepted_document_counts": counts,
             "uuid_audit_total": self.provenance.total_count(),
             "uuid_conflict_count": self.provenance.conflict_count(),
+            "snapshot_staging_path": str(snapshot_staging),
             "final": final,
         }
-        atomic_write_json(temporary / "bundle.json", metadata)
-        self._validate(temporary, metadata)
-        temporary.replace(target)
+        try:
+            atomic_write_json(temporary / "bundle.json", metadata)
+            self._validate(temporary, metadata)
+        except RecoveryError:
+            raise
+        except Exception as exc:
+            raise RecoveryError(
+                RECOVERY_BUNDLE_VALIDATION_ERROR,
+                "bundle_validation",
+                str(exc),
+                bundle_name=name,
+                recovery_milestone=label,
+            ) from exc
+        if target.exists():
+            raise RecoveryError(
+                RECOVERY_BUNDLE_VALIDATION_ERROR,
+                "bundle_publish",
+                f"validated recovery bundle target appeared during publish: {target}",
+                bundle_name=name,
+                recovery_milestone=label,
+            )
+        try:
+            temporary.replace(target)
+        except OSError as exc:
+            raise RecoveryError(
+                RECOVERY_BUNDLE_VALIDATION_ERROR,
+                "bundle_publish",
+                f"validated recovery bundle publish failed: {exc}",
+                bundle_name=name,
+                recovery_milestone=label,
+            ) from exc
         metadata["path"] = str(target)
         self.created.append(metadata)
         if not final:
@@ -284,10 +411,14 @@ class RecoveryBundleManager:
         accepted = int(report.data["counts"].get("records_accepted", 0))
         if accepted - self.last_milestone_accepted < RECOVERY_MILESTONE_DOCUMENTS:
             return None
+        created = self.create(f"milestone-{accepted}", report)
         self.last_milestone_accepted = accepted
-        return self.create(f"milestone-{accepted}", report)
+        return created
 
     def _validate(self, directory: Path, metadata: Mapping[str, Any]) -> None:
+        snapshot = directory / "typesense-snapshot"
+        if not snapshot.is_dir() or not any(snapshot.iterdir()):
+            raise RuntimeError("recovery Typesense snapshot is missing or empty")
         for name in ("checkpoint.sqlite3", "uuid-provenance.sqlite3", "backfill-report.json", "manifest.json"):
             if not (directory / name).is_file():
                 raise RuntimeError(f"recovery bundle missing {name}")
@@ -649,6 +780,7 @@ def run(args: argparse.Namespace) -> int:
             bundles.create("initial", runner.report)
         interrupted_or_failed: str | None = None
         coverage: dict[str, Any] = {"status": "NOT_RUN", "sources": {}, "changed_partitions": [], "requests": 0}
+        recovery_error: dict[str, Any] | None = None
         with graceful_interrupts():
             try:
                 if args.resume:
@@ -658,8 +790,15 @@ def run(args: argparse.Namespace) -> int:
                 runner.run()
             except KeyboardInterrupt as exc:
                 interrupted_or_failed = str(exc) or "INTERRUPTED"
+            except RecoveryError as exc:
+                interrupted_or_failed = str(exc)
+                recovery_error = _record_recovery_error(runner.report, exc)
             except Exception as exc:
                 interrupted_or_failed = str(exc)
+                recovery_error = _record_recovery_error(
+                    runner.report,
+                    RecoveryError("RECOVERY_FINALIZATION_ERROR", "finalization", str(exc)),
+                )
 
         if interrupted_or_failed is not None and coverage["status"] == "NOT_RUN":
             coverage = {"status": "SKIPPED", "sources": {}, "changed_partitions": [], "requests": 0}
@@ -674,6 +813,8 @@ def run(args: argparse.Namespace) -> int:
         base_audit["stale_recovery_milestone"] = stale_milestone
         base_audit["coverage_reconciliation"] = coverage
         base_audit["counts"] = report_data.get("counts", {})
+        base_audit["errors"] = report_data.get("errors", [])
+        base_audit["recovery_error"] = recovery_error or report_data.get("recovery_error")
         base_audit["source_coverage"] = base_audit.get("source_coverage_parity", {})
         base_audit["schema_drift"] = report_data.get("schema_drift", {})
         base_audit["uuid_conflicts"] = provenance.conflict_count()
@@ -703,14 +844,35 @@ def run(args: argparse.Namespace) -> int:
             base_audit["resources_final_before_restart"] = resource_snapshot(args.typesense_root)
             audit_gates_pass = base_audit["overall_status"] == "PASS" and base_audit["data_plane_gate"]["pass"] and base_audit["sample_parity"]["status"] == "PASS" and not base_audit["search_benchmark"]["errors"] and all(not item["errors"] for item in base_audit["concurrency"])
             if audit_gates_pass:
-                final_bundle = bundles.create("final", runner.report, final=True)
-                base_audit["final_recovery_bundle"] = final_bundle
-                subprocess.run(["bash", "infra/typesense/local-typesense.sh", "restart"], check=True)
-                restarted = TypesenseClient(TypesenseConfig.from_env())
-                restart_counts = {group: restarted.document_count(physical_collection_name(group, args.generation)) for group in LOGICAL_ALIASES}
-                restart_search = restarted.search_group("goods", "*", collection=physical_collection_name("goods", args.generation), per_page=1)
-                base_audit["clean_restart"] = {"pass": restarted.health().get("ok") is True and all(value == base_audit["group_expected_unique_counts"][group] for group, value in restart_counts.items()) and int(restart_search.get("found", 0)) >= 1, "counts": restart_counts, "search_found": restart_search.get("found")}
-                base_audit["resources_final"] = resource_snapshot(args.typesense_root)
+                try:
+                    final_bundle = bundles.create("final", runner.report, final=True)
+                except RecoveryError as exc:
+                    interrupted_or_failed = str(exc)
+                    recovery_error = _record_recovery_error(runner.report, exc)
+                    runner.report.set_state("FAILED", current_partition=runner.report.data.get("current_partition"))
+                    runner.report.write()
+                    base_audit["interrupted_or_failed"] = interrupted_or_failed
+                    base_audit["recovery_error"] = recovery_error
+                    base_audit["clean_restart"] = {"pass": False, "skipped": True}
+                except Exception as exc:
+                    interrupted_or_failed = str(exc)
+                    recovery_error = _record_recovery_error(
+                        runner.report,
+                        RecoveryError("RECOVERY_FINALIZATION_ERROR", "finalization", str(exc)),
+                    )
+                    runner.report.set_state("FAILED", current_partition=runner.report.data.get("current_partition"))
+                    runner.report.write()
+                    base_audit["interrupted_or_failed"] = interrupted_or_failed
+                    base_audit["recovery_error"] = recovery_error
+                    base_audit["clean_restart"] = {"pass": False, "skipped": True}
+                else:
+                    base_audit["final_recovery_bundle"] = final_bundle
+                    subprocess.run(["bash", "infra/typesense/local-typesense.sh", "restart"], check=True)
+                    restarted = TypesenseClient(TypesenseConfig.from_env())
+                    restart_counts = {group: restarted.document_count(physical_collection_name(group, args.generation)) for group in LOGICAL_ALIASES}
+                    restart_search = restarted.search_group("goods", "*", collection=physical_collection_name("goods", args.generation), per_page=1)
+                    base_audit["clean_restart"] = {"pass": restarted.health().get("ok") is True and all(value == base_audit["group_expected_unique_counts"][group] for group, value in restart_counts.items()) and int(restart_search.get("found", 0)) >= 1, "counts": restart_counts, "search_found": restart_search.get("found")}
+                    base_audit["resources_final"] = resource_snapshot(args.typesense_root)
             else:
                 base_audit["clean_restart"] = {"pass": False, "skipped": True}
         else:

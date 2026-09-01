@@ -971,7 +971,7 @@ class BackfillRunner:
                 results.append(result)
                 self.report.update(result)
                 self.report.write()
-                if self.on_partition_boundary is not None:
+                if self.on_partition_boundary is not None and not result.skipped:
                     self.on_partition_boundary(result, self.report)
                     self.report.write()
                 if result.status in {IngestionStatus.FAILED, IngestionStatus.QUARANTINED}:

@@ -173,6 +173,42 @@ class ReadinessTest(unittest.TestCase):
                 BackfillRunner(engine, store, manifest, report_path=report_path, resume=True, force=True, max_partitions=14).run()
                 self.assertTrue(engine.calls)
 
+    def test_resumed_skipped_partition_does_not_fire_recovery_callback(self):
+        manifest = self._manifest({key: 1 for key in SOURCE_CONTRACTS})
+        partitions = tuple(iter_parent_partitions(
+            manifest["source_range"]["from"], manifest["source_range"]["to"], manifest["sources"]
+        ))
+        with tempfile.TemporaryDirectory() as temp:
+            checkpoint_path = Path(temp) / "checkpoints.sqlite3"
+            report_path = Path(temp) / "backfill-report.json"
+            with CheckpointStore(checkpoint_path) as store:
+                source_key, partition_date = partitions[0]
+                store.start(source_key, partition_date, sink_target="typesense:test-generation")
+                store.finish(
+                    source_key,
+                    partition_date,
+                    IngestionStatus.COMPLETED,
+                    sink_target="typesense:test-generation",
+                    parent_pre_count=1,
+                    parent_post_count=1,
+                    normalized_count=1,
+                    sink_accepted_count=1,
+                )
+                callbacks = []
+                results = BackfillRunner(
+                    FakeEngine(store),
+                    store,
+                    manifest,
+                    report_path=report_path,
+                    resume=True,
+                    max_partitions=14,
+                    on_partition_boundary=lambda result, _report: callbacks.append(result),
+                ).run()
+
+            self.assertTrue(results[0].skipped)
+            self.assertEqual(13, len(callbacks))
+            self.assertTrue(all(not result.skipped for result in callbacks))
+
     def test_capacity_arithmetic_and_field_review(self):
         samples = load_fixture_samples(sample_limit=1)
         totals = {key: 10 for key in SOURCE_CONTRACTS}
