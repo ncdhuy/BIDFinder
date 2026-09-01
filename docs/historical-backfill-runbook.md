@@ -379,3 +379,10 @@ and a clean Typesense restart. Alias activation remains a separate operation.
 Later migration to Hetzner/Linux can use a validated snapshot or a fresh
 historical generation with the same collections, checkpoints, and engine; only
 the operator service wrapper changes.
+
+Phase 3C does not extend or rewrite this historical generation. The final
+`hist_v1_20260829` evidence remains frozen through 2026-08-29; newer closed MSC
+days belong to a separate mutable serving generation whose checkpoint and UUID
+provenance databases are copied/remapped from this final state. Historical
+audit and recovery evidence remains the rollback/base reference for that
+serving continuation.

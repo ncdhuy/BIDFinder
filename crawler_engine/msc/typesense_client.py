@@ -218,9 +218,40 @@ class TypesenseClient:
                 return None
             raise
 
+    def list_collections(self) -> list[dict[str, Any]]:
+        raw = self._request_raw("GET", "/collections", error_code=TYPESENSE_SCHEMA_ERROR)
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise TypesenseError(TYPESENSE_SCHEMA_ERROR, "Typesense returned invalid collection JSON") from exc
+        collections = payload.get("collections", []) if isinstance(payload, dict) else payload
+        if not isinstance(collections, list) or not all(isinstance(item, dict) for item in collections):
+            raise TypesenseError(TYPESENSE_SCHEMA_ERROR, "Typesense returned invalid collection list")
+        return collections
+
     def create_collection(self, schema: Mapping[str, Any]) -> dict[str, Any]:
         return self._request_json(
             "POST", "/collections", schema, error_code=TYPESENSE_SCHEMA_ERROR,
+        )
+
+    def clone_collection(
+        self,
+        source: str,
+        destination: str,
+        *,
+        copy_documents: bool = True,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Clone one collection server-side, optionally including documents."""
+
+        if not source or not destination or source == destination:
+            raise ValueError("clone source and destination must be distinct non-empty names")
+        payload: dict[str, Any] = {"name": destination}
+        if metadata is not None:
+            payload["metadata"] = dict(metadata)
+        query = urlencode({"src_name": source, "copy_documents": str(copy_documents).lower()})
+        return self._request_json(
+            "POST", f"/collections?{query}", payload, error_code=TYPESENSE_SCHEMA_ERROR,
         )
 
     def get_alias(self, alias: str) -> dict[str, Any] | None:
@@ -386,6 +417,17 @@ class TypesenseCollectionManager:
         expected_signature = schema_signature(expected)
         if actual_signature == expected_signature:
             return True
+        actual_metadata = actual_signature.get("metadata", {})
+        expected_metadata = expected_signature.get("metadata", {})
+        if actual_metadata in (None, {}):
+            actual_signature = {**actual_signature, "metadata": expected_metadata}
+            actual_metadata = expected_metadata
+        if (
+            isinstance(actual_metadata, Mapping)
+            and isinstance(expected_metadata, Mapping)
+            and all(actual_metadata.get(key) == value for key, value in expected_metadata.items())
+        ):
+            actual_signature = {**actual_signature, "metadata": expected_metadata}
         # Typesense v30 stores the document id as an implicit field and omits
         # it from GET /collections/{name}; canonical IDs remain fully usable.
         actual_fields = {field["name"] for field in actual_signature["fields"]}

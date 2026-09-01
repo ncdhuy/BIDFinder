@@ -326,3 +326,28 @@ estimate, and monitor WSL memory, Typesense RSS, CPU, and swap. Avoid sustained
 swap thrashing and other memory-heavy local workloads. Prevent Windows Sleep or
 Hibernate during backfill or serving. This is a single-node local dogfood
 target; HA is deferred to the later dedicated Linux/Hetzner stage.
+
+## Phase 3C current serving generation
+
+Phase 3B's `hist_v1_20260829` is immutable evidence and remains frozen through
+2026-08-29. Phase 3C creates exactly one `serving_v1_<creation-date>` physical
+generation by sequentially cloning the three historical collections with
+Typesense's server-side `copy_documents=true` operation. It then copies the
+historical checkpoint and UUID-provenance databases, remapping only the sink
+target to the serving generation, and ingests closed days beginning at
+2026-08-30. The historical collections and stable aliases are never changed.
+
+The local operator wrapper performs the guarded bootstrap, clone parity,
+catch-up, serving snapshot, and clean-restart proof:
+
+```bash
+set -a; source ~/.config/bidfinder/typesense.env; set +a
+python3 tools/phase3c_serving.py
+```
+
+The wrapper uses a bounded three-day closed-day lookback for future correction
+checks. A changed recent partition is replaced using upsert plus exact stale
+UUID deletion; upsert alone is insufficient for source deletions. The lighter
+serving snapshot policy is one validated snapshot after each successful
+catch-up batch. Only after shadow-read validation in Phase 4 may an operator
+consider stable alias activation.

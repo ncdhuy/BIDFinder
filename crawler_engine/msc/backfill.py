@@ -928,6 +928,8 @@ class BackfillRunner:
         resume: bool = False,
         force: bool = False,
         max_partitions: int | None = None,
+        replace_existing: bool = False,
+        replace_existing_before: date | None = None,
         on_before_partition: Callable[[str, str, "BackfillReport"], None] | None = None,
         on_partition_boundary: Callable[[PartitionResult, "BackfillReport"], None] | None = None,
     ) -> None:
@@ -939,6 +941,8 @@ class BackfillRunner:
         self.resume = resume
         self.force = force
         self.max_partitions = max_partitions
+        self.replace_existing = replace_existing
+        self.replace_existing_before = replace_existing_before
         self.on_before_partition = on_before_partition
         self.on_partition_boundary = on_partition_boundary
 
@@ -961,14 +965,26 @@ class BackfillRunner:
                 if self.on_before_partition is not None:
                     self.on_before_partition(source_key, partition_date, self.report)
                 checkpoint = self.checkpoint_store.get(source_key, partition_date, getattr(self.engine.sink, "sink_target", ""))
-                if checkpoint and checkpoint.status == IngestionStatus.COMPLETED and not self.force:
+                should_replace = (
+                    self.replace_existing
+                    and checkpoint is not None
+                    and checkpoint.status == IngestionStatus.COMPLETED
+                    and (self.force or self.replace_existing_before is None or parse_partition_date(partition_date) < self.replace_existing_before)
+                )
+                if checkpoint and checkpoint.status == IngestionStatus.COMPLETED and not self.force and not should_replace:
                     if not self.resume:
                         raise BackfillControlError(
                             f"completed partition {source_key}:{partition_date} requires --resume or --force"
                         )
                     result = _checkpoint_skip_result(checkpoint)
                 else:
-                    result = self.engine.ingest_partition(source_key, partition_date, force=self.force, allow_open_day=False)
+                    result = self.engine.ingest_partition(
+                        source_key,
+                        partition_date,
+                        force=self.force or should_replace,
+                        allow_open_day=False,
+                        replace_existing=should_replace,
+                    )
                 results.append(result)
                 self.report.update(result)
                 self.report.write()

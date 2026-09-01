@@ -36,6 +36,7 @@ from .engine import EngineError, MSCIngestionEngine
 from .models import IngestionStatus
 from .sink import InMemorySink, JsonlValidationSink, TypesenseSink
 from .typesense_client import TypesenseClient, TypesenseCollectionManager, TypesenseError
+from .serving import latest_closed_day, next_incremental_start, render_serving_report_markdown, run_incremental
 
 
 def _sources(value: str) -> tuple[str, ...]:
@@ -133,6 +134,26 @@ def build_parser() -> argparse.ArgumentParser:
     backfill.add_argument("--sample-dir", type=Path, default=None)
     backfill.add_argument("--acknowledge-readiness", action="store_true", help="required for any actual run")
     backfill.add_argument("--authorize-full-run", metavar="PHRASE", help="exact historical-write authorization phrase")
+    incremental = sub.add_parser("incremental", help="sync a serving generation through closed MSC days")
+    incremental.add_argument("--generation", required=True, help="serving physical generation; historical generation is rejected")
+    incremental.add_argument("--checkpoint", required=True, type=Path)
+    incremental.add_argument("--provenance", required=True, type=Path)
+    incremental.add_argument("--from", dest="from_date", type=_day)
+    incremental.add_argument("--to", dest="to_date", type=_day)
+    incremental.add_argument("--latest-closed", action="store_true", help="use latest fully closed Vietnam day as --to")
+    incremental.add_argument("--lookback", type=int, default=3, help="bounded recent closed-day revalidation window")
+    incremental.add_argument("--resume", action="store_true", default=True)
+    incremental.add_argument("--no-resume", dest="resume", action="store_false")
+    incremental.add_argument("--force", action="store_true")
+    incremental.add_argument("--max-partitions", type=int, required=True)
+    incremental.add_argument("--request-delay", type=float, default=1.0)
+    incremental.add_argument("--timeout", type=float, default=30.0)
+    incremental.add_argument("--max-retries", type=int, default=3)
+    incremental.add_argument("--page-size", type=int, default=1000)
+    incremental.add_argument("--typesense-batch-size", type=int, default=None)
+    incremental.add_argument("--report", type=Path, default=Path("incremental-serving-audit.json"))
+    incremental.add_argument("--markdown", type=Path, default=None)
+    incremental.add_argument("--base-manifest-fingerprint", required=True)
     audit = sub.add_parser("backfill-audit", help="audit a completed physical generation without alias writes")
     audit.add_argument("--plan", required=True, type=Path)
     audit.add_argument("--checkpoint", required=True, type=Path)
@@ -249,6 +270,37 @@ def _run_backfill(args: argparse.Namespace) -> int:
     return 0 if all(result.status == IngestionStatus.COMPLETED for result in results) else 1
 
 
+def _run_incremental(args: argparse.Namespace) -> int:
+    if args.latest_closed and args.to_date is not None:
+        raise BackfillControlError("--latest-closed cannot be combined with --to")
+    with CheckpointStore(args.checkpoint) as checkpoints:
+        from_date = args.from_date or next_incremental_start(checkpoints, args.generation).isoformat()
+    to_date = args.to_date or latest_closed_day().isoformat()
+    config = _msc_config(args)
+    ts_config = TypesenseConfig.from_env()
+    if args.typesense_batch_size is not None:
+        ts_config = replace(ts_config, batch_size=args.typesense_batch_size)
+    report = run_incremental(
+        generation=args.generation,
+        from_date=from_date,
+        to_date=to_date,
+        checkpoint_path=args.checkpoint,
+        provenance_path=args.provenance,
+        report_path=args.report,
+        base_manifest_fingerprint=args.base_manifest_fingerprint,
+        lookback_days=args.lookback,
+        force=args.force,
+        resume=args.resume,
+        max_partitions=args.max_partitions,
+        msc_config=config,
+        typesense_config=ts_config,
+    )
+    if args.markdown:
+        args.markdown.write_text(render_serving_report_markdown(report), encoding="utf-8")
+    print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+    return 0 if report["overall_status"] == "PASS" else 1
+
+
 def _run_audit(args: argparse.Namespace) -> int:
     manifest = json.loads(args.plan.read_text(encoding="utf-8"))
     report = json.loads(args.report.read_text(encoding="utf-8")) if args.report else None
@@ -275,6 +327,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_capacity(args)
         if args.operation == "backfill":
             return _run_backfill(args)
+        if args.operation == "incremental":
+            return _run_incremental(args)
         if args.operation == "backfill-audit":
             return _run_audit(args)
         if args.operation == "benchmark":

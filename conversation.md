@@ -2698,13 +2698,13 @@
 > {
 >   "language": "javascript",
 >   "cwd": "D:\\startup\\muasamcong\\BIDFinder\\apps\\api",
->   "code": "const cp=require('child_process');try{const o=cp.execFileSync('rtk',['python','-c','import os; os.environ.setdefault(\"DATABASE_URL\", \"postgresql://user:pass@localhost/test\"); import server; print(len(server.app.routes))'],{cwd:process.cwd(),encoding:'utf8',stdio:['ignore','pipe','pipe']});console.log('PASS',o.trim())}catch(e){console.log('FAIL');console.log(((e.stdout||'')+(e.stderr||'')).split(/\\r?\\n/).filter(x=>/Error|ModuleNotFound|Traceback|No module/i.test(x)).slice(-12).join('\\n'))}"
+>   "code": "const cp=require('child_process');try{const o=cp.execFileSync('rtk',['python','-c','import os; os.environ.setdefault(\"DATABASE_URL\", \"<REDACTED_POSTGRES_URL>\"); import server; print(len(server.app.routes))'],{cwd:process.cwd(),encoding:'utf8',stdio:['ignore','pipe','pipe']});console.log('PASS',o.trim())}catch(e){console.log('FAIL');console.log(((e.stdout||'')+(e.stderr||'')).split(/\\r?\\n/).filter(x=>/Error|ModuleNotFound|Traceback|No module/i.test(x)).slice(-12).join('\\n'))}"
 > }
 > ```
 >
 > ````text
 > ```javascript
-> const cp=require('child_process');try{const o=cp.execFileSync('rtk',['python','-c','import os; os.environ.setdefault("DATABASE_URL", "postgresql://user:pass@localhost/test"); import server; print(len(server.app.routes))'],{cwd:process.cwd(),encoding:'utf8',stdio:['ignore','pipe','pipe']});console.log('PASS',o.trim())}catch(e){console.log('FAIL');console.log(((e.stdout||'')+(e.stderr||'')).split(/\r?\n/).filter(x=>/Error|ModuleNotFound|Traceback|No module/i.test(x)).slice(-12).join('\n'))}
+> const cp=require('child_process');try{const o=cp.execFileSync('rtk',['python','-c','import os; os.environ.setdefault("DATABASE_URL", "<REDACTED_POSTGRES_URL>"); import server; print(len(server.app.routes))'],{cwd:process.cwd(),encoding:'utf8',stdio:['ignore','pipe','pipe']});console.log('PASS',o.trim())}catch(e){console.log('FAIL');console.log(((e.stdout||'')+(e.stderr||'')).split(/\r?\n/).filter(x=>/Error|ModuleNotFound|Traceback|No module/i.test(x)).slice(-12).join('\n'))}
 > ```
 >
 > FAIL

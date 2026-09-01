@@ -6,6 +6,8 @@ readonly TYPESENSE_VERSION="30.2"
 readonly DEFAULT_HOST="127.0.0.1"
 readonly DEFAULT_PORT="8108"
 readonly DOWNLOAD_URL="https://dl.typesense.org/releases/30.2/typesense-server-30.2-linux-amd64.tar.gz"
+readonly HEALTH_WAIT_SECONDS="${BIDFINDER_TYPESENSE_HEALTH_WAIT_SECONDS:-1200}"
+readonly STOP_WAIT_SECONDS="${BIDFINDER_TYPESENSE_STOP_WAIT_SECONDS:-300}"
 
 CONFIG_FILE="${BIDFINDER_TYPESENSE_CONFIG:-$HOME/.config/bidfinder/typesense.env}"
 if [[ -f "$CONFIG_FILE" ]]; then
@@ -64,7 +66,7 @@ pid_alive() {
 wait_health() {
   local port="$1"
   local url="http://127.0.0.1:$port/health"
-  for _ in $(seq 1 60); do
+  for _ in $(seq 1 "$HEALTH_WAIT_SECONDS"); do
     if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then
       return 0
     fi
@@ -109,7 +111,7 @@ stop_pid() {
     return 0
   fi
   kill -TERM "$pid"
-  for _ in $(seq 1 30); do
+  for _ in $(seq 1 "$STOP_WAIT_SECONDS"); do
     if ! kill -0 "$pid" 2>/dev/null; then
       rm -f "$pid_file"
       echo "stopped"
@@ -138,9 +140,10 @@ snapshot() {
   local snapshot_path="${1:-}"
   [[ -n "$snapshot_path" && "$snapshot_path" == /* ]] || die "snapshot path must be an absolute Linux path"
   [[ "$snapshot_path" != "$DATA_DIR" && "$snapshot_path" != "$DATA_DIR/"* ]] || die "snapshot must not be inside live data"
+  [[ ! -e "$snapshot_path" ]] || die "snapshot destination already exists; use a new unique path"
   require_local_config
   ensure_dirs
-  mkdir -p "$snapshot_path"
+  mkdir -p "$(dirname "$snapshot_path")"
   curl -fsS -X POST --get --data-urlencode "snapshot_path=$snapshot_path" \
     "http://$HOST:$PORT/operations/snapshot"
   echo

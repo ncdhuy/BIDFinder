@@ -94,3 +94,19 @@ docs/historical-backfill-runbook.md
 The backfill control plane is intentionally layered over `engine.py`,
 `checkpoint.py`, and `sink.py`; it does not duplicate MSC retrieval or
 Typesense import logic.
+
+Phase 3C adds the current-serving continuation without changing the
+application:
+
+```text
+crawler_engine/msc/serving.py       Serving guards, clone, SQLite bootstrap, incremental report
+tools/phase3c_serving.py            Local guarded bootstrap/catch-up/snapshot/restart operator
+tests/msc/test_phase3c_serving.py   Offline serving lifecycle and safety tests
+incremental-serving-audit.json      Compact serving-generation audit evidence
+incremental-serving-audit.md        Human-readable serving audit summary
+```
+
+The immutable `hist_v1_20260829` generation is the audited base. The mutable
+serving generation is caught up from the first post-freeze closed day and is
+the future explicit Phase 4 shadow-read target. Stable aliases and FastAPI/UI
+remain unchanged in Phase 3C.

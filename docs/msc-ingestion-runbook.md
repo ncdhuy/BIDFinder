@@ -270,3 +270,30 @@ phrase `AUTHORIZE_PHASE_3B_HISTORICAL_BACKFILL` through
 `--authorize-full-run`, alongside explicit range, generation, checkpoint,
 manifest, readiness acknowledgement, and matching fingerprints. This local
 phase never supplies that authorization.
+
+## Current serving generation and daily incremental ingestion (Phase 3C)
+
+`hist_v1_20260829` is the immutable historical base; never append post-
+2026-08-29 records to it. Create one `serving_v1_<creation-date>` generation
+from the historical Typesense collections, bootstrap serving-specific copies
+of the checkpoint and UUID-provenance databases, and ingest from 2026-08-30
+through the latest fully closed Vietnam day. The current calendar day is never
+marked permanently complete.
+
+For the guarded local bootstrap and recovery proof, run
+`python3 tools/phase3c_serving.py` with the local Typesense environment
+exported. For subsequent daily operations use the dedicated CLI, for example:
+
+```bash
+python -m crawler_engine.msc.cli incremental \
+  --generation serving_v1_20260901 \
+  --checkpoint ~/.local/share/bidfinder/typesense/checkpoints/serving_v1_20260901.sqlite3 \
+  --provenance ~/.local/share/bidfinder/typesense/checkpoints/serving_v1_20260901.uuid.sqlite3 \
+  --base-manifest-fingerprint <Phase-3B-fingerprint> \
+  --latest-closed --lookback 3 --resume
+```
+
+The bounded lookback revalidates recent closed dates. Changed partitions use
+exact replacement semantics: upsert current UUIDs and delete only UUIDs no
+longer returned by MSC. Inspect the JSON/Markdown report after each run;
+stable aliases stay inactive until a later FastAPI shadow-read phase.

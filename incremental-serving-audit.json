@@ -1,0 +1,1262 @@
+{
+  "audit_version": "phase-3c-incremental-serving-v1",
+  "base_generation": "hist_v1_20260829",
+  "base_historical_through": "2026-08-29",
+  "base_manifest_fingerprint": "507609bb95405a109b0588473abe44bd3dc3eb1f3ffb8efd64bf30b246d06d5c",
+  "broad_source_counts": {
+    "goods_general": 8234750,
+    "herbal_material": 9554,
+    "medical_devices": 964685,
+    "medicine_generic": 494720,
+    "medicine_herbal": 35490,
+    "medicine_originator": 55239,
+    "traditional_medicine": 22468
+  },
+  "broad_source_parity": true,
+  "canary_retirement": {
+    "aliases_before": {
+      "bidfinder_goods": null,
+      "bidfinder_medicines": null,
+      "bidfinder_traditional": null
+    },
+    "collections": [
+      "bidfinder_goods_v1_local_canary_20260831_29ef44",
+      "bidfinder_medicines_v1_local_canary_20260831_29ef44",
+      "bidfinder_traditional_v1_local_canary_20260831_29ef44"
+    ],
+    "deleted": 3,
+    "generation": "local_canary_20260831_29ef44"
+  },
+  "checkpoint_source_sums": {
+    "goods_general": 8234750,
+    "herbal_material": 9554,
+    "medical_devices": 964685,
+    "medicine_generic": 494720,
+    "medicine_herbal": 35490,
+    "medicine_originator": 55239,
+    "traditional_medicine": 22468
+  },
+  "checkpoint_state": {
+    "completed_parent_partitions": 9156,
+    "expected_parent_partitions": 9156,
+    "range": {
+      "from": "2023-02-01",
+      "to": "2026-08-31"
+    },
+    "sink_target": "typesense:serving_v1_20260901",
+    "sources": {
+      "goods_general": {
+        "completed": 1308,
+        "data_group": "goods",
+        "expected_date_partitions": 1308,
+        "failed": 0,
+        "pending": 0,
+        "quarantined": 0,
+        "running": 0,
+        "stale_running": 0,
+        "sum_completed_parent_pre_count": 8234750
+      },
+      "herbal_material": {
+        "completed": 1308,
+        "data_group": "traditional_medicine",
+        "expected_date_partitions": 1308,
+        "failed": 0,
+        "pending": 0,
+        "quarantined": 0,
+        "running": 0,
+        "stale_running": 0,
+        "sum_completed_parent_pre_count": 9554
+      },
+      "medical_devices": {
+        "completed": 1308,
+        "data_group": "goods",
+        "expected_date_partitions": 1308,
+        "failed": 0,
+        "pending": 0,
+        "quarantined": 0,
+        "running": 0,
+        "stale_running": 0,
+        "sum_completed_parent_pre_count": 964685
+      },
+      "medicine_generic": {
+        "completed": 1308,
+        "data_group": "medicines",
+        "expected_date_partitions": 1308,
+        "failed": 0,
+        "pending": 0,
+        "quarantined": 0,
+        "running": 0,
+        "stale_running": 0,
+        "sum_completed_parent_pre_count": 494720
+      },
+      "medicine_herbal": {
+        "completed": 1308,
+        "data_group": "medicines",
+        "expected_date_partitions": 1308,
+        "failed": 0,
+        "pending": 0,
+        "quarantined": 0,
+        "running": 0,
+        "stale_running": 0,
+        "sum_completed_parent_pre_count": 35490
+      },
+      "medicine_originator": {
+        "completed": 1308,
+        "data_group": "medicines",
+        "expected_date_partitions": 1308,
+        "failed": 0,
+        "pending": 0,
+        "quarantined": 0,
+        "running": 0,
+        "stale_running": 0,
+        "sum_completed_parent_pre_count": 55239
+      },
+      "traditional_medicine": {
+        "completed": 1308,
+        "data_group": "traditional_medicine",
+        "expected_date_partitions": 1308,
+        "failed": 0,
+        "pending": 0,
+        "quarantined": 0,
+        "running": 0,
+        "stale_running": 0,
+        "sum_completed_parent_pre_count": 22468
+      }
+    }
+  },
+  "checks": {
+    "aliases_inactive": true,
+    "all_seven_sources": true,
+    "broad_source_parity": true,
+    "canary_retired": true,
+    "catchup_starts_after_freeze": true,
+    "checkpoint_bootstrap": true,
+    "clean_restart": true,
+    "clone_count_and_sample_parity": true,
+    "historical_unchanged": true,
+    "interruption_resume": true,
+    "one_serving_generation": true,
+    "postflight_clean_restart": true,
+    "postflight_historical_counts": true,
+    "postflight_idempotency": true,
+    "postflight_snapshot_validated": true,
+    "postflight_two_generations": true,
+    "provenance_bootstrap": true,
+    "serving_provenance_typesense_parity": true,
+    "snapshot_validated": true,
+    "two_generations": true,
+    "zero_rejects_and_conflicts": true
+  },
+  "clean_restart": {
+    "health": {
+      "ok": true
+    },
+    "start": 0,
+    "status": "PASS",
+    "stop": 0
+  },
+  "clone": {
+    "base_generation": "hist_v1_20260829",
+    "groups": {
+      "goods": {
+        "destination_collection": "bidfinder_goods_v1_serving_v1_20260901",
+        "destination_count": 9183726,
+        "duration_seconds": 1450.459,
+        "lineage_metadata": {
+          "base_generation": "hist_v1_20260829",
+          "base_historical_through": "2026-08-29",
+          "base_manifest_fingerprint": "507609bb95405a109b0588473abe44bd3dc3eb1f3ffb8efd64bf30b246d06d5c",
+          "created_at": "2026-09-01T10:31:11+00:00",
+          "current_coverage_through": "2026-08-29",
+          "generation_id": "serving_v1_20260901",
+          "ingestion_engine_version": "msc-ingestion-v1",
+          "logical_group": "goods",
+          "role": "serving",
+          "schema_version": "msc-source-schema-v1"
+        },
+        "metadata": {},
+        "metadata_status": "operational-report-only",
+        "parity": true,
+        "sample_ids": [
+          "00000044-01ec-4579-bfbf-2a2cbbfb2bc1",
+          "000000a0-2079-4c20-a612-7abb783e3fc2",
+          "000000d1-9da8-4c13-86a4-fcad19bf15dd"
+        ],
+        "search_found": 9183726,
+        "source_collection": "bidfinder_goods_v1_hist_v1_20260829",
+        "source_count": 9183726
+      },
+      "medicines": {
+        "destination_collection": "bidfinder_medicines_v1_serving_v1_20260901",
+        "destination_count": 585426,
+        "duration_seconds": 53.806,
+        "lineage_metadata": {
+          "base_generation": "hist_v1_20260829",
+          "base_historical_through": "2026-08-29",
+          "base_manifest_fingerprint": "507609bb95405a109b0588473abe44bd3dc3eb1f3ffb8efd64bf30b246d06d5c",
+          "created_at": "2026-09-01T10:31:11+00:00",
+          "current_coverage_through": "2026-08-29",
+          "generation_id": "serving_v1_20260901",
+          "ingestion_engine_version": "msc-ingestion-v1",
+          "logical_group": "medicines",
+          "role": "serving",
+          "schema_version": "msc-source-schema-v1"
+        },
+        "metadata": {},
+        "metadata_status": "operational-report-only",
+        "parity": true,
+        "sample_ids": [
+          "00001db9-5a91-4365-9055-307844525378",
+          "000025a9-ca07-48d5-93c5-a476a1f424ae",
+          "00002d23-131e-466a-8864-5b9f05d977b1"
+        ],
+        "search_found": 585426,
+        "source_collection": "bidfinder_medicines_v1_hist_v1_20260829",
+        "source_count": 585426
+      },
+      "traditional_medicine": {
+        "destination_collection": "bidfinder_traditional_v1_serving_v1_20260901",
+        "destination_count": 32022,
+        "duration_seconds": 3.902,
+        "lineage_metadata": {
+          "base_generation": "hist_v1_20260829",
+          "base_historical_through": "2026-08-29",
+          "base_manifest_fingerprint": "507609bb95405a109b0588473abe44bd3dc3eb1f3ffb8efd64bf30b246d06d5c",
+          "created_at": "2026-09-01T10:31:11+00:00",
+          "current_coverage_through": "2026-08-29",
+          "generation_id": "serving_v1_20260901",
+          "ingestion_engine_version": "msc-ingestion-v1",
+          "logical_group": "traditional_medicine",
+          "role": "serving",
+          "schema_version": "msc-source-schema-v1"
+        },
+        "metadata": {},
+        "metadata_status": "operational-report-only",
+        "parity": true,
+        "sample_ids": [
+          "000284bc-90a2-4428-b20a-1d99d9aad51e",
+          "0002f338-22e2-4c02-83d6-032545860723",
+          "00043d76-c997-4cf9-9bb4-9cf4998b71ec"
+        ],
+        "search_found": 32022,
+        "source_collection": "bidfinder_traditional_v1_hist_v1_20260829",
+        "source_count": 32022
+      }
+    },
+    "method": "Typesense server-side clone with copy_documents=true",
+    "serving_generation": "serving_v1_20260901"
+  },
+  "clone_parity": {
+    "base_generation": "hist_v1_20260829",
+    "groups": {
+      "goods": {
+        "destination_collection": "bidfinder_goods_v1_serving_v1_20260901",
+        "destination_count": 9183726,
+        "duration_seconds": 1450.459,
+        "lineage_metadata": {
+          "base_generation": "hist_v1_20260829",
+          "base_historical_through": "2026-08-29",
+          "base_manifest_fingerprint": "507609bb95405a109b0588473abe44bd3dc3eb1f3ffb8efd64bf30b246d06d5c",
+          "created_at": "2026-09-01T10:31:11+00:00",
+          "current_coverage_through": "2026-08-29",
+          "generation_id": "serving_v1_20260901",
+          "ingestion_engine_version": "msc-ingestion-v1",
+          "logical_group": "goods",
+          "role": "serving",
+          "schema_version": "msc-source-schema-v1"
+        },
+        "metadata": {},
+        "metadata_status": "operational-report-only",
+        "parity": true,
+        "sample_ids": [
+          "00000044-01ec-4579-bfbf-2a2cbbfb2bc1",
+          "000000a0-2079-4c20-a612-7abb783e3fc2",
+          "000000d1-9da8-4c13-86a4-fcad19bf15dd"
+        ],
+        "search_found": 9183726,
+        "source_collection": "bidfinder_goods_v1_hist_v1_20260829",
+        "source_count": 9183726
+      },
+      "medicines": {
+        "destination_collection": "bidfinder_medicines_v1_serving_v1_20260901",
+        "destination_count": 585426,
+        "duration_seconds": 53.806,
+        "lineage_metadata": {
+          "base_generation": "hist_v1_20260829",
+          "base_historical_through": "2026-08-29",
+          "base_manifest_fingerprint": "507609bb95405a109b0588473abe44bd3dc3eb1f3ffb8efd64bf30b246d06d5c",
+          "created_at": "2026-09-01T10:31:11+00:00",
+          "current_coverage_through": "2026-08-29",
+          "generation_id": "serving_v1_20260901",
+          "ingestion_engine_version": "msc-ingestion-v1",
+          "logical_group": "medicines",
+          "role": "serving",
+          "schema_version": "msc-source-schema-v1"
+        },
+        "metadata": {},
+        "metadata_status": "operational-report-only",
+        "parity": true,
+        "sample_ids": [
+          "00001db9-5a91-4365-9055-307844525378",
+          "000025a9-ca07-48d5-93c5-a476a1f424ae",
+          "00002d23-131e-466a-8864-5b9f05d977b1"
+        ],
+        "search_found": 585426,
+        "source_collection": "bidfinder_medicines_v1_hist_v1_20260829",
+        "source_count": 585426
+      },
+      "traditional_medicine": {
+        "destination_collection": "bidfinder_traditional_v1_serving_v1_20260901",
+        "destination_count": 32022,
+        "duration_seconds": 3.902,
+        "lineage_metadata": {
+          "base_generation": "hist_v1_20260829",
+          "base_historical_through": "2026-08-29",
+          "base_manifest_fingerprint": "507609bb95405a109b0588473abe44bd3dc3eb1f3ffb8efd64bf30b246d06d5c",
+          "created_at": "2026-09-01T10:31:11+00:00",
+          "current_coverage_through": "2026-08-29",
+          "generation_id": "serving_v1_20260901",
+          "ingestion_engine_version": "msc-ingestion-v1",
+          "logical_group": "traditional_medicine",
+          "role": "serving",
+          "schema_version": "msc-source-schema-v1"
+        },
+        "metadata": {},
+        "metadata_status": "operational-report-only",
+        "parity": true,
+        "sample_ids": [
+          "000284bc-90a2-4428-b20a-1d99d9aad51e",
+          "0002f338-22e2-4c02-83d6-032545860723",
+          "00043d76-c997-4cf9-9bb4-9cf4998b71ec"
+        ],
+        "search_found": 32022,
+        "source_collection": "bidfinder_traditional_v1_hist_v1_20260829",
+        "source_count": 32022
+      }
+    },
+    "method": "Typesense server-side clone with copy_documents=true",
+    "serving_generation": "serving_v1_20260901"
+  },
+  "effective_range": {
+    "closed": true,
+    "from": "2026-08-30",
+    "to": "2026-08-31"
+  },
+  "execution_time_latest_closed_day": "2026-08-31",
+  "final_serving_physical_counts": {
+    "goods": 9199435,
+    "medicines": 585449,
+    "traditional_medicine": 32022
+  },
+  "final_serving_unique_group_counts": {
+    "goods": 9199435,
+    "medicines": 585449,
+    "traditional_medicine": 32022
+  },
+  "force": false,
+  "group_source_counts": {
+    "goods": 15710,
+    "medicines": 23,
+    "traditional_medicine": 0
+  },
+  "historical_base_validation": {
+    "audit": {
+      "audit_version": "msc-historical-backfill-audit-v1",
+      "checkpoint_audit": {
+        "completed_parent_partitions": 9142,
+        "expected_parent_partitions": 9142,
+        "range": {
+          "from": "2023-02-01",
+          "to": "2026-08-29"
+        },
+        "sink_target": "typesense:hist_v1_20260829",
+        "sources": {
+          "goods_general": {
+            "completed": 1306,
+            "data_group": "goods",
+            "expected_date_partitions": 1306,
+            "failed": 0,
+            "pending": 0,
+            "quarantined": 0,
+            "running": 0,
+            "stale_running": 0,
+            "sum_completed_parent_pre_count": 8219041
+          },
+          "herbal_material": {
+            "completed": 1306,
+            "data_group": "traditional_medicine",
+            "expected_date_partitions": 1306,
+            "failed": 0,
+            "pending": 0,
+            "quarantined": 0,
+            "running": 0,
+            "stale_running": 0,
+            "sum_completed_parent_pre_count": 9554
+          },
+          "medical_devices": {
+            "completed": 1306,
+            "data_group": "goods",
+            "expected_date_partitions": 1306,
+            "failed": 0,
+            "pending": 0,
+            "quarantined": 0,
+            "running": 0,
+            "stale_running": 0,
+            "sum_completed_parent_pre_count": 964685
+          },
+          "medicine_generic": {
+            "completed": 1306,
+            "data_group": "medicines",
+            "expected_date_partitions": 1306,
+            "failed": 0,
+            "pending": 0,
+            "quarantined": 0,
+            "running": 0,
+            "stale_running": 0,
+            "sum_completed_parent_pre_count": 494698
+          },
+          "medicine_herbal": {
+            "completed": 1306,
+            "data_group": "medicines",
+            "expected_date_partitions": 1306,
+            "failed": 0,
+            "pending": 0,
+            "quarantined": 0,
+            "running": 0,
+            "stale_running": 0,
+            "sum_completed_parent_pre_count": 35489
+          },
+          "medicine_originator": {
+            "completed": 1306,
+            "data_group": "medicines",
+            "expected_date_partitions": 1306,
+            "failed": 0,
+            "pending": 0,
+            "quarantined": 0,
+            "running": 0,
+            "stale_running": 0,
+            "sum_completed_parent_pre_count": 55239
+          },
+          "traditional_medicine": {
+            "completed": 1306,
+            "data_group": "traditional_medicine",
+            "expected_date_partitions": 1306,
+            "failed": 0,
+            "pending": 0,
+            "quarantined": 0,
+            "running": 0,
+            "stale_running": 0,
+            "sum_completed_parent_pre_count": 22468
+          }
+        }
+      },
+      "completed_partition_count": 9142,
+      "counts": {
+        "completed_partitions": 9142,
+        "failed_partitions": 0,
+        "import_batches": 0,
+        "quarantined_partitions": 0,
+        "rejected_documents": 0,
+        "retries": 0
+      },
+      "failed_partition_count": 0,
+      "generation": "hist_v1_20260829",
+      "group_expected_unique_counts": {
+        "goods": 9183726,
+        "medicines": 585426,
+        "traditional_medicine": 32022
+      },
+      "group_typesense_actual_counts": {
+        "goods": 9183726,
+        "medicines": 585426,
+        "traditional_medicine": 32022
+      },
+      "import_batch_total": 0,
+      "overall_status": "PASS",
+      "quarantined_partition_count": 0,
+      "range": {
+        "calendar": "Asia/Ho_Chi_Minh",
+        "closed_upper_boundary": true,
+        "from": "2023-02-01",
+        "to": "2026-08-29"
+      },
+      "rejected_document_count": 0,
+      "retry_total": 0,
+      "sampling_validation": {
+        "bands": [
+          "early",
+          "middle",
+          "recent_closed"
+        ],
+        "seed": 20230830,
+        "source_tabs": [
+          "goods_general",
+          "medical_devices",
+          "medicine_generic",
+          "medicine_originator",
+          "medicine_herbal",
+          "herbal_material",
+          "traditional_medicine"
+        ],
+        "status": "PLANNED"
+      },
+      "schema_drift_diagnostics": {
+        "mismatches": [],
+        "status": "PASS",
+        "validation": {
+          "goods": {
+            "collection": "bidfinder_goods_v1_hist_v1_20260829",
+            "metadata": {
+              "generation_id": "hist_v1_20260829",
+              "ingestion_engine_version": "msc-ingestion-v1",
+              "logical_group": "goods",
+              "schema_version": "msc-source-schema-v1"
+            },
+            "num_documents": 9183726
+          },
+          "medicines": {
+            "collection": "bidfinder_medicines_v1_hist_v1_20260829",
+            "metadata": {
+              "generation_id": "hist_v1_20260829",
+              "ingestion_engine_version": "msc-ingestion-v1",
+              "logical_group": "medicines",
+              "schema_version": "msc-source-schema-v1"
+            },
+            "num_documents": 585426
+          },
+          "traditional_medicine": {
+            "collection": "bidfinder_traditional_v1_hist_v1_20260829",
+            "metadata": {
+              "generation_id": "hist_v1_20260829",
+              "ingestion_engine_version": "msc-ingestion-v1",
+              "logical_group": "traditional_medicine",
+              "schema_version": "msc-source-schema-v1"
+            },
+            "num_documents": 32022
+          }
+        }
+      },
+      "search_benchmark": {
+        "latency": [
+          "p50-like",
+          "p95-like"
+        ],
+        "query_set": [
+          "item/medicine name",
+          "active ingredient",
+          "manufacturer",
+          "bidder",
+          "tender code",
+          "source tab",
+          "price range",
+          "sort",
+          "multi-search all"
+        ],
+        "status": "PLANNED"
+      },
+      "source_broad_counts": {
+        "goods_general": 8219041,
+        "herbal_material": 9554,
+        "medical_devices": 964685,
+        "medicine_generic": 494698,
+        "medicine_herbal": 35489,
+        "medicine_originator": 55239,
+        "traditional_medicine": 22468
+      },
+      "source_completed_parent_count_sums": {
+        "goods_general": 8219041,
+        "herbal_material": 9554,
+        "medical_devices": 964685,
+        "medicine_generic": 494698,
+        "medicine_herbal": 35489,
+        "medicine_originator": 55239,
+        "traditional_medicine": 22468
+      },
+      "source_coverage_parity": {
+        "goods_general": {
+          "broad_range_count": 8219041,
+          "parity": true,
+          "sum_completed_parent_source_counts": 8219041
+        },
+        "herbal_material": {
+          "broad_range_count": 9554,
+          "parity": true,
+          "sum_completed_parent_source_counts": 9554
+        },
+        "medical_devices": {
+          "broad_range_count": 964685,
+          "parity": true,
+          "sum_completed_parent_source_counts": 964685
+        },
+        "medicine_generic": {
+          "broad_range_count": 494698,
+          "parity": true,
+          "sum_completed_parent_source_counts": 494698
+        },
+        "medicine_herbal": {
+          "broad_range_count": 35489,
+          "parity": true,
+          "sum_completed_parent_source_counts": 35489
+        },
+        "medicine_originator": {
+          "broad_range_count": 55239,
+          "parity": true,
+          "sum_completed_parent_source_counts": 55239
+        },
+        "traditional_medicine": {
+          "broad_range_count": 22468,
+          "parity": true,
+          "sum_completed_parent_source_counts": 22468
+        }
+      },
+      "typesense_count_parity": {
+        "goods": true,
+        "medicines": true,
+        "traditional_medicine": true
+      },
+      "typesense_server_version": null,
+      "uuid_audit_total": 9801174,
+      "uuid_conflict_count": 0
+    },
+    "checkpoint_integrity": "ok",
+    "checkpoint_status": {
+      "COMPLETED": 9142,
+      "FAILED": 0,
+      "PENDING": 0,
+      "QUARANTINED": 0,
+      "RUNNING": 0,
+      "VALIDATED": 0
+    },
+    "conflicts": 0,
+    "provenance_groups": {
+      "goods": 9183726,
+      "medicines": 585426,
+      "traditional_medicine": 32022
+    },
+    "provenance_integrity": "ok",
+    "provenance_total": 9801174
+  },
+  "historical_immutability": true,
+  "idempotency": {
+    "forced_revalidation": {
+      "physical_counts": {
+        "goods": 9199435,
+        "medicines": 585449,
+        "traditional_medicine": 32022
+      },
+      "status": "PASS"
+    },
+    "no_force_skip": {
+      "partition_count": 7,
+      "physical_counts": {
+        "goods": 9199435,
+        "medicines": 585449,
+        "traditional_medicine": 32022
+      },
+      "status": "PASS"
+    },
+    "observed_upstream_drift": {
+      "goods_after": 9199435,
+      "goods_before": 9199435,
+      "goods_general_after": 12437,
+      "goods_general_before": 12437,
+      "handled_by": "exact partition replacement",
+      "removed_stale_uuid_count": 0
+    },
+    "repeat_forced_revalidation": {
+      "physical_counts": {
+        "goods": 9199435,
+        "medicines": 585449,
+        "traditional_medicine": 32022
+      },
+      "status": "PASS"
+    },
+    "status": "PASS"
+  },
+  "incremental_start": "2026-08-30",
+  "interruption_resume": {
+    "mode": "offline bounded BackfillRunner fake-engine interruption/resume",
+    "status": "PASS",
+    "test_command": "python -m unittest -v tests.msc.test_backfill_readiness",
+    "tests": 14
+  },
+  "last_successful_incremental_run": "2026-09-01T12:07:02+00:00",
+  "lookback_days": 0,
+  "operational_state_bootstrap": {
+    "checkpoint": {
+      "integrity": "ok",
+      "rows_remapped": 9142,
+      "sink_target": "typesense:serving_v1_20260901",
+      "source_rows": 9142
+    },
+    "provenance": {
+      "conflicts": 0,
+      "generation": "serving_v1_20260901",
+      "group_counts": {
+        "goods": 9183726,
+        "medicines": 585426,
+        "traditional_medicine": 32022
+      },
+      "integrity": "ok",
+      "total": 9801174
+    }
+  },
+  "overall_status": "PASS",
+  "physical_counts": {
+    "goods": 9199435,
+    "medicines": 585449,
+    "traditional_medicine": 32022
+  },
+  "post_restart_generations": [
+    "hist_v1_20260829",
+    "serving_v1_20260901"
+  ],
+  "post_restart_historical_counts": {
+    "goods": 9183726,
+    "medicines": 585426,
+    "traditional_medicine": 32022
+  },
+  "post_restart_serving_counts": {
+    "goods": 9199435,
+    "medicines": 585449,
+    "traditional_medicine": 32022
+  },
+  "postflight_group_source_counts": {
+    "goods": 12437,
+    "medicines": 21,
+    "traditional_medicine": 0
+  },
+  "postflight_source_counts": {
+    "goods_general": 12437,
+    "herbal_material": 0,
+    "medical_devices": 0,
+    "medicine_generic": 21,
+    "medicine_herbal": 0,
+    "medicine_originator": 0,
+    "traditional_medicine": 0
+  },
+  "provenance": {
+    "conflicts": 0,
+    "group_counts": {
+      "goods": 9199435,
+      "medicines": 585449,
+      "traditional_medicine": 32022
+    },
+    "unique_total": 9816906
+  },
+  "reconciliation": [],
+  "requested_range": {
+    "closed": true,
+    "from": "2026-08-30",
+    "to": "2026-08-31"
+  },
+  "resources_after_clone": {
+    "disk_available_bytes": 934160719872,
+    "disk_total_bytes": 1081101176832,
+    "disk_used_bytes": 146940456960,
+    "memory_available_bytes": 4736229376,
+    "swap_used_bytes": 225280
+  },
+  "resources_after_postflight": {
+    "disk_available_bytes": 882795110400,
+    "disk_total_bytes": 1081101176832,
+    "disk_used_bytes": 143313711104,
+    "memory_available_bytes": 5698179072,
+    "swap_used_bytes": 859168768
+  },
+  "resources_before_clone": {
+    "disk_available_bytes": 955596701696,
+    "disk_total_bytes": 1081101176832,
+    "disk_used_bytes": 125504475136,
+    "memory_available_bytes": 11380031488,
+    "swap_used_bytes": 0
+  },
+  "results": [
+    {
+      "additive_schema_fields": [],
+      "elapsed_seconds": 8.527,
+      "error_code": null,
+      "error_message": null,
+      "leaf_count": 1,
+      "normalized_count": 3272,
+      "parent_post_count": 3272,
+      "parent_pre_count": 3272,
+      "partition_date": "2026-08-30",
+      "raw_fetched_count": 3272,
+      "request_count": 6,
+      "retry_count": 0,
+      "sink_accepted_count": 3272,
+      "sink_attempted_count": 3272,
+      "sink_batch_count": 7,
+      "sink_elapsed_seconds": 1.764,
+      "sink_target": "typesense:serving_v1_20260901",
+      "skipped": false,
+      "source_key": "goods_general",
+      "status": "COMPLETED",
+      "unique_source_count": 3272
+    },
+    {
+      "additive_schema_fields": [],
+      "elapsed_seconds": 2.265,
+      "error_code": null,
+      "error_message": null,
+      "leaf_count": 1,
+      "normalized_count": 0,
+      "parent_post_count": 0,
+      "parent_pre_count": 0,
+      "partition_date": "2026-08-30",
+      "raw_fetched_count": 0,
+      "request_count": 3,
+      "retry_count": 0,
+      "sink_accepted_count": 0,
+      "sink_attempted_count": 0,
+      "sink_batch_count": 0,
+      "sink_elapsed_seconds": 0.001,
+      "sink_target": "typesense:serving_v1_20260901",
+      "skipped": false,
+      "source_key": "medical_devices",
+      "status": "COMPLETED",
+      "unique_source_count": 0
+    },
+    {
+      "additive_schema_fields": [],
+      "elapsed_seconds": 2.887,
+      "error_code": null,
+      "error_message": null,
+      "leaf_count": 1,
+      "normalized_count": 1,
+      "parent_post_count": 1,
+      "parent_pre_count": 1,
+      "partition_date": "2026-08-30",
+      "raw_fetched_count": 1,
+      "request_count": 3,
+      "retry_count": 0,
+      "sink_accepted_count": 1,
+      "sink_attempted_count": 1,
+      "sink_batch_count": 1,
+      "sink_elapsed_seconds": 0.018,
+      "sink_target": "typesense:serving_v1_20260901",
+      "skipped": false,
+      "source_key": "medicine_generic",
+      "status": "COMPLETED",
+      "unique_source_count": 1
+    },
+    {
+      "additive_schema_fields": [],
+      "elapsed_seconds": 2.991,
+      "error_code": null,
+      "error_message": null,
+      "leaf_count": 1,
+      "normalized_count": 0,
+      "parent_post_count": 0,
+      "parent_pre_count": 0,
+      "partition_date": "2026-08-30",
+      "raw_fetched_count": 0,
+      "request_count": 3,
+      "retry_count": 0,
+      "sink_accepted_count": 0,
+      "sink_attempted_count": 0,
+      "sink_batch_count": 0,
+      "sink_elapsed_seconds": 0.002,
+      "sink_target": "typesense:serving_v1_20260901",
+      "skipped": false,
+      "source_key": "medicine_originator",
+      "status": "COMPLETED",
+      "unique_source_count": 0
+    },
+    {
+      "additive_schema_fields": [],
+      "elapsed_seconds": 3.028,
+      "error_code": null,
+      "error_message": null,
+      "leaf_count": 1,
+      "normalized_count": 1,
+      "parent_post_count": 1,
+      "parent_pre_count": 1,
+      "partition_date": "2026-08-30",
+      "raw_fetched_count": 1,
+      "request_count": 3,
+      "retry_count": 0,
+      "sink_accepted_count": 1,
+      "sink_attempted_count": 1,
+      "sink_batch_count": 1,
+      "sink_elapsed_seconds": 0.029,
+      "sink_target": "typesense:serving_v1_20260901",
+      "skipped": false,
+      "source_key": "medicine_herbal",
+      "status": "COMPLETED",
+      "unique_source_count": 1
+    },
+    {
+      "additive_schema_fields": [],
+      "elapsed_seconds": 2.888,
+      "error_code": null,
+      "error_message": null,
+      "leaf_count": 1,
+      "normalized_count": 0,
+      "parent_post_count": 0,
+      "parent_pre_count": 0,
+      "partition_date": "2026-08-30",
+      "raw_fetched_count": 0,
+      "request_count": 3,
+      "retry_count": 0,
+      "sink_accepted_count": 0,
+      "sink_attempted_count": 0,
+      "sink_batch_count": 0,
+      "sink_elapsed_seconds": 0.007,
+      "sink_target": "typesense:serving_v1_20260901",
+      "skipped": false,
+      "source_key": "herbal_material",
+      "status": "COMPLETED",
+      "unique_source_count": 0
+    },
+    {
+      "additive_schema_fields": [],
+      "elapsed_seconds": 2.973,
+      "error_code": null,
+      "error_message": null,
+      "leaf_count": 1,
+      "normalized_count": 0,
+      "parent_post_count": 0,
+      "parent_pre_count": 0,
+      "partition_date": "2026-08-30",
+      "raw_fetched_count": 0,
+      "request_count": 3,
+      "retry_count": 0,
+      "sink_accepted_count": 0,
+      "sink_attempted_count": 0,
+      "sink_batch_count": 0,
+      "sink_elapsed_seconds": 0.002,
+      "sink_target": "typesense:serving_v1_20260901",
+      "skipped": false,
+      "source_key": "traditional_medicine",
+      "status": "COMPLETED",
+      "unique_source_count": 0
+    },
+    {
+      "additive_schema_fields": [],
+      "elapsed_seconds": 28.377,
+      "error_code": null,
+      "error_message": null,
+      "leaf_count": 3,
+      "normalized_count": 12438,
+      "parent_post_count": 12438,
+      "parent_pre_count": 12438,
+      "partition_date": "2026-08-31",
+      "raw_fetched_count": 12438,
+      "request_count": 19,
+      "retry_count": 0,
+      "sink_accepted_count": 12438,
+      "sink_attempted_count": 12438,
+      "sink_batch_count": 25,
+      "sink_elapsed_seconds": 5.883,
+      "sink_target": "typesense:serving_v1_20260901",
+      "skipped": false,
+      "source_key": "goods_general",
+      "status": "COMPLETED",
+      "unique_source_count": 12438
+    },
+    {
+      "additive_schema_fields": [],
+      "elapsed_seconds": 2.297,
+      "error_code": null,
+      "error_message": null,
+      "leaf_count": 1,
+      "normalized_count": 0,
+      "parent_post_count": 0,
+      "parent_pre_count": 0,
+      "partition_date": "2026-08-31",
+      "raw_fetched_count": 0,
+      "request_count": 3,
+      "retry_count": 0,
+      "sink_accepted_count": 0,
+      "sink_attempted_count": 0,
+      "sink_batch_count": 0,
+      "sink_elapsed_seconds": 0.02,
+      "sink_target": "typesense:serving_v1_20260901",
+      "skipped": false,
+      "source_key": "medical_devices",
+      "status": "COMPLETED",
+      "unique_source_count": 0
+    },
+    {
+      "additive_schema_fields": [],
+      "elapsed_seconds": 3.008,
+      "error_code": null,
+      "error_message": null,
+      "leaf_count": 1,
+      "normalized_count": 21,
+      "parent_post_count": 21,
+      "parent_pre_count": 21,
+      "partition_date": "2026-08-31",
+      "raw_fetched_count": 21,
+      "request_count": 3,
+      "retry_count": 0,
+      "sink_accepted_count": 21,
+      "sink_attempted_count": 21,
+      "sink_batch_count": 1,
+      "sink_elapsed_seconds": 0.024,
+      "sink_target": "typesense:serving_v1_20260901",
+      "skipped": false,
+      "source_key": "medicine_generic",
+      "status": "COMPLETED",
+      "unique_source_count": 21
+    },
+    {
+      "additive_schema_fields": [],
+      "elapsed_seconds": 2.861,
+      "error_code": null,
+      "error_message": null,
+      "leaf_count": 1,
+      "normalized_count": 0,
+      "parent_post_count": 0,
+      "parent_pre_count": 0,
+      "partition_date": "2026-08-31",
+      "raw_fetched_count": 0,
+      "request_count": 3,
+      "retry_count": 0,
+      "sink_accepted_count": 0,
+      "sink_attempted_count": 0,
+      "sink_batch_count": 0,
+      "sink_elapsed_seconds": 0.001,
+      "sink_target": "typesense:serving_v1_20260901",
+      "skipped": false,
+      "source_key": "medicine_originator",
+      "status": "COMPLETED",
+      "unique_source_count": 0
+    },
+    {
+      "additive_schema_fields": [],
+      "elapsed_seconds": 2.957,
+      "error_code": null,
+      "error_message": null,
+      "leaf_count": 1,
+      "normalized_count": 0,
+      "parent_post_count": 0,
+      "parent_pre_count": 0,
+      "partition_date": "2026-08-31",
+      "raw_fetched_count": 0,
+      "request_count": 3,
+      "retry_count": 0,
+      "sink_accepted_count": 0,
+      "sink_attempted_count": 0,
+      "sink_batch_count": 0,
+      "sink_elapsed_seconds": 0.002,
+      "sink_target": "typesense:serving_v1_20260901",
+      "skipped": false,
+      "source_key": "medicine_herbal",
+      "status": "COMPLETED",
+      "unique_source_count": 0
+    },
+    {
+      "additive_schema_fields": [],
+      "elapsed_seconds": 2.871,
+      "error_code": null,
+      "error_message": null,
+      "leaf_count": 1,
+      "normalized_count": 0,
+      "parent_post_count": 0,
+      "parent_pre_count": 0,
+      "partition_date": "2026-08-31",
+      "raw_fetched_count": 0,
+      "request_count": 3,
+      "retry_count": 0,
+      "sink_accepted_count": 0,
+      "sink_attempted_count": 0,
+      "sink_batch_count": 0,
+      "sink_elapsed_seconds": 0.002,
+      "sink_target": "typesense:serving_v1_20260901",
+      "skipped": false,
+      "source_key": "herbal_material",
+      "status": "COMPLETED",
+      "unique_source_count": 0
+    },
+    {
+      "additive_schema_fields": [],
+      "elapsed_seconds": 2.953,
+      "error_code": null,
+      "error_message": null,
+      "leaf_count": 1,
+      "normalized_count": 0,
+      "parent_post_count": 0,
+      "parent_pre_count": 0,
+      "partition_date": "2026-08-31",
+      "raw_fetched_count": 0,
+      "request_count": 3,
+      "retry_count": 0,
+      "sink_accepted_count": 0,
+      "sink_attempted_count": 0,
+      "sink_batch_count": 0,
+      "sink_elapsed_seconds": 0.002,
+      "sink_target": "typesense:serving_v1_20260901",
+      "skipped": false,
+      "source_key": "traditional_medicine",
+      "status": "COMPLETED",
+      "unique_source_count": 0
+    }
+  ],
+  "schema_fingerprints": {
+    "goods": "bba6ce10a8e7111a4fbf00d3770530e6e7d8dc9c6766d655cdacf87c0bd73f4f",
+    "medicines": "0665733017272dbce60546f09e036688c2a667c5259848f652a39cf8179d1d9d",
+    "traditional_medicine": "e7070d6233cd04796c22640c4f173873a4f5e611f5ffdbc31f0ace05ac8ffeb9"
+  },
+  "search_smoke": {
+    "cases": [
+      {
+        "category": "goods search",
+        "latency_ms": 1.911,
+        "parameters": {
+          "group": "goods",
+          "q": "*"
+        },
+        "result_count": 9199435
+      },
+      {
+        "category": "medicines search",
+        "latency_ms": 4.677,
+        "parameters": {
+          "group": "medicines",
+          "q": "amlodipin"
+        },
+        "result_count": 10107
+      },
+      {
+        "category": "traditional search",
+        "latency_ms": 1.489,
+        "parameters": {
+          "group": "traditional_medicine",
+          "q": "*"
+        },
+        "result_count": 32022
+      },
+      {
+        "category": "filter",
+        "latency_ms": 325.136,
+        "parameters": {
+          "filter_by": "source_tab:HANG_HOA",
+          "group": "goods",
+          "q": "*"
+        },
+        "result_count": 8234750
+      },
+      {
+        "category": "sort",
+        "latency_ms": 982.91,
+        "parameters": {
+          "group": "goods",
+          "q": "*",
+          "sort_by": "winning_unit_price:desc"
+        },
+        "result_count": 9199435
+      },
+      {
+        "category": "multi-search",
+        "latency_ms": 21.208,
+        "parameters": {
+          "generation": "serving_v1_20260901",
+          "q": "*"
+        },
+        "result_count": [
+          9199435,
+          585449,
+          32022
+        ]
+      }
+    ],
+    "outliers_over_500ms": [
+      {
+        "category": "sort",
+        "latency_ms": 982.91,
+        "parameters": {
+          "group": "goods",
+          "q": "*",
+          "sort_by": "winning_unit_price:desc"
+        },
+        "result_count": 9199435
+      }
+    ]
+  },
+  "serving_generation": "serving_v1_20260901",
+  "serving_recovery_bundle": {
+    "base_generation": "hist_v1_20260829",
+    "bundle_version": "msc-phase3c-serving-v1",
+    "created_at": "2026-09-01T12:16:43+00:00",
+    "files": {
+      "checkpoint.sqlite3": {
+        "bytes": 2875392,
+        "sha256": "3418f0e6b47b351c3ad1cf85215854f08d063a89c795768ff1a4d2b9ac76bc97"
+      },
+      "incremental-serving-audit.json": {
+        "bytes": 38646,
+        "sha256": "a858ff0749300a864b0761ef25e367865a9a06b09016f83308c2c04a508c4e70"
+      },
+      "serving-state-manifest.json": {
+        "bytes": 3931,
+        "sha256": "b4dd9207ec2a019950863fdab5302f737c8fbd10825be73263c7f06e5f9dc26a"
+      },
+      "uuid-provenance.sqlite3": {
+        "bytes": 2188296192,
+        "sha256": "b7eca324d339a9acb260fe8c0d4db39b1e2940a4dcbc65b580d7ca15ce5eb1ad"
+      }
+    },
+    "serving_generation": "serving_v1_20260901",
+    "sqlite_integrity": {
+      "checkpoint": "ok",
+      "provenance": "ok"
+    },
+    "status": "VALIDATED",
+    "typesense_snapshot": {
+      "bytes": 12153453329,
+      "files": 246,
+      "path": "/home/ncdhuy/.local/share/bidfinder/typesense/snapshots/serving_v1_20260901-20260901T120702Z-postflight-d3305289577845b98d2ba2812923b6bc",
+      "response": {
+        "success": true
+      }
+    }
+  },
+  "serving_state_manifest": "/home/ncdhuy/.local/share/bidfinder/typesense/reports/serving-state-serving_v1_20260901.json",
+  "snapshot": {
+    "bytes": 12153453329,
+    "files": 246,
+    "path": "/home/ncdhuy/.local/share/bidfinder/typesense/snapshots/serving_v1_20260901-20260901T120702Z-postflight-d3305289577845b98d2ba2812923b6bc",
+    "response": {
+      "success": true
+    }
+  },
+  "source_counts": {
+    "goods_general": 15710,
+    "herbal_material": 0,
+    "medical_devices": 0,
+    "medicine_generic": 22,
+    "medicine_herbal": 1,
+    "medicine_originator": 0,
+    "traditional_medicine": 0
+  },
+  "source_preflight": {
+    "group_totals": {
+      "goods": 9199435,
+      "medicines": 585449,
+      "traditional_medicine": 32022
+    },
+    "msc_requests": 7,
+    "overall_total": 9816906,
+    "range": {
+      "closed": true,
+      "from": "2023-02-01",
+      "to": "2026-08-31"
+    },
+    "records_paginated": false,
+    "source_totals": {
+      "goods_general": 8234750,
+      "herbal_material": 9554,
+      "medical_devices": 964685,
+      "medicine_generic": 494720,
+      "medicine_herbal": 35490,
+      "medicine_originator": 55239,
+      "traditional_medicine": 22468
+    }
+  },
+  "unresolved_errors": [],
+  "unresolved_rejected_docs": [],
+  "uuid_conflicts": 0
+}

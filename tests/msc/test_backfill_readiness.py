@@ -57,7 +57,15 @@ class FakeEngine:
         self.calls = []
         self.fail_key = fail_key
 
-    def ingest_partition(self, source_key, partition_date, *, force=False, allow_open_day=False):
+    def ingest_partition(
+        self,
+        source_key,
+        partition_date,
+        *,
+        force=False,
+        allow_open_day=False,
+        replace_existing=False,
+    ):
         self.calls.append((source_key, partition_date, force, allow_open_day))
         self.checkpoints.start(source_key, partition_date, force=force, sink_target=self.sink.sink_target)
         if self.fail_key == (source_key, partition_date):
@@ -72,7 +80,15 @@ class FakeEngine:
 
 
 class InterruptEngine(FakeEngine):
-    def ingest_partition(self, source_key, partition_date, *, force=False, allow_open_day=False):
+    def ingest_partition(
+        self,
+        source_key,
+        partition_date,
+        *,
+        force=False,
+        allow_open_day=False,
+        replace_existing=False,
+    ):
         self.calls.append((source_key, partition_date, force, allow_open_day))
         raise KeyboardInterrupt
 

@@ -901,3 +901,18 @@ backfill or serving. A later Hetzner/Linux move can restore a validated
 snapshot or build a fresh historical generation using same core engine,
 collections, checkpoints, and fingerprints; only local operator wrapper and
 host paths change. HA remains a future infrastructure decision.
+
+## Phase 3C current-serving state
+
+Phase 3B is final and its `hist_v1_20260829` generation is frozen through
+2026-08-29. Phase 3C creates one mutable `serving_v1_<creation-date>` candidate
+by sequential server-side collection clone, remaps copies of the historical
+checkpoint and UUID-provenance state, then catches up closed MSC days from
+2026-08-30. Daily operation uses the same seven public search contracts,
+bounded recent lookback, completeness gates, and exact stale-UUID deletion.
+
+The candidate remains a physical generation with stable aliases inactive.
+Phase 4 will target it explicitly for FastAPI shadow-read; alias activation and
+application query cutover remain later decisions. Runtime Typesense data,
+snapshots, and SQLite state stay outside Git; only compact audit/report
+evidence is committed.
