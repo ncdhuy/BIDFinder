@@ -215,7 +215,14 @@ class RecoveryBundleManager:
         self.manifest_path = Path(manifest_path)
         self.recovery_dir = Path(recovery_dir)
         self.recovery_dir.mkdir(parents=True, exist_ok=True)
-        self.last_milestone_accepted = 0
+        self.last_milestone_accepted = max(
+            (
+                int(json.loads((bundle / "bundle.json").read_text(encoding="utf-8")).get("uuid_audit_total", 0))
+                for bundle in self.recovery_dir.glob("bundle-*")
+                if (bundle / "bundle.json").is_file()
+            ),
+            default=0,
+        )
         self.created: list[dict[str, Any]] = []
 
     def _counts(self) -> dict[str, int]:

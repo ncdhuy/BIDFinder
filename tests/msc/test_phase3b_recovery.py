@@ -34,6 +34,26 @@ class Phase3BRecoveryTest(unittest.TestCase):
 
             self.assertEqual(names, tuple(path.name for path in sorted(manager.recovery_dir.iterdir())))
 
+    def test_resume_uses_existing_milestone_watermark(self):
+        with TemporaryDirectory() as temporary:
+            recovery_dir = Path(temporary)
+            bundle = recovery_dir / "bundle-00003-milestone-6025897"
+            bundle.mkdir()
+            (bundle / "bundle.json").write_text('{"uuid_audit_total":6025897}\n', encoding="utf-8")
+
+            manager = RecoveryBundleManager(
+                object(),
+                {"generation": "hist_v1_20260829"},
+                object(),
+                checkpoint_path=recovery_dir / "checkpoint.sqlite3",
+                uuid_path=recovery_dir / "uuid.sqlite3",
+                report_path=recovery_dir / "report.json",
+                manifest_path=recovery_dir / "manifest.json",
+                recovery_dir=recovery_dir,
+            )
+
+            self.assertEqual(6025897, manager.last_milestone_accepted)
+
 
 if __name__ == "__main__":
     unittest.main()
