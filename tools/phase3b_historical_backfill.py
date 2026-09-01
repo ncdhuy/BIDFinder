@@ -299,12 +299,9 @@ class RecoveryBundleManager:
             raise RuntimeError("recovery Typesense counts changed during validation")
 
     def _prune(self) -> None:
-        bundles = sorted((p for p in self.recovery_dir.glob("bundle-*") if p.is_dir()), key=lambda p: p.name)
-        keep = set(bundles[-2:])
-        keep.update(p for p in bundles if p.name.endswith("-final"))
-        for bundle in bundles:
-            if bundle not in keep:
-                shutil.rmtree(bundle)
+        # Validated bundles are immutable recovery points.  Retention is an
+        # explicit operator/finalization decision, never an automatic delete.
+        return
 
 
 def _reconcile_coverage(
