@@ -571,7 +571,8 @@ class UUIDProvenanceStore:
         self.path = str(path)
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(self.path)
+        self._connection = sqlite3.connect(self.path, timeout=30.0)
+        self._connection.execute("PRAGMA busy_timeout = 30000")
         self._connection.execute(
             """CREATE TABLE IF NOT EXISTS uuid_provenance (
                 uuid TEXT PRIMARY KEY,

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from datetime import date
+import sqlite3
+import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -192,6 +196,52 @@ class SampleParityTest(unittest.TestCase):
             result = _sample_parity(FakeMSC(), FakeTypesense(), manifest)
 
         self.assertEqual("PASS", result["status"])
+
+
+class SQLiteBusyTimeoutTest(unittest.TestCase):
+    def test_checkpoint_store_waits_for_transient_reader(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = f"{temporary}/checkpoint.sqlite3"
+            with CheckpointStore(path):
+                pass
+
+            blocker = sqlite3.connect(path, timeout=1.0)
+            try:
+                blocker.execute("BEGIN")
+                blocker.execute("SELECT count(1) FROM ingestion_checkpoint").fetchone()
+                result: dict[str, object] = {}
+
+                def write_checkpoint() -> None:
+                    try:
+                        with CheckpointStore(path) as store:
+                            result["checkpoint"] = store.start(
+                                "goods_general",
+                                "2026-01-01",
+                                sink_target="typesense:test",
+                            )
+                    except BaseException as exc:  # pragma: no cover - assertion below reports it
+                        result["error"] = exc
+
+                worker = threading.Thread(target=write_checkpoint)
+                worker.start()
+                time.sleep(0.2)
+                blocker.commit()
+                worker.join(timeout=5.0)
+
+                self.assertFalse(worker.is_alive())
+                self.assertNotIn("error", result)
+                self.assertEqual(result["checkpoint"].status, IngestionStatus.RUNNING)
+            finally:
+                blocker.close()
+
+    def test_both_live_stores_configure_busy_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            checkpoint_path = f"{temporary}/checkpoint.sqlite3"
+            provenance_path = f"{temporary}/provenance.sqlite3"
+            with CheckpointStore(checkpoint_path) as checkpoints:
+                self.assertEqual(checkpoints._connection.execute("PRAGMA busy_timeout").fetchone()[0], 30000)
+            with UUIDProvenanceStore(provenance_path) as provenance:
+                self.assertEqual(provenance._connection.execute("PRAGMA busy_timeout").fetchone()[0], 30000)
 
 
 if __name__ == "__main__":
