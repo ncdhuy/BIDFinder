@@ -532,7 +532,7 @@ def _sample_parity(msc: MSCClient, typesense: TypesenseClient, manifest: Mapping
             page = response.get("page", {})
             records = page.get("content", []) if isinstance(page, dict) else []
             drift = validate_raw_records(contract, records)
-            if not records or drift.breaking:
+            if not records or drift.has_breaking_change:
                 samples.append({"source_key": source_key, "date": sample_date.isoformat(), "pass": False, "reason": "sample contract failure"})
                 continue
             canonical = normalize_records(contract, records[:1], sample_date.isoformat())[0]

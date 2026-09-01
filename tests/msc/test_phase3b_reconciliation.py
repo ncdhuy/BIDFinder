@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 import unittest
+from unittest.mock import patch
 
 from crawler_engine.msc.backfill import (
     AuditedSink,
@@ -11,12 +12,13 @@ from crawler_engine.msc.backfill import (
 )
 from crawler_engine.msc.checkpoint import CheckpointStore
 from crawler_engine.msc.contracts import get_contract
-from crawler_engine.msc.models import IngestionStatus, PartitionContext, SinkWriteResult
+from crawler_engine.msc.models import DriftDiagnostic, IngestionStatus, PartitionContext, SinkWriteResult
 from crawler_engine.msc.partitioning import official_day_interval
 from tools.phase3b_historical_backfill import (
     _current_observed_manifest,
     _manifest_deltas,
     _prepare_manifest_for_run,
+    _sample_parity,
 )
 
 
@@ -161,6 +163,35 @@ class ManifestLineageTest(unittest.TestCase):
         self.assertEqual({"goods_general"}, set(changed))
         self.assertEqual(-2, deltas["goods_general"]["delta"])
         self.assertEqual(8, observed["source_totals"]["goods_general"])
+
+
+class SampleParityTest(unittest.TestCase):
+    def test_sample_parity_uses_drift_diagnostic_breaking_property(self):
+        class FakeMSC:
+            def count_interval(self, contract, interval):
+                return 1
+
+            def fetch_page(self, contract, interval, page):
+                return {"page": {"content": [{"id": "sample"}]}}
+
+        class FakeTypesense:
+            def get_document(self, collection, document_id):
+                return {"id": document_id}
+
+        manifest = {
+            "source_range": {"from": "2023-02-01", "to": "2026-08-29"},
+            "sources": ["goods_general"],
+            "generation": "hist_v1_20260829",
+        }
+        with patch("tools.phase3b_historical_backfill.validate_raw_records", return_value=DriftDiagnostic(())), patch(
+            "tools.phase3b_historical_backfill.normalize_records", return_value=[{"id": "sample"}]
+        ), patch(
+            "tools.phase3b_historical_backfill.canonical_to_typesense_document",
+            side_effect=lambda record, data_group: dict(record),
+        ):
+            result = _sample_parity(FakeMSC(), FakeTypesense(), manifest)
+
+        self.assertEqual("PASS", result["status"])
 
 
 if __name__ == "__main__":
