@@ -65,6 +65,7 @@ class MSCIngestionEngine:
         force: bool = False,
         allow_open_day: bool = False,
         max_leaves: int | None = None,
+        replace_existing: bool = False,
     ) -> PartitionResult:
         contract = get_contract(source_key)
         day = parse_partition_date(partition_date)
@@ -76,6 +77,15 @@ class MSCIngestionEngine:
             raise EngineError("MSC_CONTRACT_ERROR", "current/open day requires explicit allow_open_day")
         sink_target = getattr(self.sink, "sink_target", "validation-jsonl")
         current = self.checkpoint_store.get(source_key, day.isoformat(), sink_target)
+        previous_uuids: set[str] = set()
+        if replace_existing:
+            if not current or current.status != IngestionStatus.COMPLETED:
+                raise EngineError("MSC_CONTRACT_ERROR", "partition replacement requires a completed checkpoint")
+            provenance = getattr(self.sink, "provenance", None)
+            partition_uuids = getattr(provenance, "partition_uuids", None)
+            if not callable(partition_uuids):
+                raise EngineError("MSC_CONTRACT_ERROR", "partition replacement requires UUID provenance")
+            previous_uuids = partition_uuids(source_key, day.isoformat())
         if current and current.status == IngestionStatus.COMPLETED and not force and not open_day:
             return PartitionResult(source_key, day.isoformat(), IngestionStatus.COMPLETED, skipped=True, sink_target=sink_target)
         self.checkpoint_store.start(source_key, day.isoformat(), force=force, sink_target=sink_target)
@@ -148,7 +158,15 @@ class MSCIngestionEngine:
                 source_key, day.isoformat(), contract, parent, pre_count, post_count,
                 union.raw_record_count, union.unique_uuid_count, len(canonical), len(plan.safe_leaves), drift, sink_target,
             )
-            write_result = self.sink.write_partition(context, canonical)
+            if replace_existing:
+                current_uuids = {str(record["id"]) for record in canonical}
+                stale_uuids = previous_uuids - current_uuids
+                replace = getattr(self.sink, "replace_partition", None)
+                if not callable(replace):
+                    raise EngineError("MSC_CONTRACT_ERROR", "partition replacement requires an audited sink")
+                write_result = replace(context, canonical, stale_uuids)
+            else:
+                write_result = self.sink.write_partition(context, canonical)
             sink_attempted_count = write_result.attempted_count
             sink_accepted_count = write_result.accepted_count
             sink_batch_count = write_result.batch_count

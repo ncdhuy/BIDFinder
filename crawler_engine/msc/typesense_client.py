@@ -135,7 +135,16 @@ class TypesenseClient:
             return str(payload.get("message") or payload.get("error") or "Typesense request failed")[:1000]
         return str(payload)[:1000]
 
-    def _request_raw(self, method: str, path: str, body: bytes | None = None, *, content_type: str = "application/json", error_code: str = TYPESENSE_CONNECT_ERROR) -> bytes:
+    def _request_raw(
+        self,
+        method: str,
+        path: str,
+        body: bytes | None = None,
+        *,
+        content_type: str = "application/json",
+        error_code: str = TYPESENSE_CONNECT_ERROR,
+        timeout_seconds: float | None = None,
+    ) -> bytes:
         request = Request(
             self._url(path), data=body, method=method,
             headers={
@@ -145,7 +154,9 @@ class TypesenseClient:
             },
         )
         try:
-            kwargs: dict[str, Any] = {"timeout": self.config.timeout_seconds}
+            kwargs: dict[str, Any] = {
+                "timeout": self.config.timeout_seconds if timeout_seconds is None else timeout_seconds,
+            }
             if self.config.protocol == "https":
                 kwargs["context"] = ssl.create_default_context()
             with self._opener(request, **kwargs) as response:
@@ -159,9 +170,17 @@ class TypesenseClient:
         except (URLError, TimeoutError, OSError) as exc:
             raise TypesenseError(TYPESENSE_CONNECT_ERROR, f"Typesense request failed: {type(exc).__name__}: {exc}") from exc
 
-    def _request_json(self, method: str, path: str, payload: Mapping[str, Any] | None = None, *, error_code: str = TYPESENSE_CONNECT_ERROR) -> dict[str, Any]:
+    def _request_json(
+        self,
+        method: str,
+        path: str,
+        payload: Mapping[str, Any] | None = None,
+        *,
+        error_code: str = TYPESENSE_CONNECT_ERROR,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
         body = None if payload is None else json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        raw = self._request_raw(method, path, body, error_code=error_code)
+        raw = self._request_raw(method, path, body, error_code=error_code, timeout_seconds=timeout_seconds)
         try:
             parsed = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -188,6 +207,7 @@ class TypesenseClient:
             "POST",
             f"/operations/snapshot?{urlencode({'snapshot_path': path})}",
             error_code=TYPESENSE_CONNECT_ERROR,
+            timeout_seconds=self.config.snapshot_timeout_seconds,
         )
 
     def get_collection(self, name: str) -> dict[str, Any] | None:
@@ -236,6 +256,15 @@ class TypesenseClient:
             if exc.status_code == 404:
                 return None
             raise
+
+    def delete_document(self, collection: str, document_id: str) -> dict[str, Any]:
+        """Delete one proven document ID; callers must provide exact IDs."""
+
+        return self._request_json(
+            "DELETE",
+            f"/collections/{quote(collection, safe='')}/documents/{quote(str(document_id), safe='')}",
+            error_code=TYPESENSE_IMPORT_ERROR,
+        )
 
     def import_documents(self, collection: str, documents: Sequence[Mapping[str, Any]]) -> ImportResult:
         started = perf_counter()

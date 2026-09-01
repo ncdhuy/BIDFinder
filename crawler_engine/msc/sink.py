@@ -110,6 +110,13 @@ class TypesenseSink:
     def collection_for(self, context: PartitionContext) -> str:
         return physical_collection_name(context.contract.data_group, self.generation_id)
 
+    def delete_documents(self, context: PartitionContext, document_ids: Sequence[str]) -> None:
+        """Delete only exact IDs proven stale for one reconciled partition."""
+
+        collection = self.collection_for(context)
+        for document_id in sorted({str(value) for value in document_ids}):
+            self.client.delete_document(collection, document_id)
+
     def _failure(self, attempted: int, errors: tuple[str, ...], code: str, *, batches: int = 0, elapsed: float = 0.0) -> SinkWriteResult:
         return SinkWriteResult(attempted, 0, max(1, attempted), errors, code, batches, elapsed)
 

@@ -322,6 +322,12 @@ checkpoint. Create snapshots with the supported `/operations/snapshot` API,
 never by copying live data. Restore only into a separate disposable data
 directory and validate counts/search before stopping it.
 
+Keep normal Typesense requests conservative with `TYPESENSE_TIMEOUT_SECONDS`
+(default `10`). Set `TYPESENSE_SNAPSHOT_TIMEOUT_SECONDS` independently (default
+`300`) because `/operations/snapshot` is a long-running administration
+operation. Do not add blind snapshot retries after a client timeout; validate
+the snapshot directory and persistent state before any operator retry.
+
 Before a future historical run, verify free disk for the projected generation,
 a snapshot, and a second generation; monitor WSL available memory, Typesense
 RSS, CPU, and swap. Avoid large local LLM or other memory-heavy workloads
@@ -332,7 +338,44 @@ matching fingerprints, and
 `--authorize-full-run AUTHORIZE_PHASE_3B_HISTORICAL_BACKFILL`. Do not supply
 that authorization during local-target validation.
 
-The intended future local generation is `hist_v1_20260829`; this phase does
-not populate it. Later migration to Hetzner/Linux can use a validated snapshot
-or a fresh historical generation with the same collections, checkpoints, and
-engine; only the operator service wrapper changes.
+The intended local generation is `hist_v1_20260829`; the authorized Phase 3B
+coordinator is `tools/phase3b_historical_backfill.py`.
+It freezes the closed `2023-02-01..2026-08-29` range and the seven-source
+totals in the signed-off manifest, keeps stable aliases inactive, and writes
+only to the generation-specific Typesense collections.
+
+Run it from WSL with the Typesense environment loaded:
+
+```bash
+python3 tools/phase3b_historical_backfill.py \
+  --from 2023-02-01 --to 2026-08-29 --generation hist_v1_20260829 \
+  --manifest "$HOME/.local/share/bidfinder/typesense/reports/historical-manifest-hist_v1_20260829.json" \
+  --checkpoint "$HOME/.local/share/bidfinder/typesense/checkpoints/hist_v1_20260829.sqlite3" \
+  --uuid-audit "$HOME/.local/share/bidfinder/typesense/checkpoints/hist_v1_20260829.uuid.sqlite3" \
+  --report "$HOME/.local/share/bidfinder/typesense/reports/hist_v1_20260829.backfill-report.json" \
+  --recovery-dir "$HOME/.local/share/bidfinder/typesense/recovery/hist_v1_20260829" \
+  --audit-json historical-backfill-audit.json \
+  --audit-markdown historical-backfill-audit.md \
+  --max-partitions 9142 --acknowledge-readiness \
+  --authorize-full-run AUTHORIZE_PHASE_3B_HISTORICAL_BACKFILL
+```
+
+The coordinator checkpoints each source/date parent, records UUID provenance
+on disk, stops at `MemAvailable < 2 GiB`, critical disk pressure, or sustained
+swap growth, and creates validated Typesense/SQLite recovery bundles initially,
+about every 1,000,000 accepted documents, and at final completion. A controlled
+SIGINT/SIGTERM is resumable: wait for the process to exit, inspect the JSON
+report, then rerun the same command with `--resume` (never global `--force`).
+On resume, the authorized start manifest is preserved; mutable broad source
+counts are recorded in a separate `.observed.json` manifest. Count-only
+completed-prefix reconciliation identifies changed dates recursively. Only
+those dates are replaced, including exact stale UUID deletion; suffix-only
+drift does not rewrite completed partitions. Never use SIGKILL.
+
+The final audit is PASS only after source-coverage reconciliation, UUID and
+Typesense count parity, zero rejected imports, representative MSC-to-Typesense
+document parity, search and concurrency benchmarks, a final recovery bundle,
+and a clean Typesense restart. Alias activation remains a separate operation.
+Later migration to Hetzner/Linux can use a validated snapshot or a fresh
+historical generation with the same collections, checkpoints, and engine; only
+the operator service wrapper changes.

@@ -17,7 +17,7 @@ import shutil
 import sqlite3
 import tempfile
 import time
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from .checkpoint import Checkpoint, CheckpointStore
 from .config import (
@@ -270,6 +270,102 @@ def source_population_preflight(
     }
 
 
+def reconcile_completed_prefix(
+    client: Any,
+    store: CheckpointStore,
+    source_key: str,
+    from_date: str | date,
+    to_date: str | date,
+    sink_target: str,
+) -> dict[str, Any]:
+    """Locate completed-date count drift with deterministic count-only splits."""
+
+    start, end = validate_closed_range(from_date, to_date)
+    checkpoints = {
+        row.partition_date: row
+        for row in store.list(sink_target)
+        if row.source_key == source_key
+    }
+    prefix_end: date | None = None
+    day = start
+    while day <= end:
+        checkpoint = checkpoints.get(day.isoformat())
+        if checkpoint is None or checkpoint.status != IngestionStatus.COMPLETED:
+            break
+        prefix_end = day
+        day += timedelta(days=1)
+    if prefix_end is None:
+        return {
+            "source_key": source_key,
+            "status": "NO_COMPLETED_PREFIX",
+            "range": {"from": start.isoformat(), "to": end.isoformat()},
+            "prefix_end": None,
+            "checkpoint_sum": 0,
+            "observed_count": 0,
+            "requests": 0,
+            "intervals": [],
+            "changed_partitions": [],
+        }
+
+    intervals: list[dict[str, Any]] = []
+    changed: list[dict[str, Any]] = []
+
+    def stored_sum(left: date, right: date) -> int:
+        cursor = left
+        total = 0
+        while cursor <= right:
+            checkpoint = checkpoints.get(cursor.isoformat())
+            if checkpoint and checkpoint.status == IngestionStatus.COMPLETED:
+                total += int(checkpoint.parent_pre_count or 0)
+            cursor += timedelta(days=1)
+        return total
+
+    def visit(left: date, right: date) -> int:
+        stored = stored_sum(left, right)
+        observed = int(client.count_interval(get_contract(source_key), closed_range_interval(left, right)))
+        node = {
+            "from": left.isoformat(),
+            "to": right.isoformat(),
+            "checkpoint_sum": stored,
+            "current_count": observed,
+        }
+        intervals.append(node)
+        if stored == observed:
+            node["status"] = "CLEAN"
+            return observed
+        if left == right:
+            node["status"] = "CHANGED"
+            checkpoint = checkpoints.get(left.isoformat())
+            if checkpoint and checkpoint.status == IngestionStatus.COMPLETED:
+                changed.append({
+                    "source_key": source_key,
+                    "partition_date": left.isoformat(),
+                    "previous_count": int(checkpoint.parent_pre_count or 0),
+                    "current_count": observed,
+                    "delta": observed - int(checkpoint.parent_pre_count or 0),
+                })
+            return observed
+        midpoint = left + (right - left) // 2
+        visit(left, midpoint)
+        visit(midpoint + timedelta(days=1), right)
+        node["status"] = "SPLIT"
+        return observed
+
+    observed_count = visit(start, prefix_end)
+    checkpoint_sum = stored_sum(start, prefix_end)
+    return {
+        "source_key": source_key,
+        "status": "CHANGED" if changed else "CLEAN",
+        "range": {"from": start.isoformat(), "to": prefix_end.isoformat()},
+        "prefix_end": prefix_end.isoformat(),
+        "checkpoint_sum": checkpoint_sum,
+        "observed_count": observed_count,
+        "requests": len(intervals),
+        "intervals": intervals,
+        "changed_partitions": changed,
+    }
+
+
 def _extract_fixture_records(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, dict):
         page = payload.get("page")
@@ -496,7 +592,13 @@ class UUIDProvenanceStore:
         )
         self._connection.commit()
 
-    def begin_partition(self, context: PartitionContext, records: Sequence[Mapping[str, Any]]) -> None:
+    def begin_partition(
+        self,
+        context: PartitionContext,
+        records: Sequence[Mapping[str, Any]],
+        *,
+        replace_partition: bool = False,
+    ) -> None:
         try:
             self._connection.execute("BEGIN")
             now = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -510,10 +612,18 @@ class UUIDProvenanceStore:
                     (record_id,),
                 ).fetchone()
                 provenance = (context.contract.data_group, context.source_key, context.partition_date, content)
-                if existing is not None and tuple(existing) != provenance:
-                    raise UUIDConflictError(
-                        f"UUID {record_id} conflicts: existing provenance/content={tuple(existing)} new={provenance}"
-                    )
+                if existing is not None:
+                    existing_provenance = tuple(existing)
+                    same_partition = existing_provenance[:3] == provenance[:3]
+                    if not same_partition or not replace_partition and existing_provenance != provenance:
+                        raise UUIDConflictError(
+                            f"UUID {record_id} conflicts: existing provenance/content={existing_provenance} new={provenance}"
+                        )
+                    if replace_partition and existing_provenance[3] != provenance[3]:
+                        self._connection.execute(
+                            "UPDATE uuid_provenance SET content_fingerprint=? WHERE uuid=?",
+                            (provenance[3], record_id),
+                        )
                 if existing is None:
                     self._connection.execute(
                         "INSERT INTO uuid_provenance (uuid, data_group, source_key, partition_date, content_fingerprint, first_seen_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -537,6 +647,30 @@ class UUIDProvenanceStore:
     def rollback(self) -> None:
         if self._connection.in_transaction:
             self._connection.rollback()
+
+    def partition_uuids(self, source_key: str, partition_date: str) -> set[str]:
+        """Read the disk-backed UUID set owned by one source/date partition."""
+
+        rows = self._connection.execute(
+            "SELECT uuid FROM uuid_provenance WHERE source_key=? AND partition_date=?",
+            (source_key, partition_date),
+        ).fetchall()
+        return {str(row[0]) for row in rows}
+
+    def remove_uuids(self, uuids: Iterable[str]) -> int:
+        """Remove exact UUIDs from the current transaction."""
+
+        values = sorted({str(value) for value in uuids})
+        removed = 0
+        for offset in range(0, len(values), 500):
+            batch = values[offset:offset + 500]
+            placeholders = ",".join("?" for _ in batch)
+            cursor = self._connection.execute(
+                f"DELETE FROM uuid_provenance WHERE uuid IN ({placeholders})",
+                batch,
+            )
+            removed += int(cursor.rowcount)
+        return removed
 
     def group_counts(self) -> dict[str, int]:
         rows = self._connection.execute(
@@ -582,6 +716,37 @@ class AuditedSink:
             self.provenance.commit()
         return result
 
+    def replace_partition(
+        self,
+        context: PartitionContext,
+        records: Sequence[Mapping[str, Any]],
+        stale_uuids: Iterable[str],
+    ) -> SinkWriteResult:
+        """Upsert current records and remove only stale UUIDs for this partition."""
+
+        delete = getattr(self.sink, "delete_documents", None)
+        if not callable(delete):
+            raise OSError("partition replacement requires an exact-delete-capable sink")
+        stale = tuple(sorted({str(value) for value in stale_uuids}))
+        self.provenance.begin_partition(context, records, replace_partition=True)
+        try:
+            result = self.sink.write_partition(context, records)
+            if result.rejected_count or result.accepted_count != len(records):
+                self.provenance.rollback()
+                return result
+            delete(context, stale)
+            self.provenance.remove_uuids(stale)
+            self.provenance.commit()
+            return result
+        except KeyboardInterrupt:
+            self.provenance.rollback()
+            raise
+        except Exception as exc:
+            self.provenance.rollback()
+            if isinstance(exc, OSError):
+                raise
+            raise OSError(str(exc)) from exc
+
 
 class BackfillReport:
     """Small atomic JSON report; no record UUIDs are persisted here."""
@@ -612,6 +777,9 @@ class BackfillReport:
                 "failed": 0,
                 "quarantined": 0,
                 "records_expected": int(self.manifest["expected_overall_total"]),
+                "normalized_documents": 0,
+                "typesense_attempted": 0,
+                "typesense_rejected": 0,
                 "records_accepted": 0,
                 "typesense_batches": 0,
                 "msc_requests": 0,
@@ -646,6 +814,8 @@ class BackfillReport:
             "quarantined_partitions": [],
             "last_completed_partition": None,
             "current_partition": None,
+            "schema_drift": {"additive_fields_by_source": {}, "breaking": []},
+            "resource_monitoring": {"samples": [], "last": None},
         }
 
     def set_state(self, state: str, *, current_partition: str | None = None) -> None:
@@ -683,9 +853,20 @@ class BackfillReport:
                 "source_key": result.source_key,
                 "partition_date": result.partition_date,
             }
+        counts["normalized_documents"] += int(result.normalized_count)
+        accepted = int(result.sink_accepted_count)
+        attempted = max(int(result.sink_attempted_count), accepted)
+        rejected = max(attempted - accepted, 0)
+        counts["typesense_attempted"] += attempted
+        counts["typesense_rejected"] += rejected
         counts["typesense_batches"] += int(result.sink_batch_count)
         counts["msc_requests"] += int(result.request_count)
         counts["retries"] += int(result.retry_count)
+        if result.drift.additive_fields:
+            additive = self.data["schema_drift"]["additive_fields_by_source"].setdefault(result.source_key, [])
+            for field in result.drift.additive_fields:
+                if field not in additive:
+                    additive.append(field)
         if result.error_code:
             error = {
                 "source_key": result.source_key,
@@ -729,6 +910,7 @@ def _checkpoint_skip_result(checkpoint: Checkpoint) -> PartitionResult:
         sink_accepted_count=checkpoint.sink_accepted_count or 0,
         skipped=True,
         sink_target=checkpoint.sink_target,
+        sink_attempted_count=checkpoint.sink_accepted_count or 0,
     )
 
 
@@ -745,6 +927,8 @@ class BackfillRunner:
         resume: bool = False,
         force: bool = False,
         max_partitions: int | None = None,
+        on_before_partition: Callable[[str, str, "BackfillReport"], None] | None = None,
+        on_partition_boundary: Callable[[PartitionResult, "BackfillReport"], None] | None = None,
     ) -> None:
         verify_manifest(manifest)
         self.engine = engine
@@ -754,6 +938,8 @@ class BackfillRunner:
         self.resume = resume
         self.force = force
         self.max_partitions = max_partitions
+        self.on_before_partition = on_before_partition
+        self.on_partition_boundary = on_partition_boundary
 
     def run(self) -> tuple[PartitionResult, ...]:
         partitions = tuple(iter_parent_partitions(
@@ -771,6 +957,8 @@ class BackfillRunner:
         try:
             for source_key, partition_date in partitions:
                 self.report.set_state("RUNNING", current_partition=f"{source_key}:{partition_date}")
+                if self.on_before_partition is not None:
+                    self.on_before_partition(source_key, partition_date, self.report)
                 checkpoint = self.checkpoint_store.get(source_key, partition_date, getattr(self.engine.sink, "sink_target", ""))
                 if checkpoint and checkpoint.status == IngestionStatus.COMPLETED and not self.force:
                     if not self.resume:
@@ -783,6 +971,9 @@ class BackfillRunner:
                 results.append(result)
                 self.report.update(result)
                 self.report.write()
+                if self.on_partition_boundary is not None:
+                    self.on_partition_boundary(result, self.report)
+                    self.report.write()
                 if result.status in {IngestionStatus.FAILED, IngestionStatus.QUARANTINED}:
                     self.report.set_state("FAILED", current_partition=f"{source_key}:{partition_date}")
                     self.report.write()

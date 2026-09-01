@@ -184,9 +184,11 @@ class ImportProtocolTest(unittest.TestCase):
         class Opener:
             def __init__(self):
                 self.request = None
+                self.kwargs = None
 
             def __call__(self, request, **kwargs):
                 self.request = request
+                self.kwargs = kwargs
                 return Response()
 
         opener = Opener()
@@ -196,6 +198,7 @@ class ImportProtocolTest(unittest.TestCase):
         self.assertEqual((1, 1, 0), (result.attempted_count, result.accepted_count, result.rejected_count))
         self.assertIn("/documents/import?action=upsert", opener.request.full_url)
         self.assertEqual("application/jsonl", opener.request.headers["Content-type"])
+        self.assertEqual(10.0, opener.kwargs["timeout"])
 
     def test_snapshot_uses_supported_operation_and_absolute_host_path(self):
         class Response:
@@ -211,9 +214,11 @@ class ImportProtocolTest(unittest.TestCase):
         class Opener:
             def __init__(self):
                 self.request = None
+                self.kwargs = None
 
             def __call__(self, request, **kwargs):
                 self.request = request
+                self.kwargs = kwargs
                 return Response()
 
         opener = Opener()
@@ -221,6 +226,7 @@ class ImportProtocolTest(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertIn("/operations/snapshot?", opener.request.full_url)
         self.assertIn("snapshot_path=%2Ftmp%2Fbidfinder.snapshot", opener.request.full_url)
+        self.assertEqual(300.0, opener.kwargs["timeout"])
 
 
 class FakeTypesenseClient:

@@ -24,6 +24,7 @@ DEFAULT_TYPESENSE_HOST = "127.0.0.1"
 DEFAULT_TYPESENSE_PORT = 8108
 DEFAULT_TYPESENSE_PROTOCOL = "http"
 DEFAULT_TYPESENSE_TIMEOUT_SECONDS = 10.0
+DEFAULT_TYPESENSE_SNAPSHOT_TIMEOUT_SECONDS = 300.0
 DEFAULT_TYPESENSE_BATCH_SIZE = 500
 ENGINE_VERSION = "msc-ingestion-v1"
 SCHEMA_VERSION = "msc-source-schema-v1"
@@ -81,6 +82,7 @@ class TypesenseConfig:
     protocol: str = DEFAULT_TYPESENSE_PROTOCOL
     api_key: str = field(default="", repr=False)
     timeout_seconds: float = DEFAULT_TYPESENSE_TIMEOUT_SECONDS
+    snapshot_timeout_seconds: float = DEFAULT_TYPESENSE_SNAPSHOT_TIMEOUT_SECONDS
     batch_size: int = DEFAULT_TYPESENSE_BATCH_SIZE
 
     def __post_init__(self) -> None:
@@ -94,6 +96,8 @@ class TypesenseConfig:
             raise ValueError("TYPESENSE_API_KEY is required for Typesense operations")
         if self.timeout_seconds <= 0:
             raise ValueError("TYPESENSE_TIMEOUT_SECONDS must be positive")
+        if self.snapshot_timeout_seconds <= 0:
+            raise ValueError("TYPESENSE_SNAPSHOT_TIMEOUT_SECONDS must be positive")
         if self.batch_size <= 0:
             raise ValueError("TYPESENSE_IMPORT_BATCH_SIZE must be positive")
 
@@ -111,5 +115,6 @@ class TypesenseConfig:
             protocol=os.getenv("TYPESENSE_PROTOCOL", DEFAULT_TYPESENSE_PROTOCOL).lower(),
             api_key=os.getenv("TYPESENSE_API_KEY", ""),
             timeout_seconds=float(os.getenv("TYPESENSE_TIMEOUT_SECONDS", os.getenv("TYPESENSE_CONNECTION_TIMEOUT_SECONDS", str(DEFAULT_TYPESENSE_TIMEOUT_SECONDS)))),
+            snapshot_timeout_seconds=float(os.getenv("TYPESENSE_SNAPSHOT_TIMEOUT_SECONDS", str(DEFAULT_TYPESENSE_SNAPSHOT_TIMEOUT_SECONDS))),
             batch_size=int(os.getenv("TYPESENSE_IMPORT_BATCH_SIZE", os.getenv("TYPESENSE_BATCH_SIZE", str(DEFAULT_TYPESENSE_BATCH_SIZE)))),
         )
