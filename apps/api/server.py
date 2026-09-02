@@ -39,6 +39,23 @@ from auth_utils import (
     set_auth_session_cookie,
     update_user_profile,
 )
+from typesense_shadow import (
+    AutocompleteQuery,
+    PostgresSearchRepository,
+    SHADOW_INFRA_ERROR,
+    TypesenseSearchRepository,
+    TypesenseShadowError,
+    build_bulk_canonical_query,
+    build_canonical_query,
+    schedule_shadow_autocomplete,
+    schedule_shadow_comparison,
+)
+from typesense_contract import (
+    canonical_field_for,
+    get_procurement_backend_config,
+    get_search_contract as get_typesense_search_contract,
+    normalize_group,
+)
 
 logger = logging.getLogger("bidfinder.api")
 
@@ -643,22 +660,45 @@ class SortRule(BaseModel):
 
 
 class QueryRequest(BaseModel):
-    scope: Literal["all", "medicine", "goods"] = "all"
+    scope: Literal["all", "medicine", "goods", "traditional"] = "all"
+    group: Optional[Literal["goods", "medicines", "traditional", "traditional_medicine"]] = None
+    sourceTypes: List[str] = Field(default_factory=list)
     filters: Optional[FilterRequest] = None
+    text: str = ""
+    searchFields: List[str] = Field(default_factory=list)
+    structuredFilters: Dict[str, Any] = Field(default_factory=dict)
+    ranges: Dict[str, Any] = Field(default_factory=dict)
+    dateRanges: Dict[str, Any] = Field(default_factory=dict)
+    exactIdentifiers: Dict[str, Any] = Field(default_factory=dict)
     sort: Optional[List[SortRule]] = None
     limit: int = DEFAULT_QUERY_LIMIT
+    page: int = 1
     searchMode: Literal["standard", "full"] = "standard"
+    queryMode: Literal["search", "exact"] = "search"
 
 
 class QueryPreviewRequest(BaseModel):
-    scope: Literal["all", "medicine", "goods"] = "all"
+    scope: Literal["all", "medicine", "goods", "traditional"] = "all"
+    group: Optional[Literal["goods", "medicines", "traditional", "traditional_medicine"]] = None
+    sourceTypes: List[str] = Field(default_factory=list)
     filters: Optional[FilterRequest] = None
+    text: str = ""
+    searchFields: List[str] = Field(default_factory=list)
+    structuredFilters: Dict[str, Any] = Field(default_factory=dict)
+    ranges: Dict[str, Any] = Field(default_factory=dict)
+    dateRanges: Dict[str, Any] = Field(default_factory=dict)
+    exactIdentifiers: Dict[str, Any] = Field(default_factory=dict)
 
 
 class BulkQueryRequest(BaseModel):
-    scope: Literal["medicine", "goods"]
+    scope: Literal["medicine", "goods", "traditional"]
+    group: Optional[Literal["goods", "medicines", "traditional", "traditional_medicine"]] = None
+    sourceTypes: List[str] = Field(default_factory=list)
     fields: List[str] = Field(default_factory=list)
     rows: List[Dict[str, Any]] = Field(default_factory=list)
+    filters: Dict[str, Any] = Field(default_factory=dict)
+    sort: List[SortRule] = Field(default_factory=list)
+    page: int = 1
     diversityMode: Literal["price", "product"] = "price"
     priceLimit: int = 3
     productLimit: int = 3
@@ -668,6 +708,9 @@ class BulkQueryRequest(BaseModel):
 
 class AutocompleteRequest(BaseModel):
     scope: Optional[str] = "all"
+    group: Optional[Literal["goods", "medicines", "traditional", "traditional_medicine"]] = None
+    sourceTypes: List[str] = Field(default_factory=list)
+    searchFields: List[str] = Field(default_factory=list)
     field: str
     keyword: str
     filters: Optional[Dict[str, Any]] = None
@@ -1989,6 +2032,341 @@ async def fetch_result_page(
     }
 
 
+async def _fetch_primary_canonical_page(conn: asyncpg.Connection, query, *, exact_count_enabled: bool = False) -> Dict[str, Any]:
+    scope_name = "medicine" if query.group == "medicines" else "goods"
+    filters = FilterRequest(**query.filters)
+    sort_rules = [SortRule(column=rule.field, order=rule.order) for rule in query.sort]
+    return await fetch_result_page(
+        conn,
+        scope_name,
+        filters,
+        sort_rules,
+        query.limit,
+        exact_count_enabled=exact_count_enabled,
+    )
+
+
+postgres_search_repository = PostgresSearchRepository(_fetch_primary_canonical_page)
+typesense_search_repository = TypesenseSearchRepository()
+
+
+def procurement_backend_config():
+    """Read centralized backend switch without scattering environment checks."""
+
+    return get_procurement_backend_config()
+
+
+async def fetch_backend_page(
+    conn: asyncpg.Connection,
+    query,
+    *,
+    exact_count_enabled: bool = False,
+) -> Dict[str, Any]:
+    config = procurement_backend_config()
+    if not config.typesense_primary:
+        return await postgres_search_repository.search(conn, query, exact_count_enabled=exact_count_enabled)
+    try:
+        result = (
+            await typesense_search_repository.exact_lookup(query)
+            if query.exact_identifiers
+            else await typesense_search_repository.search(query)
+        )
+        return result.to_api_page()
+    except TypesenseShadowError as exc:
+        if not (config.fallback_enabled and exc.code == SHADOW_INFRA_ERROR):
+            raise
+        page = await asyncio.wait_for(
+            postgres_search_repository.search(conn, query, exact_count_enabled=exact_count_enabled),
+            timeout=config.fallback_timeout_seconds,
+        )
+        page["backend_fallback"] = {
+            "from": "typesense",
+            "to": "postgres",
+            "reason": "typesense_infrastructure",
+            "classification": SHADOW_INFRA_ERROR,
+        }
+        return page
+
+
+def _query_groups(payload: QueryRequest) -> list[str]:
+    if payload.group:
+        return [payload.group]
+    if payload.scope == "medicine":
+        return ["medicines"]
+    if payload.scope == "goods":
+        return ["goods"]
+    if payload.scope == "traditional":
+        return ["traditional"]
+    return ["medicines", "goods"]
+
+
+async def query_typesense_primary(request: Request, payload: QueryRequest) -> JSONResponse:
+    """Serve complete canonical groups when Phase 4C switch is explicitly enabled."""
+
+    pool = await ensure_db_pool()
+    filters = payload.filters or FilterRequest()
+    sort_rules = payload.sort or []
+    search_mode = payload.searchMode if payload.searchMode in {"standard", "full"} else "standard"
+    requested_limit = max(1, min(int(payload.limit or MAX_QUERY_LIMIT), MAX_QUERY_LIMIT))
+    limit = requested_limit if search_mode == "full" else min(requested_limit, DEFAULT_QUERY_LIMIT)
+    groups = _query_groups(payload)
+    result: Dict[str, Any] = {
+        "success": True,
+        "search_mode": search_mode,
+        "backend": "typesense",
+        "diversify_prices": False,
+        "applied_limit_per_scope": limit,
+        "applied_total_limit": limit * len(groups),
+    }
+    count_parts: list[dict[str, Any]] = []
+    async with pool.acquire() as conn:
+        user = await enforce_data_access_policy(conn, request, "full_query")
+        if search_mode == "full":
+            quota = await get_full_search_usage_snapshot(request, user)
+            if quota["remaining"] <= 0:
+                raise HTTPException(status_code=429, detail=FULL_SEARCH_LIMIT_MESSAGE)
+        for group in groups:
+            query = build_canonical_query(
+                group,
+                filters,
+                sort_rules,
+                limit,
+                page=payload.page,
+                search_mode=search_mode,
+                source_types=payload.sourceTypes,
+                text=payload.text,
+                search_fields=payload.searchFields,
+                structured_filters=payload.structuredFilters,
+                ranges=payload.ranges,
+                date_ranges=payload.dateRanges,
+                exact_identifiers=payload.exactIdentifiers,
+                query_mode=payload.queryMode,
+            )
+            page = await fetch_backend_page(conn, query, exact_count_enabled=False)
+            key = {"medicines": "df1", "goods": "df2", "traditional_medicine": "df3"}[query.group]
+            result[key] = page
+            count_parts.append({"count": page["count"], "exact": page["count_exact"]})
+        if search_mode == "full":
+            quota = await consume_full_search_usage(request, user)
+            result["full_search_daily_used"] = quota["used"]
+            result["full_search_daily_remaining"] = quota["remaining"]
+        result["auth"] = await build_auth_config(request, user=user)
+    combined = combine_count_meta(count_parts)
+    result.update({
+        "total_count": int(combined["count"]),
+        "total_count_exact": bool(combined["exact"]),
+        "total_count_label": combined["label"],
+        "total_count_summary": combined["summary"],
+    })
+    return JSONResponse(content=result)
+
+
+async def autocomplete_typesense_primary(request: Request, payload: AutocompleteRequest) -> JSONResponse:
+    keyword = (payload.keyword or "").strip()
+    limit = max(1, min(int(payload.limit or 10), 20))
+    if not keyword:
+        return JSONResponse(content={"success": True, "field": payload.field, "data": [], "backend": "typesense"})
+    group_names = [payload.group] if payload.group else (
+        ["medicines"] if payload.scope == "medicine" else
+        ["goods"] if payload.scope == "goods" else
+        ["traditional"] if payload.scope == "traditional" else
+        ["medicines", "goods"]
+    )
+    filters = payload.filters if isinstance(payload.filters, dict) else {}
+    filters_obj = FilterRequest(**filters)
+    pool = await ensure_db_pool()
+    values: list[str] = []
+    seen: set[str] = set()
+
+    def push(value: Any) -> None:
+        text = normalize_ws(value)
+        if text and text.casefold() not in seen:
+            seen.add(text.casefold())
+            values.append(text)
+
+    push(keyword)
+    async with pool.acquire() as conn:
+        user = await enforce_data_access_policy(conn, request, "autocomplete")
+        for group in group_names:
+            query = AutocompleteQuery(
+                group=group,
+                field=payload.field,
+                keyword=keyword,
+                filters=filters_obj.model_dump(exclude_none=True),
+                limit=limit,
+                source_types=tuple(payload.sourceTypes),
+                search_fields=tuple(payload.searchFields),
+            )
+            try:
+                suggestions = await typesense_search_repository.suggest(query)
+            except TypesenseShadowError as exc:
+                config = procurement_backend_config()
+                if not (config.fallback_enabled and exc.code == SHADOW_INFRA_ERROR):
+                    raise
+                if group == "traditional_medicine":
+                    raise
+                legacy_scope = "medicine" if group == "medicines" else "goods"
+                suggestions = await asyncio.wait_for(
+                    fetch_autocomplete_suggestions(conn, AutocompleteRequest(
+                        scope=legacy_scope, field=payload.field, keyword=keyword, filters=filters,
+                        limit=limit,
+                    ), legacy_scope),
+                    timeout=config.fallback_timeout_seconds,
+                )
+            for suggestion in suggestions:
+                push(suggestion)
+            if len(values) >= limit:
+                break
+        auth = await build_auth_config(request, user=user)
+    return JSONResponse(content={
+        "success": True,
+        "field": payload.field,
+        "data": values[:limit],
+        "backend": "typesense",
+        "auth": auth,
+    })
+
+
+async def preview_typesense_primary(request: Request, payload: QueryPreviewRequest) -> JSONResponse:
+    groups = [payload.group] if payload.group else (
+        ["medicines"] if payload.scope == "medicine" else
+        ["goods"] if payload.scope == "goods" else
+        ["traditional"] if payload.scope == "traditional" else
+        ["medicines", "goods"]
+    )
+    filters = payload.filters or FilterRequest()
+    pool = await ensure_db_pool()
+    pages: dict[str, dict[str, Any]] = {}
+    async with pool.acquire() as conn:
+        user = await enforce_data_access_policy(conn, request, "preview")
+        for group in groups:
+            query = build_canonical_query(
+                group,
+                filters,
+                limit=PREVIEW_BUCKET_LIMIT,
+                page=1,
+                endpoint="/api/query-preview",
+                source_types=payload.sourceTypes,
+                text=payload.text,
+                search_fields=payload.searchFields,
+                structured_filters=payload.structuredFilters,
+                ranges=payload.ranges,
+                date_ranges=payload.dateRanges,
+                exact_identifiers=payload.exactIdentifiers,
+            )
+            pages[query.group] = await fetch_backend_page(conn, query)
+        auth = await build_auth_config(request, user=user)
+    combined = combine_count_meta([
+        {"count": page["count"], "exact": page["count_exact"]}
+        for page in pages.values()
+    ])
+    result: dict[str, Any] = {
+        "success": True,
+        "backend": "typesense",
+        "total": int(combined["count"]),
+        "exact": bool(combined["exact"]),
+        "display": combined["label"],
+        "summary": combined["summary"],
+        "total_estimate": combined,
+        "is_estimated": not bool(combined["exact"]),
+        "bucket_limit": PREVIEW_BUCKET_LIMIT,
+        "auth": auth,
+    }
+    if "medicines" in pages:
+        result["df1"] = pages["medicines"]
+        result["medicine_estimate"] = pages["medicines"]
+    if "goods" in pages:
+        result["df2"] = pages["goods"]
+        result["goods_estimate"] = pages["goods"]
+    if "traditional_medicine" in pages:
+        result["df3"] = pages["traditional_medicine"]
+        result["traditional_estimate"] = pages["traditional_medicine"]
+    return JSONResponse(content=result)
+
+
+async def bulk_typesense_primary(request: Request, payload: BulkQueryRequest) -> JSONResponse:
+    group = payload.group or {"medicine": "medicines", "goods": "goods", "traditional": "traditional"}[payload.scope]
+    contract_fields = {field["name"] for field in get_typesense_search_contract()["groups"]["traditional" if group == "traditional_medicine" else group]["fields"]}
+    legacy_fields = set(BULK_SEARCH_FIELDS.get(payload.scope, {}))
+    selected_fields = [field for field in payload.fields if field in contract_fields or field in legacy_fields]
+    if not selected_fields:
+        raise HTTPException(status_code=422, detail="At least one supported search field is required")
+    rows = [row for row in payload.rows if isinstance(row, dict)]
+    if not rows:
+        raise HTTPException(status_code=422, detail="At least one bulk query row is required")
+    diversity_mode = payload.diversityMode if payload.diversityMode in {"price", "product"} else "price"
+    child_limit = max(1, min(int(payload.productLimit if diversity_mode == "product" else payload.priceLimit), 10))
+    result_limit = max(1, min(int(payload.limit or BULK_EXPORT_QUERY_LIMIT), BULK_EXPORT_QUERY_LIMIT))
+    pool = await ensure_db_pool()
+    result_rows: list[dict[str, Any]] = []
+    matched_input_count = 0
+    child_errors: list[dict[str, Any]] = []
+    truncated = False
+    async with pool.acquire() as conn:
+        user = await enforce_data_access_policy(conn, request, "full_query")
+        for index, row in enumerate(rows, start=1):
+            if len(result_rows) >= result_limit:
+                truncated = True
+                break
+            child_group = row.get("group", group)
+            child_source_types = row.get("sourceTypes", payload.sourceTypes)
+            try:
+                query = build_bulk_canonical_query(
+                    child_group,
+                    selected_fields,
+                    row,
+                    limit=child_limit,
+                    source_types=child_source_types,
+                    sort=payload.sort,
+                    page=payload.page,
+                )
+                if payload.filters:
+                    query = build_canonical_query(
+                        query.group,
+                        query.filters,
+                        payload.sort,
+                        child_limit,
+                        page=payload.page,
+                        source_types=child_source_types,
+                        structured_filters=payload.filters,
+                        endpoint="/api/bulk-query",
+                    )
+                page = await fetch_backend_page(conn, query)
+            except (ValueError, TypesenseShadowError) as exc:
+                child_errors.append({"index": index, "classification": "QUERY_CONTRACT_FAILURE" if isinstance(exc, ValueError) or getattr(exc, "code", "") != SHADOW_INFRA_ERROR else SHADOW_INFRA_ERROR})
+                continue
+            visible = page["data"][:child_limit]
+            if visible:
+                matched_input_count += 1
+            label = " | ".join(str(row.get(field) or "").strip() for field in selected_fields if str(row.get(field) or "").strip())
+            for item in visible:
+                if len(result_rows) >= result_limit:
+                    truncated = True
+                    break
+                item = dict(item)
+                item["Bulk query"] = index
+                item["Bulk query row"] = label
+                result_rows.append(item)
+            if page.get("has_more"):
+                truncated = True
+        auth = await build_auth_config(request, user=user)
+    count_meta = build_count_meta(result_limit if truncated else len(result_rows), exact=not truncated)
+    scope_key = "medicine" if group == "medicines" else "goods" if group == "goods" else "traditional"
+    empty = {"data": [], "count": 0, "count_exact": True, "count_label": "0", "count_summary": "0", "displayed": 0, "has_more": False, "approx_total": None}
+    populated = {"data": result_rows, "count": count_meta["count"], "count_exact": count_meta["exact"], "count_label": count_meta["label"], "count_summary": count_meta["summary"], "displayed": len(result_rows), "has_more": truncated, "approx_total": None, "backend": "typesense"}
+    return JSONResponse(content={
+        "success": True,
+        "search_mode": "bulk",
+        "backend": "typesense",
+        "bulk": {"scope": scope_key, "search_mode": "bulk", "diversity_mode": diversity_mode, "input_count": len(rows), "matched_count": count_meta["count"], "matched_input_count": matched_input_count, "fields": selected_fields, "result_limit": result_limit, "truncated": truncated, "child_errors": child_errors},
+        "total_count": count_meta["count"], "total_count_exact": count_meta["exact"], "total_count_label": count_meta["label"], "total_count_summary": count_meta["summary"], "applied_total_limit": result_limit,
+        "df1": populated if group == "medicines" else empty,
+        "df2": populated if group == "goods" else empty,
+        "df3": populated if group == "traditional_medicine" else empty,
+        "auth": auth,
+    })
+
+
 # =========================
 # APP
 # =========================
@@ -2811,6 +3189,22 @@ async def get_filter_config(request: Request):
         return internal_error_response()
 
 
+@app.get("/api/search-contract")
+async def get_search_contract(request: Request):
+    limited = await enforce_rate_limit(request, "search-contract", METADATA_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+    try:
+        return JSONResponse(content={
+            "success": True,
+            "contract": get_typesense_search_contract(),
+            "backend": procurement_backend_config().mode,
+        })
+    except Exception as exc:
+        log_server_exception("get_search_contract failed", exc)
+        return internal_error_response()
+
+
 @app.post("/api/query")
 async def query_data(request: Request, payload: QueryRequest):
     limited = await enforce_rate_limit(request, "query", QUERY_RATE_LIMIT_PER_MINUTE)
@@ -2818,6 +3212,11 @@ async def query_data(request: Request, payload: QueryRequest):
         return limited
 
     try:
+        backend_config = procurement_backend_config()
+        if backend_config.typesense_primary:
+            return await query_typesense_primary(request, payload)
+        if payload.group in {"traditional", "traditional_medicine"} or payload.scope == "traditional":
+            raise HTTPException(status_code=503, detail="traditional search requires Typesense backend")
         pool = await ensure_db_pool()
         filters = payload.filters or FilterRequest()
         sort_rules = payload.sort or []
@@ -2839,6 +3238,7 @@ async def query_data(request: Request, payload: QueryRequest):
         }
         count_parts: List[Dict[str, Any]] = []
         current_user: Optional[Dict[str, Any]] = None
+        shadow_postgres_latencies: Dict[str, float] = {}
 
         async with pool.acquire() as conn:
             current_user = await enforce_data_access_policy(conn, request, "full_query")
@@ -2859,15 +3259,13 @@ async def query_data(request: Request, payload: QueryRequest):
                 }
 
             if payload.scope in ("all", "medicine"):
-                page = await fetch_result_page(
+                primary_started = time.perf_counter()
+                page = await postgres_search_repository.search(
                     conn,
-                    "medicine",
-                    filters,
-                    sort_rules,
-                    allocation["medicine"],
-                    diversify_prices=False,
+                    build_canonical_query("medicines", filters, sort_rules, allocation["medicine"], search_mode=search_mode),
                     exact_count_enabled=STANDARD_QUERY_EXACT_COUNT_ENABLED and not is_full_search,
                 )
+                shadow_postgres_latencies["medicines"] = (time.perf_counter() - primary_started) * 1000
                 result["df1"] = page
                 count_parts.append({
                     "count": page["count"],
@@ -2875,15 +3273,13 @@ async def query_data(request: Request, payload: QueryRequest):
                 })
 
             if payload.scope in ("all", "goods"):
-                page = await fetch_result_page(
+                primary_started = time.perf_counter()
+                page = await postgres_search_repository.search(
                     conn,
-                    "goods",
-                    filters,
-                    sort_rules,
-                    allocation["goods"],
-                    diversify_prices=False,
+                    build_canonical_query("goods", filters, sort_rules, allocation["goods"], search_mode=search_mode),
                     exact_count_enabled=STANDARD_QUERY_EXACT_COUNT_ENABLED and not is_full_search,
                 )
+                shadow_postgres_latencies["goods"] = (time.perf_counter() - primary_started) * 1000
                 result["df2"] = page
                 count_parts.append({
                     "count": page["count"],
@@ -2900,27 +3296,23 @@ async def query_data(request: Request, payload: QueryRequest):
                     if medicine_page and goods_page and medicine_page.get("has_more") and goods_unused > 0:
                         allocation["medicine"] = int(allocation.get("medicine", 0)) + goods_unused
                         allocation["goods"] = int(goods_page.get("displayed", 0))
-                        result["df1"] = await fetch_result_page(
+                        primary_started = time.perf_counter()
+                        result["df1"] = await postgres_search_repository.search(
                             conn,
-                            "medicine",
-                            filters,
-                            sort_rules,
-                            allocation["medicine"],
-                            diversify_prices=False,
+                            build_canonical_query("medicines", filters, sort_rules, allocation["medicine"], search_mode=search_mode),
                             exact_count_enabled=False,
                         )
+                        shadow_postgres_latencies["medicines"] = (time.perf_counter() - primary_started) * 1000
                     elif medicine_page and goods_page and goods_page.get("has_more") and medicine_unused > 0:
                         allocation["goods"] = int(allocation.get("goods", 0)) + medicine_unused
                         allocation["medicine"] = int(medicine_page.get("displayed", 0))
-                        result["df2"] = await fetch_result_page(
+                        primary_started = time.perf_counter()
+                        result["df2"] = await postgres_search_repository.search(
                             conn,
-                            "goods",
-                            filters,
-                            sort_rules,
-                            allocation["goods"],
-                            diversify_prices=False,
+                            build_canonical_query("goods", filters, sort_rules, allocation["goods"], search_mode=search_mode),
                             exact_count_enabled=False,
                         )
+                        shadow_postgres_latencies["goods"] = (time.perf_counter() - primary_started) * 1000
 
                     medicine_page = result.get("df1")
                     goods_page = result.get("df2")
@@ -2959,6 +3351,26 @@ async def query_data(request: Request, payload: QueryRequest):
         result["total_count_label"] = combined_meta["label"]
         result["total_count_summary"] = combined_meta["summary"]
 
+        shadow_queries = []
+        shadow_results: Dict[str, Any] = {}
+        for group, response_key in (("medicines", "df1"), ("goods", "df2")):
+            if response_key not in result:
+                continue
+            shadow_queries.append(build_canonical_query(
+                group,
+                filters,
+                sort_rules,
+                max(1, int(allocation.get("medicine" if group == "medicines" else "goods", limit))),
+                search_mode=search_mode,
+            ))
+            shadow_results[group] = result[response_key]
+        if shadow_queries:
+            schedule_shadow_comparison(
+                shadow_queries,
+                shadow_results,
+                postgres_latencies_ms=shadow_postgres_latencies,
+            )
+
         return JSONResponse(content=result)
 
     except HTTPException as exc:
@@ -2973,6 +3385,14 @@ async def bulk_query_data(request: Request, payload: BulkQueryRequest):
     limited = await enforce_rate_limit(request, "bulk-query", QUERY_RATE_LIMIT_PER_MINUTE)
     if limited:
         return limited
+
+    try:
+        if procurement_backend_config().typesense_primary:
+            return await bulk_typesense_primary(request, payload)
+        if payload.group in {"traditional", "traditional_medicine"} or payload.scope == "traditional":
+            raise HTTPException(status_code=503, detail="traditional bulk search requires Typesense backend")
+    except HTTPException as exc:
+        return auth_error_response(exc)
 
     scope_name = payload.scope
     selected_fields = [field for field in payload.fields if field in BULK_SEARCH_FIELDS[scope_name]]
@@ -2997,6 +3417,8 @@ async def bulk_query_data(request: Request, payload: BulkQueryRequest):
         result_truncated = False
         diversity_truncated = False
         current_user: Optional[Dict[str, Any]] = None
+        bulk_primary_by_index: Dict[int, List[Dict[str, Any]]] = {}
+        bulk_row_has_more: Dict[int, bool] = {}
 
         async with pool.acquire() as conn:
             current_user = await enforce_data_access_policy(conn, request, "full_query")
@@ -3038,6 +3460,8 @@ async def bulk_query_data(request: Request, payload: BulkQueryRequest):
                     result_truncated = True
                 if row_has_more:
                     diversity_truncated = True
+                bulk_primary_by_index[index] = list(cleaned)
+                bulk_row_has_more[index] = row_has_more
                 query_label = " | ".join(
                     str(row_values.get(field) or "").strip()
                     for field in selected_fields
@@ -3107,6 +3531,27 @@ async def bulk_query_data(request: Request, payload: BulkQueryRequest):
         if is_full_search:
             response_payload["full_search_daily_used"] = quota["used"]
             response_payload["full_search_daily_remaining"] = quota["remaining"]
+
+        bulk_group = "medicines" if scope_name == "medicine" else "goods"
+        bulk_limit = product_limit if diversity_mode == "product" else price_limit
+        for index, row in enumerate(rows[:20], start=1):
+            shadow_query = build_bulk_canonical_query(
+                bulk_group,
+                selected_fields,
+                row,
+                limit=bulk_limit,
+            )
+            child_rows = bulk_primary_by_index.get(index, [])
+            schedule_shadow_comparison(
+                [shadow_query],
+                {
+                    bulk_group: {
+                        "data": child_rows,
+                        "count": len(child_rows),
+                        "count_exact": not bulk_row_has_more.get(index, False),
+                    }
+                },
+            )
         return response_payload
     except HTTPException as exc:
         return auth_error_response(exc)
@@ -3122,6 +3567,10 @@ async def preview_query(request: Request, payload: QueryPreviewRequest):
         return limited
 
     try:
+        if procurement_backend_config().typesense_primary:
+            return await preview_typesense_primary(request, payload)
+        if payload.group in {"traditional", "traditional_medicine"} or payload.scope == "traditional":
+            raise HTTPException(status_code=503, detail="traditional preview requires Typesense backend")
         pool = await ensure_db_pool()
         filters = payload.filters or FilterRequest()
         result = {"success": True}
@@ -3147,6 +3596,24 @@ async def preview_query(request: Request, payload: QueryPreviewRequest):
         result["total_estimate"] = total_meta
         result["is_estimated"] = not bool(total_meta["exact"])
         result["bucket_limit"] = PREVIEW_BUCKET_LIMIT
+
+        preview_queries = [
+            build_canonical_query(
+                group,
+                filters,
+                limit=PREVIEW_BUCKET_LIMIT,
+                endpoint="/api/query-preview",
+            )
+            for group, api_scope in (("medicines", "medicine"), ("goods", "goods"))
+            if payload.scope in {"all", api_scope}
+        ]
+        if preview_queries:
+            preview_primary = {}
+            if payload.scope == "medicine":
+                preview_primary["medicines"] = {"count": total_meta["count"], "count_exact": total_meta["exact"], "data": []}
+            elif payload.scope == "goods":
+                preview_primary["goods"] = {"count": total_meta["count"], "count_exact": total_meta["exact"], "data": []}
+            schedule_shadow_comparison(preview_queries, preview_primary)
 
         return JSONResponse(content=result)
     except HTTPException as exc:
@@ -3193,6 +3660,8 @@ async def autocomplete(request: Request, payload: AutocompleteRequest):
         return limited
 
     try:
+        if procurement_backend_config().typesense_primary:
+            return await autocomplete_typesense_primary(request, payload)
         timings: Dict[str, int] = {}
         pool_started = time.perf_counter()
         pool = await ensure_db_pool()
@@ -3265,6 +3734,24 @@ async def autocomplete(request: Request, payload: AutocompleteRequest):
                     push(item)
                 timings["goods_ms"] = int((time.perf_counter() - goods_started) * 1000)
         timings["db_ms"] = int((time.perf_counter() - db_started) * 1000)
+
+        autocomplete_queries = [
+            AutocompleteQuery(
+                group=group,
+                field=payload.field,
+                keyword=keyword,
+                filters=filters_obj.model_dump(exclude_none=True),
+                limit=int(req.limit or 10),
+            )
+            for group, api_scope in (("medicines", "medicine"), ("goods", "goods"))
+            if req.scope in ("all", api_scope)
+        ]
+        if autocomplete_queries:
+            schedule_shadow_autocomplete(
+                autocomplete_queries,
+                merged[: int(req.limit or 10)],
+                postgres_latency_ms=float(timings.get("db_ms", 0)),
+            )
 
         return JSONResponse(content={
             "success": True,

@@ -1,0 +1,2878 @@
+{
+  "backend_independent": true,
+  "contract_version": "typesense-search-contract-v1",
+  "groups": {
+    "goods": {
+      "autocomplete_fields": [
+        "item_name",
+        "manufacturer",
+        "winning_bidder_name",
+        "bid_invitation_code",
+        "procuring_entity_name"
+      ],
+      "collection_alias": "bidfinder_goods",
+      "fields": [
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": true,
+          "example": "4a38103c-8b82-4e18-9dad-4b46b615916a",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": true,
+          "label": "Mã bản ghi",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "id",
+          "nullable": false,
+          "raw_aliases": [
+            "id"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "string",
+          "ui_visibility": "detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "in"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "goods",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Nhóm dữ liệu",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "data_group",
+          "nullable": false,
+          "raw_aliases": [
+            "data_group"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "in"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "HANG_HOA",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Mã nguồn MSC",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "source_tab",
+          "nullable": false,
+          "raw_aliases": [
+            "tab"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "in"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "Hàng hóa ngoài thuốc, thiết bị, vật tư y tế",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Loại nguồn",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "source_tab_label",
+          "nullable": false,
+          "raw_aliases": [],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "from",
+            "to"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "2026-09-01",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Ngày phân vùng",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "partition_date",
+          "nullable": false,
+          "raw_aliases": [
+            "partition_date"
+          ],
+          "searchable": false,
+          "sortable": true,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": true,
+          "exact_lookup": false,
+          "example": "Thực phẩm",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Tên hàng hóa / dược liệu",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "item_name",
+          "nullable": true,
+          "raw_aliases": [
+            "danhMucHangHoa",
+            "tenThietBi"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "in"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "kg",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Đơn vị tính",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "unit",
+          "nullable": true,
+          "raw_aliases": [
+            "donViTinh"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "min",
+            "max"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": 1,
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": true,
+          "identifier": false,
+          "label": "Số lượng / khối lượng",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "quantity",
+          "nullable": true,
+          "raw_aliases": [
+            "khoiLuongDouble"
+          ],
+          "searchable": false,
+          "sortable": true,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "float",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "in"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "Việt Nam",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Xuất xứ",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "country_of_origin",
+          "nullable": true,
+          "raw_aliases": [
+            "xuatXu"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Mã HS",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "hs_code",
+          "nullable": true,
+          "raw_aliases": [
+            "maHs"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "Thực phẩm",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Ký mã hiệu",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "model_mark",
+          "nullable": true,
+          "raw_aliases": [
+            "kyMaHieu"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "Thực phẩm",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Nhãn hiệu",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "brand",
+          "nullable": true,
+          "raw_aliases": [
+            "nhanHieu"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "min",
+            "max"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": 2026,
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": true,
+          "identifier": false,
+          "label": "Năm sản xuất",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "production_year",
+          "nullable": true,
+          "raw_aliases": [
+            "namSanXuat"
+          ],
+          "searchable": false,
+          "sortable": true,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "int32",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": true,
+          "exact_lookup": false,
+          "example": "Việt Nam",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Hãng / cơ sở sản xuất",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "manufacturer",
+          "nullable": true,
+          "raw_aliases": [
+            "hangSanXuat"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "Thực phẩm",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Cấu hình / tính năng kỹ thuật",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "technical_specification",
+          "nullable": true,
+          "raw_aliases": [
+            "cauHinh"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Chủng loại",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "model",
+          "nullable": true,
+          "raw_aliases": [
+            "chungLoai"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "medical_devices"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": true,
+          "example": "",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": true,
+          "label": "Số lưu hành / giấy phép nhập khẩu",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "registration_or_import_permit_number",
+          "nullable": true,
+          "raw_aliases": [
+            "soLuuHanh"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "medical_devices"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "min",
+            "max"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": 61595022,
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": true,
+          "identifier": false,
+          "label": "Đơn giá trúng thầu (VND)",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "winning_unit_price",
+          "nullable": true,
+          "raw_aliases": [
+            "donGia",
+            "donGiaDuThau"
+          ],
+          "searchable": false,
+          "sortable": true,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "float",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": true,
+          "example": [
+            "vn0319058766"
+          ],
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": true,
+          "label": "Mã nhà thầu trúng thầu",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "winning_bidder_id",
+          "nullable": true,
+          "raw_aliases": [
+            "winningCode"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "string[]",
+          "ui_visibility": "detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": true,
+          "exact_lookup": false,
+          "example": [
+            "CÔNG TY TNHH SCHOOL NUTRITION METAMILK VN"
+          ],
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Nhà thầu trúng thầu",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "winning_bidder_name",
+          "nullable": true,
+          "raw_aliases": [
+            "winningName"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "string[]",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": true,
+          "exact_lookup": true,
+          "example": "IB2600498667",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": true,
+          "label": "Mã TBMT",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "bid_invitation_code",
+          "nullable": true,
+          "raw_aliases": [
+            "maTbmt"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": true,
+          "example": "vn0304098773",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": true,
+          "label": "Mã chủ đầu tư",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "procuring_entity_id",
+          "nullable": true,
+          "raw_aliases": [
+            "maCdt"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "string",
+          "ui_visibility": "detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": true,
+          "exact_lookup": false,
+          "example": "TRƯỜNG MẦM NON 14",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Chủ đầu tư",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "procuring_entity_name",
+          "nullable": true,
+          "raw_aliases": [
+            "tenCdtBmt"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "in"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "LCNT_DB",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Hình thức lựa chọn nhà thầu",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "selection_method",
+          "nullable": true,
+          "raw_aliases": [
+            "bidForm"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "2026-08-28T23:57:28",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Thời điểm đăng kết quả",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "result_posted_at",
+          "nullable": true,
+          "raw_aliases": [
+            "ngayDangTaiKqlcnt"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": true,
+          "example": "184/QĐ-MN14",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": true,
+          "label": "Số quyết định",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "decision_number",
+          "nullable": true,
+          "raw_aliases": [
+            "soQuyetDinh"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "2026-08-25T23:59:59",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Ngày ban hành quyết định",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "decision_issued_at",
+          "nullable": true,
+          "raw_aliases": [
+            "ngayBanHanhQuyetDinh"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "min",
+            "max"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": 1.7142857142857142,
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": true,
+          "identifier": false,
+          "label": "Số nhà thầu tham dự",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "bidder_count",
+          "nullable": true,
+          "raw_aliases": [
+            "soNhaThauThamDu"
+          ],
+          "searchable": false,
+          "sortable": true,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "float",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "Thành phố Hồ Chí Minh, Phường Khánh Hội",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Địa điểm",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "location",
+          "nullable": true,
+          "raw_aliases": [
+            "diaDiem"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "goods_general",
+            "medical_devices"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        }
+      ],
+      "filter_fields": [
+        "bidder_count",
+        "country_of_origin",
+        "data_group",
+        "partition_date",
+        "production_year",
+        "quantity",
+        "selection_method",
+        "source_tab",
+        "source_tab_label",
+        "unit",
+        "winning_unit_price"
+      ],
+      "full_text": {
+        "fields": [
+          "item_name",
+          "country_of_origin",
+          "hs_code",
+          "model_mark",
+          "brand",
+          "manufacturer",
+          "technical_specification",
+          "model",
+          "registration_or_import_permit_number",
+          "winning_bidder_name",
+          "bid_invitation_code",
+          "procuring_entity_name",
+          "selection_method",
+          "unit"
+        ],
+        "weights": [
+          10,
+          2,
+          2,
+          2,
+          2,
+          5,
+          6,
+          2,
+          2,
+          5,
+          8,
+          4,
+          2,
+          2
+        ]
+      },
+      "identifier_fields": [
+        "id",
+        "bid_invitation_code",
+        "decision_number",
+        "registration_or_import_permit_number",
+        "winning_bidder_id",
+        "procuring_entity_id"
+      ],
+      "null_semantics": {
+        "empty_array": "not indexed; never treated as numeric zero",
+        "empty_string": "normalized as missing during ingestion where source value is blank",
+        "missing": "not indexed and does not match equality/range filters",
+        "zero": "legitimate numeric value and remains filterable/sortable"
+      },
+      "result_fields": [
+        "id",
+        "data_group",
+        "source_tab",
+        "source_tab_label",
+        "partition_date",
+        "item_name",
+        "unit",
+        "quantity",
+        "country_of_origin",
+        "hs_code",
+        "model_mark",
+        "brand",
+        "production_year",
+        "manufacturer",
+        "technical_specification",
+        "model",
+        "registration_or_import_permit_number",
+        "winning_unit_price",
+        "winning_bidder_id",
+        "winning_bidder_name",
+        "bid_invitation_code",
+        "procuring_entity_id",
+        "procuring_entity_name",
+        "selection_method",
+        "result_posted_at",
+        "decision_number",
+        "decision_issued_at",
+        "bidder_count",
+        "location"
+      ],
+      "schema_group": "goods",
+      "sort_fields": [
+        "bidder_count",
+        "partition_date",
+        "production_year",
+        "quantity",
+        "winning_unit_price"
+      ],
+      "source_types": [
+        {
+          "key": "goods_general",
+          "label": "Hàng hóa ngoài thuốc, thiết bị, vật tư y tế",
+          "selector": {
+            "field": "source_tab",
+            "value": "HANG_HOA"
+          }
+        },
+        {
+          "key": "medical_devices",
+          "label": "Thiết bị, vật tư y tế",
+          "selector": {
+            "field": "source_tab",
+            "value": "THIET_BI_VAT_TU_Y_TE"
+          }
+        }
+      ]
+    },
+    "medicines": {
+      "autocomplete_fields": [
+        "medicine_name",
+        "active_ingredient_or_herbal_component",
+        "manufacturer",
+        "winning_bidder_name",
+        "bid_invitation_code",
+        "procuring_entity_name"
+      ],
+      "collection_alias": "bidfinder_medicines",
+      "fields": [
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": true,
+          "example": "53ece56b-0d7d-4b19-a10e-341a3741f0e4",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": true,
+          "label": "Mã bản ghi",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "id",
+          "nullable": false,
+          "raw_aliases": [
+            "id"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "in"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "medicines",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Nhóm dữ liệu",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "data_group",
+          "nullable": false,
+          "raw_aliases": [
+            "data_group"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "in"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "THUOC_TAN_DUOC",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Mã nguồn MSC",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "source_tab",
+          "nullable": false,
+          "raw_aliases": [
+            "tab"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "in"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "Gói thầu thuốc Generic",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Loại nguồn",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "source_tab_label",
+          "nullable": false,
+          "raw_aliases": [],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "from",
+            "to"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "2026-09-01",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Ngày phân vùng",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "partition_date",
+          "nullable": false,
+          "raw_aliases": [
+            "partition_date"
+          ],
+          "searchable": false,
+          "sortable": true,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": true,
+          "exact_lookup": false,
+          "example": "Apitim 5",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Tên thuốc",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "medicine_name",
+          "nullable": true,
+          "raw_aliases": [
+            "tenThuoc"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": true,
+          "exact_lookup": false,
+          "example": "Amlodipin",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Hoạt chất / thành phần dược liệu",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "active_ingredient_or_herbal_component",
+          "nullable": true,
+          "raw_aliases": [
+            "tenHoatChat"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "5mg",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Nồng độ / hàm lượng",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "strength",
+          "nullable": true,
+          "raw_aliases": [
+            "nongDo"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": true,
+          "example": "893110140124",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": true,
+          "label": "GĐKLH hoặc GPNK",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "marketing_authorization_or_import_permit",
+          "nullable": true,
+          "raw_aliases": [
+            "gdklh_GPNK"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "in"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "Uống",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Đường dùng",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "route_of_administration",
+          "nullable": true,
+          "raw_aliases": [
+            "duongDung"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "in"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "Viên nang cứng",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Dạng bào chế",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "dosage_form",
+          "nullable": true,
+          "raw_aliases": [
+            "dangBaoChe"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "36 tháng",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Hạn dùng",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "shelf_life",
+          "nullable": true,
+          "raw_aliases": [
+            "hanDung"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": true,
+          "exact_lookup": false,
+          "example": "Công ty Cổ phần Dược Hậu Giang - Chi nhánh nhà máy dược phẩm DHG tại Hậu Giang",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Hãng / cơ sở sản xuất",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "manufacturer",
+          "nullable": true,
+          "raw_aliases": [
+            "tenCoSoSanXuat"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "in"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "Việt Nam",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Nước sản xuất",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "production_country",
+          "nullable": true,
+          "raw_aliases": [
+            "nuocSanXuat"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "Hộp 3 vỉ x 10 viên",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Quy cách đóng gói",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "packaging",
+          "nullable": true,
+          "raw_aliases": [
+            "quyCachDongGoi"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "in"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "Viên",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Đơn vị tính",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "unit",
+          "nullable": true,
+          "raw_aliases": [
+            "donViTinh"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "min",
+            "max"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": 65000,
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": true,
+          "identifier": false,
+          "label": "Số lượng / khối lượng",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "quantity",
+          "nullable": true,
+          "raw_aliases": [
+            "soLuong"
+          ],
+          "searchable": false,
+          "sortable": true,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "float",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "min",
+            "max"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": 580,
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": true,
+          "identifier": false,
+          "label": "Đơn giá trúng thầu (VND)",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "winning_unit_price",
+          "nullable": true,
+          "raw_aliases": [
+            "donGia"
+          ],
+          "searchable": false,
+          "sortable": true,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "float",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": true,
+          "example": [
+            "vn1800156801"
+          ],
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": true,
+          "label": "Mã nhà thầu trúng thầu",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "winning_bidder_id",
+          "nullable": true,
+          "raw_aliases": [
+            "winningCode"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string[]",
+          "ui_visibility": "detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": true,
+          "exact_lookup": false,
+          "example": [
+            "CÔNG TY CỔ PHẦN DƯỢC HẬU GIANG"
+          ],
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Nhà thầu trúng thầu",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "winning_bidder_name",
+          "nullable": true,
+          "raw_aliases": [
+            "winningName"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string[]",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "in"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "N2",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Nhóm thuốc",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "medicine_group",
+          "nullable": true,
+          "raw_aliases": [
+            "nhomThuoc"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": true,
+          "exact_lookup": true,
+          "example": "IB2600498574",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": true,
+          "label": "Mã TBMT",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "bid_invitation_code",
+          "nullable": true,
+          "raw_aliases": [
+            "maTbmt"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": true,
+          "example": "vn3101155502",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": true,
+          "label": "Mã chủ đầu tư",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "procuring_entity_id",
+          "nullable": true,
+          "raw_aliases": [
+            "maCdt"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": true,
+          "exact_lookup": false,
+          "example": "TRẠM Y TẾ XÃ TRƯỜNG NINH",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Chủ đầu tư",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "procuring_entity_name",
+          "nullable": true,
+          "raw_aliases": [
+            "tenCdtBmt"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "in"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "CDT",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Hình thức lựa chọn nhà thầu",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "selection_method",
+          "nullable": true,
+          "raw_aliases": [
+            "bidForm"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "2026-08-28T21:56:06",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Thời điểm đăng kết quả",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "result_posted_at",
+          "nullable": true,
+          "raw_aliases": [
+            "ngayDangTaiKqlcnt"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": true,
+          "example": "452/QĐ-TYT",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": true,
+          "label": "Số quyết định",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "decision_number",
+          "nullable": true,
+          "raw_aliases": [
+            "soQuyetDinh"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "2026-08-28T23:59:59",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Ngày ban hành quyết định",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "decision_issued_at",
+          "nullable": true,
+          "raw_aliases": [
+            "ngayBanHanhQuyetDinh"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "min",
+            "max"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": null,
+          "example_source": "not present in provided fixture sample",
+          "facetable": false,
+          "filterable": true,
+          "identifier": false,
+          "label": "Số nhà thầu tham dự",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "bidder_count",
+          "nullable": true,
+          "raw_aliases": [
+            "soNhaThauThamDu"
+          ],
+          "searchable": false,
+          "sortable": true,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "float",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "Tỉnh Quảng Trị, Xã Trường Ninh",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Địa điểm",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "location",
+          "nullable": true,
+          "raw_aliases": [
+            "diaDiem"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "medicine_generic",
+            "medicine_originator",
+            "medicine_herbal"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        }
+      ],
+      "filter_fields": [
+        "bidder_count",
+        "data_group",
+        "dosage_form",
+        "medicine_group",
+        "partition_date",
+        "production_country",
+        "quantity",
+        "route_of_administration",
+        "selection_method",
+        "source_tab",
+        "source_tab_label",
+        "unit",
+        "winning_unit_price"
+      ],
+      "full_text": {
+        "fields": [
+          "medicine_name",
+          "active_ingredient_or_herbal_component",
+          "strength",
+          "marketing_authorization_or_import_permit",
+          "route_of_administration",
+          "dosage_form",
+          "shelf_life",
+          "manufacturer",
+          "production_country",
+          "packaging",
+          "winning_bidder_name",
+          "medicine_group",
+          "bid_invitation_code",
+          "procuring_entity_name",
+          "selection_method",
+          "unit"
+        ],
+        "weights": [
+          10,
+          9,
+          2,
+          2,
+          2,
+          2,
+          2,
+          5,
+          2,
+          2,
+          5,
+          2,
+          8,
+          4,
+          2,
+          2
+        ]
+      },
+      "identifier_fields": [
+        "id",
+        "bid_invitation_code",
+        "decision_number",
+        "marketing_authorization_or_import_permit",
+        "winning_bidder_id",
+        "procuring_entity_id"
+      ],
+      "null_semantics": {
+        "empty_array": "not indexed; never treated as numeric zero",
+        "empty_string": "normalized as missing during ingestion where source value is blank",
+        "missing": "not indexed and does not match equality/range filters",
+        "zero": "legitimate numeric value and remains filterable/sortable"
+      },
+      "result_fields": [
+        "id",
+        "data_group",
+        "source_tab",
+        "source_tab_label",
+        "partition_date",
+        "medicine_name",
+        "active_ingredient_or_herbal_component",
+        "strength",
+        "marketing_authorization_or_import_permit",
+        "route_of_administration",
+        "dosage_form",
+        "shelf_life",
+        "manufacturer",
+        "production_country",
+        "packaging",
+        "unit",
+        "quantity",
+        "winning_unit_price",
+        "winning_bidder_id",
+        "winning_bidder_name",
+        "medicine_group",
+        "bid_invitation_code",
+        "procuring_entity_id",
+        "procuring_entity_name",
+        "selection_method",
+        "result_posted_at",
+        "decision_number",
+        "decision_issued_at",
+        "bidder_count",
+        "location"
+      ],
+      "schema_group": "medicines",
+      "sort_fields": [
+        "bidder_count",
+        "partition_date",
+        "quantity",
+        "winning_unit_price"
+      ],
+      "source_types": [
+        {
+          "key": "medicine_generic",
+          "label": "Gói thầu thuốc Generic",
+          "selector": {
+            "field": "source_tab_label",
+            "value": "Gói thầu thuốc Generic"
+          }
+        },
+        {
+          "key": "medicine_originator",
+          "label": "Gói thầu thuốc biệt dược gốc",
+          "selector": {
+            "field": "source_tab_label",
+            "value": "Gói thầu thuốc biệt dược gốc"
+          }
+        },
+        {
+          "key": "medicine_herbal",
+          "label": "Gói thầu thuốc dược liệu",
+          "selector": {
+            "field": "source_tab_label",
+            "value": "Gói thầu thuốc dược liệu"
+          }
+        }
+      ]
+    },
+    "traditional": {
+      "autocomplete_fields": [
+        "item_name",
+        "scientific_name",
+        "manufacturer",
+        "winning_bidder_name",
+        "bid_invitation_code",
+        "procuring_entity_name"
+      ],
+      "collection_alias": "bidfinder_traditional",
+      "fields": [
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": true,
+          "example": "8d1a9094-9e9c-483e-a7b5-3535b9a8d7b0",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": true,
+          "label": "Mã bản ghi",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "id",
+          "nullable": false,
+          "raw_aliases": [
+            "id"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string",
+          "ui_visibility": "detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "in"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "traditional_medicine",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Nhóm dữ liệu",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "data_group",
+          "nullable": false,
+          "raw_aliases": [
+            "data_group"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "in"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "DUOC_LIEU",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Mã nguồn MSC",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "source_tab",
+          "nullable": false,
+          "raw_aliases": [
+            "tab"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "in"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "Dược liệu",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Loại nguồn",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "source_tab_label",
+          "nullable": false,
+          "raw_aliases": [],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "from",
+            "to"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "2026-09-01",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Ngày phân vùng",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "partition_date",
+          "nullable": false,
+          "raw_aliases": [
+            "partition_date"
+          ],
+          "searchable": false,
+          "sortable": true,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": true,
+          "exact_lookup": false,
+          "example": "Bạch linh (Phục linh, Bạch phục linh)",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Tên hàng hóa / dược liệu",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "item_name",
+          "nullable": true,
+          "raw_aliases": [
+            "tenDuocLieu",
+            "tenViThuocCoTruyen"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "Thân nấm",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Bộ phận dùng",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "used_part",
+          "nullable": true,
+          "raw_aliases": [
+            "boPhanDung"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": true,
+          "exact_lookup": false,
+          "example": "Poria",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Tên khoa học",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "scientific_name",
+          "nullable": true,
+          "raw_aliases": [
+            "tenKhoaHoc"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "in"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "B",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Nguồn gốc",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "origin",
+          "nullable": true,
+          "raw_aliases": [
+            "nguonGoc"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "Quả thể nấm, thái, phơi khô hoặc sấy khô",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Phương pháp chế biến",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "processing_method",
+          "nullable": true,
+          "raw_aliases": [
+            "phuongPhapCheBien"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": true,
+          "example": "4979/BYT-YDCT 122/YDCT-QLHN",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": true,
+          "label": "Số lưu hành / giấy phép nhập khẩu",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "registration_or_import_permit_number",
+          "nullable": true,
+          "raw_aliases": [
+            "gdklh_GPNK"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": true,
+          "exact_lookup": false,
+          "example": "Công ty dược liệu",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Hãng / cơ sở sản xuất",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "manufacturer",
+          "nullable": true,
+          "raw_aliases": [
+            "tenCoSoSanXuat"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "in"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "Việt Nam",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Nước sản xuất",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "production_country",
+          "nullable": true,
+          "raw_aliases": [
+            "nuocSanXuat"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "Gói 1-5kg",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Quy cách đóng gói",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "packaging",
+          "nullable": true,
+          "raw_aliases": [
+            "quyCachDongGoi"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "in"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "Kg",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Đơn vị tính",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "unit",
+          "nullable": true,
+          "raw_aliases": [
+            "donViTinh"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "min",
+            "max"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": 20,
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": true,
+          "identifier": false,
+          "label": "Số lượng / khối lượng",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "quantity",
+          "nullable": true,
+          "raw_aliases": [
+            "soLuong"
+          ],
+          "searchable": false,
+          "sortable": true,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "float",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "min",
+            "max"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": 197400,
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": true,
+          "identifier": false,
+          "label": "Đơn giá trúng thầu (VND)",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "winning_unit_price",
+          "nullable": true,
+          "raw_aliases": [
+            "donGia"
+          ],
+          "searchable": false,
+          "sortable": true,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "float",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": true,
+          "example": [
+            "vn3100781627"
+          ],
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": true,
+          "label": "Mã nhà thầu trúng thầu",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "winning_bidder_id",
+          "nullable": true,
+          "raw_aliases": [
+            "winningCode"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string[]",
+          "ui_visibility": "detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": true,
+          "exact_lookup": false,
+          "example": [
+            "Công ty TNHH Đông Dược Văn Hương"
+          ],
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Nhà thầu trúng thầu",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "winning_bidder_name",
+          "nullable": true,
+          "raw_aliases": [
+            "winningName"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string[]",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "in"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "N3",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Nhóm tiêu chí kỹ thuật",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "technical_group",
+          "nullable": true,
+          "raw_aliases": [
+            "nhomTCKT"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": true,
+          "exact_lookup": true,
+          "example": "IB2600477804",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": true,
+          "label": "Mã TBMT",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "bid_invitation_code",
+          "nullable": true,
+          "raw_aliases": [
+            "maTbmt"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": true,
+          "example": "vn3100488587",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": true,
+          "label": "Mã chủ đầu tư",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "procuring_entity_id",
+          "nullable": true,
+          "raw_aliases": [
+            "maCdt"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string",
+          "ui_visibility": "detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": true,
+          "exact_lookup": false,
+          "example": "Bệnh viện đa khoa khu vực Minh Hóa",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Chủ đầu tư",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "procuring_entity_name",
+          "nullable": true,
+          "raw_aliases": [
+            "tenCdtBmt"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "in"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "CDTRG",
+          "example_source": "MSC contract fixture",
+          "facetable": true,
+          "filterable": true,
+          "identifier": false,
+          "label": "Hình thức lựa chọn nhà thầu",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "selection_method",
+          "nullable": true,
+          "raw_aliases": [
+            "bidForm"
+          ],
+          "searchable": true,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "2026-08-22T17:29:44",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Thời điểm đăng kết quả",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "result_posted_at",
+          "nullable": true,
+          "raw_aliases": [
+            "ngayDangTaiKqlcnt"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": true,
+          "example": "885/QĐ-BV",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": true,
+          "label": "Số quyết định",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "decision_number",
+          "nullable": true,
+          "raw_aliases": [
+            "soQuyetDinh"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "2026-08-21T23:59:59",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Ngày ban hành quyết định",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "decision_issued_at",
+          "nullable": true,
+          "raw_aliases": [
+            "ngayBanHanhQuyetDinh"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [
+            "eq",
+            "min",
+            "max"
+          ],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": 1.7419354838709677,
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": true,
+          "identifier": false,
+          "label": "Số nhà thầu tham dự",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "bidder_count",
+          "nullable": true,
+          "raw_aliases": [
+            "soNhaThauThamDu"
+          ],
+          "searchable": false,
+          "sortable": true,
+          "source_types": [
+            "traditional_medicine"
+          ],
+          "type": "float",
+          "ui_visibility": "list_and_detail"
+        },
+        {
+          "allowed_operators": [],
+          "api_exposure": "canonical",
+          "autocomplete": false,
+          "exact_lookup": false,
+          "example": "Tỉnh Quảng Trị, Xã Minh Hóa",
+          "example_source": "MSC contract fixture",
+          "facetable": false,
+          "filterable": false,
+          "identifier": false,
+          "label": "Địa điểm",
+          "missing_behavior": "omitted; never coerced to zero or empty string",
+          "name": "location",
+          "nullable": true,
+          "raw_aliases": [
+            "diaDiem"
+          ],
+          "searchable": false,
+          "sortable": false,
+          "source_types": [
+            "herbal_material",
+            "traditional_medicine"
+          ],
+          "type": "string",
+          "ui_visibility": "list_and_detail"
+        }
+      ],
+      "filter_fields": [
+        "bidder_count",
+        "data_group",
+        "origin",
+        "partition_date",
+        "production_country",
+        "quantity",
+        "selection_method",
+        "source_tab",
+        "source_tab_label",
+        "technical_group",
+        "unit",
+        "winning_unit_price"
+      ],
+      "full_text": {
+        "fields": [
+          "item_name",
+          "used_part",
+          "scientific_name",
+          "origin",
+          "processing_method",
+          "registration_or_import_permit_number",
+          "manufacturer",
+          "production_country",
+          "packaging",
+          "winning_bidder_name",
+          "technical_group",
+          "bid_invitation_code",
+          "procuring_entity_name",
+          "selection_method",
+          "unit"
+        ],
+        "weights": [
+          10,
+          2,
+          9,
+          2,
+          2,
+          2,
+          5,
+          2,
+          2,
+          5,
+          2,
+          8,
+          4,
+          2,
+          2
+        ]
+      },
+      "identifier_fields": [
+        "id",
+        "bid_invitation_code",
+        "decision_number",
+        "registration_or_import_permit_number",
+        "winning_bidder_id",
+        "procuring_entity_id"
+      ],
+      "null_semantics": {
+        "empty_array": "not indexed; never treated as numeric zero",
+        "empty_string": "normalized as missing during ingestion where source value is blank",
+        "missing": "not indexed and does not match equality/range filters",
+        "zero": "legitimate numeric value and remains filterable/sortable"
+      },
+      "result_fields": [
+        "id",
+        "data_group",
+        "source_tab",
+        "source_tab_label",
+        "partition_date",
+        "item_name",
+        "used_part",
+        "scientific_name",
+        "origin",
+        "processing_method",
+        "registration_or_import_permit_number",
+        "manufacturer",
+        "production_country",
+        "packaging",
+        "unit",
+        "quantity",
+        "winning_unit_price",
+        "winning_bidder_id",
+        "winning_bidder_name",
+        "technical_group",
+        "bid_invitation_code",
+        "procuring_entity_id",
+        "procuring_entity_name",
+        "selection_method",
+        "result_posted_at",
+        "decision_number",
+        "decision_issued_at",
+        "bidder_count",
+        "location"
+      ],
+      "schema_group": "traditional_medicine",
+      "sort_fields": [
+        "bidder_count",
+        "partition_date",
+        "quantity",
+        "winning_unit_price"
+      ],
+      "source_types": [
+        {
+          "key": "herbal_material",
+          "label": "Dược liệu",
+          "selector": {
+            "field": "source_tab",
+            "value": "DUOC_LIEU"
+          }
+        },
+        {
+          "key": "traditional_medicine",
+          "label": "Vị thuốc cổ truyền",
+          "selector": {
+            "field": "source_tab",
+            "value": "VI_THUOC_CO_TRUYEN"
+          }
+        }
+      ]
+    }
+  },
+  "legacy_compatibility": {
+    "bulk_query": "/api/bulk-query",
+    "query_preview": "/api/query-preview",
+    "scope": {
+      "all": [
+        "goods",
+        "medicines",
+        "traditional"
+      ],
+      "goods": [
+        "goods"
+      ],
+      "medicine": [
+        "medicines"
+      ]
+    },
+    "traditional_legacy_key": "traditional_medicine"
+  },
+  "serving_generation": "serving_v1_20260901"
+}

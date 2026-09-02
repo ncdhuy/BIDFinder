@@ -1,0 +1,89 @@
+{
+  "contract_version": "typesense-search-contract-v1",
+  "generation": "serving_v1_20260901",
+  "corpus_size": 212,
+  "by_group": {"goods": 68, "medicines": 74, "traditional": 70},
+  "by_kind": {"autocomplete": 17, "combined": 3, "combined_page": 3, "date_range": 3, "exact": 18, "filter_eq": 36, "filter_in": 26, "group_all": 3, "pagination": 12, "range": 10, "sort": 26, "subtype": 7, "subtypes_all": 3, "text": 45},
+  "by_operator": {"asc": 13, "autocomplete_prefix": 17, "desc": 13, "eq": 36, "exact_zero_typo": 18, "from": 3, "in": 26, "max": 10, "min": 10, "to": 3},
+  "offline_contract_validation": {"status": "PASS", "focused_tests": 34, "query_contract_failures": 0, "metadata_schema_agreement": "PASS"},
+  "schema_metadata_validation": {
+    "status": "PASS",
+    "health": "PASS",
+    "aliases": "INACTIVE",
+    "live_physical_collection_count": 3,
+    "physical_counts": {"goods": 9593796, "medicines": 585449, "traditional": 32022},
+    "capability_counts": {
+      "goods": {"fields": 29, "searchable": 14, "filterable": 11, "sortable": 5, "autocomplete": 5},
+      "medicines": {"fields": 30, "searchable": 16, "filterable": 13, "sortable": 4, "autocomplete": 6},
+      "traditional": {"fields": 29, "searchable": 15, "filterable": 12, "sortable": 4, "autocomplete": 6}
+    },
+    "mismatches": []
+  },
+  "preserved_phase4a_performance_baseline": {
+    "typesense_p50_ms": 27.944,
+    "typesense_p95_ms": 579.397,
+    "quantity_sort_observed_ms": {"asc": 978.508, "desc": 968.566},
+    "resource_state": {"typesense_rss_kb": 7371396, "wsl_mem_available_bytes": 11333726208, "swap_free_bytes": 9637429248}
+  },
+  "query_tuning": {
+    "filter_only_shape": "q=*; query_by=first relevant field; deterministic sort; include_fields=result fields",
+    "quantity_sort_root_cause": "Broad-corpus numeric sort over 9,593,796 goods documents remains an expensive global ordering operation even with a sortable float schema.",
+    "date_range_fix": "Bounded ISO date ranges use exact string date/month/year prefixes because the frozen partition_date field is a Typesense string facet.",
+    "after_measurement": {"status": "MEASURED", "quantity_sort_ms": {"asc_median": 982.953, "desc_median": 974.566, "asc_max": 1016.484, "desc_max": 1021.006}, "material_improvement": false, "decision": "Document as PERFORMANCE_OUTLIER; no speculative further tuning."},
+    "generation_rebuild": false
+  },
+  "live_validation": {
+    "status": "PASS",
+    "attempted": true,
+    "execution_context": "WSL repository mount with sourced /home/ncdhuy/.config/bidfinder/typesense.env",
+    "credentials_loaded": true,
+    "timeout_seconds": 15,
+    "errors": {},
+    "invariant_failures": {},
+    "cases_by_group": {"goods": 68, "medicines": 74, "traditional": 70},
+    "cases_by_capability": {"autocomplete": 17, "combined_filters": 3, "date_ranges": 3, "exact_identifiers": 18, "filter_equality": 36, "filter_multi_value": 26, "group_wide": 3, "numeric_ranges": 10, "pagination": 12, "sort_directions": 26, "subtype": 7, "subtypes_all": 3, "field_specific_text": 45, "text": 45},
+    "cases_by_operator": {"asc": 13, "autocomplete_prefix": 17, "desc": 13, "eq": 36, "exact_zero_typo": 18, "from": 3, "in": 26, "max": 10, "min": 10, "to": 3},
+    "source_grounded_evidence": {
+      "sample_docs_per_subtype": 100,
+      "field_specific": {"advertised_cases": 45, "source_grounded_cases": 43, "query_by_only": "PASS", "unrelated_field_leakage": "PASS", "no_value_cases": ["goods.model", "goods.registration_or_import_permit_number"]},
+      "exact_identifier": {"advertised": 18, "source_grounded": 17, "passed": 17, "direct_id_lookup": "PASS", "zero_typo_probes": "3/3 PASS", "no_value_case": "goods.registration_or_import_permit_number"},
+      "filters": {"equality": "36/36 PASS", "multi_value": "26/26 PASS", "combined": "3/3 PASS"},
+      "numeric_ranges": {"advertised_fields": 10, "min_only": "10/10 PASS", "max_only": "10/10 PASS", "bounded": "10/10 PASS", "missing_numeric_not_zero": "PASS"},
+      "date_ranges": {"historical_2022_goods": {"found": 8647, "status": "PASS"}, "january_2023_goods": {"found": 36772, "status": "PASS"}, "recent_2026_goods": {"found": 61150, "status": "PASS"}},
+      "subtype_isolation": {"advertised": 7, "passed": 7, "status": "PASS"},
+      "sorts": {"advertised_directions": 26, "monotonic": "26/26 PASS", "repeat_stability": "26/26 PASS"},
+      "pagination": {"corpus_cases": 12, "page_size": "PASS", "boundaries": "PASS", "empty_last_page": "PASS"},
+      "autocomplete": {"advertised_fields": 17, "passed": 17, "prefix": "PASS", "deduplication": "PASS", "limits": "PASS", "unicode_prefixes": 7, "subtype_contexts": "3/3 PASS"},
+      "relevance_mvp": {"groups": 3, "source_records_top5": "3/3 PASS", "broad_query_observations": 3}
+    },
+    "api_compatibility": {"search_contract": "PASS", "query_preview": "PASS", "bulk_query": "PASS", "malformed_child_isolation": "PASS", "public_envelopes_unchanged": true, "typesense_primary_request_path": "canonical adapter and FastAPI compatibility checks"},
+    "latency_ms": {
+      "autocomplete": {"p50_ms": 8.13, "p95_ms": 334.542, "max_ms": 334.542},
+      "combined": {"p50_ms": 28.212, "p95_ms": 429.383, "max_ms": 429.383},
+      "combined_page": {"p50_ms": 37.382, "p95_ms": 3337.226, "max_ms": 3337.226},
+      "date_range": {"p50_ms": 7.963, "p95_ms": 28.135, "max_ms": 28.135},
+      "exact": {"p50_ms": 1.871, "p95_ms": 5.977, "max_ms": 5.977},
+      "filter_eq": {"p50_ms": 4.914, "p95_ms": 827.744, "max_ms": 2863.458},
+      "filter_in": {"p50_ms": 31.37, "p95_ms": 1285.542, "max_ms": 5228.093},
+      "group_all": {"p50_ms": 31.362, "p95_ms": 493.069, "max_ms": 493.069},
+      "pagination": {"p50_ms": 34.088, "p95_ms": 594.547, "max_ms": 594.547},
+      "range": {"p50_ms": 123.885, "p95_ms": 3232.849, "max_ms": 3232.849},
+      "sort": {"p50_ms": 30.56, "p95_ms": 1053.87, "max_ms": 1100.598},
+      "subtype": {"p50_ms": 22.857, "p95_ms": 686.142, "max_ms": 686.142},
+      "subtypes_all": {"p50_ms": 122.226, "p95_ms": 863.169, "max_ms": 863.169},
+      "text": {"p50_ms": 8.824, "p95_ms": 298.356, "max_ms": 2517.693}
+    },
+    "outliers_over_500ms": 26,
+    "outliers_over_500ms_by_kind": {"combined_page": 1, "filter_eq": 4, "filter_in": 4, "pagination": 2, "range": 4, "sort": 8, "subtype": 1, "subtypes_all": 1, "text": 1},
+    "performance_policy": "PASS: no multi-second common-path errors or resource-unsafe condition; broad sort/range outliers documented as PERFORMANCE_OUTLIER.",
+    "id_tie_break": "The frozen live schema rejects literal id:asc because id is implicit; adapter omits it, advertised sorts are deterministic on repeated reads, and no id sort is advertised.",
+    "resource_sampled_live_corpus": {"samples": 88, "typesense_pid_count": 1, "typesense_rss_kb_min": 7372744, "typesense_rss_kb_max": 7573056, "typesense_cpu_pct_max": 187.0, "wsl_mem_available_kb_min": 10872304, "wsl_mem_available_kb_max": 11245452, "swap_free_kb_min": 8375700, "swap_free_kb_max": 8375700},
+    "final_steady_state": {"typesense_rss_kb": 7355704, "typesense_cpu_pct": 97.1, "wsl_mem_available_kb": 10599784, "wsl_swap_total_kb": 8388608, "wsl_swap_free_kb": 8375700, "typesense_processes": 1, "fastapi_processes_in_wsl": 0}
+  },
+  "phase4a_reclassification": {"legacy_population_difference": "INFORMATIONAL", "query_contract_failure": "NONE", "ranking_difference": "NOT_A_GLOBAL_PARITY_GATE", "performance_outlier": "DOCUMENTED", "shadow_infra_error": "NONE_IN_FINAL_CORPUS", "preserved_raw_artifacts": ["historical-backfill-audit.pre-r4.json", "historical-backfill-audit.pre-r4.md"]},
+  "backend_switch": {"default": "postgres", "supported": ["postgres", "typesense", "controlled"], "primary_switched": false, "fallback_opt_in_only": true},
+  "raw_queries_written": false,
+  "raw_documents_written": false,
+  "aliases_used": false,
+  "frontend_changed": false
+}
