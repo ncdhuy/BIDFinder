@@ -1,0 +1,26 @@
+[Unit]
+Description=BIDFinder FastAPI service
+Wants=network-online.target
+After=network-online.target bidfinder-typesense.service
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.config/bidfinder/typesense.env
+EnvironmentFile=-%h/.config/bidfinder/runtime.env
+EnvironmentFile=-%h/.config/bidfinder/backend.env
+Environment=BIDFINDER_REPO_ROOT=@BIDFINDER_REPO@
+Environment=BIDFINDER_PYTHON=@BIDFINDER_VENV@/bin/python
+Environment=BIDFINDER_TYPESENSE_SHADOW_ENABLED=false
+Environment=BIDFINDER_TYPESENSE_SHADOW_DEBUG_QUERIES=false
+ExecStart=/usr/bin/env bash @BIDFINDER_REPO@/infra/runtime/bidfinder-api-entrypoint.sh
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+SendSIGKILL=no
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

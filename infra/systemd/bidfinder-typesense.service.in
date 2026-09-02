@@ -1,0 +1,21 @@
+[Unit]
+Description=BIDFinder Typesense serving engine
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.config/bidfinder/typesense.env
+EnvironmentFile=-%h/.config/bidfinder/runtime.env
+ExecStart=/usr/bin/env bash @BIDFINDER_REPO@/infra/typesense/local-typesense.sh foreground
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=300s
+KillSignal=SIGTERM
+SendSIGKILL=no
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

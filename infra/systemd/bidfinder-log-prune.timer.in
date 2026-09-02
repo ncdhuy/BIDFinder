@@ -1,0 +1,11 @@
+[Unit]
+Description=BIDFinder daily bounded journal retention schedule
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 Asia/Ho_Chi_Minh
+AccuracySec=10m
+Persistent=false
+Unit=bidfinder-log-prune.service
+
+[Install]
+WantedBy=timers.target

@@ -939,6 +939,7 @@ class BackfillRunner:
         max_partitions: int | None = None,
         replace_existing: bool = False,
         replace_existing_before: date | None = None,
+        replace_existing_dates: set[tuple[str, date]] | None = None,
         on_before_partition: Callable[[str, str, "BackfillReport"], None] | None = None,
         on_partition_boundary: Callable[[PartitionResult, "BackfillReport"], None] | None = None,
     ) -> None:
@@ -952,6 +953,7 @@ class BackfillRunner:
         self.max_partitions = max_partitions
         self.replace_existing = replace_existing
         self.replace_existing_before = replace_existing_before
+        self.replace_existing_dates = replace_existing_dates or set()
         self.on_before_partition = on_before_partition
         self.on_partition_boundary = on_partition_boundary
 
@@ -975,10 +977,19 @@ class BackfillRunner:
                     self.on_before_partition(source_key, partition_date, self.report)
                 checkpoint = self.checkpoint_store.get(source_key, partition_date, getattr(self.engine.sink, "sink_target", ""))
                 should_replace = (
-                    self.replace_existing
-                    and checkpoint is not None
+                    checkpoint is not None
                     and checkpoint.status == IngestionStatus.COMPLETED
-                    and (self.force or self.replace_existing_before is None or parse_partition_date(partition_date) < self.replace_existing_before)
+                    and (
+                        self.force
+                        or (
+                            self.replace_existing
+                            and (
+                                self.replace_existing_before is None
+                                or parse_partition_date(partition_date) < self.replace_existing_before
+                            )
+                        )
+                        or (source_key, parse_partition_date(partition_date)) in self.replace_existing_dates
+                    )
                 )
                 if checkpoint and checkpoint.status == IngestionStatus.COMPLETED and not self.force and not should_replace:
                     if not self.resume:

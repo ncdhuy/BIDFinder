@@ -302,6 +302,17 @@ def _run_incremental(args: argparse.Namespace) -> int:
     with CheckpointStore(args.checkpoint) as checkpoints:
         from_date = args.from_date or next_incremental_start(checkpoints, args.generation).isoformat()
     to_date = args.to_date or latest_closed_day().isoformat()
+    from_day = from_date if isinstance(from_date, date) else date.fromisoformat(from_date)
+    to_day = to_date if isinstance(to_date, date) else date.fromisoformat(to_date)
+    if from_day > to_day:
+        print(json.dumps({
+            "overall_status": "PASS",
+            "status": "SKIPPED",
+            "reason": "no fully closed dates are missing",
+            "from_date": from_day.isoformat(),
+            "to_date": to_day.isoformat(),
+        }, ensure_ascii=False, sort_keys=True))
+        return 0
     config = _msc_config(args)
     ts_config = TypesenseConfig.from_env()
     if args.typesense_batch_size is not None:

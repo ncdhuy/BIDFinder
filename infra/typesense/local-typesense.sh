@@ -97,6 +97,19 @@ start_instance() {
   echo "started pid=$(pid_value "$pid_file") port=$port"
 }
 
+foreground_instance() {
+  local data_dir="$1" port="$2" peering_port="${3:-8107}"
+  [[ -x "$BIN" ]] || die "Typesense binary missing: run '$0 install'"
+  mkdir -p "$data_dir"
+  # systemd owns this foreground process and sends graceful SIGTERM on stop.
+  exec "$BIN" \
+    --data-dir="$data_dir" \
+    --api-address="$HOST" \
+    --api-port="$port" \
+    --peering-address=127.0.0.1 \
+    --peering-port="$peering_port"
+}
+
 stop_pid() {
   local pid_file="$1"
   local pid
@@ -144,7 +157,9 @@ snapshot() {
   require_local_config
   ensure_dirs
   mkdir -p "$(dirname "$snapshot_path")"
-  curl -fsS -X POST --get --data-urlencode "snapshot_path=$snapshot_path" \
+  curl -fsS -X POST --get \
+    -H "X-TYPESENSE-API-KEY: $TYPESENSE_API_KEY" \
+    --data-urlencode "snapshot_path=$snapshot_path" \
     "http://$HOST:$PORT/operations/snapshot"
   echo
 }
@@ -177,6 +192,10 @@ case "${1:-}" in
   start)
     ensure_dirs
     start_instance "$DATA_DIR" "$PORT" "$PID_FILE" "$LOG_FILE"
+    ;;
+  foreground)
+    ensure_dirs
+    foreground_instance "$DATA_DIR" "$PORT"
     ;;
   stop)
     stop_pid "$PID_FILE"
@@ -213,6 +232,6 @@ case "${1:-}" in
     restore_stop "${2:-}"
     ;;
   *)
-    die "usage: $0 {install|start|stop|restart|status|health|snapshot PATH|restore-start SNAPSHOT PORT DATA_DIR|restore-stop PORT}"
+    die "usage: $0 {install|start|foreground|stop|restart|status|health|snapshot PATH|restore-start SNAPSHOT PORT DATA_DIR|restore-stop PORT}"
     ;;
 esac

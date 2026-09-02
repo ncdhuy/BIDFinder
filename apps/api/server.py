@@ -6,7 +6,7 @@ import time
 import copy
 import hashlib
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import asyncio
@@ -14,6 +14,9 @@ import asyncpg
 import json
 import os
 import ssl
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote
+from urllib.request import Request as URLRequest, urlopen
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -42,6 +45,7 @@ from auth_utils import (
 from typesense_shadow import (
     AutocompleteQuery,
     PostgresSearchRepository,
+    physical_collection_name,
     QUERY_CONTRACT_FAILURE,
     SHADOW_INFRA_ERROR,
     TypesenseSearchRepository,
@@ -59,6 +63,7 @@ from typesense_contract import (
 )
 
 logger = logging.getLogger("bidfinder.api")
+logger.setLevel(os.getenv("BIDFINDER_LOG_LEVEL", "INFO").upper())
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 db_pool: Optional[asyncpg.Pool] = None
@@ -73,6 +78,11 @@ cache_lock = asyncio.Lock()
 preview_cache: Dict[str, Dict[str, Any]] = {}
 autocomplete_cache: Dict[str, Dict[str, Any]] = {}
 metadata_cache: Dict[str, Dict[str, Any]] = {}
+SERVING_GENERATION = os.getenv(
+    "BIDFINDER_TYPESENSE_SERVING_GENERATION",
+    "serving_v1_20260901",
+).strip()
+SERVING_REPORT_PATH = os.getenv("BIDFINDER_SERVING_REPORT_PATH", "").strip()
 
 
 def get_env_flag(name: str, default: bool = False) -> bool:
@@ -1000,6 +1010,30 @@ async def ensure_db_pool() -> asyncpg.Pool:
             db_pool = await get_db_pool()
 
     return db_pool
+
+
+def anonymous_access_allows(requirement: Literal["preview", "full_query", "autocomplete", "metadata"]) -> bool:
+    if requirement == "full_query":
+        return ANONYMOUS_ACCESS_LEVEL == "full"
+    if requirement == "autocomplete":
+        return ANONYMOUS_ACCESS_LEVEL in {"preview", "full"} and ANONYMOUS_AUTOCOMPLETE_ENABLED
+    if requirement == "metadata":
+        return ANONYMOUS_ACCESS_LEVEL in {"preview", "full"} and ANONYMOUS_METADATA_ENABLED
+    return ANONYMOUS_ACCESS_LEVEL in {"preview", "full"}
+
+
+@asynccontextmanager
+async def optional_db_connection(
+    request: Request,
+    requirement: Literal["preview", "full_query", "autocomplete", "metadata"],
+):
+    # Typesense-primary anonymous reads do not need a control-plane DB connection.
+    if not extract_session_token(request) and anonymous_access_allows(requirement):
+        yield None
+        return
+    pool = await ensure_db_pool()
+    async with pool.acquire() as conn:
+        yield conn
 
 
 def clean_value(val):
@@ -2088,7 +2122,7 @@ def record_procurement_fallback(endpoint: str, group: str, reason: str) -> None:
 
 
 async def fetch_backend_page(
-    conn: asyncpg.Connection,
+    conn: asyncpg.Connection | None,
     query,
     *,
     exact_count_enabled: bool = False,
@@ -2106,10 +2140,24 @@ async def fetch_backend_page(
     except TypesenseShadowError as exc:
         if not (config.fallback_enabled and exc.code == SHADOW_INFRA_ERROR):
             raise
-        page = await asyncio.wait_for(
-            postgres_search_repository.search(conn, query, exact_count_enabled=exact_count_enabled),
-            timeout=config.fallback_timeout_seconds,
-        )
+        if conn is not None:
+            page = await asyncio.wait_for(
+                postgres_search_repository.search(conn, query, exact_count_enabled=exact_count_enabled),
+                timeout=config.fallback_timeout_seconds,
+            )
+        elif not isinstance(postgres_search_repository, PostgresSearchRepository):
+            # Preserve lightweight adapter tests that provide their own repository.
+            page = await asyncio.wait_for(
+                postgres_search_repository.search(None, query, exact_count_enabled=exact_count_enabled),
+                timeout=config.fallback_timeout_seconds,
+            )
+        else:
+            pool = await ensure_db_pool()
+            async with pool.acquire() as fallback_conn:
+                page = await asyncio.wait_for(
+                    postgres_search_repository.search(fallback_conn, query, exact_count_enabled=exact_count_enabled),
+                    timeout=config.fallback_timeout_seconds,
+                )
         record_procurement_fallback(query.endpoint, query.group, "typesense_infrastructure")
         page["backend_fallback"] = {
             "event": PROCUREMENT_FALLBACK_EVENT,
@@ -2136,7 +2184,6 @@ def _query_groups(payload: QueryRequest) -> list[str]:
 async def query_typesense_primary(request: Request, payload: QueryRequest) -> JSONResponse:
     """Serve complete canonical groups when Phase 4C switch is explicitly enabled."""
 
-    pool = await ensure_db_pool()
     filters = payload.filters or FilterRequest()
     sort_rules = payload.sort or []
     search_mode = payload.searchMode if payload.searchMode in {"standard", "full"} else "standard"
@@ -2152,7 +2199,7 @@ async def query_typesense_primary(request: Request, payload: QueryRequest) -> JS
         "applied_total_limit": limit * len(groups),
     }
     count_parts: list[dict[str, Any]] = []
-    async with pool.acquire() as conn:
+    async with optional_db_connection(request, "full_query") as conn:
         user = await enforce_data_access_policy(conn, request, "full_query")
         if search_mode == "full":
             quota = await get_full_search_usage_snapshot(request, user)
@@ -2207,7 +2254,6 @@ async def autocomplete_typesense_primary(request: Request, payload: Autocomplete
     )
     filters = payload.filters if isinstance(payload.filters, dict) else {}
     filters_obj = FilterRequest(**filters)
-    pool = await ensure_db_pool()
     values: list[str] = []
     seen: set[str] = set()
     fallback_used = False
@@ -2220,7 +2266,7 @@ async def autocomplete_typesense_primary(request: Request, payload: Autocomplete
             values.append(text)
 
     push(keyword)
-    async with pool.acquire() as conn:
+    async with optional_db_connection(request, "autocomplete") as conn:
         user = await enforce_data_access_policy(conn, request, "autocomplete")
         for group in group_names:
             query = AutocompleteQuery(
@@ -2247,13 +2293,22 @@ async def autocomplete_typesense_primary(request: Request, payload: Autocomplete
                 record_procurement_fallback("/api/autocomplete", group, "typesense_infrastructure")
                 fallback_used = True
                 typesense_latency_ms = 0.0
-                suggestions = await asyncio.wait_for(
-                    fetch_autocomplete_suggestions(conn, AutocompleteRequest(
-                        scope=legacy_scope, field=payload.field, keyword=keyword, filters=filters,
-                        limit=limit,
-                    ), legacy_scope),
-                    timeout=config.fallback_timeout_seconds,
+                fallback_request = AutocompleteRequest(
+                    scope=legacy_scope, field=payload.field, keyword=keyword, filters=filters,
+                    limit=limit,
                 )
+                if conn is not None:
+                    suggestions = await asyncio.wait_for(
+                        fetch_autocomplete_suggestions(conn, fallback_request, legacy_scope),
+                        timeout=config.fallback_timeout_seconds,
+                    )
+                else:
+                    pool = await ensure_db_pool()
+                    async with pool.acquire() as fallback_conn:
+                        suggestions = await asyncio.wait_for(
+                            fetch_autocomplete_suggestions(fallback_conn, fallback_request, legacy_scope),
+                            timeout=config.fallback_timeout_seconds,
+                        )
             for suggestion in suggestions:
                 push(suggestion)
             if len(values) >= limit:
@@ -2278,9 +2333,8 @@ async def preview_typesense_primary(request: Request, payload: QueryPreviewReque
         ["medicines", "goods", "traditional"]
     )
     filters = payload.filters or FilterRequest()
-    pool = await ensure_db_pool()
     pages: dict[str, dict[str, Any]] = {}
-    async with pool.acquire() as conn:
+    async with optional_db_connection(request, "preview") as conn:
         user = await enforce_data_access_policy(conn, request, "preview")
         for group in groups:
             query = build_canonical_query(
@@ -2340,12 +2394,11 @@ async def bulk_typesense_primary(request: Request, payload: BulkQueryRequest) ->
     diversity_mode = payload.diversityMode if payload.diversityMode in {"price", "product"} else "price"
     child_limit = max(1, min(int(payload.productLimit if diversity_mode == "product" else payload.priceLimit), 10))
     result_limit = max(1, min(int(payload.limit or BULK_EXPORT_QUERY_LIMIT), BULK_EXPORT_QUERY_LIMIT))
-    pool = await ensure_db_pool()
     result_rows: list[dict[str, Any]] = []
     matched_input_count = 0
     child_errors: list[dict[str, Any]] = []
     truncated = False
-    async with pool.acquire() as conn:
+    async with optional_db_connection(request, "full_query") as conn:
         user = await enforce_data_access_policy(conn, request, "full_query")
         for index, row in enumerate(rows, start=1):
             if len(result_rows) >= result_limit:
@@ -2414,6 +2467,131 @@ async def bulk_typesense_primary(request: Request, payload: BulkQueryRequest) ->
 # APP
 # =========================
 
+RUNTIME_GROUPS = ("goods", "medicines", "traditional_medicine")
+
+
+def _typesense_json(path: str) -> Dict[str, Any]:
+    config = typesense_search_repository.config
+    if not config.api_key:
+        raise RuntimeError("Typesense API key is not configured")
+    request = URLRequest(
+        f"{config.base_url}{path}",
+        method="GET",
+        headers={"Accept": "application/json", "X-TYPESENSE-API-KEY": config.api_key},
+    )
+    with urlopen(request, timeout=max(1.0, float(config.timeout_seconds))) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Typesense returned a non-object response")
+    return payload
+
+
+def typesense_runtime_status() -> Dict[str, Any]:
+    config = typesense_search_repository.config
+    generation = config.serving_generation
+    collections: Dict[str, int] = {}
+    try:
+        health = _typesense_json("/health")
+        for group in RUNTIME_GROUPS:
+            collection = physical_collection_name(group, generation)
+            payload = _typesense_json(f"/collections/{quote(collection, safe='')}")
+            collections[group] = int(payload.get("num_documents", 0))
+        return {
+            "status": "ok" if health.get("ok") is True else "unavailable",
+            "generation": generation,
+            "generation_available": len(collections) == len(RUNTIME_GROUPS),
+            "collections": collections,
+            "endpoint": f"{config.host}:{config.port}",
+        }
+    except HTTPError as exc:
+        return {
+            "status": "unavailable",
+            "generation": generation,
+            "generation_available": False,
+            "collections": collections,
+            "endpoint": f"{config.host}:{config.port}",
+            "error_type": f"http_{exc.code}",
+        }
+    except (URLError, TimeoutError, OSError, RuntimeError, ValueError, TypeError) as exc:
+        return {
+            "status": "unavailable",
+            "generation": generation,
+            "generation_available": False,
+            "collections": collections,
+            "endpoint": f"{config.host}:{config.port}",
+            "error_type": type(exc).__name__,
+        }
+
+
+def freshness_status() -> Dict[str, Any]:
+    if not SERVING_REPORT_PATH:
+        return {"status": "unknown", "reason": "BIDFINDER_SERVING_REPORT_PATH is not configured"}
+    report_path = Path(SERVING_REPORT_PATH)
+    if not report_path.is_file():
+        return {"status": "unknown", "reason": "serving report is missing"}
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        coverage = report.get("coverage_through")
+        latest_closed = (datetime.now(APP_TIMEZONE).date() - timedelta(days=1)).isoformat()
+        lag_days = None
+        next_expected = None
+        if coverage:
+            covered_day = datetime.fromisoformat(str(coverage)).date()
+            lag_days = (datetime.fromisoformat(latest_closed).date() - covered_day).days
+            next_expected = (covered_day + timedelta(days=1)).isoformat()
+        return {
+            "status": "ok" if not report.get("unresolved_errors") else "degraded",
+            "serving_generation": report.get("serving_generation"),
+            "coverage_through": coverage,
+            "latest_closed_day": latest_closed,
+            "freshness_lag_days": lag_days,
+            "next_expected_date": next_expected,
+            "last_successful_incremental_run": report.get("last_successful_incremental_run"),
+            "unresolved_errors": len(report.get("unresolved_errors") or []),
+        }
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        return {"status": "unknown", "reason": type(exc).__name__}
+
+
+async def postgres_runtime_status() -> Dict[str, Any]:
+    if not DATABASE_URL:
+        return {"status": "unavailable", "reason": "DATABASE_URL is not configured"}
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            await conn.fetchval("SELECT 1")
+        return {"status": "ok"}
+    except Exception as exc:
+        return {"status": "unavailable", "error_type": type(exc).__name__}
+
+
+async def runtime_status() -> Dict[str, Any]:
+    backend = procurement_backend_config()
+    typesense = await asyncio.to_thread(typesense_runtime_status)
+    postgres = await postgres_runtime_status()
+    freshness = freshness_status()
+    primary_ready = bool(
+        backend.typesense_primary
+        and typesense["status"] == "ok"
+        and typesense["generation_available"]
+    )
+    fallback_ready = bool(
+        postgres["status"] == "ok"
+        and ((not backend.typesense_primary) or backend.fallback_enabled)
+    )
+    ready = primary_ready or fallback_ready
+    return {
+        "status": "ready" if primary_ready else "degraded" if fallback_ready else "unavailable",
+        "liveness": "ok",
+        "backend": backend.mode,
+        "fallback_enabled": backend.fallback_enabled,
+        "procurement_ready": ready,
+        "typesense": typesense,
+        "postgres": postgres,
+        "freshness": freshness,
+    }
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global db_pool
@@ -2430,6 +2608,23 @@ async def lifespan(app: FastAPI):
         auth_config_payload.get("google_status"),
         auth_config_payload.get("password_reset_status"),
     )
+    startup_status = await runtime_status()
+    logger.warning(
+        "Startup procurement: backend=%s fallback_enabled=%s serving_generation=%s typesense=%s generation_available=%s postgres=%s freshness=%s",
+        startup_status["backend"],
+        startup_status["fallback_enabled"],
+        startup_status["typesense"]["generation"],
+        startup_status["typesense"]["status"],
+        startup_status["typesense"]["generation_available"],
+        startup_status["postgres"]["status"],
+        startup_status["freshness"].get("coverage_through"),
+    )
+    if startup_status["status"] != "ready":
+        logger.warning(
+            "Startup procurement is degraded: status=%s fallback_enabled=%s",
+            startup_status["status"],
+            startup_status["fallback_enabled"],
+        )
     yield
     if db_pool:
         await db_pool.close()
@@ -2464,19 +2659,18 @@ async def add_security_headers(request: Request, call_next):
 async def health(request: Request):
     if request.method == "HEAD":
         return Response(status_code=200)
-    return {"status": "ok"}
+    return {"status": "ok", "service": "bidfinder-api"}
 
 
 @app.get("/ready")
 async def ready():
     try:
-        pool = await ensure_db_pool()
-        async with pool.acquire() as conn:
-            await conn.fetchval("SELECT 1")
-        return {"status": "ready"}
+        status = await runtime_status()
+        code = 200 if status["procurement_ready"] else 503
+        return JSONResponse(status_code=code, content=status)
     except Exception as exc:
         log_server_exception("readiness check failed", exc)
-        return JSONResponse(status_code=503, content={"status": "unavailable"})
+        return JSONResponse(status_code=503, content={"status": "unavailable", "liveness": "ok"})
 
 
 def auth_error_response(exc: HTTPException) -> JSONResponse:
@@ -2563,11 +2757,12 @@ async def build_auth_config(
 
 
 async def enforce_data_access_policy(
-    conn: asyncpg.Connection,
+    conn: asyncpg.Connection | None,
     request: Request,
     requirement: Literal["preview", "full_query", "autocomplete", "metadata"],
 ) -> Optional[Dict[str, Any]]:
-    current_user = await get_authenticated_user(conn, extract_session_token(request) or "")
+    token = extract_session_token(request) or ""
+    current_user = await get_authenticated_user(conn, token) if conn is not None and token else None
 
     if requirement == "full_query":
         if current_user:
@@ -2577,25 +2772,35 @@ async def enforce_data_access_policy(
             if quota["anonymous_full_query_login_required"]:
                 raise HTTPException(status_code=401, detail=quota["anonymous_full_query_limit_message"])
             return None
+        if conn is None:
+            raise RuntimeError("database connection required for authenticated data access")
         return await require_authenticated_user(conn, request)
 
     if requirement == "preview":
         if ANONYMOUS_ACCESS_LEVEL in {"preview", "full"}:
             return current_user
+        if conn is None:
+            raise RuntimeError("database connection required for authenticated data access")
         return current_user or await require_authenticated_user(conn, request)
 
     if requirement == "autocomplete":
         if ANONYMOUS_ACCESS_LEVEL in {"preview", "full"} and ANONYMOUS_AUTOCOMPLETE_ENABLED:
             return current_user
+        if conn is None:
+            raise RuntimeError("database connection required for authenticated data access")
         return current_user or await require_authenticated_user(conn, request)
 
     if requirement == "metadata":
         if ANONYMOUS_ACCESS_LEVEL in {"preview", "full"} and ANONYMOUS_METADATA_ENABLED:
             return current_user
+        if conn is None:
+            raise RuntimeError("database connection required for authenticated data access")
         return current_user or await require_authenticated_user(conn, request)
 
     if not AUTH_REQUIRED_FOR_DATA_ACCESS:
         return current_user
+    if conn is None:
+        raise RuntimeError("database connection required for authenticated data access")
     return current_user or await require_authenticated_user(conn, request)
 
 

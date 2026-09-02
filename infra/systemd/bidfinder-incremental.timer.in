@@ -1,0 +1,11 @@
+[Unit]
+Description=BIDFinder daily closed-day incremental schedule
+
+[Timer]
+OnCalendar=*-*-* 04:00:00 Asia/Ho_Chi_Minh
+AccuracySec=5m
+Persistent=false
+Unit=bidfinder-incremental.service
+
+[Install]
+WantedBy=timers.target

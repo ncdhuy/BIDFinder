@@ -1,0 +1,11 @@
+[Unit]
+Description=BIDFinder weekly serving recovery snapshot schedule
+
+[Timer]
+OnCalendar=Sun *-*-* 05:30:00 Asia/Ho_Chi_Minh
+AccuracySec=10m
+Persistent=false
+Unit=bidfinder-snapshot.service
+
+[Install]
+WantedBy=timers.target

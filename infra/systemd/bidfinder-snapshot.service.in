@@ -1,0 +1,17 @@
+[Unit]
+Description=BIDFinder validated serving recovery snapshot
+After=bidfinder-typesense.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%h/.config/bidfinder/typesense.env
+EnvironmentFile=-%h/.config/bidfinder/runtime.env
+EnvironmentFile=-%h/.config/bidfinder/backend.env
+Environment=BIDFINDER_REPO_ROOT=@BIDFINDER_REPO@
+Environment=BIDFINDER_PYTHON=@BIDFINDER_VENV@/bin/python
+WorkingDirectory=@BIDFINDER_REPO@
+ExecStart=/usr/bin/env bash @BIDFINDER_REPO@/infra/runtime/bidfinder-snapshot.sh
+TimeoutStartSec=infinity
+Nice=10
+StandardOutput=journal
+StandardError=journal

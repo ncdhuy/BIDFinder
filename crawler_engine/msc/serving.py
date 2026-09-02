@@ -21,6 +21,7 @@ from .backfill import (
     checkpoint_audit,
     group_totals,
     ordered_source_keys,
+    reconcile_completed_prefix,
     source_coverage_checkpoint_audit,
     source_population_preflight,
     typesense_schema_fingerprints,
@@ -597,7 +598,26 @@ def run_incremental(
     client = TypesenseClient(ts_config)
     TypesenseCollectionManager(client).validate_generation(generation)
     run_report_path = Path(checkpoint_path).with_name(f".{generation}.backfill.json")
+    sink_target = f"typesense:{generation}"
+    revalidation: list[dict[str, Any]] = []
+    changed_partitions: set[tuple[str, date]] = set()
     with CheckpointStore(checkpoint_path) as checkpoints, UUIDProvenanceStore(provenance_path) as provenance:
+        if effective_start < requested_start:
+            revalidation_end = requested_start - timedelta(days=1)
+            for source_key in SOURCE_CONTRACTS:
+                result = reconcile_completed_prefix(
+                    msc_client,
+                    checkpoints,
+                    source_key,
+                    effective_start,
+                    revalidation_end,
+                    sink_target,
+                )
+                revalidation.append(result)
+                changed_partitions.update(
+                    (source_key, parse_partition_date(item["partition_date"]))
+                    for item in result["changed_partitions"]
+                )
         sink = AuditedSink(TypesenseSink(client, generation, batch_size=ts_config.batch_size), provenance)
         engine = MSCIngestionEngine(msc_client, checkpoints, sink, config)
         results = BackfillRunner(
@@ -608,8 +628,8 @@ def run_incremental(
             resume=resume,
             force=force,
             max_partitions=max_partitions,
-            replace_existing=True,
-            replace_existing_before=requested_start,
+            replace_existing=bool(changed_partitions),
+            replace_existing_dates=changed_partitions,
         ).run()
         state = checkpoint_audit(checkpoints, effective_start, end, manifest["sources"], sink.sink_target)
         provenance_counts = {
@@ -626,6 +646,14 @@ def run_incremental(
         for result in results
         if result.status in {IngestionStatus.FAILED, IngestionStatus.QUARANTINED}
     ]
+    records_added = {
+        source_key: sum(
+            int(result.sink_accepted_count or 0)
+            for result in results
+            if result.source_key == source_key and not result.skipped
+        )
+        for source_key in SOURCE_CONTRACTS
+    }
     report = build_serving_report(
         serving_generation=generation,
         base_manifest_fingerprint=base_manifest_fingerprint,
@@ -640,6 +668,13 @@ def run_incremental(
         results=[result.as_dict() for result in results],
         source_preflight=source_preflight,
         lookback_days=lookback_days,
+        revalidation=revalidation,
+        changed_partitions=sorted(f"{source}:{day.isoformat()}" for source, day in changed_partitions),
+        records_added_by_source=records_added,
+        records_accepted=sum(records_added.values()),
+        coverage_through=end.isoformat(),
+        latest_closed_day=latest_closed_day().isoformat(),
+        next_expected_date=(end + timedelta(days=1)).isoformat(),
         force=force,
     )
     atomic_write_json(report_path, report)
