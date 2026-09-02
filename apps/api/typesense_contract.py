@@ -421,11 +421,11 @@ VALID_BACKEND_MODES = frozenset({"postgres", "typesense", "controlled"})
 
 @dataclass(frozen=True)
 class ProcurementBackendConfig:
-    """Centralized Phase 4C switch preparation; defaults stay on Postgres."""
+    """Centralized procurement read switch; Postgres remains rollback/fallback infrastructure."""
 
-    mode: str = "postgres"
+    mode: str = "typesense"
     controlled_typesense_enabled: bool = False
-    fallback_enabled: bool = False
+    fallback_enabled: bool = True
     fallback_timeout_seconds: float = 0.8
 
     @property
@@ -439,7 +439,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 
 def get_procurement_backend_config() -> ProcurementBackendConfig:
-    mode = os.getenv("BIDFINDER_PROCUREMENT_BACKEND", "postgres").strip().lower()
+    mode = os.getenv("BIDFINDER_PROCUREMENT_BACKEND", "typesense").strip().lower()
     if mode not in VALID_BACKEND_MODES:
         raise ValueError(f"BIDFINDER_PROCUREMENT_BACKEND must be one of: {', '.join(sorted(VALID_BACKEND_MODES))}")
     try:
@@ -449,6 +449,6 @@ def get_procurement_backend_config() -> ProcurementBackendConfig:
     return ProcurementBackendConfig(
         mode=mode,
         controlled_typesense_enabled=_env_bool("BIDFINDER_CONTROLLED_TYPESENSE_ENABLED"),
-        fallback_enabled=_env_bool("BIDFINDER_PROCUREMENT_FALLBACK_ENABLED"),
+        fallback_enabled=_env_bool("BIDFINDER_PROCUREMENT_FALLBACK_ENABLED", True),
         fallback_timeout_seconds=timeout,
     )

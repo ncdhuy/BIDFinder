@@ -5,19 +5,23 @@ import json
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "apps" / "api"))
 
+import server as server_module  # noqa: E402
 from server import (  # noqa: E402
     AutocompleteRequest,
     BulkQueryRequest,
     FilterRequest,
+    PROCUREMENT_FALLBACK_EVENT,
     QueryPreviewRequest,
     QueryRequest,
     SortRule,
     build_count_meta,
     build_sort_order_parts,
+    fetch_backend_page,
 )
 
 from typesense_shadow import (  # noqa: E402
@@ -48,7 +52,7 @@ from typesense_shadow import (  # noqa: E402
 )
 
 
-from typesense_contract import IDENTIFIER_FIELDS  # noqa: E402
+from typesense_contract import IDENTIFIER_FIELDS, ProcurementBackendConfig  # noqa: E402
 
 
 UUID = "00000000-0000-4000-8000-000000000001"
@@ -226,6 +230,71 @@ class TestAdapter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((1, UUID), (exact.total, exact.hits[0]["id"]))
         self.assertEqual(("Nhà máy",), suggestions)
         self.assertIn("/documents/" + UUID, opener.urls[0])
+
+
+class TestProcurementBackendSwitch(unittest.IsolatedAsyncioTestCase):
+    async def test_infrastructure_failure_uses_postgres_fallback_and_records_event(self):
+        class TypesenseOffline:
+            async def search(self, query):
+                raise TypesenseShadowError("Typesense unavailable", SHADOW_INFRA_ERROR)
+
+        class PostgresFallback:
+            def __init__(self):
+                self.calls = 0
+
+            async def search(self, connection, query, *, exact_count_enabled=False):
+                self.calls += 1
+                return {"data": [{"id": UUID}], "count": 1, "count_exact": True, "backend": "postgres"}
+
+        fallback = PostgresFallback()
+        query = build_canonical_query("goods", limit=1)
+        with patch.object(server_module, "typesense_search_repository", TypesenseOffline()), \
+             patch.object(server_module, "postgres_search_repository", fallback), \
+             patch.object(server_module, "procurement_backend_config", return_value=ProcurementBackendConfig(mode="typesense", fallback_enabled=True, fallback_timeout_seconds=0.1)), \
+             patch.object(server_module, "record_procurement_fallback") as record:
+            page = await fetch_backend_page(None, query)
+
+        self.assertEqual(1, fallback.calls)
+        self.assertEqual(PROCUREMENT_FALLBACK_EVENT, page["backend_fallback"]["event"])
+        record.assert_called_once_with("/api/query", "goods", "typesense_infrastructure")
+
+    async def test_semantic_failure_never_falls_back(self):
+        class TypesenseContractFailure:
+            async def search(self, query):
+                raise TypesenseShadowError("unsupported field", QUERY_CONTRACT_FAILURE)
+
+        class PostgresMustNotRun:
+            async def search(self, *args, **kwargs):
+                raise AssertionError("semantic Typesense errors must not use Postgres fallback")
+
+        query = build_canonical_query("goods", limit=1)
+        with patch.object(server_module, "typesense_search_repository", TypesenseContractFailure()), \
+             patch.object(server_module, "postgres_search_repository", PostgresMustNotRun()), \
+             patch.object(server_module, "procurement_backend_config", return_value=ProcurementBackendConfig(mode="typesense", fallback_enabled=True)):
+            with self.assertRaises(TypesenseShadowError) as context:
+                await fetch_backend_page(None, query)
+
+        self.assertEqual(QUERY_CONTRACT_FAILURE, context.exception.code)
+
+    async def test_traditional_infrastructure_failure_does_not_use_goods_fallback(self):
+        class TypesenseOffline:
+            async def search(self, query):
+                raise TypesenseShadowError("Typesense unavailable", SHADOW_INFRA_ERROR)
+
+        class PostgresMustNotRun:
+            async def search(self, connection, query, **kwargs):
+                if server_module.normalize_group(query.group) != "traditional_medicine":
+                    raise AssertionError("traditional fallback must not use the goods legacy scope")
+                raise TypesenseShadowError("traditional legacy scope unavailable", QUERY_CONTRACT_FAILURE)
+
+        query = build_canonical_query("traditional", limit=1)
+        with patch.object(server_module, "typesense_search_repository", TypesenseOffline()), \
+             patch.object(server_module, "postgres_search_repository", PostgresMustNotRun()), \
+             patch.object(server_module, "procurement_backend_config", return_value=ProcurementBackendConfig(mode="typesense", fallback_enabled=True)):
+            with self.assertRaises(TypesenseShadowError) as context:
+                await fetch_backend_page(None, query)
+
+        self.assertEqual(QUERY_CONTRACT_FAILURE, context.exception.code)
 
 
 class TestParity(unittest.IsolatedAsyncioTestCase):

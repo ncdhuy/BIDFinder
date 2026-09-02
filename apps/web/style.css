@@ -7458,3 +7458,15 @@ body.product-journey-active #panel-overlay.show {
     margin-left: 0;
   }
 }
+/* Phase 4C: canonical Typesense result surface. Legacy tables remain in the
+   DOM for Postgres compatibility and existing insight code, but procurement
+   users see the metadata-driven three-group surface. */
+body.typesense-primary-ui #data-view-switcher,
+body.typesense-primary-ui #df1-panel,
+body.typesense-primary-ui #df2-panel {
+    display: none !important;
+}
+
+typesense-results-ui {
+    display: block;
+}

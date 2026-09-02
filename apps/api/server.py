@@ -42,6 +42,7 @@ from auth_utils import (
 from typesense_shadow import (
     AutocompleteQuery,
     PostgresSearchRepository,
+    QUERY_CONTRACT_FAILURE,
     SHADOW_INFRA_ERROR,
     TypesenseSearchRepository,
     TypesenseShadowError,
@@ -2033,7 +2034,26 @@ async def fetch_result_page(
 
 
 async def _fetch_primary_canonical_page(conn: asyncpg.Connection, query, *, exact_count_enabled: bool = False) -> Dict[str, Any]:
-    scope_name = "medicine" if query.group == "medicines" else "goods"
+    query_group = normalize_group(query.group)
+    if query_group == "traditional_medicine":
+        raise TypesenseShadowError(
+            "Postgres fallback does not cover the traditional procurement group",
+            QUERY_CONTRACT_FAILURE,
+        )
+    if (
+        query.source_types
+        or query.text
+        or query.search_fields
+        or query.structured_filters
+        or query.ranges
+        or query.date_ranges
+        or query.exact_identifiers
+    ):
+        raise TypesenseShadowError(
+            "Postgres fallback cannot satisfy the complete canonical query contract",
+            QUERY_CONTRACT_FAILURE,
+        )
+    scope_name = "medicine" if query_group == "medicines" else "goods"
     filters = FilterRequest(**query.filters)
     sort_rules = [SortRule(column=rule.field, order=rule.order) for rule in query.sort]
     return await fetch_result_page(
@@ -2048,12 +2068,23 @@ async def _fetch_primary_canonical_page(conn: asyncpg.Connection, query, *, exac
 
 postgres_search_repository = PostgresSearchRepository(_fetch_primary_canonical_page)
 typesense_search_repository = TypesenseSearchRepository()
+PROCUREMENT_FALLBACK_EVENT = "DEGRADED_POSTGRES_FALLBACK"
 
 
 def procurement_backend_config():
     """Read centralized backend switch without scattering environment checks."""
 
     return get_procurement_backend_config()
+
+
+def record_procurement_fallback(endpoint: str, group: str, reason: str) -> None:
+    logger.warning(
+        "%s endpoint=%s group=%s reason=%s coverage=legacy_postgres_subset",
+        PROCUREMENT_FALLBACK_EVENT,
+        endpoint,
+        group,
+        reason,
+    )
 
 
 async def fetch_backend_page(
@@ -2079,7 +2110,9 @@ async def fetch_backend_page(
             postgres_search_repository.search(conn, query, exact_count_enabled=exact_count_enabled),
             timeout=config.fallback_timeout_seconds,
         )
+        record_procurement_fallback(query.endpoint, query.group, "typesense_infrastructure")
         page["backend_fallback"] = {
+            "event": PROCUREMENT_FALLBACK_EVENT,
             "from": "typesense",
             "to": "postgres",
             "reason": "typesense_infrastructure",
@@ -2097,7 +2130,7 @@ def _query_groups(payload: QueryRequest) -> list[str]:
         return ["goods"]
     if payload.scope == "traditional":
         return ["traditional"]
-    return ["medicines", "goods"]
+    return ["medicines", "goods", "traditional"]
 
 
 async def query_typesense_primary(request: Request, payload: QueryRequest) -> JSONResponse:
@@ -2170,13 +2203,15 @@ async def autocomplete_typesense_primary(request: Request, payload: Autocomplete
         ["medicines"] if payload.scope == "medicine" else
         ["goods"] if payload.scope == "goods" else
         ["traditional"] if payload.scope == "traditional" else
-        ["medicines", "goods"]
+        ["medicines", "goods", "traditional"]
     )
     filters = payload.filters if isinstance(payload.filters, dict) else {}
     filters_obj = FilterRequest(**filters)
     pool = await ensure_db_pool()
     values: list[str] = []
     seen: set[str] = set()
+    fallback_used = False
+    typesense_latency_ms = 0.0
 
     def push(value: Any) -> None:
         text = normalize_ws(value)
@@ -2198,14 +2233,20 @@ async def autocomplete_typesense_primary(request: Request, payload: Autocomplete
                 search_fields=tuple(payload.searchFields),
             )
             try:
+                started = time.perf_counter()
                 suggestions = await typesense_search_repository.suggest(query)
+                typesense_latency_ms += (time.perf_counter() - started) * 1000
             except TypesenseShadowError as exc:
                 config = procurement_backend_config()
                 if not (config.fallback_enabled and exc.code == SHADOW_INFRA_ERROR):
                     raise
-                if group == "traditional_medicine":
+                group_key = normalize_group(group)
+                if group_key == "traditional_medicine":
                     raise
-                legacy_scope = "medicine" if group == "medicines" else "goods"
+                legacy_scope = "medicine" if group_key == "medicines" else "goods"
+                record_procurement_fallback("/api/autocomplete", group, "typesense_infrastructure")
+                fallback_used = True
+                typesense_latency_ms = 0.0
                 suggestions = await asyncio.wait_for(
                     fetch_autocomplete_suggestions(conn, AutocompleteRequest(
                         scope=legacy_scope, field=payload.field, keyword=keyword, filters=filters,
@@ -2222,7 +2263,9 @@ async def autocomplete_typesense_primary(request: Request, payload: Autocomplete
         "success": True,
         "field": payload.field,
         "data": values[:limit],
-        "backend": "typesense",
+        "backend": "postgres" if fallback_used else "typesense",
+        "backend_fallback": {"event": PROCUREMENT_FALLBACK_EVENT, "from": "typesense", "to": "postgres"} if fallback_used else None,
+        "typesense_latency_ms": round(typesense_latency_ms, 3) if not fallback_used else None,
         "auth": auth,
     })
 
@@ -2232,7 +2275,7 @@ async def preview_typesense_primary(request: Request, payload: QueryPreviewReque
         ["medicines"] if payload.scope == "medicine" else
         ["goods"] if payload.scope == "goods" else
         ["traditional"] if payload.scope == "traditional" else
-        ["medicines", "goods"]
+        ["medicines", "goods", "traditional"]
     )
     filters = payload.filters or FilterRequest()
     pool = await ensure_db_pool()

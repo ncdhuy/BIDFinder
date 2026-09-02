@@ -847,6 +847,7 @@ class TypesenseSearchResult:
             "page": self.page,
             "limit": self.per_page,
             "backend": "typesense",
+            "typesense_latency_ms": round(self.latency_ms, 3),
         }
 
 

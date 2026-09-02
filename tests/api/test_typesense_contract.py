@@ -123,11 +123,19 @@ class TypesenseContractTest(unittest.TestCase):
         page = TypesenseSearchResult("goods", 3, ({"id": "1", "item_name": "A"},), 4.0, 2, 1).to_api_page()
         self.assertEqual((3, True, 1, "typesense"), (page["count"], page["has_more"], page["displayed"], page["backend"]))
 
-    def test_backend_defaults_to_postgres_and_fallback_is_opt_in(self):
+    def test_backend_defaults_to_typesense_with_postgres_fallback_and_supports_rollback(self):
         names = ["BIDFINDER_PROCUREMENT_BACKEND", "BIDFINDER_CONTROLLED_TYPESENSE_ENABLED", "BIDFINDER_PROCUREMENT_FALLBACK_ENABLED"]
         with patch.dict(os.environ, {}, clear=False):
             for name in names:
                 os.environ.pop(name, None)
+            config = get_procurement_backend_config()
+        self.assertEqual("typesense", config.mode)
+        self.assertTrue(config.typesense_primary)
+        self.assertTrue(config.fallback_enabled)
+        with patch.dict(os.environ, {
+            "BIDFINDER_PROCUREMENT_BACKEND": "postgres",
+            "BIDFINDER_PROCUREMENT_FALLBACK_ENABLED": "false",
+        }):
             config = get_procurement_backend_config()
         self.assertEqual("postgres", config.mode)
         self.assertFalse(config.typesense_primary)

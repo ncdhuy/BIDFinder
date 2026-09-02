@@ -44,15 +44,16 @@ compatible while the future UI consumes the shared search catalog.
 Backend selection is centralized:
 
 ```text
-BIDFINDER_PROCUREMENT_BACKEND=postgres       # default
-BIDFINDER_PROCUREMENT_BACKEND=typesense      # explicit primary switch
-BIDFINDER_PROCUREMENT_BACKEND=controlled     # switch only with opt-in flag
+BIDFINDER_PROCUREMENT_BACKEND=typesense      # Phase 4C final default
+BIDFINDER_PROCUREMENT_BACKEND=postgres       # explicit rollback mode
+BIDFINDER_PROCUREMENT_BACKEND=controlled     # controlled verification mode
 ```
 
 `BIDFINDER_CONTROLLED_TYPESENSE_ENABLED` enables the controlled mode, and
-`BIDFINDER_PROCUREMENT_FALLBACK_ENABLED` opt-in enables bounded fallback. Only
-Typesense infrastructure failures may fall back to Postgres. Semantic or query
-contract errors must surface as errors. Fallback remains inactive by default.
+`BIDFINDER_PROCUREMENT_FALLBACK_ENABLED` enables bounded fallback. In the Phase
+4C serving runtime fallback is enabled by default, and only Typesense
+infrastructure failures may fall back to Postgres. Semantic or query-contract
+errors must surface as errors. Postgres remains a degraded legacy subset.
 
 ## Shadow classification
 

@@ -13,6 +13,10 @@ function getAuthorizedFetch() {
     return window.bidfinderAuthorizedFetch || fetch;
 }
 
+function getProcurementSearchForm() {
+    return document.querySelector('typesense-search-form, custom-search-form');
+}
+
 function requireAuthenticatedSession(mode = 'login', requirement = 'preview') {
     const auth = window.BIDFinderAuth;
     if (!auth) return true;
@@ -1099,11 +1103,20 @@ let latestFilterPreview = null;
 function buildQueryRequest(baseRequest = {}, overrides = {}) {
     const safeBase = baseRequest && typeof baseRequest === 'object' ? baseRequest : {};
 
-    return {
+    const request = {
         scope: safeBase.scope || 'all',
         filters: safeBase.filters && typeof safeBase.filters === 'object' ? { ...safeBase.filters } : {},
         ...overrides
     };
+    [
+        'group', 'sourceTypes', 'text', 'searchFields', 'structuredFilters',
+        'ranges', 'dateRanges', 'exactIdentifiers', 'sort', 'page', 'limit', 'queryMode'
+    ].forEach(key => {
+        if (Object.prototype.hasOwnProperty.call(safeBase, key) && !Object.prototype.hasOwnProperty.call(overrides, key)) {
+            request[key] = safeBase[key];
+        }
+    });
+    return request;
 }
 
 function stableStringify(value) {
@@ -1118,6 +1131,15 @@ function stableStringify(value) {
 
 function hasActiveQueryFilters(queryRequest) {
     if (!queryRequest || typeof queryRequest !== 'object') return false;
+
+    if (queryRequest.group || String(queryRequest.text || '').trim()) return true;
+    if (Array.isArray(queryRequest.sourceTypes) && queryRequest.sourceTypes.length) return true;
+    if (Array.isArray(queryRequest.searchFields) && queryRequest.searchFields.length) return true;
+    if (queryRequest.structuredFilters && Object.keys(queryRequest.structuredFilters).length) return true;
+    if (queryRequest.ranges && Object.keys(queryRequest.ranges).length) return true;
+    if (queryRequest.dateRanges && Object.keys(queryRequest.dateRanges).length) return true;
+    if (queryRequest.exactIdentifiers && Object.keys(queryRequest.exactIdentifiers).length) return true;
+    if (Array.isArray(queryRequest.sort) && queryRequest.sort.length) return true;
 
     const filters = queryRequest.filters || {};
     return Object.values(filters).some(value => {
@@ -1193,7 +1215,7 @@ async function restoreFilterUrlState({ apply = true } = {}) {
     const queryRequest = readFilterUrlState();
     if (!queryRequest || !hasActiveQueryFilters(queryRequest)) return false;
 
-    const searchForm = document.querySelector('custom-search-form');
+    const searchForm = getProcurementSearchForm();
     if (typeof searchForm?.setFilterPayload === 'function') {
         searchForm.setFilterPayload(queryRequest);
         searchForm.setPreviewResult?.({ loading: true });
@@ -1240,11 +1262,26 @@ async function fetchQueryResults(
 
     const searchMode = options?.searchMode === 'full' ? 'full' : 'standard';
     window.BIDFinderAnalytics?.trackSearchSubmitted?.(queryRequest, { searchMode });
+    document.dispatchEvent(new CustomEvent('bidfinder:query-start', {
+        detail: { query: queryRequest, searchMode }
+    }));
     const requestBody = {
         scope: queryRequest?.scope || 'all',
+        group: queryRequest?.group,
+        sourceTypes: queryRequest?.sourceTypes || [],
         filters: queryRequest?.filters || {},
-        sort: buildSortPayload(sortRule),
+        text: queryRequest?.text || '',
+        searchFields: queryRequest?.searchFields || [],
+        structuredFilters: queryRequest?.structuredFilters || {},
+        ranges: queryRequest?.ranges || {},
+        dateRanges: queryRequest?.dateRanges || {},
+        exactIdentifiers: queryRequest?.exactIdentifiers || {},
+        sort: Array.isArray(queryRequest?.sort) && queryRequest.sort.length
+            ? queryRequest.sort
+            : buildSortPayload(sortRule),
         limit,
+        page: Number(queryRequest?.page || 1),
+        queryMode: queryRequest?.queryMode || 'search',
         searchMode
     };
 
@@ -1283,7 +1320,15 @@ async function fetchQueryPreview(queryRequest, signal = null) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             scope: queryRequest?.scope || 'all',
-            filters: queryRequest?.filters || {}
+            group: queryRequest?.group,
+            sourceTypes: queryRequest?.sourceTypes || [],
+            filters: queryRequest?.filters || {},
+            text: queryRequest?.text || '',
+            searchFields: queryRequest?.searchFields || [],
+            structuredFilters: queryRequest?.structuredFilters || {},
+            ranges: queryRequest?.ranges || {},
+            dateRanges: queryRequest?.dateRanges || {},
+            exactIdentifiers: queryRequest?.exactIdentifiers || {}
         }),
         signal
     });
@@ -1403,6 +1448,17 @@ function normalizeQueryResult(result) {
             approx_total: null,
             ...(result?.df2 || {})
         },
+        df3: {
+            data: [],
+            count: 0,
+            count_exact: true,
+            count_label: '0',
+            count_summary: '0',
+            displayed: 0,
+            has_more: false,
+            approx_total: null,
+            ...(result?.df3 || {})
+        },
         totalCount: Number(result?.total_count || 0),
         totalCountExact: result?.total_count_exact !== false,
         totalCountLabel: result?.total_count_label || String(Number(result?.total_count || 0)),
@@ -1445,6 +1501,9 @@ function handleQuerySuccess(result, options = {}) {
         resetMiniFilters: options.resetMiniFilters !== false,
         resetScroll: options.resetScroll !== false
     });
+    document.dispatchEvent(new CustomEvent('bidfinder:query-result', {
+        detail: { result, query: currentQueryRequest }
+    }));
 }
 
 
@@ -1455,10 +1514,14 @@ async function applyFilters(payload) {
     console.log('Applying filters with query request:', currentQueryRequest);
 
     try {
+        const requestedLimit = Math.max(1, Math.min(
+            Number(currentQueryRequest?.limit || MAX_RESULTS_PER_TABLE),
+            MAX_RESULTS_PER_TABLE
+        ));
         const result = await fetchQueryResults(
             currentQueryRequest,
             activeSortRule,
-            MAX_RESULTS_PER_TABLE,
+            requestedLimit,
             { searchMode: 'standard' }
         );
 
@@ -1475,6 +1538,9 @@ async function applyFilters(payload) {
         }
     } catch (err) {
         console.error('Filter failed:', err);
+        document.dispatchEvent(new CustomEvent('bidfinder:query-error', {
+            detail: { message: err?.message || 'Không tải được kết quả.' }
+        }));
         window.BIDFinderAnalytics?.track?.('search_failed', {
             search_mode: 'standard',
             error: err?.message || 'unknown'
@@ -1819,7 +1885,7 @@ function showPanel(panelId) {
     overlay.classList.add('show');
 
     if (panelId === 'filter-panel') {
-        const searchForm = document.querySelector('custom-search-form');
+        const searchForm = getProcurementSearchForm();
         if (typeof searchForm?.activatePane === 'function') {
             const paneKey = typeof searchForm.getPreferredPaneForOpen === 'function'
                 ? searchForm.getPreferredPaneForOpen()
@@ -1893,7 +1959,7 @@ function closeTransientUi() {
 }
 
 function focusSearchFormPrimaryInput() {
-    const searchForm = document.querySelector('custom-search-form');
+    const searchForm = getProcurementSearchForm();
     const root = searchForm?.shadowRoot;
     if (!root) return;
 
@@ -1911,7 +1977,7 @@ function focusSearchFormPrimaryInput() {
 }
 
 function focusActiveFilterField() {
-    const searchForm = document.querySelector('custom-search-form');
+    const searchForm = getProcurementSearchForm();
     if (!searchForm) return;
 
     if (typeof searchForm.focusActiveField === 'function') {
@@ -7039,7 +7105,7 @@ function exportTableToExcel(tableId) {
 }
 
 function initSearchFormEvents() {
-    const searchForm = document.querySelector('custom-search-form');
+    const searchForm = getProcurementSearchForm();
     if (!searchForm) return;
     let previewRequestId = 0;
     let previewAbortController = null;
@@ -7074,7 +7140,19 @@ function initSearchFormEvents() {
         clearFilterUrlState();
         resetQueryResultMeta();
         updateResults([], [], { resetMiniFilters: true });
+        document.dispatchEvent(new CustomEvent('bidfinder:query-reset'));
         hideLimitWarning();
+    });
+
+    document.addEventListener('bidfinder:page-request', async event => {
+        const page = Math.max(1, Number(event.detail?.page || 1));
+        const nextRequest = buildQueryRequest(currentQueryRequest, { page });
+        searchForm.setPage?.(page);
+        try {
+            await applyFilters(nextRequest);
+        } finally {
+            searchForm.setApplyLoading?.(false);
+        }
     });
 
     searchForm.addEventListener('preview-filters', async (e) => {
@@ -7134,7 +7212,7 @@ function initSearchFormEvents() {
 function initFilterUrlEvents() {
     window.addEventListener('popstate', () => {
         const queryRequest = readFilterUrlState();
-        const searchForm = document.querySelector('custom-search-form');
+        const searchForm = getProcurementSearchForm();
 
         if (!queryRequest || !hasActiveQueryFilters(queryRequest)) {
             currentQueryRequest = { scope: 'all', filters: {} };
