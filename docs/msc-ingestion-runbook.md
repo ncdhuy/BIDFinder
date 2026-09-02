@@ -297,3 +297,26 @@ The bounded lookback revalidates recent closed dates. Changed partitions use
 exact replacement semantics: upsert current UUIDs and delete only UUIDs no
 longer returned by MSC. Inspect the JSON/Markdown report after each run;
 stable aliases stay inactive until a later FastAPI shadow-read phase.
+
+## Phase 3C.1 source-specific prefix extension
+
+Coverage floors are source-specific and live in the authoritative
+`SOURCE_COVERAGE_FLOORS` registry in `crawler_engine/msc/contracts.py`:
+
+```text
+goods_general         2022-01-01
+medical_devices       2023-01-01
+medicine_generic      2023-01-01
+medicine_originator   2023-01-01
+medicine_herbal       2023-01-01
+herbal_material       2023-01-01
+traditional_medicine  2023-01-01
+```
+
+Use the narrow `prefix` CLI only for the missing ranges ending on `2023-01-31`:
+396 partitions for `goods_general` from `2022-01-01`, and 186 partitions for
+the other six sources from `2023-01-01`. It rejects mixed floors, non-floor
+starts, non-boundary ends, and non-serving generations. It writes only to the
+existing serving generation, checkpoint, provenance database, and physical
+collections; it never creates a new generation or modifies Phase 3B offline
+evidence.

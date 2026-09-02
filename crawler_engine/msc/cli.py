@@ -36,7 +36,13 @@ from .engine import EngineError, MSCIngestionEngine
 from .models import IngestionStatus
 from .sink import InMemorySink, JsonlValidationSink, TypesenseSink
 from .typesense_client import TypesenseClient, TypesenseCollectionManager, TypesenseError
-from .serving import latest_closed_day, next_incremental_start, render_serving_report_markdown, run_incremental
+from .serving import (
+    latest_closed_day,
+    next_incremental_start,
+    render_serving_report_markdown,
+    run_incremental,
+    run_prefix_extension,
+)
 
 
 def _sources(value: str) -> tuple[str, ...]:
@@ -154,6 +160,26 @@ def build_parser() -> argparse.ArgumentParser:
     incremental.add_argument("--report", type=Path, default=Path("incremental-serving-audit.json"))
     incremental.add_argument("--markdown", type=Path, default=None)
     incremental.add_argument("--base-manifest-fingerprint", required=True)
+    prefix = sub.add_parser("prefix", help="extend serving data with one explicit source-floor prefix")
+    prefix.add_argument("--generation", required=True, help="serving physical generation only")
+    prefix.add_argument("--checkpoint", required=True, type=Path)
+    prefix.add_argument("--provenance", required=True, type=Path)
+    prefix.add_argument("--from", dest="from_date", required=True, type=_day)
+    prefix.add_argument("--to", dest="to_date", required=True, type=_day)
+    prefix.add_argument("--sources", required=True, type=_sources)
+    prefix.add_argument("--resume", action="store_true", default=True)
+    prefix.add_argument("--no-resume", dest="resume", action="store_false")
+    prefix.add_argument("--force", action="store_true")
+    prefix.add_argument("--max-partitions", type=int, required=True)
+    prefix.add_argument("--request-delay", type=float, default=1.0)
+    prefix.add_argument("--timeout", type=float, default=30.0)
+    prefix.add_argument("--max-retries", type=int, default=3)
+    prefix.add_argument("--page-size", type=int, default=1000)
+    prefix.add_argument("--typesense-batch-size", type=int, default=None)
+    prefix.add_argument("--manifest", type=Path, required=True)
+    prefix.add_argument("--report", type=Path, required=True)
+    prefix.add_argument("--markdown", type=Path, default=None)
+    prefix.add_argument("--base-manifest-fingerprint", required=True)
     audit = sub.add_parser("backfill-audit", help="audit a completed physical generation without alias writes")
     audit.add_argument("--plan", required=True, type=Path)
     audit.add_argument("--checkpoint", required=True, type=Path)
@@ -301,6 +327,33 @@ def _run_incremental(args: argparse.Namespace) -> int:
     return 0 if report["overall_status"] == "PASS" else 1
 
 
+def _run_prefix(args: argparse.Namespace) -> int:
+    config = _msc_config(args)
+    ts_config = TypesenseConfig.from_env()
+    if args.typesense_batch_size is not None:
+        ts_config = replace(ts_config, batch_size=args.typesense_batch_size)
+    report = run_prefix_extension(
+        generation=args.generation,
+        from_date=args.from_date,
+        to_date=args.to_date,
+        source_keys=args.sources,
+        checkpoint_path=args.checkpoint,
+        provenance_path=args.provenance,
+        report_path=args.report,
+        manifest_path=args.manifest,
+        base_manifest_fingerprint=args.base_manifest_fingerprint,
+        force=args.force,
+        resume=args.resume,
+        max_partitions=args.max_partitions,
+        msc_config=config,
+        typesense_config=ts_config,
+    )
+    if args.markdown:
+        args.markdown.write_text(render_serving_report_markdown(report), encoding="utf-8")
+    print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+    return 0 if report["overall_status"] == "PASS" else 1
+
+
 def _run_audit(args: argparse.Namespace) -> int:
     manifest = json.loads(args.plan.read_text(encoding="utf-8"))
     report = json.loads(args.report.read_text(encoding="utf-8")) if args.report else None
@@ -329,6 +382,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_backfill(args)
         if args.operation == "incremental":
             return _run_incremental(args)
+        if args.operation == "prefix":
+            return _run_prefix(args)
         if args.operation == "backfill-audit":
             return _run_audit(args)
         if args.operation == "benchmark":

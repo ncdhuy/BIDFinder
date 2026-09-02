@@ -25,7 +25,12 @@ from .config import (
     ENGINE_VERSION,
     SCHEMA_VERSION,
 )
-from .contracts import SOURCE_CONTRACTS, get_contract
+from .contracts import (
+    SOURCE_CONTRACTS,
+    SOURCE_COVERAGE_REGISTRY_VERSION,
+    SOURCE_COVERAGE_FLOORS,
+    get_contract,
+)
 from .engine import MSCIngestionEngine, operational_today, parse_partition_date
 from .models import IngestionStatus, PartitionContext, PartitionResult, SearchInterval, SinkWriteResult
 from .sink import Sink
@@ -217,6 +222,10 @@ def build_manifest(
         },
         "created_at": created_at or datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "sources": list(sources),
+        "source_coverage_registry_version": SOURCE_COVERAGE_REGISTRY_VERSION,
+        "source_coverage_floors": {
+            key: SOURCE_COVERAGE_FLOORS[key].isoformat() for key in sources
+        },
         "source_totals": normalized_totals,
         "group_totals": groups,
         "expected_overall_total": sum(normalized_totals.values()),
@@ -1056,6 +1065,37 @@ def checkpoint_audit(
         "sources": per_source,
         "expected_parent_partitions": sum(item["expected_date_partitions"] for item in per_source.values()),
         "completed_parent_partitions": sum(item["completed"] for item in per_source.values()),
+    }
+
+
+def source_coverage_checkpoint_audit(
+    store: CheckpointStore,
+    through: str | date,
+    source_keys: Iterable[str],
+    sink_target: str,
+) -> dict[str, Any]:
+    """Audit each source from its registered floor through one closed date."""
+
+    end = parse_partition_date(through)
+    sources = ordered_source_keys(source_keys)
+    per_source: dict[str, Any] = {}
+    for source_key in sources:
+        start = SOURCE_COVERAGE_FLOORS[source_key]
+        per_source[source_key] = checkpoint_audit(store, start, end, (source_key,), sink_target)["sources"][source_key]
+    return {
+        "sink_target": sink_target,
+        "coverage_through": end.isoformat(),
+        "sources": per_source,
+        "expected_parent_partitions": sum(item["expected_date_partitions"] for item in per_source.values()),
+        "completed_parent_partitions": sum(item["completed"] for item in per_source.values()),
+        "failed_parent_partitions": sum(item["failed"] for item in per_source.values()),
+        "quarantined_parent_partitions": sum(item["quarantined"] for item in per_source.values()),
+        "pending_parent_partitions": sum(item["pending"] for item in per_source.values()),
+        "stale_running_partitions": sum(item["stale_running"] for item in per_source.values()),
+        "source_sums": {
+            source_key: item["sum_completed_parent_pre_count"]
+            for source_key, item in per_source.items()
+        },
     }
 
 

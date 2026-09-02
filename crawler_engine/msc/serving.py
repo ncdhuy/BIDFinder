@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+import json
 import os
 from pathlib import Path
 import sqlite3
@@ -12,19 +13,27 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from .backfill import (
     AuditedSink,
+    BackfillControlError,
     BackfillRunner,
     UUIDProvenanceStore,
     atomic_write_json,
     build_manifest,
     checkpoint_audit,
     group_totals,
+    ordered_source_keys,
+    source_coverage_checkpoint_audit,
     source_population_preflight,
     typesense_schema_fingerprints,
 )
 from .checkpoint import CheckpointStore
 from .client import MSCClient
 from .config import MSCConfig, TypesenseConfig
-from .contracts import SOURCE_CONTRACTS
+from .contracts import (
+    SOURCE_CONTRACTS,
+    SOURCE_COVERAGE_FLOORS,
+    SOURCE_COVERAGE_REGISTRY_VERSION,
+    source_coverage_floor,
+)
 from .engine import MSCIngestionEngine, operational_today, parse_partition_date
 from .models import IngestionStatus
 from .sink import TypesenseSink
@@ -38,6 +47,7 @@ from .typesense_schema import (
 
 HISTORICAL_GENERATION = "hist_v1_20260829"
 HISTORICAL_END = date(2026, 8, 29)
+HISTORICAL_START = date(2023, 2, 1)
 INCREMENTAL_START = HISTORICAL_END + timedelta(days=1)
 SERVING_GENERATION_PREFIX = "serving_v1_"
 DEFAULT_LOOKBACK_DAYS = 3
@@ -90,6 +100,39 @@ def incremental_window(
         raise ValueError("lookback_days cannot be negative")
     effective_start = max(INCREMENTAL_START, requested_start - timedelta(days=lookback_days))
     return requested_start, effective_start, end
+
+
+def validate_prefix_range(
+    source_keys: Iterable[str],
+    from_date: str | date,
+    to_date: str | date,
+) -> tuple[tuple[str, ...], date, date]:
+    """Require one complete registered prefix ending at existing history."""
+
+    start, end = checkpoint_range = (
+        parse_partition_date(from_date),
+        parse_partition_date(to_date),
+    )
+    if start > end:
+        raise BackfillControlError("prefix from date cannot be after to date")
+    if end >= operational_today():
+        raise BackfillControlError("prefix range must end before the current Vietnam calendar day")
+    sources = ordered_source_keys(source_keys)
+    if not sources:
+        raise BackfillControlError("prefix requires at least one source")
+    floors = {source_coverage_floor(source_key) for source_key in sources}
+    if len(floors) != 1:
+        raise BackfillControlError("prefix source selection must use one shared coverage floor")
+    floor = next(iter(floors))
+    if start != floor:
+        raise BackfillControlError(
+            f"prefix must start at registered source floor {floor.isoformat()}"
+        )
+    if end != HISTORICAL_START - timedelta(days=1):
+        raise BackfillControlError(
+            f"prefix must end immediately before {HISTORICAL_START.isoformat()}"
+        )
+    return sources, checkpoint_range[0], checkpoint_range[1]
 
 
 def _copy_sqlite(source: str | Path, destination: str | Path) -> None:
@@ -309,6 +352,132 @@ def safe_retire_generation(client: TypesenseClient, generation: str) -> dict[str
     return {"generation": generation, "collections": list(names.values()), "aliases_before": aliases, "deleted": len(deleted)}
 
 
+def validate_sqlite_artifact(path: str | Path) -> dict[str, Any]:
+    artifact = Path(path)
+    if not artifact.is_file():
+        raise FileNotFoundError(artifact)
+    connection = sqlite3.connect(f"file:{artifact}?mode=ro", uri=True)
+    try:
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+    finally:
+        connection.close()
+    if integrity != "ok":
+        raise ValueError(f"SQLite artifact failed integrity check: {artifact}")
+    return {"path": str(artifact), "bytes": artifact.stat().st_size, "integrity": integrity}
+
+
+def validate_recovery_bundle(
+    bundle_dir: str | Path,
+    *,
+    required_files: Iterable[str] = (),
+    require_snapshot: bool = False,
+    validate_sqlite: bool = True,
+    provenance_filename: str = "provenance.sqlite3",
+) -> dict[str, Any]:
+    bundle = Path(bundle_dir)
+    if not bundle.is_dir():
+        raise FileNotFoundError(bundle)
+    required = ("bundle.json", "checkpoint.sqlite3", provenance_filename, *required_files)
+    missing = [name for name in required if not (bundle / name).exists()]
+    if missing:
+        raise ValueError(f"recovery bundle is incomplete: {', '.join(missing)}")
+    metadata = json.loads((bundle / "bundle.json").read_text(encoding="utf-8"))
+    snapshot = bundle / "typesense-snapshot"
+    if require_snapshot and not (snapshot / "state").is_dir():
+        raise ValueError("recovery bundle snapshot state is missing")
+    databases = {}
+    if validate_sqlite:
+        databases = {
+            name: validate_sqlite_artifact(bundle / name)
+            for name in ("checkpoint.sqlite3", provenance_filename)
+        }
+    return {
+        "path": str(bundle),
+        "bundle_version": metadata.get("bundle_version"),
+        "required_files": list(required),
+        "snapshot_state_present": (snapshot / "state").is_dir(),
+        "sqlite": databases,
+    }
+
+
+def retire_historical_generation(
+    client: TypesenseClient,
+    *,
+    historical_bundle: str | Path,
+    serving_bundle: str | Path,
+    historical_manifest: str | Path | None = None,
+    historical_audit: str | Path | None = None,
+    serving_generation: str,
+) -> dict[str, Any]:
+    """Delete only the frozen historical physical collections after all gates pass."""
+
+    serving_generation = require_serving_generation(serving_generation)
+    historical = validate_recovery_bundle(
+        historical_bundle,
+        required_files=(
+            "final-backfill-report.json",
+            "final-observed-manifest.json",
+            "manifest-lineage.json",
+            "reconciliation.json",
+            "counts.json",
+            "fingerprints.json",
+        ),
+        require_snapshot=True,
+    )
+    serving = validate_recovery_bundle(
+        serving_bundle,
+        required_files=("incremental-serving-audit.json", "serving-state-manifest.json"),
+        validate_sqlite=False,
+        provenance_filename="uuid-provenance.sqlite3",
+    )
+    serving_metadata = json.loads((Path(serving_bundle) / "bundle.json").read_text(encoding="utf-8"))
+    if serving_metadata.get("status") != "VALIDATED" or serving_metadata.get("sqlite_integrity") != {
+        "checkpoint": "ok",
+        "provenance": "ok",
+    }:
+        raise ValueError("serving recovery bundle is not a prior VALIDATED bundle")
+    historical_manifest_path = Path(historical_manifest or Path(historical_bundle) / "final-observed-manifest.json")
+    historical_audit_path = Path(historical_audit or Path(historical_bundle) / "final-backfill-report.json")
+    for evidence in (historical_manifest_path, historical_audit_path):
+        if not evidence.is_file():
+            raise FileNotFoundError(evidence)
+    health = client.health()
+    if health.get("ok") is not True:
+        raise ValueError("serving generation health check failed")
+    TypesenseCollectionManager(client).validate_generation(serving_generation)
+    aliases: dict[str, str | None] = {}
+    for alias in LOGICAL_ALIASES.values():
+        target = client.get_alias(alias)
+        aliases[alias] = target.get("collection_name") if target else None
+        if target:
+            raise ValueError(f"stable alias {alias} is active; historical retirement blocked")
+    before = set(live_generations(client))
+    expected = {HISTORICAL_GENERATION, serving_generation}
+    if not expected.issubset(before) or not before.issubset(expected):
+        raise ValueError(f"unexpected live generation inventory before retirement: {sorted(before)}")
+    names = tuple(physical_collection_name(group, HISTORICAL_GENERATION) for group in LOGICAL_ALIASES)
+    if any(client.get_collection(name) is None for name in names):
+        raise ValueError("historical retirement target is incomplete")
+    for name in names:
+        client.delete_collection(name)
+    remaining = [name for name in names if client.get_collection(name) is not None]
+    after = tuple(live_generations(client))
+    if remaining or after != (serving_generation,):
+        raise ValueError(f"historical retirement incomplete: remaining={remaining}, live={after}")
+    return {
+        "generation": HISTORICAL_GENERATION,
+        "collections": list(names),
+        "deleted": len(names),
+        "aliases_before": aliases,
+        "live_before": sorted(before),
+        "live_after": list(after),
+        "historical_bundle": historical,
+        "serving_bundle": serving,
+        "historical_manifest": str(historical_manifest_path),
+        "historical_audit": str(historical_audit_path),
+    }
+
+
 def live_generations(client: TypesenseClient) -> tuple[str, ...]:
     generations: set[str] = set()
     for item in client.list_collections():
@@ -354,6 +523,11 @@ def build_serving_report(
         "base_generation": HISTORICAL_GENERATION,
         "base_historical_through": HISTORICAL_END.isoformat(),
         "base_manifest_fingerprint": base_manifest_fingerprint,
+        "source_coverage_registry_version": SOURCE_COVERAGE_REGISTRY_VERSION,
+        "source_coverage_floors": {
+            source_key: SOURCE_COVERAGE_FLOORS[source_key].isoformat()
+            for source_key in SOURCE_CONTRACTS
+        },
         "incremental_start": INCREMENTAL_START.isoformat(),
         "requested_range": dict(requested_range),
         "effective_range": dict(effective_range),
@@ -466,6 +640,115 @@ def run_incremental(
         results=[result.as_dict() for result in results],
         source_preflight=source_preflight,
         lookback_days=lookback_days,
+        force=force,
+    )
+    atomic_write_json(report_path, report)
+    return report
+
+
+def run_prefix_extension(
+    *,
+    generation: str,
+    from_date: str | date,
+    to_date: str | date,
+    source_keys: Iterable[str],
+    checkpoint_path: str | Path,
+    provenance_path: str | Path,
+    report_path: str | Path,
+    manifest_path: str | Path,
+    base_manifest_fingerprint: str,
+    force: bool = False,
+    resume: bool = True,
+    max_partitions: int | None = None,
+    msc_config: MSCConfig | None = None,
+    typesense_config: TypesenseConfig | None = None,
+) -> dict[str, Any]:
+    """Ingest one explicit source-floor prefix into existing serving state."""
+
+    generation = require_serving_generation(generation)
+    sources, start, end = validate_prefix_range(source_keys, from_date, to_date)
+    if max_partitions is None:
+        raise ValueError("prefix run requires explicit max_partitions")
+    config = msc_config or MSCConfig()
+    ts_config = typesense_config or TypesenseConfig.from_env()
+    msc_client = MSCClient(config)
+    source_preflight = source_population_preflight(msc_client, start, end, sources)
+    manifest = build_manifest(
+        start,
+        end,
+        generation,
+        source_preflight["source_totals"],
+        page_size=config.page_size,
+        typesense_batch_size=ts_config.batch_size,
+        source_keys=sources,
+    )
+    atomic_write_json(manifest_path, manifest)
+    client = TypesenseClient(ts_config)
+    TypesenseCollectionManager(client).validate_generation(generation)
+    run_report_path = Path(checkpoint_path).with_name(f".{generation}.prefix.backfill.json")
+    sink_target = f"typesense:{generation}"
+    with CheckpointStore(checkpoint_path) as checkpoints, UUIDProvenanceStore(provenance_path) as provenance:
+        sink = AuditedSink(TypesenseSink(client, generation, batch_size=ts_config.batch_size), provenance)
+        engine = MSCIngestionEngine(msc_client, checkpoints, sink, config)
+        results = BackfillRunner(
+            engine,
+            checkpoints,
+            manifest,
+            report_path=run_report_path,
+            resume=resume,
+            force=force,
+            max_partitions=max_partitions,
+        ).run()
+        state = checkpoint_audit(checkpoints, start, end, sources, sink_target)
+        provenance_counts = {
+            "unique_total": provenance.total_count(),
+            "group_counts": provenance.group_counts(),
+            "conflicts": provenance.conflict_count(),
+        }
+    physical_counts = {
+        group: client.document_count(physical_collection_name(group, generation))
+        for group in LOGICAL_ALIASES
+    }
+    errors = [
+        f"{result.source_key}:{result.partition_date}:{result.error_code or result.status.value}"
+        for result in results
+        if result.status in {IngestionStatus.FAILED, IngestionStatus.QUARANTINED}
+    ]
+    if state["completed_parent_partitions"] != state["expected_parent_partitions"]:
+        errors.append("prefix checkpoint coverage is incomplete")
+    if any(
+        item["sum_completed_parent_pre_count"] != source_preflight["source_totals"][source_key]
+        for source_key, item in state["sources"].items()
+    ):
+        errors.append("prefix source count parity failed")
+    records_added = {
+        source_key: sum(
+            int(result.unique_source_count or 0)
+            for result in results
+            if result.source_key == source_key and not result.skipped
+        )
+        for source_key in sources
+    }
+    report = build_serving_report(
+        serving_generation=generation,
+        base_manifest_fingerprint=base_manifest_fingerprint,
+        requested_range={"from": start.isoformat(), "to": end.isoformat(), "closed": True},
+        effective_range={"from": start.isoformat(), "to": end.isoformat(), "closed": True},
+        source_counts=source_preflight["source_totals"],
+        checkpoint_state=state,
+        provenance_counts=provenance_counts,
+        physical_counts=physical_counts,
+        last_successful_run=datetime.now(timezone.utc).isoformat(timespec="seconds") if not errors else None,
+        unresolved_errors=errors,
+        source_selection=list(sources),
+        prefix_range={"from": start.isoformat(), "to": end.isoformat(), "closed": True},
+        coverage_extension={
+            "lineage": "hist_v1_20260829 -> serving_v1_20260901",
+            "records_added_by_source": records_added,
+            "source_floor": start.isoformat(),
+        },
+        results=[result.as_dict() for result in results],
+        source_preflight=source_preflight,
         force=force,
     )
     atomic_write_json(report_path, report)

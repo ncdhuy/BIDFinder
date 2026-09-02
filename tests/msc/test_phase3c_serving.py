@@ -9,7 +9,12 @@ from unittest.mock import patch
 
 from crawler_engine.msc.backfill import UUIDProvenanceStore
 from crawler_engine.msc.checkpoint import CheckpointStore
-from crawler_engine.msc.contracts import SOURCE_CONTRACTS
+from crawler_engine.msc.contracts import (
+    SOURCE_CONTRACTS,
+    SOURCE_COVERAGE_FLOORS,
+    expected_coverage_partition_count,
+    expected_source_partition_count,
+)
 from crawler_engine.msc.models import IngestionStatus, PartitionContext, SearchInterval
 from crawler_engine.msc.serving import (
     EXPECTED_HISTORICAL_GROUP_COUNTS,
@@ -18,10 +23,12 @@ from crawler_engine.msc.serving import (
     bootstrap_provenance,
     build_serving_report,
     clone_generation,
+    retire_historical_generation,
     incremental_window,
     live_generations,
     require_serving_generation,
     safe_retire_generation,
+    validate_prefix_range,
 )
 from crawler_engine.msc.typesense_schema import LOGICAL_ALIASES, collection_schema, physical_collection_name
 
@@ -64,6 +71,9 @@ class FakeTypesense:
     def get_alias(self, _alias):
         return None
 
+    def health(self):
+        return {"ok": True, "version": "30.2"}
+
     def delete_collection(self, name):
         self.deleted.append(name)
         self.collections.pop(name, None)
@@ -80,6 +90,37 @@ def _context(source_key: str, day: str) -> PartitionContext:
 
 
 class TestPhase3CServing(unittest.TestCase):
+    def test_source_specific_coverage_registry_and_total(self):
+        self.assertEqual(date(2022, 1, 1), SOURCE_COVERAGE_FLOORS["goods_general"])
+        self.assertTrue(all(
+            SOURCE_COVERAGE_FLOORS[key] == date(2023, 1, 1)
+            for key in SOURCE_CONTRACTS
+            if key != "goods_general"
+        ))
+        self.assertEqual(9738, expected_coverage_partition_count("2026-08-31"))
+        self.assertEqual(0, expected_source_partition_count("medical_devices", "2022-12-31"))
+        self.assertEqual(31, expected_source_partition_count("medicine_generic", "2023-01-31"))
+
+    def test_prefix_range_guard_uses_one_registered_floor_and_boundary(self):
+        self.assertEqual(
+            ("goods_general",),
+            validate_prefix_range(("goods_general",), "2022-01-01", "2023-01-31")[0],
+        )
+        self.assertEqual(
+            set(SOURCE_CONTRACTS) - {"goods_general"},
+            set(validate_prefix_range(
+                tuple(key for key in SOURCE_CONTRACTS if key != "goods_general"),
+                "2023-01-01", "2023-01-31",
+            )[0]),
+        )
+        for args in (
+            (("goods_general",), "2023-01-01", "2023-01-31"),
+            (("goods_general", "medical_devices"), "2022-01-01", "2023-01-31"),
+            (("goods_general",), "2022-01-01", "2023-02-01"),
+        ):
+            with self.assertRaises(ValueError):
+                validate_prefix_range(*args)
+
     def test_serving_generation_guard_and_immutable_historical_guard(self):
         self.assertEqual("serving_v1_20260901", require_serving_generation("serving_v1_20260901"))
         for generation in (HISTORICAL_GENERATION, "local_canary_20260831_29ef44"):
@@ -161,6 +202,30 @@ class TestPhase3CServing(unittest.TestCase):
         self.assertIn("serving_v1_20260901", encoded)
         self.assertEqual(HISTORICAL_GENERATION, report["base_generation"])
         self.assertEqual(set(LOGICAL_ALIASES), set(report["physical_counts"]))
+
+    def test_historical_retirement_guard_preserves_offline_bundle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            historical = root / "historical-final"
+            serving = root / "serving-final"
+            (historical / "typesense-snapshot" / "state").mkdir(parents=True)
+            serving.mkdir()
+            (historical / "bundle.json").write_text("{}", encoding="utf-8")
+            (serving / "bundle.json").write_text("{}", encoding="utf-8")
+            client = FakeTypesense((HISTORICAL_GENERATION, "serving_v1_20260901"))
+            with self.assertRaises(ValueError):
+                retire_historical_generation(
+                    client,
+                    historical_bundle=historical,
+                    serving_bundle=serving,
+                    serving_generation="serving_v1_20260901",
+                )
+            self.assertTrue(historical.is_dir())
+            self.assertEqual([], client.deleted)
+
+    def test_one_live_generation_inventory(self):
+        client = FakeTypesense(("serving_v1_20260901",))
+        self.assertEqual(("serving_v1_20260901",), live_generations(client))
 
 
 if __name__ == "__main__":

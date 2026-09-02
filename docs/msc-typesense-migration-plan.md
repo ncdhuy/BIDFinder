@@ -916,3 +916,19 @@ Phase 4 will target it explicitly for FastAPI shadow-read; alias activation and
 application query cutover remain later decisions. Runtime Typesense data,
 snapshots, and SQLite state stay outside Git; only compact audit/report
 evidence is committed.
+
+## Phase 3C.1 historical prefix coverage extension
+
+Phase 3C.1 adds coverage-extension lineage without rewriting Phase 3B or
+creating another serving generation. `serving_v1_20260901` receives only the
+missing source prefixes: `goods_general` from `2022-01-01` through `2023-01-31`
+and each other source from `2023-01-01` through `2023-01-31`. Source floors are
+authoritative in `SOURCE_COVERAGE_FLOORS` in
+`crawler_engine/msc/contracts.py`; the expected combined checkpoint coverage
+through `2026-08-31` is `9,738` logical source-day partitions.
+
+After the historical final bundle and serving recovery evidence pass their
+guards, the three live `hist_v1_20260829` physical collections are retired.
+The historical final bundle remains an offline recovery asset. Stable aliases
+stay inactive, FastAPI/frontend files remain unchanged, and Phase 4 shadow-read
+has not started.

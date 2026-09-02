@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from .models import FieldMapping, FilterSpec, SourceContract
 
 
@@ -190,6 +192,35 @@ SOURCE_CONTRACTS: dict[str, SourceContract] = {
         ("medicine_type=[0,null] when official medicineType is 0",),
     ),
 }
+
+
+SOURCE_COVERAGE_REGISTRY_VERSION = "msc-source-coverage-v1"
+SOURCE_COVERAGE_FLOORS: dict[str, date] = {
+    "goods_general": date(2022, 1, 1),
+    "medical_devices": date(2023, 1, 1),
+    "medicine_generic": date(2023, 1, 1),
+    "medicine_originator": date(2023, 1, 1),
+    "medicine_herbal": date(2023, 1, 1),
+    "herbal_material": date(2023, 1, 1),
+    "traditional_medicine": date(2023, 1, 1),
+}
+
+
+def source_coverage_floor(source_key: str) -> date:
+    try:
+        return SOURCE_COVERAGE_FLOORS[source_key]
+    except KeyError as exc:
+        raise ValueError(f"unknown MSC source key: {source_key}") from exc
+
+
+def expected_source_partition_count(source_key: str, through: str | date) -> int:
+    end = date.fromisoformat(through) if isinstance(through, str) else through
+    start = source_coverage_floor(source_key)
+    return max((end - start).days + 1, 0)
+
+
+def expected_coverage_partition_count(through: str | date) -> int:
+    return sum(expected_source_partition_count(source_key, through) for source_key in SOURCE_CONTRACTS)
 
 
 def get_contract(source_key: str) -> SourceContract:

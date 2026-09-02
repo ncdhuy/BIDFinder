@@ -6,9 +6,11 @@ Neon/Postgres write, or alias activation in this phase.
 
 ## Readiness preflight
 
-The intended starting date is `2023-02-01`. The upper bound must be an
-explicit, fully closed Vietnam calendar day. Do not use the current day and do
-not omit either date argument.
+The Phase 3B historical bootstrap starts at `2023-02-01`. The upper bound
+must be an explicit, fully closed Vietnam calendar day. Do not use the current
+day and do not omit either date argument. Phase 3C.1 extends the serving
+generation with source-specific prefixes; it does not rewrite this Phase 3B
+scope or its evidence.
 
 Run the read-only seven-source count preflight:
 
@@ -237,6 +239,56 @@ broad_range_count == sum(completed parent source counts)
 ```
 
 This is a source coverage check; a Typesense count cannot replace it.
+
+## Phase 3C.1 source-floor extension
+
+Source contracts have different supported historical floors. The authoritative
+registry is `SOURCE_COVERAGE_FLOORS` in
+`crawler_engine/msc/contracts.py`:
+
+| Source | Minimum supported date |
+|---|---|
+| `goods_general` | `2022-01-01` |
+| `medical_devices` | `2023-01-01` |
+| `medicine_generic` | `2023-01-01` |
+| `medicine_originator` | `2023-01-01` |
+| `medicine_herbal` | `2023-01-01` |
+| `herbal_material` | `2023-01-01` |
+| `traditional_medicine` | `2023-01-01` |
+
+The missing prefix ends at `2023-01-31`, immediately before existing Phase 3B
+coverage. Run only these two explicit source/range commands against
+`serving_v1_20260901`, using its existing checkpoint and provenance databases:
+
+```powershell
+python -m crawler_engine.msc.cli prefix `
+  --from 2022-01-01 --to 2023-01-31 --sources goods_general `
+  --generation serving_v1_20260901 `
+  --checkpoint $HOME/.local/share/bidfinder/typesense/checkpoints/serving_v1_20260901.sqlite3 `
+  --provenance $HOME/.local/share/bidfinder/typesense/checkpoints/serving_v1_20260901.uuid.sqlite3 `
+  --max-partitions 396 --manifest prefix-goods-manifest.json `
+  --report prefix-goods-report.json --base-manifest-fingerprint <Phase-3C-base-fingerprint>
+
+python -m crawler_engine.msc.cli prefix `
+  --from 2023-01-01 --to 2023-01-31 --sources medical_devices,medicine_generic,medicine_originator,medicine_herbal,herbal_material,traditional_medicine `
+  --generation serving_v1_20260901 `
+  --checkpoint $HOME/.local/share/bidfinder/typesense/checkpoints/serving_v1_20260901.sqlite3 `
+  --provenance $HOME/.local/share/bidfinder/typesense/checkpoints/serving_v1_20260901.uuid.sqlite3 `
+  --max-partitions 186 --manifest prefix-six-manifest.json `
+  --report prefix-six-report.json --base-manifest-fingerprint <Phase-3C-base-fingerprint>
+```
+
+The commands reject mixed source floors, ranges that do not begin at the
+registered floor, ranges that do not end at `2023-01-31`, historical targets,
+and serving targets other than the explicit versioned generation. A no-force
+rerun should skip all completed partitions and issue only the preflight count
+requests. Combined logical coverage is `9,738` source-day partitions through
+`2026-08-31`: `1,704` goods dates plus `1,339` dates for each other source.
+
+Phase 3C.1 retirement changes local steady state to one live generation:
+`serving_v1_20260901`. The final validated `hist_v1_20260829` recovery bundle,
+checkpoint, provenance, audit, manifest, and lineage copies remain offline
+recovery evidence and are never deleted by live collection retirement.
 
 The runner wraps the existing sink with a disk-backed SQLite provenance table.
 It stores UUID, group, source, partition date, and canonical content
