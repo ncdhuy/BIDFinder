@@ -1,0 +1,80 @@
+{
+  "status": "PARTIAL",
+  "starting_head": "04f84bf63d06695afb3756aba638d74c0726eb08",
+  "branch": "refactor-msc-typesense-v1",
+  "root_cause": {
+    "controls": "The only typesense-search-form element was nested inside the hidden .side-panel modal.",
+    "blank_space": "Phase 4C hid the legacy data-tab children but left #data-tab itself as a flex-filling container, pushing typesense-results-ui to the viewport bottom.",
+    "test_gap": "Phase 4C tests inspected source tokens and contract counts; they never ran a rendered browser or asserted visibility, geometry, placement, console errors, or network behavior."
+  },
+  "runtime": {
+    "typesense_health": {"ok": true, "http_status": 200},
+    "fastapi_health": {"status": "ok"},
+    "fastapi_ready": "ready",
+    "backend": "typesense",
+    "serving_generation": "serving_v1_20260901",
+    "collections": {"goods": 9596715, "medicines": 585449, "traditional_medicine": 32022},
+    "data_plane_changed": false
+  },
+  "authentication": {
+    "guest_contract": "public",
+    "guest_metadata": "public",
+    "guest_autocomplete": "public",
+    "guest_preview": "public",
+    "result_queries": "login required by existing runtime policy",
+    "ui_behavior": "controls remain visible; clicking Tìm kiếm opens the login panel and shows a login-required result message",
+    "policy_changed": false
+  },
+  "browser": {
+    "engine": "Chrome 152.0.7977.66 via Selenium",
+    "viewports": ["1440x1000", "800x900"],
+    "initial_visible": ["three group tabs", "subtype choices", "keyword input", "search-field selector", "Tìm kiếm button", "Bộ lọc và sắp xếp", "compact result area"],
+    "fatal_javascript_errors": [],
+    "contract_requests_on_initial_load": 1,
+    "screenshots": [
+      "ui-search-recovery-screenshots/initial-page.png",
+      "ui-search-recovery-screenshots/goods-preview.png",
+      "ui-search-recovery-screenshots/medicines-preview.png",
+      "ui-search-recovery-screenshots/traditional-preview.png",
+      "ui-search-recovery-screenshots/advanced-filter.png",
+      "ui-search-recovery-screenshots/authentication-required.png",
+      "ui-search-recovery-screenshots/narrow-desktop.png"
+    ]
+  },
+  "seven_subtype_ui_previews": {
+    "goods_general": 8631874,
+    "medical_devices": 964841,
+    "medicine_generic": 494717,
+    "medicine_originator": 55239,
+    "medicine_herbal": 35490,
+    "herbal_material": 9554,
+    "traditional_medicine": 22468
+  },
+  "browser_data_range_previews": {
+    "goods_2022": 9718,
+    "goods_january_2023": 36772,
+    "goods_recent_2026_09_01": 3003
+  },
+  "contract_coverage": {
+    "searchable": {"count": 45, "ui_route": "group tab > Tất cả trường tìm kiếm or specific field > keyword input"},
+    "filterable": {"count": 36, "ui_route": "group tab > Bộ lọc và sắp xếp > metadata-derived text/date/numeric control"},
+    "sortable": {"count": 13, "ui_route": "group tab > Bộ lọc và sắp xếp > Sắp xếp theo + Thứ tự"},
+    "autocomplete": {"count": 17, "ui_route": "group tab > autocomplete-capable search field > keyword suggestions"}
+  },
+  "validation": {
+    "real_browser": "4 tests passed in Chrome 152.0.7977.66",
+    "frontend_contract": "6 tests passed",
+    "backend_relevant": "39 tests passed",
+    "javascript_syntax": "3 files passed node --check",
+    "python_syntax": "browser regression test passed py_compile",
+    "secret_scan": "clean across the 9 recovery source, test, and audit files",
+    "git_diff_check": "passed"
+  },
+  "known_limitations": [
+    "No authorized browser session was available, so result rows, pagination, and expanded detail could not be validated against real data.",
+    "String multi-value filters use a compact comma-separated input because the contract does not publish finite option lists or a UI-control enum.",
+    "The built-in browser connector had no available browser; Chrome/Selenium supplied the rendered-browser evidence.",
+    "The WSL user service needed a temporary keepalive during validation; no repository runtime or data configuration changed."
+  ],
+  "commit": null
+}

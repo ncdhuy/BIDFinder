@@ -157,3 +157,109 @@ Postgres fallback is a smaller legacy subset; broad global quantity sorting is
 approximately 1–1.6 seconds; serving generation selection is explicit rather
 than alias-based; local availability depends on Windows/WSL/network state;
 and this is not a high-availability deployment.
+
+## Early-user public HTTPS mode
+
+Public access uses one Cloudflare Tunnel named tunnel. The tunnel connects to
+FastAPI on `127.0.0.1:8001`; it does not expose Typesense, WSL, Postgres, or
+the filesystem. Cloudflare terminates HTTPS and renews the certificate. No
+router port forwarding is required. Caddy/nginx is not part of this path.
+
+The API serves the existing `apps/web` directory same-origin when running from
+the repository. `/config.js` then selects the public origin for browser API
+calls. The checked-in frontend contains no Typesense key, Postgres DSN, tunnel
+token, or private certificate.
+
+### One-time public setup
+
+Install `cloudflared` in WSL or set its absolute path. In Cloudflare, create a
+named tunnel and DNS hostname, then copy the example and replace only the
+placeholder values:
+
+```bash
+cp infra/ingress/cloudflared.yml.example ~/.config/bidfinder/cloudflared.yml
+chmod 600 ~/.config/bidfinder/cloudflared.yml
+```
+
+Create `~/.config/bidfinder/ingress.env` with mode `600`:
+
+```text
+BIDFINDER_PUBLIC_URL=https://public.example.com
+CLOUDFLARED_BIN=/usr/local/bin/cloudflared
+CLOUDFLARED_CONFIG=/home/USER/.config/bidfinder/cloudflared.yml
+```
+
+Set the same `BIDFINDER_PUBLIC_URL` in `~/.config/bidfinder/runtime.env`.
+This enables trusted proxy handling only for loopback peers and makes public
+cookies `Secure; HttpOnly; SameSite=Lax`. Do not set `TRUSTED_PROXY_IPS` to a
+public network; the ingress must continue to connect through loopback.
+
+Install or refresh user units, then validate the external config:
+
+```bash
+bash infra/runtime/bidfinder-install.sh install
+bash infra/runtime/bidfinder-install.sh public-status
+bash infra/ingress/bidfinder-cloudflared.sh validate
+```
+
+### Public lifecycle
+
+```bash
+# Local only: ingress stopped; FastAPI and Typesense remain usable locally.
+bash infra/runtime/bidfinder-install.sh public-stop
+
+# Start/stop public access without changing local services.
+bash infra/runtime/bidfinder-install.sh public-start
+bash infra/runtime/bidfinder-install.sh public-stop
+bash infra/runtime/bidfinder-install.sh public-restart
+bash infra/runtime/bidfinder-install.sh public-status
+
+# Persist public mode across WSL user-service startup.
+bash infra/runtime/bidfinder-install.sh public-enable
+
+# Immediate disable plus remove automatic startup.
+bash infra/runtime/bidfinder-install.sh public-disable
+```
+
+`public-stop` is the immediate public-access safety switch and does not stop
+FastAPI or Typesense. `public-disable` is the stronger rollback for local-only
+mode. The tunnel service has no access log and uses systemd journal output;
+query bodies, cookies, and authorization headers are not logged by BIDFinder.
+
+Rotate access by creating a new Cloudflare tunnel credential, updating the
+external `cloudflared.yml` path, restarting with `public-restart`, then
+revoking the old tunnel/credential in Cloudflare. Never commit either file.
+
+### Public route boundary
+
+Allowed public surface is `/`, static assets, `/health`, and the existing
+product `/api/*` routes for auth, search, autocomplete, metadata, feedback,
+filter configuration, and search contract. `/ready`, `/api/warmup`,
+`/docs`, `/redoc`, and `/openapi.json` are denied by the tunnel config because
+they expose operator or diagnostic detail. `/health` is intentionally a
+minimal anonymous liveness response.
+
+The application keeps an explicit in-process rate limit for search,
+autocomplete, auth, metadata, feedback, and contract routes. Public requests
+are bounded to a 2 MiB body, 100 bulk child queries, 20 bulk fields, and
+sequential bulk execution (concurrency 1). These are process-local MVP guards,
+not distributed abuse protection.
+
+### Windows/WSL availability
+
+Keep Windows running, WSL active, the machine awake, and network connected.
+Windows reboot, update, sleep, or WSL shutdown creates an outage. Existing
+linger-backed BIDFinder services recover after WSL startup; if public mode is
+not enabled, run `public-start` after the machine returns. There is no HA.
+
+For troubleshooting, check `public-status`, `status`, and:
+
+```bash
+journalctl --user-unit=bidfinder-ingress.service -n 120 --no-pager
+curl --fail --max-time 10 "$BIDFINDER_PUBLIC_URL/health"
+```
+
+If the backend is unavailable, stop ingress, verify local `health` and
+`ready`, then start/restart the existing Typesense and API services before
+re-enabling public access. Do not expose port `8108` or change Typesense
+binding.

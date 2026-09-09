@@ -59,7 +59,7 @@ Sources:
 | `hs_code` | Mã HS | string, searchable |
 | `model_mark` | Kỹ/Ký mã hiệu | string, searchable |
 | `brand` | Nhãn hiệu | string, searchable |
-| `production_year` | Năm sản xuất | integer, sortable |
+| `production_year` | Năm sản xuất | string year/range, sortable |
 | `manufacturer` | Hãng sản xuất | string, searchable/facet |
 | `technical_specification` | Cấu hình, tính năng kỹ thuật cơ bản | string, searchable |
 | `model` | Chủng loại (model) | string, optional, searchable |
@@ -74,7 +74,7 @@ Sources:
 | `result_posted_at` | Ngày đăng tải KQLCNT | date/time, sortable/filterable |
 | `decision_number` | Số quyết định | string, searchable |
 | `decision_issued_at` | Ngày ban hành quyết định | date/time, sortable/filterable |
-| `bidder_count` | Số nhà thầu tham dự | float, sortable |
+| `bidder_count` | Số nhà thầu tham dự | int32, sortable |
 | `location` | Địa điểm | string, facet/searchable |
 
 `model` and `registration_or_import_permit_number` remain optional. Their device mappings are verified for medical devices; their canonical meaning for general goods is `UNKNOWN` and must not become a production dependency.
@@ -112,7 +112,7 @@ Sources:
 | `result_posted_at` | Ngày đăng tải KQLCNT | date/time, sortable/filterable |
 | `decision_number` | Số quyết định | string, searchable |
 | `decision_issued_at` | Ngày ban hành quyết định | date/time, sortable/filterable |
-| `bidder_count` | Số nhà thầu tham dự | float, sortable |
+| `bidder_count` | Số nhà thầu tham dự | int32, sortable |
 | `location` | Địa điểm | string, facet/searchable |
 
 `medicine_group` is a source-backed field, not automatically the legacy `BDG`/`N1`-`N5` classification. The old `drug_group_parser.py` may be considered only after exports prove equivalent values.
@@ -148,7 +148,7 @@ Sources:
 | `result_posted_at` | Ngày đăng tải KQLCNT | date/time, sortable/filterable |
 | `decision_number` | Số quyết định | string, searchable |
 | `decision_issued_at` | Ngày ban hành quyết định | date/time, sortable/filterable |
-| `bidder_count` | Số nhà thầu tham dự | float, sortable |
+| `bidder_count` | Số nhà thầu tham dự | int32, sortable |
 | `location` | Địa điểm | string, facet/searchable |
 
 The two traditional-medicine source tabs share one logical collection but retain their exact `source_tab` and `source_tab_label`. The common `item_name` key is the normalized search surface; the original concept distinction remains in the provenance label and tab discriminator.
@@ -254,7 +254,7 @@ Every request uses index `es-smart-pricing`, `matchType=all-1`, empty `keyWordNo
 
 ### 10.1 Source-to-canonical mapping
 
-Mapping policy values: `text` means NFC Unicode normalization, whitespace collapse, and trim; `number` means preserve JSON numbers and parse numeric-looking strings only where the source fixture proves that field representation; `date-raw` means preserve the source string; `array` means preserve all array members; `location-join` means deterministic source-order display joining of `diaDiem` components.
+Mapping policy values: `text` means NFC Unicode normalization, whitespace collapse, and trim; `number` means preserve JSON numbers and parse numeric-looking strings only where the source fixture proves that field representation; `date-raw` means preserve the source string; `array` means preserve all array members; `location-normalize` means deterministic display joining of `diaDiem` components with the local administrative unit before the province/city while retaining source-era province names; `extract_location_province` isolates the province/city for map aggregation and merger resolution.
 
 #### Goods
 
@@ -267,7 +267,7 @@ Mapping policy values: `text` means NFC Unicode normalization, whitespace collap
 | `hs_code` | `maHs` / `maHs` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
 | `model_mark` | `kyMaHieu` / `kyMaHieu` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
 | `brand` | `nhanHieu` / `nhanHieu` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
-| `production_year` | `namSanXuat` / `namSanXuat` | string | int32 | non-four-digit -> null | strict year | no | no | yes | both / yes |
+| `production_year` | `namSanXuat` / `namSanXuat` | string | string | invalid value -> null; year ranges preserved | year or year-range | no | no | yes | both / yes |
 | `manufacturer` | `hangSanXuat` / `hangSanXuat` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
 | `technical_specification` | `cauHinh` / `cauHinh` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
 | `model` | absent / `chungLoai` | string or absent | string | absent/blank -> null | text | yes | no | no | device / yes |
@@ -282,8 +282,8 @@ Mapping policy values: `text` means NFC Unicode normalization, whitespace collap
 | `result_posted_at` | `ngayDangTaiKqlcnt` / `ngayDangTaiKqlcnt` | date string | string | absent -> null | date-raw | no | no | no | both / yes |
 | `decision_number` | `soQuyetDinh` / `soQuyetDinh` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
 | `decision_issued_at` | `ngayBanHanhQuyetDinh` / `ngayBanHanhQuyetDinh` | date string | string | absent -> null | date-raw | no | no | no | both / yes |
-| `bidder_count` | `soNhaThauThamDu` / `soNhaThauThamDu` | JSON number, often absent | float | absent/invalid -> null | number | no | no | yes | both / yes |
-| `location` | `diaDiem` / `diaDiem` | object[] | string | absent/empty -> null | location-join | yes | no | no | both / yes |
+| `bidder_count` | `soNhaThauThamDu` / `soNhaThauThamDu` | JSON number, often absent | int32 | absent/invalid -> null | non-negative half-up rounding | no | no | yes | both / yes |
+| `location` | `diaDiem` / `diaDiem` | object[] or string | string | absent/empty -> null | local administrative unit before province/city; province/city extractable | yes | no | no | both / yes |
 
 #### Medicines
 
@@ -312,8 +312,8 @@ Mapping policy values: `text` means NFC Unicode normalization, whitespace collap
 | `result_posted_at` | `ngayDangTaiKqlcnt` | date string | string | absent -> null | date-raw | no | no | no | all / yes |
 | `decision_number` | `soQuyetDinh` | string | string | absent/blank -> null | text | yes | no | no | all / yes |
 | `decision_issued_at` | `ngayBanHanhQuyetDinh` | date string | string | absent -> null | date-raw | no | no | no | all / yes |
-| `bidder_count` | `soNhaThauThamDu` | JSON number or absent | float | absent/invalid -> null | number | no | no | yes | all / yes |
-| `location` | `diaDiem` | object[] | string | absent/empty -> null | location-join | yes | no | no | all / yes |
+| `bidder_count` | `soNhaThauThamDu` | JSON number or absent | int32 | absent/invalid -> null | non-negative half-up rounding | no | no | yes | all / yes |
+| `location` | `diaDiem` | object[] or string | string | absent/empty -> null | local administrative unit before province/city; province/city extractable | yes | no | no | all / yes |
 
 #### Traditional medicine
 
@@ -341,8 +341,8 @@ Mapping policy values: `text` means NFC Unicode normalization, whitespace collap
 | `result_posted_at` | `ngayDangTaiKqlcnt` / `ngayDangTaiKqlcnt` | date string | string | absent -> null | date-raw | no | no | no | both / yes |
 | `decision_number` | `soQuyetDinh` / `soQuyetDinh` | string | string | absent/blank -> null | text | yes | no | no | both / yes |
 | `decision_issued_at` | `ngayBanHanhQuyetDinh` / `ngayBanHanhQuyetDinh` | date string | string | absent -> null | date-raw | no | no | no | both / yes |
-| `bidder_count` | `soNhaThauThamDu` / `soNhaThauThamDu` | JSON number or absent | float | absent/invalid -> null | number | no | no | yes | both / yes |
-| `location` | `diaDiem` / `diaDiem` | object[] | string | absent/empty -> null | location-join | yes | no | no | both / yes |
+| `bidder_count` | `soNhaThauThamDu` / `soNhaThauThamDu` | JSON number or absent | int32 | absent/invalid -> null | non-negative half-up rounding | no | no | yes | both / yes |
+| `location` | `diaDiem` / `diaDiem` | object[] or string | string | absent/empty -> null | local administrative unit before province/city; province/city extractable | yes | no | no | both / yes |
 
 Phase 1B field-parity evidence classifies `herbal-material.bidder_count` as `UNKNOWN`: the mapped field was absent from its selected full public-search partition. Keep it optional; do not fabricate zero.
 
@@ -350,8 +350,8 @@ Source-only classifier and display fields (`medicines`, `medicineType`, `dangBao
 
 ### 10.2 Numeric and text rules
 
-- `khoiLuongDouble`, `soLuong`, `donGia`, `donGiaDuThau`, and `medicineType` are JSON numbers in public-search evidence. Keep them numeric. `soNhaThauThamDu` is a fractional JSON number in device and traditional samples, while absent in the selected Dược liệu partition; canonical `bidder_count` is `float` when present, otherwise null.
-- `namSanXuat` is a string. Strict four-digit values may become `production_year`; values such as `2025 trở về sau` stay raw-only and canonical `production_year` remains null. No numeric-looking string is silently coerced elsewhere.
+- `khoiLuongDouble`, `soLuong`, `donGia`, `donGiaDuThau`, and `medicineType` are JSON numbers in public-search evidence. Keep them numeric. `soNhaThauThamDu` is a fractional JSON number in device and traditional samples, while absent in the selected Dược liệu partition; canonical `bidder_count` is rounded half-up to an integer when present, otherwise null.
+- `namSanXuat` is a string. Four-digit values and ranges such as `2024-2025` become textual `production_year` values; descriptive values such as `2025 trở về sau` remain null. No numeric-looking string is silently coerced elsewhere.
 - Missing fields and empty strings become null during future normalization. Invalid numeric/date values become validation failures or null by field policy, never zero.
 - Reuse only narrow future primitives from `crawler_engine/schema_normalization_shared.py`: NFC Unicode normalization, whitespace cleanup, and safe null handling. Do not import the Excel pipeline or its inference rules.
 
