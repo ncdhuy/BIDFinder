@@ -198,10 +198,14 @@ def validate_raw_records(contract: SourceContract, records: Sequence[dict[str, A
         for field in contract.date_fields:
             if field in record and record[field] is not None and not isinstance(record[field], str):
                 errors.append(f"uuid={record_id}: {_type_error(field, 'date string', record[field])}")
-        if "diaDiem" in record and record["diaDiem"] is not None and (
-            not isinstance(record["diaDiem"], list) or not all(isinstance(item, dict) for item in record["diaDiem"])
-        ):
-            errors.append(f"uuid={record_id}: {_type_error('diaDiem', 'object array', record['diaDiem'])}")
+        if "diaDiem" in record and record["diaDiem"] is not None:
+            location = record["diaDiem"]
+            valid_location = isinstance(location, str) or (
+                isinstance(location, list)
+                and all(isinstance(item, (dict, str)) for item in location)
+            )
+            if not valid_location:
+                errors.append(f"uuid={record_id}: {_type_error('diaDiem', 'object array or string', location)}")
         for field in mapped_fields | {"medicines"}:
             if field not in record or record[field] is None:
                 continue

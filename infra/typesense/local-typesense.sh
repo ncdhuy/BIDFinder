@@ -37,6 +37,12 @@ die() {
   exit 2
 }
 
+set_nofile_limit() {
+  local limit="${BIDFINDER_TYPESENSE_NOFILE_LIMIT:-1048576}"
+  [[ "$limit" =~ ^[0-9]+$ && "$limit" -gt 0 ]] || die "invalid BIDFINDER_TYPESENSE_NOFILE_LIMIT: $limit"
+  ulimit -n "$limit" || die "unable to raise open-file limit to $limit"
+}
+
 require_local_config() {
   [[ -n "${TYPESENSE_API_KEY:-}" ]] || die "TYPESENSE_API_KEY is missing; create $CONFIG_FILE with mode 600"
   [[ "$PROTOCOL" == "http" ]] || die "local target requires TYPESENSE_PROTOCOL=http"
@@ -84,6 +90,7 @@ start_instance() {
   fi
   rm -f "$pid_file"
   mkdir -p "$data_dir" "$(dirname "$pid_file")" "$(dirname "$log_file")"
+  set_nofile_limit
   # API key stays in the environment, not argv or operator output.
   TYPESENSE_API_KEY="$TYPESENSE_API_KEY" nohup "$BIN" \
     --data-dir="$data_dir" \
@@ -101,6 +108,7 @@ foreground_instance() {
   local data_dir="$1" port="$2" peering_port="${3:-8107}"
   [[ -x "$BIN" ]] || die "Typesense binary missing: run '$0 install'"
   mkdir -p "$data_dir"
+  set_nofile_limit
   # systemd owns this foreground process and sends graceful SIGTERM on stop.
   exec "$BIN" \
     --data-dir="$data_dir" \

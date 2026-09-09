@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import ssl
 from time import perf_counter
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
@@ -234,6 +234,25 @@ class TypesenseClient:
             "POST", "/collections", schema, error_code=TYPESENSE_SCHEMA_ERROR,
         )
 
+    def update_collection_schema(
+        self,
+        collection: str,
+        schema_update: Mapping[str, Any],
+        *,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        """Apply a synchronous Typesense collection schema alteration."""
+
+        if not collection or not isinstance(schema_update, Mapping):
+            raise ValueError("collection and schema_update are required")
+        return self._request_json(
+            "PATCH",
+            f"/collections/{quote(collection, safe='')}",
+            schema_update,
+            error_code=TYPESENSE_SCHEMA_ERROR,
+            timeout_seconds=timeout_seconds,
+        )
+
     def clone_collection(
         self,
         source: str,
@@ -241,6 +260,7 @@ class TypesenseClient:
         *,
         copy_documents: bool = True,
         metadata: Mapping[str, Any] | None = None,
+        timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         """Clone one collection server-side, optionally including documents."""
 
@@ -252,6 +272,7 @@ class TypesenseClient:
         query = urlencode({"src_name": source, "copy_documents": str(copy_documents).lower()})
         return self._request_json(
             "POST", f"/collections?{query}", payload, error_code=TYPESENSE_SCHEMA_ERROR,
+            timeout_seconds=timeout_seconds,
         )
 
     def get_alias(self, alias: str) -> dict[str, Any] | None:
@@ -280,9 +301,14 @@ class TypesenseClient:
                 return None
             raise
 
-    def delete_collection(self, name: str) -> dict[str, Any] | None:
+    def delete_collection(self, name: str, *, timeout_seconds: float | None = None) -> dict[str, Any] | None:
         try:
-            return self._request_json("DELETE", f"/collections/{quote(name, safe='')}", error_code=TYPESENSE_SCHEMA_ERROR)
+            return self._request_json(
+                "DELETE",
+                f"/collections/{quote(name, safe='')}",
+                error_code=TYPESENSE_SCHEMA_ERROR,
+                timeout_seconds=timeout_seconds,
+            )
         except TypesenseHttpError as exc:
             if exc.status_code == 404:
                 return None
@@ -297,7 +323,13 @@ class TypesenseClient:
             error_code=TYPESENSE_IMPORT_ERROR,
         )
 
-    def import_documents(self, collection: str, documents: Sequence[Mapping[str, Any]]) -> ImportResult:
+    def import_documents(
+        self,
+        collection: str,
+        documents: Sequence[Mapping[str, Any]],
+        *,
+        timeout_seconds: float | None = None,
+    ) -> ImportResult:
         started = perf_counter()
         try:
             raw = self._request_raw(
@@ -306,6 +338,7 @@ class TypesenseClient:
                 serialize_ndjson(documents),
                 content_type="application/jsonl",
                 error_code=TYPESENSE_IMPORT_ERROR,
+                timeout_seconds=timeout_seconds,
             )
         except TypesenseError as exc:
             return ImportResult(len(documents), 0, len(documents), (str(exc),), exc.code, perf_counter() - started)
@@ -314,6 +347,49 @@ class TypesenseClient:
             result.attempted_count, result.accepted_count, result.rejected_count, result.errors,
             result.error_code, perf_counter() - started,
         )
+
+    def export_documents(
+        self,
+        collection: str,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        """Stream one collection export without buffering its documents in RAM."""
+
+        request = Request(
+            self._url(f"/collections/{quote(collection, safe='')}/documents/export"),
+            method="GET",
+            headers={
+                "Accept": "application/jsonl",
+                "X-TYPESENSE-API-KEY": self.config.api_key,
+            },
+        )
+        try:
+            kwargs: dict[str, Any] = {
+                "timeout": self.config.timeout_seconds if timeout_seconds is None else timeout_seconds,
+            }
+            if self.config.protocol == "https":
+                kwargs["context"] = ssl.create_default_context()
+            with self._opener(request, **kwargs) as response:
+                for raw_line in response:
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line:
+                        continue
+                    try:
+                        document = json.loads(line)
+                    except json.JSONDecodeError as exc:
+                        raise TypesenseError(TYPESENSE_IMPORT_ERROR, "Typesense export returned invalid JSON") from exc
+                    if not isinstance(document, dict):
+                        raise TypesenseError(TYPESENSE_IMPORT_ERROR, "Typesense export returned a non-object document")
+                    yield document
+        except HTTPError as exc:
+            try:
+                message = self._error_message(exc.read())
+            except OSError:
+                message = "Typesense export failed"
+            raise TypesenseHttpError(TYPESENSE_IMPORT_ERROR, f"HTTP {exc.code}: {message}", exc.code) from exc
+        except (URLError, TimeoutError, OSError) as exc:
+            raise TypesenseError(TYPESENSE_CONNECT_ERROR, f"Typesense export failed: {type(exc).__name__}: {exc}") from exc
 
     @staticmethod
     def _validate_filter_fields(logical_group: str, filter_by: str | None) -> None:
@@ -336,7 +412,17 @@ class TypesenseClient:
             if field not in allowed:
                 raise ValueError(f"sort field is not allowed for {logical_group}: {field}")
 
-    def search_group(self, logical_group: str, query: str, *, filter_by: str | None = None, sort_by: str | None = None, per_page: int = 20, collection: str | None = None) -> dict[str, Any]:
+    def search_group(
+        self,
+        logical_group: str,
+        query: str,
+        *,
+        filter_by: str | None = None,
+        sort_by: str | None = None,
+        facet_by: str | None = None,
+        per_page: int = 20,
+        collection: str | None = None,
+    ) -> dict[str, Any]:
         if logical_group not in SEARCH_CONFIGS:
             raise ValueError(f"unknown logical group: {logical_group}")
         if per_page <= 0:
@@ -352,6 +438,8 @@ class TypesenseClient:
             params["filter_by"] = filter_by
         if sort_by:
             params["sort_by"] = sort_by
+        if facet_by:
+            params["facet_by"] = facet_by
         encoded = urlencode(params)
         return self._request_json(
             "GET",

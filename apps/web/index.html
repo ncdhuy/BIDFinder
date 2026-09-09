@@ -141,31 +141,56 @@
                         
                     </div>
                 </header>
-                
+
                 <!-- DATA TABLES -->
                 <div id="data-tab" class="tab-content active">
-                    <div class="result-table-tabs" id="data-view-switcher">
-                        <div class="result-table-tab-list">
+                    <div class="result-table-tabs toolbar" id="data-view-switcher">
+                        <div class="result-table-tab-list toolbar-navigation">
                             <div class="result-table-tab-choice" role="tablist" aria-label="Chọn bảng kết quả">
-                                <button class="scope-btn result-table-tab active" type="button" data-view="df1-panel" aria-selected="true" role="tab">
-                                    <span class="scope-icon" aria-hidden="true">
-                                        💊
-                                    </span>
-                                    <span class="scope-text">Thuốc</span>
-                                    <span class="scope-count" id="df1-count-switcher">0/0</span>
-                                </button>
-                                <button class="scope-btn result-table-tab" type="button" data-view="df2-panel" aria-selected="false" role="tab">
+                                <button class="scope-btn result-table-tab" type="button" data-view="df2-panel" aria-selected="false" role="tab" title="Hàng hóa">
+                                    <span class="tab-plate" aria-hidden="true"></span>
                                     <span class="scope-icon" aria-hidden="true">
                                         📦
                                     </span>
                                     <span class="scope-text">Hàng hóa</span>
-                                    <span class="scope-count" id="df2-count-switcher">0/0</span>
+                                    <span class="scope-count" id="df2-count-switcher">0</span>
+                                </button>
+                                <button class="scope-btn result-table-tab active" type="button" data-view="df1-panel" aria-selected="true" role="tab" title="Thuốc">
+                                    <span class="tab-plate" aria-hidden="true"></span>
+                                    <span class="scope-icon" aria-hidden="true">
+                                        💊
+                                    </span>
+                                    <span class="scope-text">Thuốc</span>
+                                    <span class="scope-count" id="df1-count-switcher">0</span>
+                                </button>
+                                <button class="scope-btn result-table-tab" type="button" data-view="df3-panel" aria-selected="false" role="tab" title="Dược liệu">
+                                    <span class="tab-plate" aria-hidden="true"></span>
+                                    <span class="scope-icon" aria-hidden="true">
+                                        🌿
+                                    </span>
+                                    <span class="scope-text">Dược liệu</span>
+                                    <span class="scope-count" id="df3-count-switcher">0</span>
                                 </button>
                             </div>
-                            <button id="insight-full-search" class="full-search-credit" type="button" aria-label="Tìm kiếm toàn bộ">
+                        </div>
+                        <div class="toolbar-divider" aria-hidden="true"></div>
+                        <div class="workspace-actions toolbar-actions">
+                            <button id="insight-full-search" class="full-search-credit" type="button" aria-label="Tìm kiếm toàn bộ" title="Tìm kiếm toàn bộ">
                                 <i data-feather="zap" aria-hidden="true"></i>
                                 <span aria-hidden="true">×</span>
                                 <strong id="insight-full-search-label">0</strong>
+                            </button>
+                            <button class="btn-meta-simple" id="open-run-history" type="button" aria-label="Lịch sử cập nhật" title="Lịch sử cập nhật">
+                                <i data-feather="refresh-ccw" aria-hidden="true"></i>
+                            </button>
+                            <button class="btn-meta-simple bulk-search-action-btn" id="open-bulk-search-modal" type="button" aria-label="Tìm kiếm hàng loạt" title="Tìm kiếm hàng loạt">
+                                <i data-feather="list" aria-hidden="true"></i>
+                            </button>
+                            <button class="action-btn" id="open-filter-panel" type="button" aria-label="Tìm kiếm nâng cao" title="Tìm kiếm nâng cao">
+                                <i data-feather="search" aria-hidden="true"></i>
+                            </button>
+                            <button id="open-insight-drawer" class="btn-meta-simple" type="button" aria-label="Phân tích trực quan" title="Phân tích trực quan" aria-controls="insight-drawer" aria-expanded="false">
+                                <i data-feather="bar-chart-2" aria-hidden="true"></i>
                             </button>
                         </div>
                         <div class="workspace-status">
@@ -173,36 +198,6 @@
                                 <strong>Cảnh báo dữ liệu trùng</strong><br>
                                 Có dòng trùng trong kết quả hiện tại.
                             </div>
-                        </div>
-                        <div class="workspace-actions">
-                            <button class="btn-meta-simple action-tone-history" id="open-run-history" aria-label="Lịch sử cập nhật dữ liệu">
-                                <i data-feather="refresh-ccw"></i>
-                                <span class="action-btn-label action-btn-label-stacked">
-                                    <span>Lịch sử</span>
-                                    <span>cập nhật</span>
-                                </span>
-                            </button>
-                            <button class="btn-meta-simple bulk-search-action-btn action-tone-bulk" id="open-bulk-search-modal" type="button" aria-label="Tìm kiếm hàng loạt">
-                                <i data-feather="list"></i>
-                                <span class="action-btn-label action-btn-label-stacked">
-                                    <span>Tìm kiếm</span>
-                                    <span>hàng loạt</span>
-                                </span>
-                            </button>
-                            <button class="action-btn action-tone-advanced" id="open-filter-panel" aria-label="Tìm kiếm nâng cao">
-                                <i data-feather="search"></i>
-                                <span class="action-btn-label action-btn-label-stacked">
-                                    <span>Tìm kiếm</span>
-                                    <span>nâng cao</span>
-                                </span>
-                            </button>
-                            <button id="open-insight-drawer" class="btn-meta-simple action-tone-insight" type="button" aria-label="Phân tích trực quan" aria-controls="insight-drawer" aria-expanded="false">
-                                <i data-feather="bar-chart-2"></i>
-                                <span class="action-btn-label action-btn-label-stacked">
-                                    <span>Phân tích</span>
-                                    <span>trực quan</span>
-                                </span>
-                            </button>
                         </div>
                     </div>
                     <!-- Bảng DF1 -->
@@ -219,23 +214,26 @@
                                 </div>
                             </div>
                             <div class="table-wrapper" data-table-id="standard-table">
-                                <div class="table-hover-controls" data-table-id="standard-table">
-                                    <div class="table-tool-group">
-                                        <button class="table-tool-btn" type="button" data-action="toggle-columns" data-table-id="standard-table" aria-haspopup="true" aria-expanded="false" title="Show/hide columns">
-                                            <i data-feather="eye"></i>
+                                <div class="table-meta-bar">
+                                    <div class="table-hover-controls" data-table-id="standard-table">
+                                        <div class="table-tool-group">
+                                            <button class="table-tool-btn" type="button" data-action="toggle-columns" data-table-id="standard-table" aria-haspopup="true" aria-expanded="false" title="Show/hide columns">
+                                                <i data-feather="eye"></i>
+                                            </button>
+                                            <div class="table-columns-popover" hidden></div>
+                                        </div>
+                                        <button class="table-tool-btn" type="button" data-action="download" data-table-id="standard-table" title="Download Excel">
+                                            <i data-feather="download"></i>
                                         </button>
-                                        <div class="table-columns-popover" hidden></div>
+                                        <button class="table-tool-btn" type="button" data-action="fullscreen" data-table-id="standard-table" title="Fullscreen">
+                                            <i data-feather="maximize"></i>
+                                        </button>
                                     </div>
-                                    <button class="table-tool-btn" type="button" data-action="download" data-table-id="standard-table" title="Download Excel">
-                                        <i data-feather="download"></i>
-                                    </button>
-                                    <button class="table-tool-btn" type="button" data-action="fullscreen" data-table-id="standard-table" title="Fullscreen">
-                                        <i data-feather="maximize"></i>
-                                    </button>
-                                </div>
-                                <div class="cell-display-bar" id="std-cell-bar">
-                                    <span class="cell-display-label"></span>
-                                    <span class="cell-display-value" id="std-cell-value"></span>
+                                    <span class="table-meta-divider" aria-hidden="true"></span>
+                                    <div class="cell-display-bar" id="std-cell-bar">
+                                        <span class="cell-display-label"></span>
+                                        <span class="cell-display-value" id="std-cell-value"></span>
+                                    </div>
                                 </div>
                                 <div class="table-scroll">
                                     <table class="data-table" id="standard-table">
@@ -245,7 +243,7 @@
                                         </thead>
                                         <tbody id="standard-data">
                                             <tr>
-                                                <td colspan="24" class="table-empty-state">
+                                                <td colspan="26" class="table-empty-state">
                                                     Chưa có dữ liệu. Thực hiện tra cứu để hiển thị kết quả theo biểu mẫu thuốc.
                                                 </td>
                                             </tr>
@@ -270,23 +268,26 @@
                                 </div>
                             </div>
                             <div class="table-wrapper" data-table-id="extended-table">
-                                <div class="table-hover-controls" data-table-id="extended-table">
-                                    <div class="table-tool-group">
-                                        <button class="table-tool-btn" type="button" data-action="toggle-columns" data-table-id="extended-table" aria-haspopup="true" aria-expanded="false" title="Ẩn/hiện cột">
-                                            <i data-feather="eye"></i>
+                                <div class="table-meta-bar">
+                                    <div class="table-hover-controls" data-table-id="extended-table">
+                                        <div class="table-tool-group">
+                                            <button class="table-tool-btn" type="button" data-action="toggle-columns" data-table-id="extended-table" aria-haspopup="true" aria-expanded="false" title="Ẩn/hiện cột">
+                                                <i data-feather="eye"></i>
+                                            </button>
+                                            <div class="table-columns-popover" hidden></div>
+                                        </div>
+                                        <button class="table-tool-btn" type="button" data-action="download" data-table-id="extended-table" title="Tải Excel">
+                                            <i data-feather="download"></i>
                                         </button>
-                                        <div class="table-columns-popover" hidden></div>
+                                        <button class="table-tool-btn" type="button" data-action="fullscreen" data-table-id="extended-table" title="Toàn màn hình">
+                                            <i data-feather="maximize"></i>
+                                        </button>
                                     </div>
-                                    <button class="table-tool-btn" type="button" data-action="download" data-table-id="extended-table" title="Tải Excel">
-                                        <i data-feather="download"></i>
-                                    </button>
-                                    <button class="table-tool-btn" type="button" data-action="fullscreen" data-table-id="extended-table" title="Toàn màn hình">
-                                        <i data-feather="maximize"></i>
-                                    </button>
-                                </div>
-                                <div class="cell-display-bar" id="ext-cell-bar">
-                                    <span class="cell-display-label"></span>
-                                    <span class="cell-display-value" id="ext-cell-value"></span>
+                                    <span class="table-meta-divider" aria-hidden="true"></span>
+                                    <div class="cell-display-bar" id="ext-cell-bar">
+                                        <span class="cell-display-label"></span>
+                                        <span class="cell-display-value" id="ext-cell-value"></span>
+                                    </div>
                                 </div>
                                 <div class="table-scroll">
                                     <table class="data-table" id="extended-table" >
@@ -296,7 +297,7 @@
                                         </thead>
                                         <tbody id="extended-data">
                                             <tr>
-                                                <td colspan="22" class="table-empty-state">
+                                                <td colspan="25" class="table-empty-state">
                                                     Chưa có dữ liệu. Thực hiện tra cứu để hiển thị kết quả theo biểu mẫu hàng hóa.
                                                 </td>
                                             </tr>
@@ -306,9 +307,71 @@
                             </div>
                         </div>
                     </section>
+
+                    <!-- Bảng dược liệu / vị thuốc cổ truyền -->
+                    <section class="data-section-vertical result-panel" id="df3-panel">
+                        <div class="data-card df3">
+                            <div class="data-card-header">
+                                <div class="data-card-heading">
+                                    <h2 class="data-card-title-df3">
+                                        <span class="data-card-icon green">
+                                            <i data-feather="leaf"></i>
+                                        </span>
+                                        KẾT QUẢ MUA SẮM DƯỢC LIỆU / VỊ THUỐC CỔ TRUYỀN
+                                    </h2>
+                                </div>
+                            </div>
+                            <div class="table-wrapper" data-table-id="traditional-table">
+                                <div class="table-meta-bar">
+                                    <div class="table-hover-controls" data-table-id="traditional-table">
+                                        <div class="table-tool-group">
+                                            <button class="table-tool-btn" type="button" data-action="toggle-columns" data-table-id="traditional-table" aria-haspopup="true" aria-expanded="false" title="Ẩn/hiện cột">
+                                                <i data-feather="eye"></i>
+                                            </button>
+                                            <div class="table-columns-popover" hidden></div>
+                                        </div>
+                                        <button class="table-tool-btn" type="button" data-action="download" data-table-id="traditional-table" title="Tải Excel">
+                                            <i data-feather="download"></i>
+                                        </button>
+                                        <button class="table-tool-btn" type="button" data-action="fullscreen" data-table-id="traditional-table" title="Toàn màn hình">
+                                            <i data-feather="maximize"></i>
+                                        </button>
+                                    </div>
+                                    <span class="table-meta-divider" aria-hidden="true"></span>
+                                    <div class="cell-display-bar" id="trad-cell-bar">
+                                        <span class="cell-display-label"></span>
+                                        <span class="cell-display-value" id="trad-cell-value"></span>
+                                    </div>
+                                </div>
+                                <div class="table-scroll">
+                                    <table class="data-table" id="traditional-table">
+                                        <thead><tr></tr></thead>
+                                        <tbody id="traditional-data">
+                                            <tr><td colspan="25" class="table-empty-state">Chưa có dữ liệu. Thực hiện tra cứu để hiển thị kết quả dược liệu và vị thuốc.</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
                 </div>
 
-                <typesense-results-ui id="typesense-results-ui"></typesense-results-ui>
+                <nav class="legacy-pagination" id="legacy-pagination" aria-label="Phân trang kết quả">
+                    <button type="button" id="legacy-prev-page" disabled>‹ Trang trước</button>
+                    <span id="legacy-page-label">Trang 1</span>
+                    <button type="button" id="legacy-next-page" disabled>Trang sau ›</button>
+                </nav>
+
+                <div class="legacy-row-detail" id="legacy-row-detail" hidden aria-hidden="true">
+                    <div class="legacy-detail-backdrop" data-close-legacy-row-detail></div>
+                    <section class="legacy-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="legacy-row-detail-title">
+                        <div class="legacy-row-detail-header">
+                            <h3 id="legacy-row-detail-title">Chi tiết kết quả</h3>
+                            <button type="button" id="close-legacy-row-detail" aria-label="Đóng chi tiết">×</button>
+                        </div>
+                        <dl id="legacy-row-detail-fields"></dl>
+                    </section>
+                </div>
 
             </main>
         </div>
@@ -317,7 +380,7 @@
         <div id="filter-panel" class="side-panel">
             <div class="panel-header">
                 <div class="panel-title-group">
-                    <h3><i data-feather="search"></i>Tra cứu nâng cao</h3>
+                    <h3><i data-feather="search"></i>Tìm kiếm nâng cao</h3>
                     <button id="filter-help-btn" class="help-icon" type="button" aria-label="Trợ giúp">i</button>
                 </div>
                 <button id="close-filter-panel" class="btn-close" aria-label="Đóng">
@@ -852,7 +915,7 @@
                 <div class="history-chart-shell">
                     <div class="history-chart-toolbar">
                         <div class="history-chart-copy">
-                            <strong>Số gói thầu được phê duyệt theo ngày</strong>
+                            <strong>Số gói thầu đăng tải KQLCNT theo ngày</strong>
                             <span>Xem xu hướng theo khoảng thời gian gần đây.</span>
                         </div>
                         <div class="history-range-switch" role="tablist" aria-label="Chọn khoảng thời gian">
@@ -862,10 +925,10 @@
                         </div>
                     </div>
                     <div id="history-list" class="history-chart-container">
-                        <canvas id="history-timeline-chart" aria-label="Biểu đồ số gói thầu được phê duyệt theo ngày"></canvas>
+                        <canvas id="history-timeline-chart" aria-label="Biểu đồ số gói thầu đăng tải KQLCNT theo ngày"></canvas>
                         <div class="history-empty">
                             <i data-feather="clock"></i>
-                            <p>Chưa có dữ liệu lịch sử phê duyệt</p>
+                            <p>Chưa có dữ liệu lịch sử đăng tải KQLCNT</p>
                         </div>
                     </div>
                 </div>
@@ -1082,9 +1145,7 @@
     <script src="analytics.js"></script>
     <script src="config.js"></script>
     <script src="auth.js"></script>
-    <script src="search-form.js"></script>
     <script src="typesense-search-form.js"></script>
-    <script src="typesense-results-ui.js"></script>
     <script src="script.js"></script>
     <script>
         feather.replace();

@@ -9,6 +9,7 @@ SERVER = ROOT / "apps" / "api" / "server.py"
 EXPECTED_ROUTES = [
     ("API_ROUTE", "/health"),
     ("GET", "/ready"),
+    ("GET", "/config.js"),
     ("GET", "/api/auth/config"),
     ("POST", "/api/auth/register"),
     ("POST", "/api/auth/login"),

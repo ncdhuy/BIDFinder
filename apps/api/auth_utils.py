@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import ipaddress
 import logging
 import os
 import re
@@ -74,7 +75,13 @@ PBKDF2_ITERATIONS = max(120_000, int(os.getenv("AUTH_PBKDF2_ITERATIONS", "240000
 PASSWORD_RESET_TTL_MINUTES = max(5, int(os.getenv("AUTH_PASSWORD_RESET_TTL_MINUTES", "30")))
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PASSWORD_POLICY_MESSAGE = "Mật khẩu phải có ít nhất 9 ký tự, bao gồm ít nhất 1 chữ số và 1 chữ cái in hoa."
-TRUST_PROXY_HEADERS = os.getenv("TRUST_PROXY_HEADERS", "false").strip().lower() in {"1", "true", "yes", "on"}
+PUBLIC_URL = os.getenv("BIDFINDER_PUBLIC_URL", "").strip()
+TRUST_PROXY_HEADERS = os.getenv("TRUST_PROXY_HEADERS", "true" if PUBLIC_URL else "false").strip().lower() in {"1", "true", "yes", "on"}
+TRUSTED_PROXY_IPS = {
+    ipaddress.ip_address(value.strip())
+    for value in os.getenv("TRUSTED_PROXY_IPS", "127.0.0.1,::1").split(",")
+    if value.strip()
+}
 AUTH_SESSION_COOKIE_NAME = os.getenv("AUTH_SESSION_COOKIE_NAME", "bidfinder_session")
 AUTH_COOKIE_DOMAIN = os.getenv("AUTH_COOKIE_DOMAIN", "").strip() or None
 AUTH_COOKIE_SECURE_MODE = os.getenv("AUTH_COOKIE_SECURE_MODE", "auto").strip().lower()
@@ -97,6 +104,16 @@ FRONTEND_BASE_URL = (
 )
 
 
+def is_trusted_proxy_request(request: Request) -> bool:
+    if not TRUST_PROXY_HEADERS:
+        return False
+    peer_host = getattr(request.client, "host", "") or ""
+    try:
+        return ipaddress.ip_address(peer_host) in TRUSTED_PROXY_IPS
+    except ValueError:
+        return False
+
+
 def normalize_text(value: Any) -> str:
     return " ".join(str(value or "").split())
 
@@ -111,10 +128,12 @@ def is_local_request(request: Request) -> bool:
 
 
 def get_request_scheme(request: Request) -> str:
-    if TRUST_PROXY_HEADERS:
+    if is_trusted_proxy_request(request):
         forwarded_proto = request.headers.get("x-forwarded-proto", "").strip().lower()
         if forwarded_proto:
-            return forwarded_proto.split(",")[0].strip()
+            forwarded_scheme = forwarded_proto.split(",")[0].strip()
+            if forwarded_scheme in {"http", "https"}:
+                return forwarded_scheme
     return request.url.scheme
 
 
@@ -129,6 +148,8 @@ def resolve_cookie_secure(request: Request) -> bool:
 def resolve_cookie_samesite(request: Request) -> str:
     if AUTH_COOKIE_SAMESITE_MODE in {"lax", "strict", "none"}:
         return AUTH_COOKIE_SAMESITE_MODE
+    if PUBLIC_URL and not is_local_request(request):
+        return "lax"
     return "lax" if is_local_request(request) else "none"
 
 
@@ -328,7 +349,7 @@ def get_password_reset_email_status() -> str:
 
 
 def get_client_ip_from_request(request: Request) -> str:
-    if TRUST_PROXY_HEADERS:
+    if is_trusted_proxy_request(request):
         forwarded_for = request.headers.get("x-forwarded-for", "").strip()
         if forwarded_for:
             return forwarded_for.split(",")[0].strip()

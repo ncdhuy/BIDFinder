@@ -349,13 +349,12 @@
         {
           "allowed_operators": [
             "eq",
-            "min",
-            "max"
+            "in"
           ],
           "api_exposure": "canonical",
           "autocomplete": false,
           "exact_lookup": false,
-          "example": 2026,
+          "example": "2026",
           "example_source": "MSC contract fixture",
           "facetable": false,
           "filterable": true,
@@ -373,7 +372,7 @@
             "goods_general",
             "medical_devices"
           ],
-          "type": "int32",
+          "type": "string",
           "ui_visibility": "list_and_detail"
         },
         {
@@ -759,7 +758,7 @@
           "api_exposure": "canonical",
           "autocomplete": false,
           "exact_lookup": false,
-          "example": 1.7142857142857142,
+          "example": 2,
           "example_source": "MSC contract fixture",
           "facetable": false,
           "filterable": true,
@@ -777,7 +776,7 @@
             "goods_general",
             "medical_devices"
           ],
-          "type": "float",
+          "type": "int32",
           "ui_visibility": "list_and_detail"
         },
         {
@@ -1762,7 +1761,7 @@
             "medicine_originator",
             "medicine_herbal"
           ],
-          "type": "float",
+          "type": "int32",
           "ui_visibility": "list_and_detail"
         },
         {
@@ -2687,7 +2686,7 @@
           "api_exposure": "canonical",
           "autocomplete": false,
           "exact_lookup": false,
-          "example": 1.7419354838709677,
+          "example": 2,
           "example_source": "MSC contract fixture",
           "facetable": false,
           "filterable": true,
@@ -2704,7 +2703,7 @@
           "source_types": [
             "traditional_medicine"
           ],
-          "type": "float",
+          "type": "int32",
           "ui_visibility": "list_and_detail"
         },
         {

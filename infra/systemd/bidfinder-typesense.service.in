@@ -5,6 +5,7 @@ After=network-online.target
 
 [Service]
 Type=simple
+LimitNOFILE=1048576
 EnvironmentFile=-%h/.config/bidfinder/typesense.env
 EnvironmentFile=-%h/.config/bidfinder/runtime.env
 ExecStart=/usr/bin/env bash @BIDFINDER_REPO@/infra/typesense/local-typesense.sh foreground

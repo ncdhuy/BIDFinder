@@ -29,12 +29,12 @@
             this.contract = null;
             this.query = null;
             this.result = null;
-            this.renderShell('Chưa có kết quả. Chọn nhóm dữ liệu để bắt đầu tra cứu.');
+            this.renderShell('Chưa có kết quả. Nhập từ khóa hoặc chọn bộ lọc để bắt đầu tra cứu.');
             document.body.classList.add('typesense-primary-ui');
             document.addEventListener('bidfinder:query-start', () => this.renderShell('Đang tải dữ liệu MSC…'));
             document.addEventListener('bidfinder:query-result', event => this.receiveResult(event.detail));
             document.addEventListener('bidfinder:query-error', event => this.renderShell(event.detail?.message || 'Không tải được kết quả.'));
-            document.addEventListener('bidfinder:query-reset', () => this.renderShell('Chưa có kết quả. Chọn nhóm dữ liệu để bắt đầu tra cứu.'));
+            document.addEventListener('bidfinder:query-reset', () => this.renderShell('Chưa có kết quả. Nhập từ khóa hoặc chọn bộ lọc để bắt đầu tra cứu.'));
             (window.BIDFinderSearchContractPromise || Promise.resolve(null)).then(contract => { this.contract = contract; if (this.result) this.render(); });
         }
 

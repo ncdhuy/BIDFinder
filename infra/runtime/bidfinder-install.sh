@@ -3,13 +3,19 @@ set -Eeuo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: bidfinder-install.sh install|start|stop|restart|status|daily|catch-up|snapshot|restore|fallback|typesense|logs
+Usage: bidfinder-install.sh install|start|stop|restart|status|public-start|public-stop|public-restart|public-enable|public-disable|public-status|daily|catch-up|snapshot|restore|fallback|typesense|logs
 
 install  Create the WSL venv, external runtime config, and systemd user units.
 start    Start Typesense and FastAPI.
 stop     Stop FastAPI and Typesense gracefully.
 restart  Restart both services gracefully.
 status   Show service, readiness, freshness, resource, and timer status.
+public-start   Start HTTPS Cloudflare Tunnel ingress only.
+public-stop    Stop HTTPS ingress; local BIDFinder stays running.
+public-restart Restart HTTPS ingress only.
+public-enable  Enable ingress for WSL user-service startup and start it.
+public-disable Disable and stop ingress immediately.
+public-status  Show ingress state and public HTTPS health.
 daily    Run the incremental oneshot now (safe catch-up equivalent).
 catch-up Alias for daily.
 snapshot Create and validate one bounded recovery bundle.
@@ -86,6 +92,11 @@ install_units() {
     "BIDFINDER_SERVING_GENERATION=serving_v1_20260901" \
     "BIDFINDER_TYPESENSE_SERVING_GENERATION=serving_v1_20260901" \
     "BIDFINDER_TYPESENSE_SHADOW_TIMEOUT_SECONDS=5.0" \
+    "BIDFINDER_PUBLIC_URL=${BIDFINDER_PUBLIC_URL:-}" \
+    "TRUSTED_PROXY_IPS=127.0.0.1,::1" \
+    "BIDFINDER_MAX_REQUEST_BODY_BYTES=2097152" \
+    "BIDFINDER_MAX_BULK_QUERY_CHILD_QUERIES=100" \
+    "BIDFINDER_MAX_BULK_QUERY_FIELDS=20" \
     "BIDFINDER_PYTHON=$venv_dir/bin/python" \
     "BIDFINDER_API_URL=http://127.0.0.1:8001" \
     "BIDFINDER_API_HOST=127.0.0.1" \
@@ -141,9 +152,32 @@ case "$command_name" in
     systemctl --user restart bidfinder-typesense.service
     systemctl --user restart bidfinder-api.service
     ;;
+  public-start)
+    bash "$repo_root/infra/ingress/bidfinder-cloudflared.sh" validate >/dev/null
+    systemctl --user start bidfinder-ingress.service
+    ;;
+  public-stop)
+    systemctl --user stop bidfinder-ingress.service
+    ;;
+  public-restart)
+    bash "$repo_root/infra/ingress/bidfinder-cloudflared.sh" validate >/dev/null
+    systemctl --user restart bidfinder-ingress.service
+    ;;
+  public-enable)
+    bash "$repo_root/infra/ingress/bidfinder-cloudflared.sh" validate >/dev/null
+    systemctl --user enable --now bidfinder-ingress.service
+    ;;
+  public-disable)
+    systemctl --user disable --now bidfinder-ingress.service
+    ;;
+  public-status)
+    bash "$repo_root/infra/ingress/bidfinder-cloudflared.sh" status
+    ;;
   status)
     load_runtime
     systemctl --user --no-pager --plain status bidfinder-typesense.service bidfinder-api.service || true
+    echo "-- ingress --"
+    bash "$repo_root/infra/ingress/bidfinder-cloudflared.sh" status || true
     echo "-- readiness --"
     curl --fail-with-body --max-time 10 --silent "$BIDFINDER_API_URL/ready" || true
     echo
@@ -199,6 +233,7 @@ PY
     ;;
   logs)
     journalctl --user-unit=bidfinder-api.service --user-unit=bidfinder-typesense.service \
+      --user-unit=bidfinder-ingress.service \
       --user-unit=bidfinder-incremental.service --no-pager -n 120
     ;;
   *)

@@ -34,6 +34,7 @@ except ModuleNotFoundError:  # ``uvicorn`` is documented from ``apps/api``.
 
 
 PUBLIC_GROUPS = ("goods", "medicines", "traditional")
+DEFAULT_SERVING_GENERATION = "serving_v1_20260901"
 SCHEMA_GROUPS = {
     "goods": "goods",
     "medicines": "medicines",
@@ -132,14 +133,14 @@ SAMPLE_VALUES = {
         "source_tab_label": "Hàng hóa ngoài thuốc, thiết bị, vật tư y tế", "partition_date": "2026-09-01",
         "item_name": "Thực phẩm", "unit": "kg", "quantity": 1, "country_of_origin": "Việt Nam",
         "hs_code": "", "model": "", "registration_or_import_permit_number": "",
-        "model_mark": "Thực phẩm", "brand": "Thực phẩm", "production_year": 2026,
+        "model_mark": "Thực phẩm", "brand": "Thực phẩm", "production_year": "2026",
         "manufacturer": "Việt Nam", "technical_specification": "Thực phẩm",
         "winning_unit_price": 61595022, "winning_bidder_id": ["vn0319058766"],
         "winning_bidder_name": ["CÔNG TY TNHH SCHOOL NUTRITION METAMILK VN"],
         "bid_invitation_code": "IB2600498667", "procuring_entity_id": "vn0304098773",
         "procuring_entity_name": "TRƯỜNG MẦM NON 14", "selection_method": "LCNT_DB",
         "result_posted_at": "2026-08-28T23:57:28", "decision_number": "184/QĐ-MN14",
-        "decision_issued_at": "2026-08-25T23:59:59", "bidder_count": 1.7142857142857142,
+        "decision_issued_at": "2026-08-25T23:59:59", "bidder_count": 2,
         "location": "Thành phố Hồ Chí Minh, Phường Khánh Hội",
     },
     "medicines": {
@@ -173,7 +174,7 @@ SAMPLE_VALUES = {
         "procuring_entity_id": "vn3100488587", "procuring_entity_name": "Bệnh viện đa khoa khu vực Minh Hóa",
         "selection_method": "CDTRG", "result_posted_at": "2026-08-22T17:29:44",
         "decision_number": "885/QĐ-BV", "decision_issued_at": "2026-08-21T23:59:59",
-        "bidder_count": 1.7419354838709677, "location": "Tỉnh Quảng Trị, Xã Minh Hóa",
+        "bidder_count": 2, "location": "Tỉnh Quảng Trị, Xã Minh Hóa",
     },
 }
 
@@ -247,6 +248,8 @@ def _operators(field: Mapping[str, Any]) -> list[str]:
     name = field["name"]
     if field.get("sort") and name == "partition_date":
         return ["eq", "from", "to"]
+    if name == "production_year":
+        return ["eq", "in"]
     if field["type"] in {"float", "int32"}:
         return ["eq", "min", "max"]
     if field.get("facet"):
@@ -316,7 +319,7 @@ def build_search_contract() -> dict[str, Any]:
         }
     return {
         "contract_version": "typesense-search-contract-v1",
-        "serving_generation": "serving_v1_20260901",
+        "serving_generation": os.getenv("BIDFINDER_TYPESENSE_SERVING_GENERATION", DEFAULT_SERVING_GENERATION).strip() or DEFAULT_SERVING_GENERATION,
         "backend_independent": True,
         "groups": groups,
         "legacy_compatibility": {

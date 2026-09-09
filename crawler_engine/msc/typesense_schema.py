@@ -16,6 +16,22 @@ LOGICAL_ALIASES = {
 }
 GENERATION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 INTERNAL_CANONICAL_FIELDS = frozenset({"source_key"})
+FILTERABLE_TEXT_FIELDS = frozenset({"production_year"})
+VIETNAMESE_LOCALE = "vi"
+_LOCALE_EXEMPT_FIELDS = frozenset({
+    "id", "data_group", "source_tab", "source_tab_label", "partition_date",
+})
+# Locale belongs only on fields sent through Typesense query_by.  Facet-only,
+# sort-only, provenance, date, and identifier strings stay on default tokenization.
+_VIETNAMESE_SEARCH_FIELDS = frozenset({
+    "item_name", "unit", "country_of_origin", "hs_code", "model_mark", "brand",
+    "manufacturer", "technical_specification", "model", "registration_or_import_permit_number",
+    "winning_bidder_name", "bid_invitation_code", "procuring_entity_name", "selection_method",
+    "medicine_name", "active_ingredient_or_herbal_component", "strength",
+    "marketing_authorization_or_import_permit", "route_of_administration", "dosage_form",
+    "shelf_life", "production_country", "packaging", "medicine_group", "used_part",
+    "scientific_name", "origin", "processing_method", "technical_group",
+})
 
 
 def validate_generation_id(generation_id: str) -> str:
@@ -30,12 +46,31 @@ def physical_collection_name(logical_group: str, generation_id: str) -> str:
     return f"{LOGICAL_ALIASES[logical_group]}_v1_{validate_generation_id(generation_id)}"
 
 
-def _field(name: str, field_type: str = "string", *, optional: bool = True, facet: bool = False, sort: bool = False) -> dict[str, Any]:
+def _field(
+    name: str,
+    field_type: str = "string",
+    *,
+    optional: bool = True,
+    facet: bool = False,
+    sort: bool = False,
+    locale: str | None = None,
+) -> dict[str, Any]:
     result: dict[str, Any] = {"name": name, "type": field_type, "optional": optional}
     if facet:
         result["facet"] = True
     if sort:
         result["sort"] = True
+    if locale is not None:
+        result["locale"] = locale
+    elif (
+        field_type in {"string", "string[]"}
+        and name in _VIETNAMESE_SEARCH_FIELDS
+        and name not in _LOCALE_EXEMPT_FIELDS
+    ):
+        # The serving collections contain Vietnamese text.  Keep accents
+        # significant in the Typesense index so words such as ``vông`` and
+        # ``vòng`` do not collapse into the same token.
+        result["locale"] = VIETNAMESE_LOCALE
     return result
 
 
@@ -51,13 +86,16 @@ _GROUP_FIELDS: Mapping[str, tuple[dict[str, Any], ...]] = {
     "goods": (
         _field("item_name"), _field("unit", facet=True), _field("quantity", "float", sort=True),
         _field("country_of_origin", facet=True), _field("hs_code"), _field("model_mark"),
-        _field("brand"), _field("production_year", "int32", sort=True), _field("manufacturer"),
+        # Production years may be a single year or a range (for example,
+        # ``2024-2025``), so keep the canonical value textual.  It remains
+        # sortable because the leading year preserves the useful ordering.
+        _field("brand"), _field("production_year", "string", sort=True), _field("manufacturer"),
         _field("technical_specification"), _field("model"),
         _field("registration_or_import_permit_number"), _field("winning_unit_price", "float", sort=True),
         _field("winning_bidder_id", "string[]"), _field("winning_bidder_name", "string[]"),
         _field("bid_invitation_code"), _field("procuring_entity_id"), _field("procuring_entity_name"),
         _field("selection_method", facet=True), _field("result_posted_at"), _field("decision_number"),
-        _field("decision_issued_at"), _field("bidder_count", "float", sort=True), _field("location"),
+        _field("decision_issued_at"), _field("bidder_count", "int32", sort=True), _field("location"),
     ),
     "medicines": (
         _field("medicine_name"), _field("active_ingredient_or_herbal_component"), _field("strength"),
@@ -68,7 +106,7 @@ _GROUP_FIELDS: Mapping[str, tuple[dict[str, Any], ...]] = {
         _field("winning_bidder_id", "string[]"), _field("winning_bidder_name", "string[]"),
         _field("medicine_group", facet=True), _field("bid_invitation_code"), _field("procuring_entity_id"),
         _field("procuring_entity_name"), _field("selection_method", facet=True), _field("result_posted_at"),
-        _field("decision_number"), _field("decision_issued_at"), _field("bidder_count", "float", sort=True),
+        _field("decision_number"), _field("decision_issued_at"), _field("bidder_count", "int32", sort=True),
         _field("location"),
     ),
     "traditional_medicine": (
@@ -79,7 +117,7 @@ _GROUP_FIELDS: Mapping[str, tuple[dict[str, Any], ...]] = {
         _field("winning_bidder_id", "string[]"), _field("winning_bidder_name", "string[]"),
         _field("technical_group", facet=True), _field("bid_invitation_code"), _field("procuring_entity_id"),
         _field("procuring_entity_name"), _field("selection_method", facet=True), _field("result_posted_at"),
-        _field("decision_number"), _field("decision_issued_at"), _field("bidder_count", "float", sort=True),
+        _field("decision_number"), _field("decision_issued_at"), _field("bidder_count", "int32", sort=True),
         _field("location"),
     ),
 }
@@ -117,7 +155,7 @@ def _search_config(group: str) -> SearchConfig:
     fields = {field["name"]: field for field in (*_COMMON_FIELDS, *_GROUP_FIELDS[group])}
     filter_fields = frozenset(
         name for name, field in fields.items()
-        if field.get("facet") or field["type"] in {"float", "int32"}
+        if field.get("facet") or field["type"] in {"float", "int32"} or name in FILTERABLE_TEXT_FIELDS
     )
     sort_fields = frozenset(name for name, field in fields.items() if field.get("sort"))
     return SearchConfig(group, LOGICAL_ALIASES[group], _QUERY_BY[group], filter_fields, sort_fields)
@@ -202,6 +240,10 @@ def schema_signature(schema: Mapping[str, Any]) -> dict[str, Any]:
                 "optional": bool(field.get("optional", False)),
                 "facet": bool(field.get("facet", False)),
                 "sort": bool(field.get("sort", False)),
+                # Typesense v30 materializes no-locale fields as locale="".
+                # Omitted/None/empty are one semantic value; an explicit
+                # locale such as "vi" remains distinct.
+                "locale": field.get("locale") or None,
             }
             for field in schema.get("fields", [])
         ], key=lambda item: item["name"]),

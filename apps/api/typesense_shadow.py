@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -26,6 +27,12 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
+from typesense_display import (
+    NormalizationError,
+    normalize_bidder_count,
+    normalize_location,
+    normalize_year,
+)
 from typesense_contract import (
     PUBLIC_GROUPS,
     canonical_field_for,
@@ -46,6 +53,7 @@ PERFORMANCE_OUTLIER = "PERFORMANCE_OUTLIER"
 SHADOW_PARITY_MISMATCH = "SHADOW_PARITY_MISMATCH"
 SHADOW_PARITY_NOT_COMPARABLE = "SHADOW_PARITY_NOT_COMPARABLE"
 IDENTITY_NOT_COMPARABLE = "IDENTITY_NOT_COMPARABLE"
+TYPESENSE_MAX_HITS_PER_PAGE = 250
 SHADOW_OK = "SHADOW_OK"
 
 SEVERITY_P0 = "P0"
@@ -124,8 +132,6 @@ SORT_FIELDS = {
     group: frozenset(get_group_contract(group)["sort_fields"])
     for group in ("goods", "medicines", "traditional_medicine")
 }
-
-
 def validate_generation_id(generation_id: str) -> str:
     if not isinstance(generation_id, str) or not GENERATION_RE.fullmatch(generation_id):
         raise ValueError("generation must contain 1-64 letters, numbers, '.', '_' or '-' and start alphanumeric")
@@ -164,13 +170,15 @@ class ProcurementQuery:
     source_types: tuple[str, ...] = ()
     text: str = ""
     search_fields: tuple[str, ...] = ()
+    cross_group_search: bool = False
+    cross_group_search_fields: tuple[str, ...] = ()
     filters: Mapping[str, Any] = field(default_factory=dict)
     structured_filters: Mapping[str, Any] = field(default_factory=dict)
     ranges: Mapping[str, Any] = field(default_factory=dict)
     date_ranges: Mapping[str, Any] = field(default_factory=dict)
     exact_identifiers: Mapping[str, Any] = field(default_factory=dict)
     sort: tuple[CanonicalSort, ...] = ()
-    limit: int = 200
+    limit: int = 1000
     page: int = 1
     search_mode: str = "standard"
     endpoint: str = "/api/query"
@@ -187,6 +195,8 @@ class ProcurementQuery:
             "group": self.group,
             "source_types": list(self.source_types),
             "search_fields": list(self.search_fields),
+            "cross_group_search": self.cross_group_search,
+            "cross_group_search_fields": list(self.cross_group_search_fields),
             "filters": _plain(self.filters),
             "structured_filters": _plain(self.structured_filters),
             "ranges": _plain(self.ranges),
@@ -265,7 +275,7 @@ def build_canonical_query(
     group: str,
     filters: Any = None,
     sort: Any = None,
-    limit: int = 200,
+    limit: int = 1000,
     *,
     page: int = 1,
     search_mode: str = "standard",
@@ -278,6 +288,8 @@ def build_canonical_query(
     date_ranges: Mapping[str, Any] | None = None,
     exact_identifiers: Mapping[str, Any] | None = None,
     query_mode: str = "search",
+    cross_group_search: bool = False,
+    cross_group_search_fields: Sequence[str] | None = None,
 ) -> ProcurementQuery:
     normalized = normalize_group(group)
     plain_filters = _plain(filters) or {}
@@ -293,6 +305,9 @@ def build_canonical_query(
     safe_page = max(1, int(page or 1))
     normalized_text = str(text or "").strip()
     normalized_fields = tuple(str(item) for item in (search_fields or ()) if str(item).strip())
+    normalized_cross_group_fields = tuple(dict.fromkeys(
+        str(item).strip() for item in (cross_group_search_fields or ()) if str(item).strip()
+    ))
     plain_structured = _plain(structured_filters) or {}
     plain_ranges = _plain(ranges) or {}
     plain_date_ranges = _plain(date_ranges) or {}
@@ -303,6 +318,8 @@ def build_canonical_query(
         source_types=normalized_source_types,
         text=normalized_text,
         search_fields=normalized_fields,
+        cross_group_search=bool(cross_group_search),
+        cross_group_search_fields=normalized_cross_group_fields,
         filters=dict(plain_filters),
         structured_filters=dict(plain_structured) if isinstance(plain_structured, Mapping) else {},
         ranges=dict(plain_ranges) if isinstance(plain_ranges, Mapping) else {},
@@ -389,12 +406,13 @@ def _escape_filter_value(value: Any) -> str:
     return str(value).replace("\\", "\\\\").replace("`", "\\`").replace("\n", " ").strip()
 
 
-def _iso_date_range_clauses(start_value: Any, end_value: Any) -> tuple[str, ...]:
-    """Build exact/prefix clauses for the frozen string date field.
+def _iso_date_range_clauses(start_value: Any, end_value: Any, field_name: str = "partition_date") -> tuple[str, ...]:
+    """Build exact/prefix clauses for ISO date strings.
 
     Typesense range operators are numeric-oriented. The serving schema stores
-    ``partition_date`` as ISO ``YYYY-MM-DD`` strings, so bounded ranges can be
-    represented losslessly as exact dates plus complete month/year prefixes.
+    date fields as ISO ``YYYY-MM-DD`` strings (or ISO timestamp prefixes), so
+    bounded ranges can be represented losslessly as exact dates plus complete
+    month/year prefixes.
     """
 
     if start_value is None or end_value is None:
@@ -412,7 +430,7 @@ def _iso_date_range_clauses(start_value: Any, end_value: Any) -> tuple[str, ...]
     while cursor <= end:
         year_end = date(cursor.year, 12, 31)
         if cursor == date(cursor.year, 1, 1) and year_end <= end:
-            clauses.append(f"partition_date:={cursor.year}*")
+            clauses.append(_date_prefix_clause(field_name, f"{cursor.year}*", exact_partition=field_name == "partition_date"))
             cursor = year_end + timedelta(days=1)
             continue
         if cursor.day == 1:
@@ -423,22 +441,213 @@ def _iso_date_range_clauses(start_value: Any, end_value: Any) -> tuple[str, ...]
             )
             month_end = next_month - timedelta(days=1)
             if month_end <= end:
-                clauses.append(f"partition_date:={cursor.strftime('%Y-%m')}*")
+                clauses.append(_date_prefix_clause(field_name, f"{cursor.strftime('%Y-%m')}*", exact_partition=field_name == "partition_date"))
                 cursor = next_month
                 continue
-        clauses.append(f"partition_date:=`{cursor.isoformat()}`")
+        clauses.append(_date_prefix_clause(field_name, cursor.isoformat(), exact_partition=field_name == "partition_date"))
         cursor += timedelta(days=1)
     return tuple(clauses)
 
 
-def _contains_clause(field_name: str, value: Any, *, negate: bool = False) -> str:
+def _prefix_clause(field_name: str, value: Any, *, negate: bool = False) -> str:
     escaped = _escape_filter_value(value)
     operator = ":!" if negate else ":"
-    return f"{field_name}{operator}`*{escaped}*`"
+    if any(character.isspace() for character in escaped):
+        return f"{field_name}{operator}`{escaped}`"
+    return f"{field_name}{operator}{escaped}*"
 
 
 def _exact_clause(field_name: str, value: Any) -> str:
     return f"{field_name}:=`{_escape_filter_value(value)}`"
+
+
+def _raw_filter_values(value: Any) -> list[Any]:
+    plain = _plain(value)
+    if isinstance(plain, (list, tuple, set)):
+        return list(plain)
+    if isinstance(plain, Mapping):
+        tokens = plain.get("tokens", [])
+        if isinstance(tokens, list):
+            return [item.get("value") if isinstance(item, Mapping) else item for item in tokens]
+    return []
+
+
+def _fold(value: Any) -> str:
+    import unicodedata
+    text = str(value if value is not None else "").replace("đ", "d").replace("Đ", "D")
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    return " ".join(text.lower().split())
+
+
+_SELECTION_METHOD_ALIASES: dict[str, tuple[str, ...]] = {
+    "dau thau rong rai": ("Đấu thầu rộng rãi", "DTRR", "LCNT_DB"),
+    "dtrr": ("Đấu thầu rộng rãi", "DTRR", "LCNT_DB"),
+    "lcnt_db": ("Đấu thầu rộng rãi", "DTRR", "LCNT_DB"),
+    "dau thau han che": ("Đấu thầu hạn chế", "DTHC", "LCNT_HC"),
+    "dthc": ("Đấu thầu hạn chế", "DTHC", "LCNT_HC"),
+    "lcnt_hc": ("Đấu thầu hạn chế", "DTHC", "LCNT_HC"),
+    "chi dinh thau": ("Chỉ định thầu", "CDT"),
+    "cdt": ("Chỉ định thầu", "CDT"),
+    "chao hang canh tranh": ("Chào hàng cạnh tranh", "CDTRG"),
+    "cdtrg": ("Chào hàng cạnh tranh", "CDTRG"),
+    "mua sam truc tiep": ("Mua sắm trực tiếp", "MSTT"),
+    "mstt": ("Mua sắm trực tiếp", "MSTT"),
+    "tu thuc hien": ("Tự thực hiện", "TTH"),
+    "tth": ("Tự thực hiện", "TTH"),
+}
+
+
+def _selection_method_filter_values(value: Any) -> list[str]:
+    expanded: list[str] = []
+    for raw in _raw_filter_values(value):
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        aliases = _SELECTION_METHOD_ALIASES.get(_fold(text), (text,))
+        for alias in aliases:
+            if alias not in expanded:
+                expanded.append(alias)
+    return expanded
+
+
+def _location_filter_values(value: Any) -> list[str]:
+    terms: list[str] = []
+    for raw in _raw_filter_values(value):
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        bare = re.sub(r"^(?:tỉnh|thành phố|tp\.?)\s+", "", text, flags=re.IGNORECASE).strip()
+        for term in (bare, text):
+            if term and term not in terms:
+                terms.append(term)
+    return terms
+
+
+def _partial_clause(field_name: str, value: Any) -> str:
+    return f"{field_name}:`{_escape_filter_value(value)}`"
+
+
+def _partial_list_clause(field_name: str, values: Any) -> str | None:
+    if not isinstance(values, list):
+        return None
+    members = [_partial_clause(field_name, value) for value in values if str(value or "").strip()]
+    return "(" + " || ".join(members) + ")" if members else None
+
+
+def _date_prefix_clause(field_name: str, prefix: str, *, exact_partition: bool = False) -> str:
+    if exact_partition:
+        return f"{field_name}:={prefix}" if prefix.endswith("*") else f"{field_name}:=`{prefix}`"
+    # Source timestamp fields are indexed strings, not facet fields. Use the
+    # partial string operator so prefix filtering does not require ``:=``.
+    return f"{field_name}:{prefix if prefix.endswith('*') else prefix + '*'}"
+
+
+_DRUG_GROUP_LEGACY_VALUES: dict[str, tuple[str, ...]] = {
+    # Keep the same value families as the legacy SQL matcher.  The source
+    # columns are not guaranteed to contain only the new canonical codes.
+    "BDG": (
+        "BDG",
+        "BGD",
+        "BD",
+        "G2",
+        "Biệt dược",
+        "Biệt dược gốc",
+        "Biet duoc",
+        "Biet duoc goc",
+    ),
+    "N1": (
+        "N1",
+        "N 1",
+        "G1N1",
+        "G1 N1",
+        "G1 Nhóm 1",
+        "G1 Nhom 1",
+        "Nhóm 1",
+        "Nhom 1",
+    ),
+    "N2": (
+        "N2",
+        "N 2",
+        "G1N2",
+        "G1 N2",
+        "G1 Nhóm 2",
+        "G1 Nhom 2",
+        "Nhóm 2",
+        "Nhom 2",
+    ),
+    "N3": (
+        "N3",
+        "N 3",
+        "G1N3",
+        "G1 N3",
+        "G1 Nhóm 3",
+        "G1 Nhom 3",
+        "Nhóm 3",
+        "Nhom 3",
+    ),
+    "N4": (
+        "N4",
+        "N 4",
+        "G1N4",
+        "G1 N4",
+        "G1 Nhóm 4",
+        "G1 Nhom 4",
+        "Nhóm 4",
+        "Nhom 4",
+    ),
+    "N5": (
+        "N5",
+        "N 5",
+        "G1N5",
+        "G1 N5",
+        "G1 Nhóm 5",
+        "G1 Nhom 5",
+        "Nhóm 5",
+        "Nhom 5",
+    ),
+    "UNKNOWN": (
+        "UNKNOWN",
+        "Không xác định",
+        "Khong xac dinh",
+        "Chưa xác định được",
+        "Chua xac dinh duoc",
+    ),
+}
+
+# Every user-facing/legacy spelling resolves to the complete legacy value
+# family.  This is deliberately broader than the canonical UI labels: old
+# rows contain packed forms such as G1N1 and G1 Nhóm 1.
+_DRUG_GROUP_ALIASES: dict[str, tuple[str, ...]] = {}
+for _canonical, _legacy_values in _DRUG_GROUP_LEGACY_VALUES.items():
+    for _alias in (_canonical, *_legacy_values):
+        _DRUG_GROUP_ALIASES[_fold(_alias)] = _legacy_values
+
+
+def _drug_group_filter_values(value: Any) -> list[str]:
+    expanded: list[str] = []
+    for raw in _raw_filter_values(value):
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        aliases = _DRUG_GROUP_ALIASES.get(_fold(text), (text,))
+        for alias in aliases:
+            if alias not in expanded:
+                expanded.append(alias)
+    return expanded
+
+
+def _drug_group_clause(field_name: str, value: Any) -> str | None:
+    values = _drug_group_filter_values(value)
+    if not values:
+        return None
+    exact_members = [_exact_clause(field_name, item) for item in values]
+    # The legacy matcher used substring matching (ILIKE ``%value%``).  Use
+    # Typesense's partial string operator for every legacy spelling so packed
+    # or comma-separated source values remain discoverable, not only values
+    # that happen to contain whitespace.
+    partial_members = [_partial_clause(field_name, item) for item in values]
+    members = list(dict.fromkeys(exact_members + partial_members))
+    return "(" + " || ".join(members) + ")"
 
 
 def _token_clauses(fields: Sequence[str], token_filter: Any) -> str | None:
@@ -453,10 +662,10 @@ def _token_clauses(fields: Sequence[str], token_filter: Any) -> str | None:
         value = str(item.get("value") or "").strip()
         if not value:
             continue
-        positive = " || ".join(_contains_clause(name, value) for name in fields)
+        positive = " || ".join(_prefix_clause(name, value) for name in fields)
         op = str(item.get("op", "OR")).upper()
         if op == "NOT":
-            not_parts.append(" && ".join(_contains_clause(name, value, negate=True) for name in fields))
+            not_parts.append(" && ".join(_prefix_clause(name, value, negate=True) for name in fields))
         elif op == "AND":
             and_parts.append(f"({positive})")
         else:
@@ -553,6 +762,8 @@ FILTER_FIELD_MAP: dict[str, dict[str, tuple[str, ...]]] = {
     "goods": {
         "investor": ("procuring_entity_name",), "approvalDecision": ("decision_number",),
         "winner": ("winning_bidder_name",), "drugName": ("item_name", "model_mark", "brand", "technical_specification"),
+        "goodsKeyword": ("item_name", "model_mark", "brand", "technical_specification"),
+        "crossGroupProductKeyword": ("item_name", "model_mark", "brand", "technical_specification"),
         "activeIngredient": ("item_name", "technical_specification"), "concentration": ("item_name", "technical_specification"),
         "route": ("item_name", "technical_specification"), "dosageForm": ("item_name", "technical_specification"),
         "specification": ("technical_specification",), "regNo": ("registration_or_import_permit_number",),
@@ -562,6 +773,7 @@ FILTER_FIELD_MAP: dict[str, dict[str, tuple[str, ...]]] = {
     "medicines": {
         "investor": ("procuring_entity_name",), "approvalDecision": ("decision_number",),
         "winner": ("winning_bidder_name",), "drugName": ("medicine_name",),
+        "crossGroupProductKeyword": ("medicine_name", "active_ingredient_or_herbal_component"),
         "activeIngredient": ("active_ingredient_or_herbal_component",), "concentration": ("strength",),
         "route": ("route_of_administration",), "dosageForm": ("dosage_form",), "specification": ("packaging",),
         "regNo": ("marketing_authorization_or_import_permit",), "unit": ("unit",), "manufacturer": ("manufacturer",),
@@ -571,6 +783,7 @@ FILTER_FIELD_MAP: dict[str, dict[str, tuple[str, ...]]] = {
     "traditional_medicine": {
         "investor": ("procuring_entity_name",), "approvalDecision": ("decision_number",),
         "winner": ("winning_bidder_name",), "drugName": ("item_name",),
+        "crossGroupProductKeyword": ("item_name",),
         "activeIngredient": ("scientific_name", "item_name"), "concentration": ("item_name",),
         "route": ("processing_method",), "dosageForm": ("processing_method",), "specification": ("packaging",),
         "regNo": ("registration_or_import_permit_number",), "unit": ("unit",), "manufacturer": ("manufacturer",),
@@ -578,6 +791,29 @@ FILTER_FIELD_MAP: dict[str, dict[str, tuple[str, ...]]] = {
         "drugGroup": ("technical_group",),
     },
 }
+
+CROSS_GROUP_GOODS_PRODUCT_FIELDS = (
+    "item_name", "model_mark", "brand", "technical_specification"
+)
+CROSS_GROUP_MEDICINE_PRODUCT_FIELDS = (
+    "medicine_name", "active_ingredient_or_herbal_component"
+)
+
+
+def _cross_group_product_fields(schema_group: str, source_fields: Sequence[str]) -> tuple[str, ...]:
+    """Keep the selected field scoped locally while mapping equivalent products."""
+
+    source = set(source_fields)
+    if schema_group == "goods":
+        return CROSS_GROUP_GOODS_PRODUCT_FIELDS
+    if schema_group == "traditional_medicine":
+        return ("item_name",)
+    if schema_group == "medicines":
+        if "item_name" in source:
+            return CROSS_GROUP_MEDICINE_PRODUCT_FIELDS
+        selected = tuple(field for field in CROSS_GROUP_MEDICINE_PRODUCT_FIELDS if field in source)
+        return selected or CROSS_GROUP_MEDICINE_PRODUCT_FIELDS
+    return ()
 
 SORT_FIELD_MAP: dict[str, dict[str, str]] = {
     "goods": {
@@ -628,20 +864,25 @@ def translate_typesense_query(query: ProcurementQuery, *, serving_generation: st
             if value is not None:
                 clauses.append(f"{name}:{operator}{_escape_filter_value(value)}")
     for name, raw_value in sorted(query.date_ranges.items()):
-        if name != "partition_date":
+        if name not in {"partition_date", "result_posted_at", "decision_issued_at"}:
             unsupported.append(name)
             continue
         if not isinstance(raw_value, Mapping):
             unsupported.append(name)
             continue
-        range_clauses = _iso_date_range_clauses(raw_value.get("from"), raw_value.get("to"))
+        range_clauses = _iso_date_range_clauses(raw_value.get("from"), raw_value.get("to"), name)
         if range_clauses:
             clauses.append("(" + " || ".join(range_clauses) + ")")
         else:
-            for operator, value in ((">=", raw_value.get("from")), ("<=", raw_value.get("to"))):
-                if value is not None:
-                    clauses.append(f"partition_date:{operator}{_escape_filter_value(value)}")
-        expected_differences.append("date range uses ingestion partition_date; source timestamps remain display-only strings")
+            if name == "partition_date":
+                for operator, value in ((">=", raw_value.get("from")), ("<=", raw_value.get("to"))):
+                    if value is not None:
+                        clauses.append(f"partition_date:{operator}{_escape_filter_value(value)}")
+            else:
+                unsupported.append(name)
+                continue
+        if name == "partition_date":
+            expected_differences.append("date range uses ingestion partition_date; source timestamps remain display-only strings")
 
     for name, raw_value in sorted(query.filters.items()):
         if raw_value is None or raw_value == "":
@@ -661,16 +902,17 @@ def translate_typesense_query(query: ProcurementQuery, *, serving_generation: st
             unsupported.append(name)
             continue
         fields = (name,) if (name in QUERY_BY[schema_group] or name in FILTER_FIELDS[schema_group]) and name not in mapping else mapping.get(name)
+        if name == "crossGroupProductKeyword" and query.cross_group_search and query.cross_group_search_fields:
+            fields = _cross_group_product_fields(schema_group, query.cross_group_search_fields) or fields
         if not fields:
             unsupported.append(name)
             continue
-        if name in {"selectionMethod", "place"}:
-            clause = _list_clause(fields[0], raw_value)
-        elif name == "drugGroup" and schema_group == "medicines":
-            plain = _plain(raw_value)
-            values = plain if isinstance(plain, list) else (plain.get("tokens", []) if isinstance(plain, Mapping) else [])
-            values = [item.get("value") if isinstance(item, Mapping) else item for item in values]
-            clause = _list_clause(fields[0], values)
+        if name == "selectionMethod":
+            clause = _list_clause(fields[0], _selection_method_filter_values(raw_value))
+        elif name == "place":
+            clause = _partial_list_clause(fields[0], _location_filter_values(raw_value))
+        elif name == "drugGroup" and schema_group in {"medicines", "traditional_medicine"}:
+            clause = _drug_group_clause(fields[0], raw_value)
         else:
             clause = _token_clauses(fields, raw_value)
         if clause:
@@ -692,17 +934,28 @@ def translate_typesense_query(query: ProcurementQuery, *, serving_generation: st
     if "approvalDate" in [rule.field for rule in query.sort]:
         expected_differences.append("approvalDate sort uses partition_date; Typesense schema has no package approval date")
 
+    requested_search_fields = query.search_fields
+    if query.cross_group_search and query.cross_group_search_fields:
+        scoped_fields = _cross_group_product_fields(schema_group, query.cross_group_search_fields)
+        if scoped_fields:
+            requested_search_fields = scoped_fields
+
     query_fields = list(QUERY_BY[schema_group])
     unsupported_search_fields: list[str] = []
-    if query.search_fields:
+    if requested_search_fields:
         query_fields = []
-        for name in query.search_fields:
+        contract_fields = {
+            field["name"]: field for field in get_group_contract(query_group).get("fields", [])
+        }
+        for name in requested_search_fields:
             canonical = canonical_field_for(query_group, name) or name
-            if canonical in QUERY_BY[schema_group]:
+            field_info = contract_fields.get(canonical)
+            if field_info and field_info["type"] in {"string", "string[]"}:
                 query_fields.append(canonical)
             else:
                 unsupported_search_fields.append(name)
-        unsupported.extend(unsupported_search_fields)
+        if not query.cross_group_search:
+            unsupported.extend(unsupported_search_fields)
         if not query_fields:
             query_fields = [QUERY_BY[schema_group][0]]
 
@@ -751,6 +1004,23 @@ def translate_typesense_query(query: ProcurementQuery, *, serving_generation: st
     }
     if exact_field:
         params.update({"num_typos": 0, "prefix": "false", "exhaustive_search": "true"})
+    elif query.text or query.search_fields:
+        # Keep ordinary search token-friendly: ``par`` must match values such
+        # as ``paracetamol`` instead of only a standalone token. Advanced
+        # Search sends multi-word field values as quoted phrases so a value
+        # like ``máy điện`` cannot degrade into independent ``máy``/``điện``
+        # matches. Typesense's phrase search is carried by q, not filter_by.
+        has_exact_phrase = bool(re.search(r'"[^"\r\n]*\s+[^"\r\n]*"', query.text or ""))
+        if has_exact_phrase:
+            params.update({"prefix": "false", "num_typos": 0, "drop_tokens_threshold": 0})
+        else:
+            # The serving schema does not enable Typesense's infix index, so
+            # use prefix search instead of sending an invalid infix request.
+            # Disable edit-distance typo correction while keeping prefix
+            # matching for partial input such as ``par`` -> ``paracetamol``.
+            # Accent preservation still depends on the collection schema's
+            # locale; an existing schema without locale="vi" needs reindexing.
+            params.update({"prefix": "true", "num_typos": 0})
     if clauses:
         params["filter_by"] = " && ".join(clauses)
     return TypesenseRequestPlan(
@@ -774,6 +1044,7 @@ class TypesenseShadowConfig:
     api_key: str = field(default="", repr=False)
     report_destination: str = ""
     debug_queries: bool = False
+    query_retry_seconds: float = 15.0
 
     @property
     def base_url(self) -> str:
@@ -796,6 +1067,10 @@ class TypesenseShadowConfig:
             port = int(os.getenv("BIDFINDER_TYPESENSE_PORT", "8108"))
         except ValueError:
             port = 8108
+        try:
+            query_retry_seconds = max(0.0, float(os.getenv("BIDFINDER_TYPESENSE_QUERY_RETRY_SECONDS", "15")))
+        except ValueError:
+            query_retry_seconds = 15.0
         host = os.getenv("BIDFINDER_TYPESENSE_HOST", os.getenv("TYPESENSE_HOST", "127.0.0.1"))
         protocol = os.getenv("BIDFINDER_TYPESENSE_PROTOCOL", os.getenv("TYPESENSE_PROTOCOL", "http")).lower()
         if protocol not in {"http", "https"} or not host or "://" in host or "/" in host:
@@ -811,6 +1086,7 @@ class TypesenseShadowConfig:
             api_key=os.getenv("BIDFINDER_TYPESENSE_API_KEY", os.getenv("TYPESENSE_API_KEY", "")),
             report_destination=os.getenv("BIDFINDER_TYPESENSE_SHADOW_REPORT_DESTINATION", "").strip(),
             debug_queries=_env_flag("BIDFINDER_TYPESENSE_SHADOW_DEBUG_QUERIES", False),
+            query_retry_seconds=query_retry_seconds,
         )
 
 
@@ -833,7 +1109,7 @@ class TypesenseSearchResult:
     per_page: int
 
     def to_api_page(self) -> dict[str, Any]:
-        visible = [dict(row) for row in self.hits]
+        visible = [_clean_result_document(row) for row in self.hits]
         has_more = self.page * self.per_page < self.total
         return {
             "data": visible,
@@ -849,6 +1125,45 @@ class TypesenseSearchResult:
             "backend": "typesense",
             "typesense_latency_ms": round(self.latency_ms, 3),
         }
+
+
+def _clean_result_document(document: Mapping[str, Any]) -> dict[str, Any]:
+    """Apply the canonical display cleanup to legacy/current hit documents.
+
+    The serving collection may still contain documents written with the
+    previous numeric schema.  Cleaning at the API boundary keeps the current
+    UI stable while new ingestion uses the canonical normalizer as well.
+    """
+
+    cleaned = dict(document)
+    if cleaned.get("bidder_count") is not None:
+        try:
+            cleaned["bidder_count"] = normalize_bidder_count(cleaned["bidder_count"])
+        except NormalizationError:
+            cleaned.pop("bidder_count", None)
+
+    if cleaned.get("production_year") is not None:
+        raw_year = cleaned["production_year"]
+        if isinstance(raw_year, bool):
+            cleaned.pop("production_year", None)
+        else:
+            if isinstance(raw_year, (int, float)):
+                raw_year = str(int(raw_year)) if float(raw_year).is_integer() else str(raw_year)
+            if isinstance(raw_year, str):
+                normalized_year = normalize_year(raw_year)
+                if normalized_year is None:
+                    cleaned.pop("production_year", None)
+                else:
+                    cleaned["production_year"] = normalized_year
+            else:
+                cleaned.pop("production_year", None)
+
+    if cleaned.get("location") is not None:
+        try:
+            cleaned["location"] = normalize_location(cleaned["location"])
+        except NormalizationError:
+            cleaned.pop("location", None)
+    return cleaned
 
 
 @dataclass(frozen=True)
@@ -915,40 +1230,60 @@ class TypesenseSearchRepository:
         if plan.unsupported_filters or plan.unsupported_sorts:
             unsupported = ", ".join((*plan.unsupported_filters, *plan.unsupported_sorts))
             raise TypesenseShadowError(f"unsupported search contract field(s): {unsupported}", QUERY_CONTRACT_FAILURE)
-        params = urlencode(plan.params, doseq=True)
-        url = f"{self.config.base_url}/collections/{quote(plan.collection, safe='')}/documents/search?{params}"
-        request = Request(url, method="GET", headers={
-            "Accept": "application/json",
-            "X-TYPESENSE-API-KEY": self.config.api_key,
-        })
-        try:
-            with self._opener(request, timeout=self.config.timeout_seconds) as response:
-                raw = response.read()
-        except HTTPError as exc:
-            code = SHADOW_INFRA_ERROR if exc.code in {408, 425, 429} or exc.code >= 500 else QUERY_CONTRACT_FAILURE
-            raise TypesenseShadowError(f"Typesense HTTP {exc.code}", code=code) from exc
-        except (URLError, TimeoutError, OSError) as exc:
-            raise TypesenseShadowError(f"Typesense request failed: {type(exc).__name__}") from exc
-        try:
-            payload = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise TypesenseShadowError("Typesense returned invalid JSON") from exc
-        if not isinstance(payload, Mapping) or not isinstance(payload.get("found"), int) or isinstance(payload.get("found"), bool) or payload["found"] < 0:
-            raise TypesenseShadowError("Typesense returned malformed search metadata")
-        hits = payload.get("hits", [])
-        if not isinstance(hits, list):
-            raise TypesenseShadowError("Typesense returned malformed hits")
+        window_start = max(0, (query.page - 1) * query.limit)
+        typesense_page = window_start // TYPESENSE_MAX_HITS_PER_PAGE + 1
+        skip_in_page = window_start % TYPESENSE_MAX_HITS_PER_PAGE
         documents: list[Mapping[str, Any]] = []
-        for hit in hits:
-            if not isinstance(hit, Mapping) or not isinstance(hit.get("document"), Mapping):
-                raise TypesenseShadowError("Typesense returned malformed hit")
-            document = dict(hit["document"])
-            if not isinstance(document.get("id"), str) or not document["id"]:
-                raise TypesenseShadowError("Typesense document has no identity")
-            documents.append(document)
+        total: int | None = None
+
+        while len(documents) < query.limit:
+            batch_limit = min(
+                TYPESENSE_MAX_HITS_PER_PAGE,
+                skip_in_page + query.limit - len(documents),
+            )
+            request_params = dict(plan.params)
+            request_params.update({"page": typesense_page, "per_page": batch_limit})
+            params = urlencode(request_params, doseq=True)
+            url = f"{self.config.base_url}/collections/{quote(plan.collection, safe='')}/documents/search?{params}"
+            request = Request(url, method="GET", headers={
+                "Accept": "application/json",
+                "X-TYPESENSE-API-KEY": self.config.api_key,
+            })
+            try:
+                with self._opener(request, timeout=self.config.timeout_seconds) as response:
+                    raw = response.read()
+            except HTTPError as exc:
+                code = SHADOW_INFRA_ERROR if exc.code in {408, 425, 429} or exc.code >= 500 else QUERY_CONTRACT_FAILURE
+                raise TypesenseShadowError(f"Typesense HTTP {exc.code}", code=code) from exc
+            except (URLError, TimeoutError, OSError) as exc:
+                raise TypesenseShadowError(f"Typesense request failed: {type(exc).__name__}") from exc
+            try:
+                payload = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise TypesenseShadowError("Typesense returned invalid JSON") from exc
+            if not isinstance(payload, Mapping) or not isinstance(payload.get("found"), int) or isinstance(payload.get("found"), bool) or payload["found"] < 0:
+                raise TypesenseShadowError("Typesense returned malformed search metadata")
+            if total is None:
+                total = int(payload["found"])
+            hits = payload.get("hits", [])
+            if not isinstance(hits, list):
+                raise TypesenseShadowError("Typesense returned malformed hits")
+            batch_documents: list[Mapping[str, Any]] = []
+            for hit in hits:
+                if not isinstance(hit, Mapping) or not isinstance(hit.get("document"), Mapping):
+                    raise TypesenseShadowError("Typesense returned malformed hit")
+                document = dict(hit["document"])
+                if not isinstance(document.get("id"), str) or not document["id"]:
+                    raise TypesenseShadowError("Typesense document has no identity")
+                batch_documents.append(document)
+            documents.extend(batch_documents[skip_in_page:skip_in_page + query.limit - len(documents)])
+            if len(documents) >= query.limit or window_start + len(documents) >= total or len(batch_documents) < batch_limit:
+                break
+            typesense_page += 1
+            skip_in_page = 0
         return TypesenseSearchResult(
             group=public_group(query.group),
-            total=int(payload["found"]),
+            total=int(total or 0),
             hits=tuple(documents),
             latency_ms=(time.perf_counter() - started) * 1000,
             page=query.page,
@@ -956,7 +1291,45 @@ class TypesenseSearchRepository:
         )
 
     async def search(self, query: ProcurementQuery) -> TypesenseSearchResult:
-        return await asyncio.to_thread(self._request, query)
+        try:
+            return await asyncio.to_thread(self._request, query)
+        except TypesenseShadowError as exc:
+            # Typesense is a local runtime dependency and can return 5xx or
+            # timeout errors while its serving collections are loading. Keep
+            # retrying only that infrastructure class for a bounded window;
+            # contract errors must still fail immediately and never fall into
+            # the incomplete legacy Postgres path.
+            retryable = (
+                exc.code == SHADOW_INFRA_ERROR
+                and (
+                    str(exc).startswith("Typesense HTTP ")
+                    or str(exc).startswith("Typesense request failed")
+                )
+            )
+            if not retryable:
+                raise
+            deadline = time.monotonic() + self.config.query_retry_seconds
+            delay = 0.25
+            last_exc = exc
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise last_exc
+                await asyncio.sleep(min(delay, remaining))
+                try:
+                    return await asyncio.to_thread(self._request, query)
+                except TypesenseShadowError as retry_exc:
+                    retryable = (
+                        retry_exc.code == SHADOW_INFRA_ERROR
+                        and (
+                            str(retry_exc).startswith("Typesense HTTP ")
+                            or str(retry_exc).startswith("Typesense request failed")
+                        )
+                    )
+                    if not retryable:
+                        raise
+                    last_exc = retry_exc
+                    delay = min(delay * 2, 2.0)
 
     def _exact_lookup(self, query: ProcurementQuery) -> TypesenseSearchResult:
         if len(query.exact_identifiers) != 1:
@@ -993,14 +1366,71 @@ class TypesenseSearchRepository:
     async def exact_lookup(self, query: ProcurementQuery) -> TypesenseSearchResult:
         return await asyncio.to_thread(self._exact_lookup, query)
 
+    def _request_update_count(self, logical_group: str, day: date) -> int:
+        if not self.config.api_key:
+            raise TypesenseShadowError("Typesense shadow API key is not configured")
+
+        params = {
+            "q": "*",
+            "query_by": "bid_invitation_code,result_posted_at",
+            "page": 1,
+            "per_page": 0,
+            "filter_by": f"result_posted_at:{day.isoformat()}*",
+        }
+        collection = physical_collection_name(logical_group, self.config.serving_generation)
+        url = f"{self.config.base_url}/collections/{quote(collection, safe='')}/documents/search?{urlencode(params)}"
+        request = Request(url, method="GET", headers={
+            "Accept": "application/json",
+            "X-TYPESENSE-API-KEY": self.config.api_key,
+        })
+        try:
+            with self._opener(request, timeout=max(self.config.timeout_seconds, 2.0)) as response:
+                raw = response.read()
+        except HTTPError as exc:
+            code = SHADOW_INFRA_ERROR if exc.code in {408, 425, 429} or exc.code >= 500 else QUERY_CONTRACT_FAILURE
+            raise TypesenseShadowError(f"Typesense HTTP {exc.code}", code=code) from exc
+        except (URLError, TimeoutError, OSError) as exc:
+            raise TypesenseShadowError(f"Typesense request failed: {type(exc).__name__}") from exc
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise TypesenseShadowError("Typesense returned invalid JSON") from exc
+        if not isinstance(payload, Mapping) or not isinstance(payload.get("found"), int) or payload["found"] < 0:
+            raise TypesenseShadowError("Typesense returned malformed update timeline count")
+        return int(payload["found"])
+
+    def _request_update_timeline(self, *, today: date | None = None) -> list[dict[str, Any]]:
+        end_date = today or date.today()
+        start_date = end_date - timedelta(days=365)
+        days = [start_date + timedelta(days=offset) for offset in range((end_date - start_date).days + 1)]
+        tasks = [(logical_group, day) for logical_group in LOGICAL_GROUPS for day in days]
+        with ThreadPoolExecutor(max_workers=24) as executor:
+            counts = list(executor.map(lambda task: self._request_update_count(*task), tasks))
+        by_day: Counter[str] = Counter()
+        for (_, day), count in zip(tasks, counts):
+            by_day[day.isoformat()] += count
+        return [{"date": day, "count": by_day[day]} for day in sorted(by_day) if by_day[day] > 0]
+
+    async def update_timeline(self) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._request_update_timeline)
+
     def _suggest(self, query: AutocompleteQuery) -> tuple[str, ...]:
         started = time.perf_counter()
         if not self.config.api_key:
             raise TypesenseShadowError("Typesense shadow API key is not configured")
         group = public_group(query.group)
         canonical = canonical_field_for(group, query.field) or query.field
+        contract_fields = {
+            field["name"]: field
+            for field in get_group_contract(group).get("fields", [])
+        }
         allowed = set(get_group_contract(group)["autocomplete_fields"])
-        fields = tuple(query.search_fields) or ((canonical,) if canonical in allowed else ())
+        requested_fields = tuple(query.search_fields)
+        fields = (
+            tuple(field for field in requested_fields if field in contract_fields and contract_fields[field]["type"] in {"string", "string[]"})
+            if requested_fields
+            else ((canonical,) if canonical in allowed else ())
+        )
         if not fields:
             return ()
         plan = translate_typesense_query(
@@ -1010,19 +1440,36 @@ class TypesenseSearchRepository:
                 limit=query.limit,
                 endpoint=query.endpoint,
                 source_types=query.source_types,
+                query_mode="autocomplete",
             ),
             serving_generation=self.config.serving_generation,
         )
         params = dict(plan.params)
+        keyword = " ".join(str(query.keyword or "").split())
+        is_phrase = " " in keyword
+        candidate_keyword = keyword
+        candidate_is_phrase = False
+        if is_phrase and len(keyword.rsplit(" ", 1)[-1]) == 1:
+            # Typesense can be too selective for a one-character final
+            # prefix. Search the completed preceding phrase, then apply the
+            # full type-ahead phrase check below.
+            candidate_keyword = keyword.rsplit(" ", 1)[0]
+            candidate_is_phrase = True
+        escaped_candidate = candidate_keyword.replace("\\", "\\\\").replace('"', '\\"')
         params.update({
-            "q": query.keyword or "*",
+            # Autocomplete deliberately searches a broad candidate set. The
+            # adapter enforces the contiguous phrase below, which also allows
+            # Typesense to expand a partial final token ("máy điện t").
+            "q": f'"{escaped_candidate}"' if candidate_is_phrase else (candidate_keyword or "*"),
             "query_by": ",".join(fields),
             "query_by_weights": ",".join("1" for _ in fields),
-            "per_page": query.limit,
+            "per_page": min(100, max(query.limit * 10, 20)),
             "include_fields": ",".join(fields),
-            "prefix": "true",
+            "prefix": "false" if candidate_is_phrase else "true",
             "num_typos": 0,
         })
+        if is_phrase or candidate_is_phrase:
+            params["drop_tokens_threshold"] = 0
         url = f"{self.config.base_url}/collections/{quote(plan.collection, safe='')}/documents/search?{urlencode(params)}"
         request = Request(url, method="GET", headers={"Accept": "application/json", "X-TYPESENSE-API-KEY": self.config.api_key})
         try:
@@ -1051,7 +1498,7 @@ class TypesenseSearchRepository:
                 members = value if isinstance(value, list) else [value]
                 for member in members:
                     text = " ".join(str(member or "").split()).strip()
-                    if text and text.casefold().startswith(query.keyword.casefold()) and text.casefold() not in seen:
+                    if text and keyword.casefold() in text.casefold() and text.casefold() not in seen:
                         seen.add(text.casefold())
                         values.append(text)
         _ = started
@@ -1200,13 +1647,6 @@ FIELD_ALIASES = {
     "quantity": ("quantity", "so luong", "khoi luong"),
     "winning_unit_price": ("winning_unit_price", "don gia trung thau (vnd)"),
 }
-
-
-def _fold(value: Any) -> str:
-    import unicodedata
-    text = str(value if value is not None else "").replace("đ", "d").replace("Đ", "D")
-    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
-    return " ".join(text.lower().split())
 
 
 def _canonical_fields(group: str, row: Mapping[str, Any]) -> dict[str, Any]:

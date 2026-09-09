@@ -17,6 +17,311 @@ function getProcurementSearchForm() {
     return document.querySelector('typesense-search-form, custom-search-form');
 }
 
+// Keep legacy payload aliases only for compatibility with older responses and
+// legacy search surfaces. Result-table columns themselves use canonical ids.
+const LEGACY_FIELD_ALIASES = {
+    'Tên hoạt chất': ['active_ingredient_or_herbal_component'],
+    'Tên thuốc': ['medicine_name'],
+    'Nồng độ, hàm lượng': ['strength'],
+    'Đường dùng': ['route_of_administration'],
+    'Dạng bào chế': ['dosage_form'],
+    'Quy cách': ['packaging'],
+    'GĐKLH hoặc GPNK': ['marketing_authorization_or_import_permit', 'registration_or_import_permit_number'],
+    'Mã thuốc': ['medicine_code', 'id'],
+    'Cơ sở sản xuất': ['manufacturer'],
+    'Xuất xứ': ['production_country', 'country_of_origin', 'origin'],
+    'Nhóm thuốc': ['medicine_group'],
+    'Đơn vị tính': ['unit'],
+    'Số lượng': ['quantity'],
+    'Đơn giá trúng thầu (VND)': ['winning_unit_price'],
+    'Thành tiền (VND)': ['total_value', 'winning_total_value'],
+    'Mã TBMT': ['bid_invitation_code'],
+    'Chủ đầu tư': ['procuring_entity_name'],
+    'Quyết định phê duyệt': ['decision_number'],
+    'Ngày phê duyệt': ['decision_issued_at', 'result_posted_at'],
+    'Hình thức LCNT': ['selection_method'],
+    'Địa điểm': ['location'],
+    'Ngày hết hiệu lực': ['valid_until', 'expiration_date', 'shelf_life'],
+    'Tình trạng hiệu lực': ['validity_status'],
+    'Nhà thầu trúng thầu': ['winning_bidder_name'],
+    'Tên phần/lô': ['lot_name', 'item_name'],
+    'Danh mục hàng hóa': ['item_name'],
+    'Tính năng kỹ thuật': ['technical_specification'],
+    'Mặt hàng dự thầu': ['bid_item', 'item_name'],
+    'Nhãn hiệu': ['brand'],
+    'Ký mã hiệu': ['model_mark', 'model'],
+    'Khối lượng': ['quantity'],
+    'Hãng sản xuất': ['manufacturer'],
+    'Tên dược liệu / vị thuốc': ['item_name', 'medicine_name'],
+    'Tên khoa học': ['scientific_name'],
+    'Nguồn gốc': ['origin', 'country_of_origin'],
+    'Bộ phận dùng': ['used_part'],
+    'Phương pháp chế biến': ['processing_method'],
+    'Số lượng / khối lượng': ['quantity']
+};
+
+const LEGACY_CANONICAL_LABELS = {
+    item_name: 'Tên hàng hóa / dược liệu',
+    medicine_name: 'Tên thuốc',
+    unit: 'Đơn vị tính',
+    quantity: 'Số lượng / khối lượng',
+    country_of_origin: 'Xuất xứ',
+    hs_code: 'Mã HS',
+    model_mark: 'Ký mã hiệu',
+    brand: 'Nhãn hiệu',
+    production_year: 'Năm sản xuất',
+    manufacturer: 'Hãng / cơ sở sản xuất',
+    technical_specification: 'Cấu hình / tính năng kỹ thuật',
+    model: 'Chủng loại',
+    registration_or_import_permit_number: 'Số lưu hành / giấy phép nhập khẩu',
+    winning_unit_price: 'Đơn giá trúng thầu',
+    winning_bidder_id: 'Mã nhà thầu trúng thầu',
+    winning_bidder_name: 'Nhà thầu trúng thầu',
+    bid_invitation_code: 'Mã TBMT',
+    procuring_entity_id: 'Mã chủ đầu tư',
+    procuring_entity_name: 'Chủ đầu tư',
+    selection_method: 'Hình thức lựa chọn nhà thầu',
+    result_posted_at: 'Thời điểm đăng kết quả',
+    decision_number: 'Số quyết định',
+    decision_issued_at: 'Ngày ban hành quyết định',
+    bidder_count: 'Số nhà thầu tham dự',
+    location: 'Địa điểm',
+    active_ingredient_or_herbal_component: 'Hoạt chất / thành phần dược liệu',
+    strength: 'Nồng độ / hàm lượng',
+    marketing_authorization_or_import_permit: 'GĐKLH hoặc GPNK',
+    route_of_administration: 'Đường dùng',
+    dosage_form: 'Dạng bào chế',
+    shelf_life: 'Hạn dùng',
+    production_country: 'Nước sản xuất',
+    packaging: 'Quy cách đóng gói',
+    medicine_group: 'Nhóm thuốc',
+    used_part: 'Bộ phận dùng',
+    scientific_name: 'Tên khoa học',
+    origin: 'Nguồn gốc',
+    processing_method: 'Phương pháp chế biến',
+    technical_group: 'Nhóm tiêu chí kỹ thuật'
+};
+
+const RESULT_COLUMN_ALIASES = {
+    // Accept the historical misspelling from older saved/result payloads,
+    // while keeping the canonical field and its display label.
+    wining_unit_price: 'winning_unit_price'
+};
+
+const LEGACY_DATASET_GROUPS = {
+    goods: {
+        scope: 'goods',
+        resultPanel: 'df2-panel',
+        subtypes: [
+            ['goods_general', 'Hàng hóa ngoài thuốc, thiết bị, vật tư y tế'],
+            ['medical_devices', 'Thiết bị, vật tư y tế']
+        ]
+    },
+    medicines: {
+        scope: 'medicine',
+        resultPanel: 'df1-panel',
+        subtypes: [
+            ['medicine_generic', 'Thuốc Generic'],
+            ['medicine_originator', 'Thuốc biệt dược gốc'],
+            ['medicine_herbal', 'Thuốc dược liệu']
+        ]
+    },
+    traditional_medicine: {
+        scope: 'traditional',
+        resultPanel: 'df3-panel',
+        subtypes: [
+            ['herbal_material', 'Dược liệu'],
+            ['traditional_medicine', 'Vị thuốc cổ truyền']
+        ]
+    }
+};
+
+let activeLegacyDatasetGroup = 'medicines';
+let advancedSearchContract = null;
+let advancedSearchContractPromise = null;
+
+function legacyDatasetDefinition(group = activeLegacyDatasetGroup) {
+    return LEGACY_DATASET_GROUPS[group] || LEGACY_DATASET_GROUPS.medicines;
+}
+
+function getSelectedLegacySourceTypes() {
+    const searchForm = getProcurementSearchForm();
+    if (searchForm?.matches?.('typesense-search-form') && typeof searchForm.collectFilterPayload === 'function') {
+        return searchForm.collectFilterPayload().sourceTypes || [];
+    }
+    return Array.from(document.querySelectorAll('#advanced-subtype-list input[data-legacy-source]:checked'))
+        .map(input => input.value);
+}
+
+function renderLegacySubtypeOptions(group = activeLegacyDatasetGroup, selectedTypes = null) {
+    const container = document.getElementById('advanced-subtype-list');
+    if (!container) return;
+    const definition = legacyDatasetDefinition(group);
+    const selected = new Set(
+        selectedTypes?.length ? selectedTypes : definition.subtypes.map(([value]) => value)
+    );
+    container.replaceChildren();
+
+    const allLabel = document.createElement('label');
+    allLabel.className = 'advanced-subtype-option advanced-subtype-all';
+    const allInput = document.createElement('input');
+    allInput.type = 'checkbox';
+    allInput.dataset.legacySourceAll = 'true';
+    allInput.checked = definition.subtypes.every(([value]) => selected.has(value));
+    const allText = document.createElement('span');
+    allText.textContent = 'Tất cả';
+    allLabel.append(allInput, allText);
+    container.appendChild(allLabel);
+
+    definition.subtypes.forEach(([value, labelText]) => {
+        const label = document.createElement('label');
+        label.className = 'advanced-subtype-option';
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.value = value;
+        input.dataset.legacySource = value;
+        input.checked = selected.has(value);
+        input.addEventListener('change', () => {
+            if (!getSelectedLegacySourceTypes().length) input.checked = true;
+            if (allInput) {
+                allInput.checked = definition.subtypes.every(([item]) =>
+                    container.querySelector(`[data-legacy-source="${item}"]`)?.checked
+                );
+            }
+            enableLegacyDatasetSearch();
+        });
+        const text = document.createElement('span');
+        text.textContent = labelText;
+        label.append(input, text);
+        container.appendChild(label);
+    });
+    allInput.addEventListener('change', () => {
+        const shouldSelectAll = allInput.checked;
+        container.querySelectorAll('[data-legacy-source]').forEach(input => {
+            input.checked = shouldSelectAll;
+        });
+        if (!shouldSelectAll && !getSelectedLegacySourceTypes().length) {
+            allInput.checked = true;
+            container.querySelectorAll('[data-legacy-source]').forEach(input => {
+                input.checked = true;
+            });
+        }
+        enableLegacyDatasetSearch();
+    });
+    enableLegacyDatasetSearch();
+}
+
+function enableLegacyDatasetSearch() {
+    const root = getProcurementSearchForm()?.shadowRoot;
+    const applyButton = root?.getElementById('apply-filters-btn') || root?.querySelector('[data-action="apply"]');
+    if (applyButton) applyButton.disabled = false;
+}
+
+function normalizeLegacyDatasetGroup(group) {
+    if (group === 'goods') return 'goods';
+    if (group === 'medicines' || group === 'medicine') return 'medicines';
+    if (group === 'traditional' || group === 'traditional_medicine') return 'traditional_medicine';
+    return null;
+}
+
+function syncLegacyDatasetControlsFromRequest(request = {}) {
+    const group = normalizeLegacyDatasetGroup(request.group) || activeLegacyDatasetGroup;
+    activeLegacyDatasetGroup = group;
+    const searchForm = getProcurementSearchForm();
+    if (searchForm?.matches?.('typesense-search-form')) return;
+    document.querySelectorAll('.advanced-group-tab').forEach(button => {
+        const active = button.dataset.legacyGroup === group;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-selected', String(active));
+    });
+    renderLegacySubtypeOptions(group, Array.isArray(request.sourceTypes) ? request.sourceTypes : null);
+}
+
+function getLegacyDatasetRequest() {
+    const definition = legacyDatasetDefinition();
+    return {
+        scope: definition.scope,
+        group: activeLegacyDatasetGroup,
+        sourceTypes: getSelectedLegacySourceTypes()
+    };
+}
+
+function enrichLegacyQueryRequest(payload = {}) {
+    const safePayload = payload && typeof payload === 'object' ? payload : {};
+    const crossGroupSearch = safePayload.crossGroupSearch === true;
+    const requestedGroup = crossGroupSearch
+        ? null
+        : (normalizeLegacyDatasetGroup(safePayload.group) || activeLegacyDatasetGroup);
+    const definition = legacyDatasetDefinition(requestedGroup);
+    if (requestedGroup) activeLegacyDatasetGroup = requestedGroup;
+    const filters = safePayload.filters && typeof safePayload.filters === 'object'
+        ? { ...safePayload.filters }
+        : {};
+    const dateRanges = safePayload.dateRanges && typeof safePayload.dateRanges === 'object'
+        ? { ...safePayload.dateRanges }
+        : {};
+    if (filters.dateFrom || filters.dateTo) {
+        dateRanges.partition_date = {
+            ...(dateRanges.partition_date || {}),
+            ...(filters.dateFrom ? { from: filters.dateFrom } : {}),
+            ...(filters.dateTo ? { to: filters.dateTo } : {})
+        };
+        delete filters.dateFrom;
+        delete filters.dateTo;
+    }
+    const sourceTypes = crossGroupSearch
+        ? []
+        : (Array.isArray(safePayload.sourceTypes)
+        ? safePayload.sourceTypes
+        : getLegacyDatasetRequest().sourceTypes);
+    if (requestedGroup) syncLegacyDatasetControlsFromRequest({ group: requestedGroup, sourceTypes });
+    return buildQueryRequest({
+        ...safePayload,
+        scope: crossGroupSearch ? 'all' : definition.scope,
+        group: requestedGroup,
+        sourceTypes,
+        crossGroupSearch,
+        filters,
+        text: safePayload.text || '',
+        searchFields: safePayload.searchFields || [],
+        structuredFilters: safePayload.structuredFilters || {},
+        ranges: safePayload.ranges || {},
+        dateRanges,
+        exactIdentifiers: safePayload.exactIdentifiers || {},
+        sort: safePayload.sort || []
+    });
+}
+
+async function loadAdvancedSearchContract() {
+    if (advancedSearchContract) return advancedSearchContract;
+    if (!advancedSearchContractPromise) {
+        advancedSearchContractPromise = getAuthorizedFetch()(`${API_BASE_URL}/api/search-contract`)
+            .then(async response => {
+                const payload = await response.json();
+                if (!response.ok || !payload?.contract?.groups) {
+                    throw new Error(payload?.message || `HTTP ${response.status}`);
+                }
+                return payload.contract;
+            })
+            .then(contract => {
+                advancedSearchContract = contract;
+                return contract;
+            })
+            .catch(error => {
+                advancedSearchContractPromise = null;
+                const status = document.getElementById('advanced-contract-status');
+                if (status) status.textContent = 'Không tải được các tiêu chí mở rộng.';
+                console.warn('Search contract unavailable:', error);
+                return null;
+            });
+    }
+    return advancedSearchContractPromise;
+}
+
+function initAdvancedContractControls() {
+    loadAdvancedSearchContract();
+}
+
 function requireAuthenticatedSession(mode = 'login', requirement = 'preview') {
     const auth = window.BIDFinderAuth;
     if (!auth) return true;
@@ -58,6 +363,13 @@ function formatNumber(value, options = {}) {
     return num.toLocaleString('vi-VN', options);
 }
 
+function formatBidderCount(value) {
+    if (value === null || value === undefined || value === '') return '';
+    const num = Number(value);
+    if (!Number.isFinite(num)) return value;
+    return Math.floor(num + 0.5).toLocaleString('vi-VN');
+}
+
 function formatCurrency(v) {
     return formatNumber(v, { maximumFractionDigits: 2 });
 }
@@ -82,51 +394,45 @@ function formatDate(dateValue, returnOriginal = false) {
     }
 }
 
-function formatDateForExcel(dateValue) {
-    return formatDate(dateValue, true);
+// ========= 2. STORAGE
+const RESULT_TABLE_GROUPS = {
+    'standard-table': 'medicines',
+    'extended-table': 'goods',
+    'traditional-table': 'traditional'
+};
+const RESULT_COLUMN_CATALOG = window.BIDFinderDataColumns || {
+    order: { goods: [], medicines: [], traditional: [] },
+    labels: { goods: {}, medicines: {}, traditional: {} }
+};
+
+// Keep stable canonical field ids in the DOM. The existing drag/drop and
+// localStorage order machinery can then customize columns without depending
+// on translated display labels.
+const DF1_COLUMNS_ORDER = [...(RESULT_COLUMN_CATALOG.order.medicines || [])];
+const DF2_COLUMNS_ORDER = [...(RESULT_COLUMN_CATALOG.order.goods || [])];
+const DF3_COLUMNS_ORDER = [...(RESULT_COLUMN_CATALOG.order.traditional || [])];
+
+function getResultColumnLabel(tableId, columnName) {
+    const group = RESULT_TABLE_GROUPS[tableId];
+    const canonicalName = RESULT_COLUMN_ALIASES[columnName] || columnName;
+    return RESULT_COLUMN_CATALOG.labels?.[group]?.[canonicalName]
+        || RESULT_COLUMN_CATALOG.labels?.[group]?.[columnName]
+        || LEGACY_CANONICAL_LABELS[canonicalName]
+        || columnName;
 }
-
-// ========= 2. ORDER COLUMNS
-function reorderDataByColumns(data, columnOrder) {
-    if (!data?.length || !columnOrder) return data;
-
-    return data.map(row => 
-        columnOrder.reduce((reordered, colName) => {
-            const actualCol = Object.keys(row).find(k => k.trim() === colName.trim());
-            reordered[colName] = actualCol ? row[actualCol] : '';
-            return reordered;
-        }, {})
-    );
-}
-
-// ========= 3. STORAGE
-const DF1_COLUMNS_ORDER = [
-    'Tên hoạt chất','Tên thuốc','Nồng độ, hàm lượng',
-    'Đường dùng','Dạng bào chế','Quy cách','GĐKLH hoặc GPNK','Mã thuốc',
-    'Cơ sở sản xuất','Xuất xứ','Nhóm thuốc',
-    'Đơn vị tính','Số lượng','Đơn giá trúng thầu (VND)','Thành tiền (VND)',    
-    'Mã TBMT','Chủ đầu tư','Quyết định phê duyệt','Ngày phê duyệt',
-    'Hình thức LCNT','Địa điểm','Ngày hết hiệu lực','Tình trạng hiệu lực','Nhà thầu trúng thầu'
-];
-
-const DF2_COLUMNS_ORDER = [
-    'Tên phần/lô','Danh mục hàng hóa','Tính năng kỹ thuật',
-    'Mặt hàng dự thầu','Nhãn hiệu','Ký mã hiệu',
-    'Xuất xứ','Hãng sản xuất',
-    'Đơn vị tính','Khối lượng','Đơn giá trúng thầu (VND)','Thành tiền (VND)',
-    'Mã TBMT','Chủ đầu tư','Quyết định phê duyệt','Ngày phê duyệt',
-    'Hình thức LCNT','Địa điểm','Ngày hết hiệu lực','Tình trạng hiệu lực','Nhà thầu trúng thầu'
-];
 
 let currentColumnOrderDf1 = [...DF1_COLUMNS_ORDER];
 let currentColumnOrderDf2 = [...DF2_COLUMNS_ORDER];
+let currentColumnOrderDf3 = [...DF3_COLUMNS_ORDER];
 const TABLE_DEFAULT_COLUMNS = {
     'standard-table': DF1_COLUMNS_ORDER,
-    'extended-table': DF2_COLUMNS_ORDER
+    'extended-table': DF2_COLUMNS_ORDER,
+    'traditional-table': DF3_COLUMNS_ORDER
 };
 const TABLE_COLUMN_WIDTH_KEYS = {
     'standard-table': 'colWidthDf1',
-    'extended-table': 'colWidthDf2'
+    'extended-table': 'colWidthDf2',
+    'traditional-table': 'colWidthDf3'
 };
 const STORAGE_KEYS = {
     hiddenColumns: 'hiddenColumnsByTable',
@@ -135,10 +441,9 @@ const STORAGE_KEYS = {
     sortRule: 'activeTableSortRule'
 };
 const RESETTABLE_UI_STORAGE_KEYS = [
-    'columnOrderDf1',
-    'columnOrderDf2',
     'colWidthDf1',
     'colWidthDf2',
+    'colWidthDf3',
     STORAGE_KEYS.hiddenColumns,
     STORAGE_KEYS.wrappedColumns,
     STORAGE_KEYS.frozenColumns,
@@ -180,7 +485,8 @@ function loadPersistentColumnSets(storageKey) {
     const stored = readJsonStorage(storageKey, {});
     return {
         'standard-table': normalizeStoredColumnSet(stored?.['standard-table'], 'standard-table'),
-        'extended-table': normalizeStoredColumnSet(stored?.['extended-table'], 'extended-table')
+        'extended-table': normalizeStoredColumnSet(stored?.['extended-table'], 'extended-table'),
+        'traditional-table': normalizeStoredColumnSet(stored?.['traditional-table'], 'traditional-table')
     };
 }
 
@@ -219,7 +525,8 @@ function validateColumnOrder(parsed, defaultOrder, storageKey) {
 function restoreColumnOrderFromStorage() {
     const configs = [
         { key: 'columnOrderDf1', default: DF1_COLUMNS_ORDER, target: 'currentColumnOrderDf1' },
-        { key: 'columnOrderDf2', default: DF2_COLUMNS_ORDER, target: 'currentColumnOrderDf2' }
+        { key: 'columnOrderDf2', default: DF2_COLUMNS_ORDER, target: 'currentColumnOrderDf2' },
+        { key: 'columnOrderDf3', default: DF3_COLUMNS_ORDER, target: 'currentColumnOrderDf3' }
     ];
 
     configs.forEach(({ key, default: defaultOrder, target }) => {
@@ -232,8 +539,10 @@ function restoreColumnOrderFromStorage() {
             
             if (target === 'currentColumnOrderDf1') {
                 currentColumnOrderDf1 = validated;
-            } else {
+            } else if (target === 'currentColumnOrderDf2') {
                 currentColumnOrderDf2 = validated;
+            } else {
+                currentColumnOrderDf3 = validated;
             }
             
             if (validated !== defaultOrder) {
@@ -254,37 +563,62 @@ function restoreColumnOrderFromStorage() {
 // ========= 1. RENDER
 let standardTbody;
 let extendedTbody;
+let traditionalTbody;
 const wrappedColumnsState = loadPersistentColumnSets(STORAGE_KEYS.wrappedColumns);
 const frozenColumnsState = loadPersistentColumnSets(STORAGE_KEYS.frozenColumns);
 const hiddenColumnsState = loadPersistentColumnSets(STORAGE_KEYS.hiddenColumns);
 const columnValueFilterState = {
     'standard-table': {},
-    'extended-table': {}
+    'extended-table': {},
+    'traditional-table': {}
 };
 let activeSortRule = loadStoredSortRule();
 const selectionState = {
     'standard-table': { rows: new Set(), columns: new Set(), lastRow: null, lastColumn: null },
-    'extended-table': { rows: new Set(), columns: new Set(), lastRow: null, lastColumn: null }
+    'extended-table': { rows: new Set(), columns: new Set(), lastRow: null, lastColumn: null },
+    'traditional-table': { rows: new Set(), columns: new Set(), lastRow: null, lastColumn: null }
 };
 let currentDisplayedDf1 = [];
 let currentDisplayedDf2 = [];
+let currentDisplayedDf3 = [];
 let serverBaseDf1 = [];
 let serverBaseDf2 = [];
+let serverBaseDf3 = [];
+let orderedWorkingDf1 = null;
+let orderedWorkingDf2 = null;
+let orderedWorkingDf3 = null;
+const workingSetAvailable = {
+    'standard-table': false,
+    'extended-table': false,
+    'traditional-table': false
+};
 let currentQueryMeta = {
     df1HasMore: false,
     df2HasMore: false,
+    df3HasMore: false,
     df1Displayed: 0,
     df1Total: 0,
+    df1WorkingCount: 0,
+    df1WorkingSetTruncated: false,
     df1TotalLabel: '0',
     df2Displayed: 0,
     df2Total: 0,
+    df2WorkingCount: 0,
+    df2WorkingSetTruncated: false,
     df2TotalLabel: '0',
+    df3Displayed: 0,
+    df3Total: 0,
+    df3WorkingCount: 0,
+    df3WorkingSetTruncated: false,
+    df3TotalLabel: '0',
+    page: 1,
     totalCount: 0,
     totalCountExact: true,
     totalCountLabel: '0',
     searchMode: 'standard',
     bulkSearchMode: 'standard',
-    appliedTotalLimit: 0
+    appliedTotalLimit: 0,
+    appliedLimitPerScope: 0
 };
 
 // Configuration object cho từng loại table
@@ -292,78 +626,120 @@ const TABLE_CONFIGS = {
     df1: {
         tbody: () => standardTbody,
         columnOrder: () => currentColumnOrderDf1,
-        rightAlignColumns: ['Số lượng', 'Đơn giá trúng thầu (VND)', 'Thành tiền (VND)'],
+        rightAlignColumns: ['quantity', 'winning_unit_price', 'bidder_count'],
         fieldMappers: {
-            'Ngày phê duyệt': formatDate,
-            'Ngày hết hiệu lực': formatDate,
-            'Số lượng': formatNumber,
-            'Đơn giá trúng thầu (VND)': formatCurrency,
-            'Thành tiền (VND)': formatCurrency
+            result_posted_at: formatDate,
+            decision_issued_at: formatDate,
+            quantity: formatNumber,
+            winning_unit_price: formatCurrency,
+            bidder_count: formatBidderCount
         }
     },
     df2: {
         tbody: () => extendedTbody,
         columnOrder: () => currentColumnOrderDf2,
-        rightAlignColumns: ['Khối lượng', 'Đơn giá trúng thầu (VND)', 'Thành tiền (VND)'],
+        rightAlignColumns: ['quantity', 'winning_unit_price', 'bidder_count'],
         fieldMappers: {
-            'Ngày phê duyệt': formatDate,
-            'Ngày hết hiệu lực': formatDate,
-            'Khối lượng': formatNumber,
-            'Đơn giá trúng thầu (VND)': formatCurrency,
-            'Thành tiền (VND)': formatCurrency
+            result_posted_at: formatDate,
+            decision_issued_at: formatDate,
+            quantity: formatNumber,
+            winning_unit_price: formatCurrency,
+            bidder_count: formatBidderCount
+        }
+    },
+    df3: {
+        tbody: () => traditionalTbody,
+        columnOrder: () => currentColumnOrderDf3,
+        rightAlignColumns: ['quantity', 'winning_unit_price', 'bidder_count'],
+        fieldMappers: {
+            result_posted_at: formatDate,
+            decision_issued_at: formatDate,
+            quantity: formatNumber,
+            winning_unit_price: formatCurrency,
+            bidder_count: formatBidderCount
         }
     }
 };
 
 const DEFAULT_COLUMN_WIDTHS = {
     'standard-table': {
-        'Mã TBMT': 118,
-        'Chủ đầu tư': 130,
-        'Quyết định phê duyệt': 200,
-        'Ngày phê duyệt': 150,
-        'Mã thuốc': 120,
-        'Tên thuốc': 150,
-        'Tên hoạt chất': 150,
-        'Nồng độ, hàm lượng': 200,
-        'Đơn vị tính': 130,
-        'Số lượng': 120,
-        'Đơn giá trúng thầu (VND)': 220,
-        'Thành tiền (VND)': 180,
-        'Đường dùng': 140,
-        'Dạng bào chế': 150,
-        'Quy cách': 130,
-        'Nhóm thuốc': 130,
-        'GĐKLH hoặc GPNK': 180,
-        'Cơ sở sản xuất': 160,
-        'Xuất xứ': 130,
-        'Nhà thầu trúng thầu': 210,
-        'Hình thức LCNT': 150,
-        'Địa điểm': 150,
-        'Ngày hết hiệu lực': 180,
-        'Tình trạng hiệu lực': 180
+        medicine_name: 180,
+        active_ingredient_or_herbal_component: 230,
+        strength: 170,
+        marketing_authorization_or_import_permit: 190,
+        route_of_administration: 140,
+        dosage_form: 160,
+        shelf_life: 150,
+        manufacturer: 190,
+        production_country: 150,
+        packaging: 180,
+        unit: 120,
+        quantity: 120,
+        winning_unit_price: 170,
+        winning_bidder_id: 190,
+        winning_bidder_name: 210,
+        medicine_group: 150,
+        bid_invitation_code: 150,
+        procuring_entity_id: 180,
+        procuring_entity_name: 180,
+        selection_method: 180,
+        result_posted_at: 170,
+        decision_number: 160,
+        decision_issued_at: 170,
+        bidder_count: 140,
+        location: 150
     },
     'extended-table': {
-        'Mã TBMT': 118,
-        'Chủ đầu tư': 130,
-        'Quyết định phê duyệt': 200,
-        'Ngày phê duyệt': 150,
-        'Tên phần/lô': 160,
-        'Danh mục hàng hóa': 210,
-        'Tính năng kỹ thuật': 260,
-        'Đơn vị tính': 130,
-        'Khối lượng': 120,
-        'Đơn giá trúng thầu (VND)': 220,
-        'Thành tiền (VND)': 180,
-        'Mặt hàng dự thầu': 180,
-        'Nhãn hiệu': 145,
-        'Ký mã hiệu': 145,
-        'Xuất xứ': 130,
-        'Hãng sản xuất': 170,
-        'Nhà thầu trúng thầu': 210,
-        'Hình thức LCNT': 150,
-        'Địa điểm': 160,
-        'Ngày hết hiệu lực': 180,
-        'Tình trạng hiệu lực': 180
+        item_name: 190,
+        unit: 120,
+        quantity: 130,
+        country_of_origin: 150,
+        hs_code: 120,
+        model_mark: 150,
+        brand: 140,
+        production_year: 130,
+        manufacturer: 180,
+        technical_specification: 260,
+        model: 170,
+        registration_or_import_permit_number: 190,
+        winning_unit_price: 170,
+        winning_bidder_id: 190,
+        winning_bidder_name: 210,
+        bid_invitation_code: 150,
+        procuring_entity_id: 180,
+        procuring_entity_name: 180,
+        selection_method: 180,
+        result_posted_at: 170,
+        decision_number: 160,
+        decision_issued_at: 170,
+        bidder_count: 140,
+        location: 150
+    },
+    'traditional-table': {
+        item_name: 240,
+        used_part: 160,
+        scientific_name: 190,
+        origin: 150,
+        processing_method: 190,
+        registration_or_import_permit_number: 190,
+        manufacturer: 190,
+        production_country: 150,
+        packaging: 180,
+        unit: 120,
+        quantity: 120,
+        winning_unit_price: 170,
+        winning_bidder_id: 190,
+        winning_bidder_name: 210,
+        technical_group: 180,
+        bid_invitation_code: 150,
+        procuring_entity_id: 180,
+        procuring_entity_name: 180,
+        selection_method: 180,
+        result_posted_at: 170,
+        decision_number: 160,
+        decision_issued_at: 170,
+        bidder_count: 140,
+        location: 150
     }
 };
 
@@ -378,7 +754,7 @@ function inferDefaultColumnWidth(tableId, columnName) {
         return explicitWidth;
     }
 
-    const normalized = String(columnName || '').toLowerCase();
+    const normalized = getResultColumnLabel(tableId, columnName).toLocaleLowerCase('vi');
     if (!normalized) return DEFAULT_STANDARD_TEXT_WIDTH;
 
     if (
@@ -407,10 +783,77 @@ function inferDefaultColumnWidth(tableId, columnName) {
     return DEFAULT_STANDARD_TEXT_WIDTH;
 }
 
+function getResultTableIdForConfig(configKey) {
+    if (configKey === 'df2') return 'extended-table';
+    if (configKey === 'df3') return 'traditional-table';
+    return 'standard-table';
+}
+
+function legacyDetailLabel(fieldName, tableId = null) {
+    if (['id', 'data_group', 'source_tab', 'source_tab_label', 'partition_date'].includes(fieldName) || fieldName.startsWith('__')) return '';
+    if (tableId && RESULT_COLUMN_CATALOG.labels?.[RESULT_TABLE_GROUPS[tableId]]?.[fieldName]) {
+        return getResultColumnLabel(tableId, fieldName);
+    }
+    if (Object.prototype.hasOwnProperty.call(LEGACY_FIELD_ALIASES, fieldName)) return fieldName;
+    const known = Object.entries(LEGACY_FIELD_ALIASES)
+        .find(([, aliases]) => aliases.includes(fieldName));
+    if (known?.[0]) return known[0];
+    if (LEGACY_CANONICAL_LABELS[fieldName]) return LEGACY_CANONICAL_LABELS[fieldName];
+    return Object.values(advancedSearchContract?.groups || {})
+        .flatMap(group => group.fields || [])
+        .find(field => field.name === fieldName)?.label || '';
+}
+
+let legacyDetailPreviousFocus = null;
+
+function closeLegacyRowDetail({ restoreFocus = true } = {}) {
+    const detail = document.getElementById('legacy-row-detail');
+    if (!detail) return;
+    detail.classList.remove('show');
+    detail.hidden = true;
+    detail.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('legacy-detail-open');
+    if (restoreFocus && legacyDetailPreviousFocus?.isConnected) legacyDetailPreviousFocus.focus();
+    legacyDetailPreviousFocus = null;
+}
+
+function openLegacyRowDetail(item, configKey) {
+    const detail = document.getElementById('legacy-row-detail');
+    const fields = document.getElementById('legacy-row-detail-fields');
+    if (!detail || !fields || !item) return;
+
+    fields.replaceChildren();
+    const tableId = getResultTableIdForConfig(configKey);
+    const preferred = TABLE_CONFIGS[configKey]?.columnOrder?.() || [];
+    const orderedFields = [...preferred, ...Object.keys(item)];
+    const seen = new Set();
+    orderedFields.forEach(fieldName => {
+        if (seen.has(fieldName) || fieldName.startsWith('__')) return;
+        seen.add(fieldName);
+        const rawValue = item[fieldName];
+        const label = legacyDetailLabel(fieldName, tableId);
+        if (!label || rawValue === undefined || rawValue === null || rawValue === '') return;
+        const dt = document.createElement('dt');
+        dt.textContent = label;
+        const dd = document.createElement('dd');
+        dd.textContent = Array.isArray(rawValue) ? rawValue.join(', ') : String(rawValue);
+        fields.append(dt, dd);
+    });
+
+    legacyDetailPreviousFocus = document.activeElement;
+    detail.hidden = false;
+    detail.classList.add('show');
+    detail.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('legacy-detail-open');
+    detail.querySelector('#close-legacy-row-detail')?.focus();
+}
+
 function renderTableData(data, configKey) {
     const config = TABLE_CONFIGS[configKey];
     const tbody = config.tbody();
-    const tableId = configKey === 'df1' ? 'standard-table' : 'extended-table';
+    const tableId = configKey === 'df1'
+        ? 'standard-table'
+        : configKey === 'df2' ? 'extended-table' : 'traditional-table';
     const columnOrder = getVisibleColumnOrder(tableId);
 
     tbody.replaceChildren();
@@ -436,9 +879,13 @@ function renderTableData(data, configKey) {
         tr.className = index % 2 === 0 ? 'bg-white' : 'bg-gray-50';
         if (item?.__has_duplicate_warning) {
             tr.classList.add('row-duplicate-warning');
-            tr.title = 'Phat hien dong trung trong ho so nguon. BidFinder giu nguyen du lieu goc va chi hien thi canh bao.';
+            tr.title = 'Phát hiện dòng trùng trong hồ sơ nguồn. BidFinder giữ nguyên dữ liệu gốc và chỉ hiển thị cảnh báo.';
         }
         tr.dataset.rowIndex = index;
+        tr.title = item?.__has_duplicate_warning
+            ? 'Phát hiện dòng trùng. Nhấp đúp để xem chi tiết.'
+            : 'Nhấp để chọn ô, kéo để chọn vùng; nhấp đúp để xem chi tiết';
+        tr.addEventListener('dblclick', () => openLegacyRowDetail(item, configKey));
 
         const selectorTd = document.createElement('td');
         selectorTd.className = 'row-selector-cell';
@@ -471,10 +918,72 @@ function renderTableData(data, configKey) {
     syncFrozenColumns(tableId);
 }
 
+function getColumnFieldCandidates(columnName) {
+    const canonicalName = RESULT_COLUMN_ALIASES[columnName] || columnName;
+    const legacyLabels = Object.entries(LEGACY_FIELD_ALIASES)
+        .filter(([, aliases]) => aliases.includes(columnName))
+        .map(([label]) => label);
+    return [...new Set([
+        columnName,
+        canonicalName,
+        ...(LEGACY_FIELD_ALIASES[canonicalName] || []),
+        ...(LEGACY_FIELD_ALIASES[columnName] || []),
+        ...legacyLabels
+    ])];
+}
+
+function getRawColumnValue(item, colName) {
+    return getColumnFieldCandidates(colName)
+        .map(field => item?.[field])
+        .find(value => value !== undefined && value !== null && value !== '');
+}
+
+const LOCATION_PROVINCE_PREFIX_RE = /^(?:T\u1ec9nh|Th\u00e0nh ph\u1ed1|TP\.?|City)\s+/i;
+const LOCATION_LOCALITY_PREFIX_RE = /^(?:X\u00e3|Ph\u01b0\u1eddng|Th\u1ecb tr\u1ea5n|Qu\u1eadn|Huy\u1ec7n|Th\u1ecb x\u00e3)\s+/i;
+
+function reorderLocationDisplayEntry(value) {
+    const parts = String(value ?? '')
+        .split(',')
+        .map(part => part.trim())
+        .filter(Boolean);
+    if (parts.length < 2) return parts.join(', ');
+
+    const provinceIndex = parts.findIndex(part => LOCATION_PROVINCE_PREFIX_RE.test(part));
+    if (provinceIndex < 0) return parts.join(', ');
+
+    const hasLocalityAfterProvince = parts
+        .slice(provinceIndex + 1)
+        .some(part => LOCATION_LOCALITY_PREFIX_RE.test(part));
+    if (hasLocalityAfterProvince) parts.push(parts.splice(provinceIndex, 1)[0]);
+    return parts.join(', ');
+}
+
+function formatLocationDisplayValue(value) {
+    if (Array.isArray(value)) {
+        return value.map(entry => {
+            if (entry && typeof entry === 'object') {
+                const province = entry.provName || entry.provinceName || entry.cityName
+                    || entry.provCode || entry.provinceCode || entry.cityCode;
+                const locality = entry.districtName || entry.wardName || entry.communeName
+                    || entry.districtCode || entry.wardCode || entry.communeCode;
+                return [locality, province].filter(Boolean).join(', ');
+            }
+            return reorderLocationDisplayEntry(entry);
+        }).filter(Boolean).join('; ');
+    }
+    if (typeof value !== 'string') return value ?? '';
+    return value.split(';').map(reorderLocationDisplayEntry).filter(Boolean).join('; ');
+}
+
 function mapField(item, colName, fieldMappers) {
-    const formatter = fieldMappers[colName];
-    const rawValue = item[colName];
-    return formatter ? formatter(rawValue) : (rawValue ?? '');
+    const canonicalName = RESULT_COLUMN_ALIASES[colName] || colName;
+    const formatter = fieldMappers[canonicalName] || fieldMappers[colName];
+    const rawValue = getRawColumnValue(item, colName);
+    const displayValue = canonicalName === 'location'
+        ? formatLocationDisplayValue(rawValue)
+        : rawValue;
+    const value = formatter ? formatter(displayValue) : (displayValue ?? '');
+    return Array.isArray(value) ? value.join(', ') : value;
 }
 
 // Wrapper functions giữ lại interface cũ
@@ -484,6 +993,10 @@ function renderStandardData(data) {
 
 function renderExtendedData(data) {
     renderTableData(data, 'df2');
+}
+
+function renderTraditionalData(data) {
+    renderTableData(data, 'df3');
 }
 
 // ========= 2. RESIZE COLUMNS
@@ -603,7 +1116,11 @@ function syncTableWidthToColumns(table, colgroup) {
     }, 0);
 
     const scrollContainer = table.closest('.table-scroll');
-    const containerWidth = scrollContainer?.clientWidth || 0;
+    const scrollStyle = scrollContainer ? window.getComputedStyle(scrollContainer) : null;
+    const horizontalPadding =
+        (parseFloat(scrollStyle?.paddingLeft) || 0) +
+        (parseFloat(scrollStyle?.paddingRight) || 0);
+    const containerWidth = Math.max(0, (scrollContainer?.clientWidth || 0) - horizontalPadding);
     const resolvedWidth = Math.max(totalWidth, containerWidth, 0);
 
     if (resolvedWidth > 0) {
@@ -775,6 +1292,14 @@ const TABLE_MAP = {
         defaultOrder: DF2_COLUMNS_ORDER,
         renderFn: renderExtendedData,
         currentData: () => currentDisplayedDf2
+    },
+    'traditional-table': {
+        columnOrder: () => currentColumnOrderDf3,
+        setColumnOrder: (order) => { currentColumnOrderDf3 = order; },
+        storageKey: 'columnOrderDf3',
+        defaultOrder: DF3_COLUMNS_ORDER,
+        renderFn: renderTraditionalData,
+        currentData: () => currentDisplayedDf3
     }
 };
 
@@ -918,6 +1443,7 @@ const DRAG_HANDLERS = {
 // ==== 3.2. REORDER & UPDATE
 let currentFilteredDf1 = [];
 let currentFilteredDf2 = [];
+let currentFilteredDf3 = [];
 
 function getVisibleColumnOrder(tableId) {
     const config = TABLE_MAP[tableId];
@@ -935,15 +1461,170 @@ function mergeVisibleOrderIntoFullOrder(fullOrder, visibleOrder, hiddenColumns) 
 }
 
 function getTableScopeKey(tableId) {
-    return tableId === 'extended-table' ? 'df2' : 'df1';
+    if (tableId === 'extended-table') return 'df2';
+    if (tableId === 'traditional-table') return 'df3';
+    return 'df1';
+}
+
+const TABLE_QUERY_GROUPS = RESULT_TABLE_GROUPS;
+
+function getCanonicalColumnField(tableId, columnName) {
+    const group = TABLE_QUERY_GROUPS[tableId];
+    const contractFields = advancedSearchContract?.groups?.[group]?.fields || [];
+    const fieldNames = new Set(contractFields.map(field => field.name));
+    const candidates = getColumnFieldCandidates(columnName);
+    if (TABLE_DEFAULT_COLUMNS[tableId]?.includes(columnName)) return columnName;
+    if (!contractFields.length) return candidates.find(candidate => candidate !== columnName) || null;
+    const direct = candidates.find(candidate => fieldNames.has(candidate));
+    if (direct) return direct;
+
+    const labelMatch = contractFields.find(field => field.label === columnName);
+    return labelMatch?.name || null;
+}
+
+function getWorkingSetData(tableId) {
+    if (!workingSetAvailable[tableId]) return [];
+    if (tableId === 'extended-table') return orderedWorkingDf2 || serverBaseDf2;
+    if (tableId === 'traditional-table') return orderedWorkingDf3 || serverBaseDf3;
+    return orderedWorkingDf1 || serverBaseDf1;
+}
+
+function normalizeColumnFilterValue(value) {
+    return String(value ?? '').trim().toLocaleLowerCase('vi');
+}
+
+function getColumnRawValues(tableId, columnName, row) {
+    const canonical = getCanonicalColumnField(tableId, columnName);
+    const candidates = [...new Set([
+        ...getColumnFieldCandidates(canonical),
+        ...getColumnFieldCandidates(columnName)
+    ].filter(Boolean))];
+    const rawValue = candidates
+        .map(field => row?.[field])
+        .find(value => value !== undefined && value !== null && value !== '');
+    if (Array.isArray(rawValue)) return rawValue.map(value => String(value ?? '').trim());
+    return [rawValue === undefined || rawValue === null ? '' : String(rawValue).trim()];
+}
+
+function getFilteredWorkingSet(tableId, excludedColumnName = null) {
+    const filters = columnValueFilterState[tableId] || {};
+    return getWorkingSetData(tableId).filter(row => Object.entries(filters).every(([columnName, selectedValues]) => {
+        if (columnName === excludedColumnName || !(selectedValues instanceof Set)) return true;
+        const selected = new Set(Array.from(selectedValues, normalizeColumnFilterValue));
+        return getColumnRawValues(tableId, columnName, row)
+            .some(value => selected.has(normalizeColumnFilterValue(value)));
+    }));
+}
+
+function getBoundedColumnValueOptions(tableId, columnName) {
+    if (!workingSetAvailable[tableId]) return [];
+    const counts = new Map();
+    getFilteredWorkingSet(tableId, columnName).forEach(row => {
+        const seenInRow = new Set();
+        getColumnRawValues(tableId, columnName, row).forEach(rawValue => {
+            const value = String(rawValue || '').trim();
+            const key = normalizeColumnFilterValue(value);
+            if (seenInRow.has(key)) return;
+            seenInRow.add(key);
+            const current = counts.get(key) || { value, count: 0 };
+            current.count += 1;
+            counts.set(key, current);
+        });
+    });
+    return Array.from(counts.values()).sort((left, right) =>
+        left.value.localeCompare(right.value, 'vi', { numeric: true, sensitivity: 'base' })
+    );
+}
+
+function collectColumnFiltersForUrl() {
+    const grouped = {};
+    Object.entries(columnValueFilterState).forEach(([tableId, columns]) => {
+        const group = TABLE_QUERY_GROUPS[tableId];
+        const scoped = {};
+        Object.entries(columns || {}).forEach(([columnName, values]) => {
+            if (!(values instanceof Set)) return;
+            const canonical = getCanonicalColumnField(tableId, columnName);
+            if (canonical) scoped[canonical] = Array.from(values);
+        });
+        if (Object.keys(scoped).length) grouped[group] = scoped;
+    });
+    return grouped;
+}
+
+function restoreColumnFiltersFromRequest(queryRequest = {}) {
+    Object.keys(columnValueFilterState).forEach(tableId => {
+        columnValueFilterState[tableId] = {};
+    });
+
+    const raw = queryRequest?.columnFilters;
+    if (!raw || typeof raw !== 'object') return;
+    const groupKeys = new Set(Object.values(TABLE_QUERY_GROUPS));
+    const isGrouped = Object.keys(raw).some(key => groupKeys.has(key) || key === 'traditional_medicine');
+    const requestedGroup = queryRequest?.group === 'traditional_medicine'
+        ? 'traditional'
+        : queryRequest?.group;
+    const grouped = isGrouped ? raw : {
+        [TABLE_QUERY_GROUPS[Object.keys(TABLE_QUERY_GROUPS).find(tableId =>
+            TABLE_QUERY_GROUPS[tableId] === requestedGroup
+        ) || 'standard-table']]: raw
+    };
+
+    Object.entries(grouped).forEach(([group, columns]) => {
+        if (!columns || typeof columns !== 'object') return;
+        const tableId = Object.keys(TABLE_QUERY_GROUPS).find(id =>
+            TABLE_QUERY_GROUPS[id] === group
+            || (group === 'traditional_medicine' && TABLE_QUERY_GROUPS[id] === 'traditional')
+        );
+        if (!tableId) return;
+        Object.entries(columns).forEach(([canonical, values]) => {
+            if (!Array.isArray(values)) return;
+            const columnName = (TABLE_DEFAULT_COLUMNS[tableId] || [])
+                .find(name => getCanonicalColumnField(tableId, name) === canonical);
+            if (columnName) columnValueFilterState[tableId][columnName] = new Set(values.map(String));
+        });
+    });
 }
 
 function getDisplayedData(tableId) {
-    return tableId === 'extended-table' ? currentDisplayedDf2 : currentDisplayedDf1;
+    if (tableId === 'extended-table') return currentDisplayedDf2;
+    if (tableId === 'traditional-table') return currentDisplayedDf3;
+    return currentDisplayedDf1;
 }
 
-function getRawFilteredData(tableId) {
-    return tableId === 'extended-table' ? currentFilteredDf2 : currentFilteredDf1;
+function getWorkingSetPage(tableId, page) {
+    const rows = getFilteredWorkingSet(tableId);
+    const pageSize = Math.max(1, Math.min(Number(currentQueryRequest?.limit || 50), 250));
+    const offset = Math.max(0, (Math.max(1, Number(page || 1)) - 1) * pageSize);
+    return {
+        rows: rows.slice(offset, offset + pageSize),
+        total: rows.length,
+        hasMore: offset + pageSize < rows.length
+    };
+}
+
+function refreshBoundedWorkingSetViews({ page = currentQueryRequest?.page || 1, resetScroll = true, redrawCharts = true } = {}) {
+    const nextPage = Math.max(1, Number(page || 1));
+    const df1 = getWorkingSetPage('standard-table', nextPage);
+    const df2 = getWorkingSetPage('extended-table', nextPage);
+    const df3 = getWorkingSetPage('traditional-table', nextPage);
+
+    currentQueryRequest = buildQueryRequest(currentQueryRequest, { page: nextPage });
+    currentQueryMeta.page = nextPage;
+    currentQueryMeta.df1Displayed = df1.rows.length;
+    currentQueryMeta.df1WorkingCount = df1.total;
+    currentQueryMeta.df1HasMore = df1.hasMore;
+    currentQueryMeta.df2Displayed = df2.rows.length;
+    currentQueryMeta.df2WorkingCount = df2.total;
+    currentQueryMeta.df2HasMore = df2.hasMore;
+    currentQueryMeta.df3Displayed = df3.rows.length;
+    currentQueryMeta.df3WorkingCount = df3.total;
+    currentQueryMeta.df3HasMore = df3.hasMore;
+    currentFilteredDf1 = df1.rows;
+    currentFilteredDf2 = df2.rows;
+    currentFilteredDf3 = df3.rows;
+
+    refreshRenderedTables({ resetScroll, redrawCharts });
+    updateLegacyPagination();
 }
 
 function updateColumnOrder(table) {
@@ -1041,6 +1722,7 @@ function syncHeadersWithLocalStorage() {
 }
 
 function createHeaderCell(tableId, colName, index) {
+    const displayLabel = getResultColumnLabel(tableId, colName);
     const th = document.createElement('th');
     th.className = 'px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider bg-gray-100';
     th.setAttribute('draggable', 'true');
@@ -1057,7 +1739,7 @@ function createHeaderCell(tableId, colName, index) {
 
     const label = document.createElement('span');
     label.className = 'column-header-label';
-    label.textContent = colName;
+    label.textContent = displayLabel;
     headerInner.appendChild(label);
 
     const sortIndicator = document.createElement('span');
@@ -1070,7 +1752,7 @@ function createHeaderCell(tableId, colName, index) {
     menuTrigger.className = 'column-menu-trigger';
     menuTrigger.dataset.tableId = tableId;
     menuTrigger.dataset.colName = colName;
-    menuTrigger.setAttribute('aria-label', `Tuy chon cot ${colName}`);
+    menuTrigger.setAttribute('aria-label', `Tuy chon cot ${displayLabel}`);
     menuTrigger.setAttribute('aria-haspopup', 'true');
     menuTrigger.setAttribute('aria-expanded', 'false');
     const triggerText = document.createElement('span');
@@ -1089,14 +1771,66 @@ function createHeaderCell(tableId, colName, index) {
 // FILTERS
 // ============================== 
 
-const MAX_RESULTS_PER_TABLE = 200;
-const FULL_SEARCH_TOTAL_LIMIT = 1000;
 let currentQueryRequest = {
     scope: 'all',
     filters: {}
 };
 let currentAppliedPreview = null;
 let latestFilterPreview = null;
+
+function getAppliedWorkingSetLimit(tableId = null) {
+    const responseLimit = Number(currentQueryMeta.appliedLimitPerScope || 0);
+    if (Number.isFinite(responseLimit) && responseLimit > 0) return responseLimit;
+
+    if (tableId === 'standard-table') {
+        const inferredLimit = Number(currentQueryMeta.df1WorkingCount || 0);
+        return inferredLimit > 0 ? inferredLimit : Number.POSITIVE_INFINITY;
+    }
+    if (tableId === 'extended-table') {
+        const inferredLimit = Number(currentQueryMeta.df2WorkingCount || 0);
+        return inferredLimit > 0 ? inferredLimit : Number.POSITIVE_INFINITY;
+    }
+    if (tableId === 'traditional-table') {
+        const inferredLimit = Number(currentQueryMeta.df3WorkingCount || 0);
+        return inferredLimit > 0 ? inferredLimit : Number.POSITIVE_INFINITY;
+    }
+    return Number.POSITIVE_INFINITY;
+}
+
+function hasMoreRowsBeyondWorkingSet(tableId) {
+    const scopeKey = tableId === 'standard-table'
+        ? 'df1'
+        : tableId === 'extended-table'
+            ? 'df2'
+            : tableId === 'traditional-table' ? 'df3' : null;
+    if (!scopeKey) return false;
+
+    if (workingSetAvailable[tableId]) {
+        // A bounded response is authoritative.  Guard the truncation flag
+        // with the actual working-set size so a stale/legacy `has_more` value
+        // cannot enable Full Search for a complete 257-row result.
+        const workingSetCount = Number(currentQueryMeta[`${scopeKey}WorkingCount`] || 0);
+        const workingSetLimit = getAppliedWorkingSetLimit(tableId);
+        if (workingSetCount > 0 && Number.isFinite(workingSetLimit) && workingSetCount < workingSetLimit) {
+            return false;
+        }
+        return Boolean(currentQueryMeta[`${scopeKey}WorkingSetTruncated`]);
+    }
+
+    // Compatibility path for an older API response that has not yet returned
+    // `working_set`.  Never use its page-level `has_more` as the Full Search
+    // gate: it describes the visible page, not the Standard working set.
+    const rawTotal = Number(currentQueryMeta[`${scopeKey}Total`] || 0);
+    if (Number.isFinite(rawTotal)) {
+        return rawTotal > getStandardWorkingSetLimitForLegacyResponse();
+    }
+    return false;
+}
+
+function getStandardWorkingSetLimitForLegacyResponse() {
+    const reportedLimit = Number(currentQueryMeta.appliedLimitPerScope || 0);
+    return Math.max(1000, Number.isFinite(reportedLimit) ? reportedLimit : 0);
+}
 
 
 // ======== 1. APPLY
@@ -1110,7 +1844,7 @@ function buildQueryRequest(baseRequest = {}, overrides = {}) {
     };
     [
         'group', 'sourceTypes', 'text', 'searchFields', 'structuredFilters',
-        'ranges', 'dateRanges', 'exactIdentifiers', 'sort', 'page', 'limit', 'queryMode'
+        'ranges', 'dateRanges', 'exactIdentifiers', 'columnFilters', 'sort', 'page', 'limit', 'queryMode', 'crossGroupSearch', 'crossGroupSearchFields'
     ].forEach(key => {
         if (Object.prototype.hasOwnProperty.call(safeBase, key) && !Object.prototype.hasOwnProperty.call(overrides, key)) {
             request[key] = safeBase[key];
@@ -1139,6 +1873,7 @@ function hasActiveQueryFilters(queryRequest) {
     if (queryRequest.ranges && Object.keys(queryRequest.ranges).length) return true;
     if (queryRequest.dateRanges && Object.keys(queryRequest.dateRanges).length) return true;
     if (queryRequest.exactIdentifiers && Object.keys(queryRequest.exactIdentifiers).length) return true;
+    if (queryRequest.columnFilters && Object.keys(queryRequest.columnFilters).length) return true;
     if (Array.isArray(queryRequest.sort) && queryRequest.sort.length) return true;
 
     const filters = queryRequest.filters || {};
@@ -1222,8 +1957,9 @@ async function restoreFilterUrlState({ apply = true } = {}) {
     }
 
     currentQueryRequest = queryRequest;
+    restoreColumnFiltersFromRequest(queryRequest);
     if (apply) {
-        const result = await applyFilters(queryRequest);
+        const result = await applyFilters(queryRequest, { resetMiniFilters: false });
         if (result?.success) {
             const total = Number(result?.total_count || 0);
             searchForm?.setPreviewResult?.({
@@ -1244,14 +1980,13 @@ function getFullSearchQuotaState() {
         limit: Number(config.full_search_daily_limit || 0),
         used: Number(config.full_search_daily_used || 0),
         remaining: Number(config.full_search_daily_remaining || 0),
-        message: config.full_search_limit_message || 'Bạn đã dùng hết lượt full search hôm nay.'
+        message: config.full_search_limit_message || 'Bạn đã dùng hết lượt tìm kiếm mở rộng hôm nay.'
     };
 }
 
 async function fetchQueryResults(
     queryRequest,
     sortRule = activeSortRule,
-    limit = MAX_RESULTS_PER_TABLE,
     options = {}
 ) {
     await window.BIDFinderAuth?.whenReady?.();
@@ -1279,9 +2014,13 @@ async function fetchQueryResults(
         sort: Array.isArray(queryRequest?.sort) && queryRequest.sort.length
             ? queryRequest.sort
             : buildSortPayload(sortRule),
-        limit,
+        // The API treats this as display page size. Standard/Full working-set
+        // limits are selected server-side from searchMode.
+        limit: Math.max(1, Math.min(Number(queryRequest?.limit || 50), 250)),
         page: Number(queryRequest?.page || 1),
         queryMode: queryRequest?.queryMode || 'search',
+        crossGroupSearch: queryRequest?.crossGroupSearch === true,
+        crossGroupSearchFields: queryRequest?.crossGroupSearchFields || [],
         searchMode
     };
 
@@ -1328,7 +2067,9 @@ async function fetchQueryPreview(queryRequest, signal = null) {
             structuredFilters: queryRequest?.structuredFilters || {},
             ranges: queryRequest?.ranges || {},
             dateRanges: queryRequest?.dateRanges || {},
-            exactIdentifiers: queryRequest?.exactIdentifiers || {}
+            exactIdentifiers: queryRequest?.exactIdentifiers || {},
+            crossGroupSearch: queryRequest?.crossGroupSearch === true,
+            crossGroupSearchFields: queryRequest?.crossGroupSearchFields || []
         }),
         signal
     });
@@ -1435,6 +2176,10 @@ function normalizeQueryResult(result) {
             displayed: 0,
             has_more: false,
             approx_total: null,
+            working_set: [],
+            working_set_count: 0,
+            working_set_limit: 0,
+            working_set_truncated: false,
             ...(result?.df1 || {})
         },
         df2: {
@@ -1446,6 +2191,10 @@ function normalizeQueryResult(result) {
             displayed: 0,
             has_more: false,
             approx_total: null,
+            working_set: [],
+            working_set_count: 0,
+            working_set_limit: 0,
+            working_set_truncated: false,
             ...(result?.df2 || {})
         },
         df3: {
@@ -1457,6 +2206,10 @@ function normalizeQueryResult(result) {
             displayed: 0,
             has_more: false,
             approx_total: null,
+            working_set: [],
+            working_set_count: 0,
+            working_set_limit: 0,
+            working_set_truncated: false,
             ...(result?.df3 || {})
         },
         totalCount: Number(result?.total_count || 0),
@@ -1474,59 +2227,125 @@ function handleQuerySuccess(result, options = {}) {
     const normalized = normalizeQueryResult(result);
     const nextDf1 = normalized.df1.data || [];
     const nextDf2 = normalized.df2.data || [];
+    const nextDf3 = normalized.df3.data || [];
+    const hasWorkingDf1 = Array.isArray(result?.df1?.working_set);
+    const hasWorkingDf2 = Array.isArray(result?.df2?.working_set);
+    const hasWorkingDf3 = Array.isArray(result?.df3?.working_set);
+    const workingDf1 = hasWorkingDf1 ? normalized.df1.working_set : nextDf1;
+    const workingDf2 = hasWorkingDf2 ? normalized.df2.working_set : nextDf2;
+    const workingDf3 = hasWorkingDf3 ? normalized.df3.working_set : nextDf3;
 
     const totalCount = Number(normalized.totalCount || 0);
     hideLimitWarning();
 
-    serverBaseDf1 = [...nextDf1];
-    serverBaseDf2 = [...nextDf2];
+    if (!hasWorkingDf1 && !hasWorkingDf2 && !hasWorkingDf3) {
+        // Keep the Full Search gate in sync even when an older API process
+        // returns only the page payload.  Leaving the previous metadata alive
+        // makes a complete small result inherit a stale `has_more` state.
+        Object.keys(workingSetAvailable).forEach(tableId => {
+            workingSetAvailable[tableId] = false;
+        });
+        Object.assign(currentQueryMeta, {
+            df1HasMore: Boolean(normalized.df1.has_more),
+            df2HasMore: Boolean(normalized.df2.has_more),
+            df3HasMore: Boolean(normalized.df3.has_more),
+            df1Displayed: nextDf1.length,
+            df1Total: Number(normalized.df1.count || nextDf1.length || 0),
+            df1WorkingCount: 0,
+            df1WorkingSetTruncated: false,
+            df1TotalLabel: String(normalized.df1.count_label || normalized.df1.count_summary || Number(normalized.df1.count || nextDf1.length || 0).toLocaleString('vi-VN')),
+            df2Displayed: nextDf2.length,
+            df2Total: Number(normalized.df2.count || nextDf2.length || 0),
+            df2WorkingCount: 0,
+            df2WorkingSetTruncated: false,
+            df2TotalLabel: String(normalized.df2.count_label || normalized.df2.count_summary || Number(normalized.df2.count || nextDf2.length || 0).toLocaleString('vi-VN')),
+            df3Displayed: nextDf3.length,
+            df3Total: Number(normalized.df3.count || nextDf3.length || 0),
+            df3WorkingCount: 0,
+            df3WorkingSetTruncated: false,
+            df3TotalLabel: String(normalized.df3.count_label || normalized.df3.count_summary || Number(normalized.df3.count || nextDf3.length || 0).toLocaleString('vi-VN')),
+            page: Number(currentQueryRequest?.page || 1),
+            totalCount,
+            totalCountExact: Boolean(normalized.totalCountExact),
+            totalCountLabel: String(normalized.totalCountLabel || totalCount),
+            searchMode: normalized.searchMode,
+            bulkSearchMode: normalized.bulkSearchMode,
+            appliedTotalLimit: normalized.appliedTotalLimit,
+            appliedLimitPerScope: normalized.appliedLimitPerScope
+        });
+        updateResults(nextDf1, nextDf2, nextDf3, options);
+        return;
+    }
+
+    serverBaseDf1 = workingDf1;
+    serverBaseDf2 = workingDf2;
+    serverBaseDf3 = workingDf3;
+    orderedWorkingDf1 = [...workingDf1];
+    orderedWorkingDf2 = [...workingDf2];
+    orderedWorkingDf3 = [...workingDf3];
+    workingSetAvailable['standard-table'] = hasWorkingDf1;
+    workingSetAvailable['extended-table'] = hasWorkingDf2;
+    workingSetAvailable['traditional-table'] = hasWorkingDf3;
     currentQueryMeta = {
         df1HasMore: Boolean(normalized.df1.has_more),
         df2HasMore: Boolean(normalized.df2.has_more),
+        df3HasMore: Boolean(normalized.df3.has_more),
         df1Displayed: nextDf1.length,
         df1Total: Number(normalized.df1.count || nextDf1.length || 0),
+        df1WorkingCount: workingDf1.length,
+        df1WorkingSetTruncated: Boolean(normalized.df1.working_set_truncated),
         df1TotalLabel: String(normalized.df1.count_label || normalized.df1.count_summary || Number(normalized.df1.count || nextDf1.length || 0).toLocaleString('vi-VN')),
         df2Displayed: nextDf2.length,
         df2Total: Number(normalized.df2.count || nextDf2.length || 0),
+        df2WorkingCount: workingDf2.length,
+        df2WorkingSetTruncated: Boolean(normalized.df2.working_set_truncated),
         df2TotalLabel: String(normalized.df2.count_label || normalized.df2.count_summary || Number(normalized.df2.count || nextDf2.length || 0).toLocaleString('vi-VN')),
+        df3Displayed: nextDf3.length,
+        df3Total: Number(normalized.df3.count || nextDf3.length || 0),
+        df3WorkingCount: workingDf3.length,
+        df3WorkingSetTruncated: Boolean(normalized.df3.working_set_truncated),
+        df3TotalLabel: String(normalized.df3.count_label || normalized.df3.count_summary || Number(normalized.df3.count || nextDf3.length || 0).toLocaleString('vi-VN')),
+        page: Number(currentQueryRequest?.page || 1),
         totalCount,
         totalCountExact: Boolean(normalized.totalCountExact),
         totalCountLabel: String(normalized.totalCountLabel || totalCount),
         searchMode: normalized.searchMode,
         bulkSearchMode: normalized.bulkSearchMode,
-        appliedTotalLimit: normalized.appliedTotalLimit
+        appliedTotalLimit: normalized.appliedTotalLimit,
+        appliedLimitPerScope: normalized.appliedLimitPerScope
     };
 
-    updateResults(nextDf1, nextDf2, {
-        resetMiniFilters: options.resetMiniFilters !== false,
-        resetScroll: options.resetScroll !== false
+    if (options.resetMiniFilters !== false) resetMiniFilters();
+    refreshBoundedWorkingSetViews({
+        page: currentQueryRequest?.page || 1,
+        resetScroll: options.resetScroll !== false,
+        redrawCharts: true
     });
+    selectResultViewWithMostRows();
     document.dispatchEvent(new CustomEvent('bidfinder:query-result', {
         detail: { result, query: currentQueryRequest }
     }));
 }
 
 
-async function applyFilters(payload) {
-    currentQueryRequest = buildQueryRequest(payload);
+async function applyFilters(payload, options = {}) {
+    currentQueryRequest = enrichLegacyQueryRequest(payload);
     closeFloatingTableUi();
 
     console.log('Applying filters with query request:', currentQueryRequest);
 
     try {
-        const requestedLimit = Math.max(1, Math.min(
-            Number(currentQueryRequest?.limit || MAX_RESULTS_PER_TABLE),
-            MAX_RESULTS_PER_TABLE
-        ));
         const result = await fetchQueryResults(
             currentQueryRequest,
             activeSortRule,
-            requestedLimit,
             { searchMode: 'standard' }
         );
 
         if (result.success) {
-            handleQuerySuccess(result);
+            handleQuerySuccess(result, {
+                resetMiniFilters: options.resetMiniFilters !== false,
+                resetScroll: options.resetScroll !== false
+            });
             setFilterUrlState(currentQueryRequest);
             currentAppliedPreview = {
                 requestKey: stableStringify(currentQueryRequest),
@@ -1537,7 +2356,9 @@ async function applyFilters(payload) {
             throw new Error(result.error || 'Query failed');
         }
     } catch (err) {
-        console.error('Filter failed:', err);
+        const authRequired = document.getElementById('auth-modal')?.classList.contains('show') &&
+            /đăng nhập/i.test(err?.message || '');
+        (authRequired ? console.info : console.error)('Filter failed:', err);
         document.dispatchEvent(new CustomEvent('bidfinder:query-error', {
             detail: { message: err?.message || 'Không tải được kết quả.' }
         }));
@@ -1548,7 +2369,7 @@ async function applyFilters(payload) {
         resetQueryResultMeta();
         updateResults([], [], { resetMiniFilters: true });
         hideLimitWarning();
-        if (err?.message) {
+        if (err?.message && !authRequired) {
             alert(err.message);
         }
         return null;
@@ -1568,7 +2389,7 @@ async function triggerFullSearch() {
             quota_remaining: quota.remaining,
             quota_limit: quota.limit
         });
-        alert(quota.message || 'Bạn đã dùng hết lượt full search hôm nay.');
+        alert(quota.message || 'Bạn đã dùng hết lượt tìm kiếm mở rộng hôm nay.');
         return;
     }
 
@@ -1594,7 +2415,6 @@ async function triggerFullSearch() {
         const result = await fetchQueryResults(
             currentQueryRequest,
             activeSortRule,
-            FULL_SEARCH_TOTAL_LIMIT,
             { searchMode: 'full' }
         );
         if (result.success) {
@@ -1639,43 +2459,44 @@ function hideLimitWarning() {
 function resetQueryResultMeta() {
     serverBaseDf1 = [];
     serverBaseDf2 = [];
+    serverBaseDf3 = [];
+    orderedWorkingDf1 = null;
+    orderedWorkingDf2 = null;
+    orderedWorkingDf3 = null;
+    Object.keys(workingSetAvailable).forEach(tableId => {
+        workingSetAvailable[tableId] = false;
+    });
     currentAppliedPreview = null;
     latestFilterPreview = null;
     currentQueryMeta = {
         df1HasMore: false,
         df2HasMore: false,
+        df3HasMore: false,
         df1Displayed: 0,
         df1Total: 0,
+        df1WorkingCount: 0,
+        df1WorkingSetTruncated: false,
         df1TotalLabel: '0',
         df2Displayed: 0,
         df2Total: 0,
+        df2WorkingCount: 0,
+        df2WorkingSetTruncated: false,
         df2TotalLabel: '0',
+        df3Displayed: 0,
+        df3Total: 0,
+        df3WorkingCount: 0,
+        df3WorkingSetTruncated: false,
+        df3TotalLabel: '0',
+        page: 1,
         totalCount: 0,
         totalCountExact: true,
         totalCountLabel: '0',
         searchMode: 'standard',
         bulkSearchMode: 'standard',
-        appliedTotalLimit: 0
+        appliedTotalLimit: 0,
+        appliedLimitPerScope: 0
     };
-}
-
-// Helper: Update results and render
-function applyMiniFiltersToRows(tableId, rows) {
-    const activeValueFilters = Object.entries(columnValueFilterState[tableId] || {})
-        .filter(([, values]) => values instanceof Set);
-
-    if (!activeValueFilters.length) return rows;
-
-    const configKey = getTableScopeKey(tableId);
-    const config = TABLE_CONFIGS[configKey];
-    if (!config) return rows;
-
-    return rows.filter(row => {
-        return activeValueFilters.every(([columnName, values]) => {
-            const displayValue = String(mapField(row, columnName, config.fieldMappers) ?? '');
-            return values.has(displayValue);
-        });
-    });
+    updateLegacyPagination();
 }
 
 function resetMiniFilters(tableId = null) {
@@ -1695,19 +2516,23 @@ function refreshRenderedTables({ resetScroll = true, redrawCharts = true } = {})
     const preservedScrollPositions = resetScroll
         ? []
         : Array.from(
-            document.querySelectorAll('#df1-panel .table-scroll, #df2-panel .table-scroll'),
+            document.querySelectorAll('#df1-panel .table-scroll, #df2-panel .table-scroll, #df3-panel .table-scroll'),
             container => ({ container, top: container.scrollTop, left: container.scrollLeft })
         );
 
-    currentDisplayedDf1 = applyMiniFiltersToRows('standard-table', currentFilteredDf1);
-    currentDisplayedDf2 = applyMiniFiltersToRows('extended-table', currentFilteredDf2);
+    // Render the current page from the bounded working set, never from only
+    // the last 50 rows returned by the API.
+    currentDisplayedDf1 = Array.isArray(currentFilteredDf1) ? currentFilteredDf1 : [];
+    currentDisplayedDf2 = Array.isArray(currentFilteredDf2) ? currentFilteredDf2 : [];
+    currentDisplayedDf3 = Array.isArray(currentFilteredDf3) ? currentFilteredDf3 : [];
 
-    updateScopeSwitcherCounts(currentDisplayedDf1.length, currentDisplayedDf2.length);
-    updateDuplicateWarning(currentDisplayedDf1, currentDisplayedDf2);
+    updateScopeSwitcherCounts(currentDisplayedDf1.length, currentDisplayedDf2.length, currentDisplayedDf3.length);
+    updateDuplicateWarning(currentDisplayedDf1, currentDisplayedDf2, currentDisplayedDf3);
     requestAnimationFrame(syncScopeSwitcherSlider);
 
     renderStandardData(currentDisplayedDf1);
     renderExtendedData(currentDisplayedDf2);
+    renderTraditionalData(currentDisplayedDf3);
 
     if (resetScroll) {
         resetTableScrollPositions();
@@ -1719,29 +2544,94 @@ function refreshRenderedTables({ resetScroll = true, redrawCharts = true } = {})
     }
 
     if (redrawCharts) {
-        drawCharts(currentFilteredDf1, currentFilteredDf2);
+        drawCharts(currentFilteredDf1, currentFilteredDf2, currentFilteredDf3);
     }
 }
 
-function updateScopeSwitcherCounts(df1Count, df2Count) {
+function formatResultTabCount(total, fallbackLabel = '', fallbackCount = 0) {
+    const numericTotal = Number(total);
+    const numericFallback = Number(fallbackCount);
+    const rawLabel = String(fallbackLabel || '').trim();
+    const labelNumber = Number(rawLabel.replace(/[^\d]/g, ''));
+    const value = Number.isFinite(numericTotal)
+        ? numericTotal
+        : Number.isFinite(labelNumber)
+            ? labelNumber
+            : Number.isFinite(numericFallback) ? numericFallback : 0;
+
+    const rawValue = Number.isFinite(labelNumber) ? labelNumber : value;
+    if (rawLabel.includes('+') || rawValue > 1000 || value > 1000) return '1000+';
+    return String(Math.max(0, Math.floor(value)));
+}
+
+function updateScopeSwitcherCounts(df1Count, df2Count, df3Count = 0) {
     const counts = {
         'df1-panel': Number(currentQueryMeta.df1Displayed || df1Count || 0),
-        'df2-panel': Number(currentQueryMeta.df2Displayed || df2Count || 0)
+        'df2-panel': Number(currentQueryMeta.df2Displayed || df2Count || 0),
+        'df3-panel': Number(currentQueryMeta.df3Displayed || df3Count || 0)
     };
     const totalLabels = {
         'df1-panel': String(currentQueryMeta.df1TotalLabel || counts['df1-panel'].toLocaleString('vi-VN')),
-        'df2-panel': String(currentQueryMeta.df2TotalLabel || counts['df2-panel'].toLocaleString('vi-VN'))
+        'df2-panel': String(currentQueryMeta.df2TotalLabel || counts['df2-panel'].toLocaleString('vi-VN')),
+        'df3-panel': String(currentQueryMeta.df3TotalLabel || counts['df3-panel'].toLocaleString('vi-VN'))
+    };
+    const boundedTotals = {
+        'df1-panel': workingSetAvailable['standard-table']
+            ? Number(currentQueryMeta.df1WorkingCount || 0)
+            : Number(currentQueryMeta.df1Total || counts['df1-panel'] || 0),
+        'df2-panel': workingSetAvailable['extended-table']
+            ? Number(currentQueryMeta.df2WorkingCount || 0)
+            : Number(currentQueryMeta.df2Total || counts['df2-panel'] || 0),
+        'df3-panel': workingSetAvailable['traditional-table']
+            ? Number(currentQueryMeta.df3WorkingCount || 0)
+            : Number(currentQueryMeta.df3Total || counts['df3-panel'] || 0)
+    };
+    const tabTotalCounts = {
+        'df1-panel': formatResultTabCount(
+            boundedTotals['df1-panel'],
+            totalLabels['df1-panel'],
+            counts['df1-panel']
+        ),
+        'df2-panel': formatResultTabCount(
+            boundedTotals['df2-panel'],
+            totalLabels['df2-panel'],
+            counts['df2-panel']
+        ),
+        'df3-panel': formatResultTabCount(
+            boundedTotals['df3-panel'],
+            totalLabels['df3-panel'],
+            counts['df3-panel']
+        )
     };
 
     const df1CountEl = document.getElementById('df1-count-switcher');
     const df2CountEl = document.getElementById('df2-count-switcher');
-    if (df1CountEl) df1CountEl.textContent = `${counts['df1-panel'].toLocaleString('vi-VN')}/${totalLabels['df1-panel']}`;
-    if (df2CountEl) df2CountEl.textContent = `${counts['df2-panel'].toLocaleString('vi-VN')}/${totalLabels['df2-panel']}`;
+    const df3CountEl = document.getElementById('df3-count-switcher');
+    const updateTabCountElement = (element, view) => {
+        if (!element) return;
+        const label = tabTotalCounts[view];
+        const cappedMatch = /^(\d+)\+$/.exec(label);
+        if (cappedMatch) {
+            element.replaceChildren(
+                document.createTextNode(cappedMatch[1]),
+                Object.assign(document.createElement('span'), {
+                    className: 'scope-count-plus',
+                    textContent: '+'
+                })
+            );
+        } else {
+            element.textContent = label;
+        }
+        element.classList.toggle('has-value', label !== '0');
+    };
+    updateTabCountElement(df1CountEl, 'df1-panel');
+    updateTabCountElement(df2CountEl, 'df2-panel');
+    updateTabCountElement(df3CountEl, 'df3-panel');
 
     document.querySelectorAll('.scope-btn').forEach(button => {
         const view = button.getAttribute('data-view');
         const count = counts[view] || 0;
-        const countLabel = `${count.toLocaleString('vi-VN')}/${totalLabels[view] || count.toLocaleString('vi-VN')}`;
+        const countLabel = tabTotalCounts[view] || formatResultTabCount(null, totalLabels[view], count);
         button.classList.toggle('has-results', count > 0);
         button.classList.toggle('is-empty', count <= 0);
         button.dataset.count = String(count);
@@ -1749,26 +2639,30 @@ function updateScopeSwitcherCounts(df1Count, df2Count) {
     });
 }
 
-function autoSwitchToAvailableResult() {
-    const activeButton = document.querySelector('.scope-btn.active');
-    const activeView = activeButton?.getAttribute('data-view') || 'df1-panel';
-    const shouldFavorDf2 = currentDisplayedDf2.length >= Math.max(20, currentDisplayedDf1.length * 5);
-    const shouldFavorDf1 = currentDisplayedDf1.length >= Math.max(20, currentDisplayedDf2.length * 5);
+function selectResultViewWithMostRows() {
+    const resultCounts = [
+        { view: 'df2-panel', count: Number(currentQueryMeta.df2WorkingCount) || currentDisplayedDf2.length },
+        { view: 'df1-panel', count: Number(currentQueryMeta.df1WorkingCount) || currentDisplayedDf1.length },
+        { view: 'df3-panel', count: Number(currentQueryMeta.df3WorkingCount) || currentDisplayedDf3.length }
+    ];
+    const largestCount = Math.max(...resultCounts.map(({ count }) => count));
+    if (largestCount <= 0) return;
 
-    if (activeView === 'df1-panel' && currentDisplayedDf1.length === 0 && currentDisplayedDf2.length > 0) {
-        activateResultView('df2-panel', { animate: false });
-    } else if (activeView === 'df2-panel' && currentDisplayedDf2.length === 0 && currentDisplayedDf1.length > 0) {
-        activateResultView('df1-panel', { animate: false });
-    } else if (activeView === 'df1-panel' && currentDisplayedDf1.length > 0 && shouldFavorDf2) {
-        activateResultView('df2-panel', { animate: false });
-    } else if (activeView === 'df2-panel' && currentDisplayedDf2.length > 0 && shouldFavorDf1) {
-        activateResultView('df1-panel', { animate: false });
-    }
+    const activeView = document.querySelector('.scope-btn.active')?.getAttribute('data-view');
+    if (resultCounts.some(({ view, count }) => view === activeView && count === largestCount)) return;
+
+    const largestResult = resultCounts.find(({ count }) => count === largestCount);
+    if (largestResult) activateResultView(largestResult.view);
 }
 
-function updateResults(df1, df2, options = {}) {
+function updateResults(df1, df2, df3 = [], options = {}) {
+    if (typeof df3 === 'object' && !Array.isArray(df3)) {
+        options = df3;
+        df3 = [];
+    }
     currentFilteredDf1 = Array.isArray(df1) ? df1 : [];
     currentFilteredDf2 = Array.isArray(df2) ? df2 : [];
+    currentFilteredDf3 = Array.isArray(df3) ? df3 : [];
 
     if (options.resetMiniFilters) {
         closeColumnMenu();
@@ -1780,16 +2674,14 @@ function updateResults(df1, df2, options = {}) {
         redrawCharts: options.redrawCharts !== false
     });
 
-    if (options.autoSwitchToResults !== false) {
-        autoSwitchToAvailableResult();
-    }
+    selectResultViewWithMostRows();
 }
 
-function updateDuplicateWarning(df1Rows, df2Rows) {
+function updateDuplicateWarning(df1Rows, df2Rows, df3Rows = []) {
     const warningDiv = document.getElementById('duplicate-warning');
     if (!warningDiv) return;
 
-    const duplicateCount = [...(df1Rows || []), ...(df2Rows || [])]
+    const duplicateCount = [...(df1Rows || []), ...(df2Rows || []), ...(df3Rows || [])]
         .filter(row => Boolean(row?.__has_duplicate_warning))
         .length;
 
@@ -1812,7 +2704,7 @@ function updateDuplicateWarning(df1Rows, df2Rows) {
 }
 
 function resetTableScrollPositions() {
-    document.querySelectorAll('#df1-panel .table-scroll, #df2-panel .table-scroll').forEach(container => {
+    document.querySelectorAll('#df1-panel .table-scroll, #df2-panel .table-scroll, #df3-panel .table-scroll').forEach(container => {
         container.scrollTop = 0;
         container.scrollLeft = 0;
     });
@@ -2358,26 +3250,64 @@ const SORTABLE_COLUMNS = {
     ],
     physical: {
         df1: {
-            quantity: 'Số lượng',
-            drugName: 'Tên thuốc',
-            activeIngredient: 'Tên hoạt chất',
-            strength: 'Nồng độ, hàm lượng',
-            route: 'Đường dùng',
-            dosageForm: 'Dạng bào chế',
-            packaging: 'Quy cách',
-            drugGroup: 'Nhóm thuốc',
-            license: 'GĐKLH hoặc GPNK',
-            manufacturer: 'Cơ sở sản xuất'
+            ma_tbmt: 'bid_invitation_code',
+            investor: 'procuring_entity_name',
+            approvalDecision: 'decision_number',
+            approvalDate: 'decision_issued_at',
+            unit: 'unit',
+            quantity: 'quantity',
+            unitPrice: 'winning_unit_price',
+            drugName: 'medicine_name',
+            activeIngredient: 'active_ingredient_or_herbal_component',
+            strength: 'strength',
+            route: 'route_of_administration',
+            dosageForm: 'dosage_form',
+            packaging: 'packaging',
+            drugGroup: 'medicine_group',
+            license: 'marketing_authorization_or_import_permit',
+            manufacturer: 'manufacturer',
+            origin: 'production_country',
+            winner: 'winning_bidder_name',
+            method: 'selection_method',
+            place: 'location'
         },
         df2: {
-            quantity: 'Khối lượng',
-            drugName: 'Danh mục hàng hóa',
-            lotName: 'Tên phần/lô',
-            bidItem: 'Mặt hàng dự thầu',
-            brand: 'Nhãn hiệu',
-            model: 'Ký mã hiệu',
-            technicalSpec: 'Tính năng kỹ thuật',
-            manufacturer: 'Hãng sản xuất'
+            ma_tbmt: 'bid_invitation_code',
+            investor: 'procuring_entity_name',
+            approvalDecision: 'decision_number',
+            approvalDate: 'decision_issued_at',
+            unit: 'unit',
+            quantity: 'quantity',
+            unitPrice: 'winning_unit_price',
+            drugName: 'item_name',
+            brand: 'brand',
+            model: 'model_mark',
+            technicalSpec: 'technical_specification',
+            manufacturer: 'manufacturer',
+            origin: 'country_of_origin',
+            winner: 'winning_bidder_name',
+            method: 'selection_method',
+            place: 'location'
+        },
+        df3: {
+            ma_tbmt: 'bid_invitation_code',
+            investor: 'procuring_entity_name',
+            approvalDecision: 'decision_number',
+            approvalDate: 'decision_issued_at',
+            unit: 'unit',
+            quantity: 'quantity',
+            unitPrice: 'winning_unit_price',
+            drugName: 'item_name',
+            activeIngredient: 'scientific_name',
+            route: 'processing_method',
+            packaging: 'packaging',
+            drugGroup: 'technical_group',
+            license: 'registration_or_import_permit_number',
+            manufacturer: 'manufacturer',
+            origin: 'origin',
+            winner: 'winning_bidder_name',
+            method: 'selection_method',
+            place: 'location'
         }
     }
 };
@@ -2563,22 +3493,23 @@ function sortRowsLocally(rows, scopeKey, sortRule = activeSortRule) {
 }
 
 function applyClientSideSort({ preserveMiniFilters = true } = {}) {
-    currentFilteredDf1 = activeSortRule
-        ? sortRowsLocally(serverBaseDf1, 'df1', activeSortRule)
-        : [...serverBaseDf1];
-    currentFilteredDf2 = activeSortRule
-        ? sortRowsLocally(serverBaseDf2, 'df2', activeSortRule)
-        : [...serverBaseDf2];
+    orderedWorkingDf1 = activeSortRule ? sortRowsLocally(serverBaseDf1, 'df1', activeSortRule) : null;
+    orderedWorkingDf2 = activeSortRule ? sortRowsLocally(serverBaseDf2, 'df2', activeSortRule) : null;
+    orderedWorkingDf3 = activeSortRule ? sortRowsLocally(serverBaseDf3, 'df3', activeSortRule) : null;
 
     if (!preserveMiniFilters) {
         closeColumnMenu();
         resetMiniFilters();
     }
 
-    refreshRenderedTables({
-        resetScroll: false,
-        redrawCharts: true
-    });
+    if (Object.values(workingSetAvailable).some(Boolean)) {
+        refreshBoundedWorkingSetViews({ resetScroll: false, redrawCharts: true });
+    } else {
+        refreshRenderedTables({
+            resetScroll: false,
+            redrawCharts: true
+        });
+    }
     syncAllHeaderDecorations();
 }
 
@@ -2680,7 +3611,6 @@ async function applyActiveSortRule({ preserveMiniFilters = true } = {}) {
         const result = await fetchQueryResults(
             currentQueryRequest,
             activeSortRule,
-            currentQueryMeta.searchMode === 'full' ? FULL_SEARCH_TOTAL_LIMIT : MAX_RESULTS_PER_TABLE,
             { searchMode: currentQueryMeta.searchMode }
         );
         if (result.success) {
@@ -2811,42 +3741,107 @@ function createColumnMenuActionButton({
 }
 
 function getDistinctColumnValues(tableId, columnName) {
-    const configKey = getTableScopeKey(tableId);
-    const config = TABLE_CONFIGS[configKey];
-    const rows = tableId === 'standard-table' ? currentFilteredDf1 : currentFilteredDf2;
-    if (!config || !Array.isArray(rows)) return [];
-
-    return Array.from(new Set(rows.map(row => (
-        String(mapField(row, columnName, config.fieldMappers) ?? '')
-    )))).sort((a, b) => a.localeCompare(b, 'vi', { numeric: true, sensitivity: 'base' }));
+    return getBoundedColumnValueOptions(tableId, columnName)
+        .map(option => option.value)
+        .sort((a, b) => a.localeCompare(b, 'vi', { numeric: true, sensitivity: 'base' }));
 }
 
 function applyColumnValueFilterFromMenu(menu, tableId, columnName) {
-    const distinctValues = getDistinctColumnValues(tableId, columnName);
-    const selectedValues = new Set(Array.from(
-        menu.querySelectorAll('.column-value-filter-checkbox:not([data-role="all"]):checked')
-    ).map(checkbox => decodeColumnName(checkbox.dataset.value)));
+    const facetOptions = getBoundedColumnValueOptions(tableId, columnName);
+    const draft = menu?.querySelector('.column-value-list')?.columnFilterDraft;
+    if (!draft) return;
+    const distinctValues = facetOptions.map(option => option.value);
+    const selectedValues = Array.from(draft.selectedKeys)
+        .map(key => draft.valuesByKey.get(key))
+        .filter(value => value !== undefined);
 
-    if (selectedValues.size === distinctValues.length) {
+    if (selectedValues.length === distinctValues.length) {
         delete columnValueFilterState[tableId][columnName];
     } else {
-        columnValueFilterState[tableId][columnName] = selectedValues;
+        columnValueFilterState[tableId][columnName] = new Set(selectedValues);
     }
 
     syncHeaderDecorations(tableId);
     closeColumnMenu();
-    refreshRenderedTables({ resetScroll: false, redrawCharts: false });
+    currentQueryRequest = buildQueryRequest(currentQueryRequest, {
+        page: 1,
+        columnFilters: collectColumnFiltersForUrl()
+    });
+    getProcurementSearchForm()?.setPage?.(1);
+    refreshBoundedWorkingSetViews({ page: 1, resetScroll: false, redrawCharts: true });
+    setFilterUrlState(currentQueryRequest);
 }
 
-function renderColumnMenu(tableId, columnName) {
+const MAX_COLUMN_VALUES_RENDERED = 250;
+
+function getMatchingColumnValueOptions(facetOptions, searchTerm = '') {
+    const normalizedSearch = String(searchTerm || '').trim().toLocaleLowerCase('vi');
+    return facetOptions.filter(option => (
+        !normalizedSearch
+        || String(option.value || '(Trống)').toLocaleLowerCase('vi').includes(normalizedSearch)
+    ));
+}
+
+function renderColumnValueOptions(valueList, facetOptions, draft, searchTerm = '') {
+    valueList.replaceChildren();
+    const normalizedSearch = String(searchTerm || '').trim().toLocaleLowerCase('vi');
+    const matchingOptions = getMatchingColumnValueOptions(facetOptions, searchTerm);
+    const visibleOptions = matchingOptions.slice(0, MAX_COLUMN_VALUES_RENDERED);
+
+    const selectAll = document.createElement('label');
+    selectAll.className = 'column-value-option is-select-all';
+    const selectAllCheckbox = document.createElement('input');
+    selectAllCheckbox.type = 'checkbox';
+    selectAllCheckbox.className = 'column-value-filter-checkbox';
+    selectAllCheckbox.dataset.role = 'all';
+    selectAllCheckbox.checked = draft.selectedKeys.size === draft.valuesByKey.size;
+    selectAllCheckbox.indeterminate = draft.selectedKeys.size > 0 && draft.selectedKeys.size < draft.valuesByKey.size;
+    const selectAllLabel = document.createElement('span');
+    selectAllLabel.textContent = '(Chọn tất cả)';
+    selectAll.append(selectAllCheckbox, selectAllLabel);
+    valueList.appendChild(selectAll);
+
+    visibleOptions.forEach(({ value, count }) => {
+        const option = document.createElement('label');
+        option.className = 'column-value-option';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'column-value-filter-checkbox';
+        checkbox.dataset.value = encodeColumnName(value);
+        checkbox.checked = draft.selectedKeys.has(normalizeColumnFilterValue(value));
+        const label = document.createElement('span');
+        label.textContent = value || '(Trống)';
+        label.title = label.textContent;
+        const countLabel = document.createElement('small');
+        countLabel.className = 'column-value-count';
+        countLabel.textContent = Number.isFinite(count) ? count.toLocaleString('vi-VN') : '';
+        option.append(checkbox, label, countLabel);
+        valueList.appendChild(option);
+    });
+
+    if (!visibleOptions.length) {
+        const empty = document.createElement('div');
+        empty.className = 'column-value-empty';
+        empty.textContent = normalizedSearch ? 'Không tìm thấy giá trị phù hợp' : 'Không có giá trị trong kết quả hiện tại';
+        valueList.appendChild(empty);
+    } else if (visibleOptions.length < matchingOptions.length) {
+        const hint = document.createElement('div');
+        hint.className = 'column-value-empty';
+        hint.textContent = 'Nhập từ khóa để tìm thêm giá trị';
+        valueList.appendChild(hint);
+    }
+}
+
+function renderColumnMenuShell(tableId, columnName) {
     const sortState = getSortStateForColumn(tableId, columnName);
     const isWrapped = wrappedColumnsState[tableId]?.has(columnName);
     const isPinned = frozenColumnsState[tableId]?.has(columnName);
+    const displayLabel = getResultColumnLabel(tableId, columnName);
     const fragment = document.createDocumentFragment();
 
     const title = document.createElement('div');
     title.className = 'column-menu-title';
-    title.textContent = columnName;
+    title.textContent = displayLabel;
     fragment.appendChild(title);
 
     const primarySection = document.createElement('div');
@@ -2937,12 +3932,15 @@ function renderColumnMenu(tableId, columnName) {
     input.dataset.tableId = tableId;
     input.dataset.columnName = encodeColumnName(columnName);
     input.placeholder = 'Tìm kiếm';
-    input.setAttribute('aria-label', `Tìm trong các giá trị của cột ${columnName}`);
+    input.setAttribute('aria-label', `Tìm trong các giá trị của cột ${displayLabel}`);
     inputWrap.appendChild(input);
     field.appendChild(inputWrap);
     filterSection.appendChild(field);
 
-    const distinctValues = getDistinctColumnValues(tableId, columnName);
+    // Values are rendered once by renderColumnValueOptions below. Keep this
+    // shell free of a second unbounded DOM build for high-cardinality columns.
+    const facetOptions = [];
+    const distinctValues = [];
     const selectedValues = columnValueFilterState[tableId]?.[columnName];
     const valueList = document.createElement('div');
     valueList.className = 'column-value-list';
@@ -2964,7 +3962,7 @@ function renderColumnMenu(tableId, columnName) {
     selectAll.append(selectAllCheckbox, selectAllLabel);
     valueList.appendChild(selectAll);
 
-    distinctValues.forEach(value => {
+    facetOptions.forEach(({ value, count }) => {
         const option = document.createElement('label');
         option.className = 'column-value-option';
         option.dataset.searchValue = (value || '(Trống)').toLocaleLowerCase('vi');
@@ -2978,14 +3976,19 @@ function renderColumnMenu(tableId, columnName) {
         const label = document.createElement('span');
         label.textContent = value || '(Trống)';
         label.title = label.textContent;
-        option.append(checkbox, label);
+        const countLabel = document.createElement('small');
+        countLabel.className = 'column-value-count';
+        countLabel.textContent = Number.isFinite(count) ? count.toLocaleString('vi-VN') : '';
+        option.append(checkbox, label, countLabel);
         valueList.appendChild(option);
     });
 
     if (!distinctValues.length) {
         const empty = document.createElement('div');
         empty.className = 'column-value-empty';
-        empty.textContent = 'Không có giá trị';
+        empty.textContent = workingSetAvailable[tableId]
+            ? 'Không có giá trị trong kết quả hiện tại'
+            : 'Facet server chưa khả dụng cho cột này';
         valueList.appendChild(empty);
     }
 
@@ -3007,6 +4010,51 @@ function renderColumnMenu(tableId, columnName) {
     footer.append(cancelButton, applyButton);
     fragment.appendChild(footer);
 
+    return fragment;
+}
+
+function renderColumnMenu(tableId, columnName) {
+    const fragment = renderColumnMenuShell(tableId, columnName);
+    const valueList = fragment.querySelector('.column-value-list');
+    if (!valueList) return fragment;
+
+    const facetOptions = getBoundedColumnValueOptions(tableId, columnName);
+    const valuesByKey = new Map(facetOptions.map(option => [
+        normalizeColumnFilterValue(option.value),
+        option.value
+    ]));
+    const selectedValues = columnValueFilterState[tableId]?.[columnName];
+    const selectedKeys = selectedValues instanceof Set
+        ? new Set(Array.from(selectedValues, normalizeColumnFilterValue))
+        : new Set(valuesByKey.keys());
+    const draft = {
+        facetOptions,
+        valuesByKey,
+        selectedKeys
+    };
+    valueList.columnFilterDraft = draft;
+    const searchInput = fragment.querySelector('.column-mini-filter-input');
+    const rerenderValueOptions = ({ syncSelection = false } = {}) => {
+        const searchTerm = searchInput?.value || '';
+        if (syncSelection) {
+            const matchingOptions = getMatchingColumnValueOptions(draft.facetOptions, searchTerm);
+            draft.selectedKeys = searchTerm.trim()
+                ? new Set(matchingOptions.map(({ value }) => normalizeColumnFilterValue(value)))
+                : new Set(draft.valuesByKey.keys());
+        }
+        renderColumnValueOptions(valueList, draft.facetOptions, draft, searchInput?.value || '');
+    };
+    const handleSearchInput = () => {
+        rerenderValueOptions({ syncSelection: true });
+    };
+    searchInput?.addEventListener('input', handleSearchInput);
+    searchInput?.addEventListener('search', handleSearchInput);
+    searchInput?.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' || event.isComposing) return;
+        event.preventDefault();
+        event.stopPropagation();
+    });
+    rerenderValueOptions();
     return fragment;
 }
 
@@ -3124,7 +4172,7 @@ function renderColumnsPopover(tableId) {
 
         option.appendChild(createFeatherIconElement(isVisible ? 'eye' : 'eye-off', 'table-columns-icon'));
         const labelText = document.createElement('span');
-        labelText.textContent = columnName;
+        labelText.textContent = getResultColumnLabel(tableId, columnName);
         option.appendChild(labelText);
         list.appendChild(option);
     });
@@ -3330,38 +4378,23 @@ function initTableWorkspaceControls() {
         }
     });
 
-    document.addEventListener('input', (e) => {
-        const input = e.target.closest('.column-mini-filter-input');
-        if (!input) return;
-
-        const keyword = input.value.trim().toLocaleLowerCase('vi');
-        input.closest('.column-value-filter-section')
-            ?.querySelectorAll('.column-value-option:not(.is-select-all)')
-            .forEach(option => {
-                option.hidden = !String(option.dataset.searchValue || '').includes(keyword);
-            });
-    });
-
     document.addEventListener('change', (e) => {
         const valueCheckbox = e.target.closest('.column-value-filter-checkbox');
         if (valueCheckbox) {
             const valueList = valueCheckbox.closest('.column-value-list');
-
+            const draft = valueList?.columnFilterDraft;
+            if (!draft) return;
             if (valueCheckbox.dataset.role === 'all') {
-                valueList?.querySelectorAll('.column-value-filter-checkbox:not([data-role="all"])')
-                    .forEach(checkbox => { checkbox.checked = valueCheckbox.checked; });
-                valueCheckbox.indeterminate = false;
+                draft.selectedKeys = valueCheckbox.checked
+                    ? new Set(draft.valuesByKey.keys())
+                    : new Set();
             } else {
-                const valueCheckboxes = Array.from(
-                    valueList?.querySelectorAll('.column-value-filter-checkbox:not([data-role="all"])') || []
-                );
-                const selectAllCheckbox = valueList?.querySelector('[data-role="all"]');
-                if (selectAllCheckbox) {
-                    const checkedCount = valueCheckboxes.filter(checkbox => checkbox.checked).length;
-                    selectAllCheckbox.checked = checkedCount === valueCheckboxes.length;
-                    selectAllCheckbox.indeterminate = checkedCount > 0 && checkedCount < valueCheckboxes.length;
-                }
+                const key = normalizeColumnFilterValue(decodeColumnName(valueCheckbox.dataset.value));
+                if (valueCheckbox.checked) draft.selectedKeys.add(key);
+                else draft.selectedKeys.delete(key);
             }
+            const input = valueList.closest('.column-value-filter-section')?.querySelector('.column-mini-filter-input');
+            renderColumnValueOptions(valueList, draft.facetOptions, draft, input?.value || '');
             return;
         }
 
@@ -3384,74 +4417,8 @@ function initTableWorkspaceControls() {
             closeColumnMenu();
         });
     });
-    initHorizontalScrollHint();
-
     document.addEventListener('fullscreenchange', syncFullscreenButtons);
     syncFullscreenButtons();
-}
-
-function getHorizontalScrollHintElement() {
-    let hint = document.getElementById('horizontal-scroll-hint');
-    if (hint) return hint;
-
-    hint = document.createElement('div');
-    hint.id = 'horizontal-scroll-hint';
-    hint.className = 'horizontal-scroll-hint';
-    hint.setAttribute('role', 'tooltip');
-    hint.innerHTML = 'Giữ <kbd>Shift</kbd> + lăn chuột<br>để cuộn ngang bảng';
-    document.body.appendChild(hint);
-    return hint;
-}
-
-function hideHorizontalScrollHint() {
-    document.getElementById('horizontal-scroll-hint')?.classList.remove('is-visible');
-}
-
-function positionHorizontalScrollHint(hint, x, y) {
-    const width = hint.offsetWidth || 280;
-    const padding = 12;
-    const minX = (width / 2) + padding;
-    const maxX = window.innerWidth - (width / 2) - padding;
-    const nextX = Math.min(Math.max(x, minX), Math.max(minX, maxX));
-    hint.style.left = `${nextX}px`;
-    hint.style.top = `${y}px`;
-}
-
-function initHorizontalScrollHint() {
-    if (document.body.dataset.horizontalScrollHintBound === '1') return;
-    document.body.dataset.horizontalScrollHintBound = '1';
-
-    const supportsHover = window.matchMedia?.('(hover: hover) and (pointer: fine)')?.matches ?? true;
-    if (!supportsHover) return;
-
-    document.addEventListener('mousemove', (event) => {
-        const scroller = event.target.closest?.('.table-wrapper .table-scroll');
-        if (!scroller || scroller.scrollWidth <= scroller.clientWidth + 8) {
-            hideHorizontalScrollHint();
-            return;
-        }
-
-        const rect = scroller.getBoundingClientRect();
-        const scrollbarHoverBand = 24;
-        const isNearHorizontalScrollbar =
-            event.clientX >= rect.left &&
-            event.clientX <= rect.right &&
-            event.clientY >= rect.bottom - scrollbarHoverBand &&
-            event.clientY <= rect.bottom + 2;
-
-        if (!isNearHorizontalScrollbar) {
-            hideHorizontalScrollHint();
-            return;
-        }
-
-        const hint = getHorizontalScrollHintElement();
-        hint.classList.add('is-visible');
-        positionHorizontalScrollHint(hint, event.clientX, rect.bottom - 10);
-    }, { passive: true });
-
-    document.addEventListener('mouseleave', hideHorizontalScrollHint);
-    window.addEventListener('scroll', hideHorizontalScrollHint, { passive: true });
-    window.addEventListener('resize', hideHorizontalScrollHint);
 }
 
 
@@ -3609,11 +4576,21 @@ function extractProvinceFromPlace(place) {
     );
     if (matchedProvince) return matchedProvince.name;
 
-    const lastSegment = rawPlace
-        .split(',')
+    // New MSC rows may put the commune/ward before the province and may use
+    // the full administrative prefix ("Thành phố ..." instead of the old
+    // "TP. ...").  Prefer the explicitly labelled province segment before
+    // falling back to the legacy last-segment behavior.
+    const segments = rawPlace
+        .split(/[;,]/)
         .map(part => part.trim())
         .filter(Boolean)
-        .pop();
+    const provinceSegment = segments.find(part => {
+        const normalized = normalizeVietnameseText(part);
+        return /^(?:tinh|thanh pho|tp|city)\s+/.test(normalized);
+    });
+    if (provinceSegment) return provinceSegment;
+
+    const lastSegment = segments.pop();
 
     return lastSegment || rawPlace || 'Không xác định';
 }
@@ -4248,27 +5225,21 @@ function formatInsightResultSummary(counts = getInsightResultCounts()) {
     return `${totalText} bản ghi: ${df1Text} thuốc, ${df2Text} hàng hóa`;
 }
 
-function formatDockResultLine() {
-    const df1Displayed = Number(currentQueryMeta.df1Displayed || currentFilteredDf1?.length || 0);
-    const df2Displayed = Number(currentQueryMeta.df2Displayed || currentFilteredDf2?.length || 0);
-    const df1Total = String(currentQueryMeta.df1TotalLabel || Number(currentQueryMeta.df1Total || df1Displayed || 0).toLocaleString('vi-VN'));
-    const df2Total = String(currentQueryMeta.df2TotalLabel || Number(currentQueryMeta.df2Total || df2Displayed || 0).toLocaleString('vi-VN'));
-
-    return `Thuốc: ${df1Displayed.toLocaleString('vi-VN')}/${df1Total}; Hàng hóa: ${df2Displayed.toLocaleString('vi-VN')}/${df2Total}`;
-}
-
 function formatDockQuotaLine(quota = getFullSearchQuotaState()) {
     if (!quota.enabled || Number(quota.limit || 0) <= 0) {
-        return 'Full search hiện chưa khả dụng';
+        return 'Tìm kiếm mở rộng hiện chưa khả dụng';
     }
 
-    return `Bạn còn ${Number(quota.remaining || 0).toLocaleString('vi-VN')}/${Number(quota.limit || 0).toLocaleString('vi-VN')} lượt full search hôm nay`;
+    return `Bạn còn ${Number(quota.remaining || 0).toLocaleString('vi-VN')}/${Number(quota.limit || 0).toLocaleString('vi-VN')} lượt hôm nay`;
 }
 
 function canRunDockFullSearch(quota = getFullSearchQuotaState()) {
     const hasQuery = Boolean(currentQueryRequest);
-    const hasLoadedRows = Number(currentQueryMeta.df1Displayed || 0) + Number(currentQueryMeta.df2Displayed || 0) > 0;
-    const hasMoreRows = Boolean(currentQueryMeta.df1HasMore || currentQueryMeta.df2HasMore);
+    const hasLoadedRows = Number(currentQueryMeta.df1Displayed || 0)
+        + Number(currentQueryMeta.df2Displayed || 0)
+        + Number(currentQueryMeta.df3Displayed || 0) > 0;
+    const hasMoreRows = ['standard-table', 'extended-table', 'traditional-table']
+        .some(hasMoreRowsBeyondWorkingSet);
     const alreadyFullSearch = currentQueryMeta.searchMode === 'full'
         || (currentQueryMeta.searchMode === 'bulk' && currentQueryMeta.bulkSearchMode === 'full');
 
@@ -4319,14 +5290,13 @@ function updateInsightEntryPoint(totalRecords = getInsightResultCounts().total) 
         dockFullSearchButton.classList.toggle('is-empty', !quota.enabled || quota.remaining <= 0);
         if (dockFullSearchLabel) dockFullSearchLabel.textContent = Number(quota.remaining || 0).toLocaleString('vi-VN');
         const quotaText = formatDockQuotaLine(quota);
-        dockFullSearchButton.title = `Tìm kiếm toàn bộ. ${quotaText}`;
-        dockFullSearchButton.setAttribute('aria-label', `Tìm kiếm toàn bộ. ${quotaText}`);
+        setActionTooltip(dockFullSearchButton, `Tìm kiếm mở rộng. ${quotaText}`);
     }
     if (openButton) {
         openButton.disabled = !hasData;
         openButton.classList.toggle('is-disabled', !hasData);
         openButton.classList.toggle('is-open', isInsightDrawerOpen());
-        openButton.title = hasData ? `${formatDockResultLine()}. Mở phân tích trực quan` : 'Chưa có dữ liệu để phân tích';
+        setActionTooltip(openButton, 'Phân tích trực quan');
     }
 
     if (!hasData) {
@@ -4486,8 +5456,8 @@ function destroyCharts() {
     });
 }
 
-function drawCharts(df1Data, df2Data) {
-    const totalRecords = (df1Data?.length || 0) + (df2Data?.length || 0);
+function drawCharts(df1Data, df2Data, df3Data = []) {
+    const totalRecords = (df1Data?.length || 0) + (df2Data?.length || 0) + (df3Data?.length || 0);
     const noDataMsg = 'Chưa có dữ liệu. Vui lòng thực hiện tìm kiếm.';
     
     destroyCharts();
@@ -4506,7 +5476,7 @@ function drawCharts(df1Data, df2Data) {
         return;
     }
     
-    const allData = [...df1Data, ...df2Data];
+    const allData = [...df1Data, ...df2Data, ...df3Data];
     renderProvinceValueMap(allData);
     
     // Draw each chart
@@ -4582,41 +5552,6 @@ let metadata = null;
 let appDataInitialized = false;
 let historyTimelineChart = null;
 let activeHistoryRangeDays = 30;
-
-function formatDuration(seconds) {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    return `${m}m ${s.toString().padStart(2, '0')}s`;
-}
-
-function formatRelative(lastStr) {
-    const diffMs = new Date() - new Date(lastStr);
-    const diffMin = Math.round(diffMs / 60000);
-    
-    if (diffMin < 60) return `Cách đây ${diffMin} phút`;
-    
-    const diffH = Math.round(diffMin / 60);
-    if (diffH < 24) return `Cách đây ${diffH} giờ`;
-    
-    return `Cách đây ${Math.round(diffH / 24)} ngày`;
-}
-
-function getHistorySortTimestamp(run) {
-    const raw = run?.end_time || run?.start_time;
-    const parsed = raw ? Date.parse(raw) : NaN;
-    return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatHistoryDateTime(value) {
-    if (!value) return 'Chưa kết thúc';
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) return 'Chưa kết thúc';
-    return parsed.toLocaleString('vi-VN');
-}
-
-function formatHistoryBoxes(value) {
-    return Number(value || 0).toLocaleString('vi-VN');
-}
 
 function getHistoryDayKey(value) {
     const parsed = value instanceof Date ? new Date(value) : (value ? new Date(value) : null);
@@ -4696,7 +5631,7 @@ function renderHistoryTimelineChart(timeline) {
         data: {
             labels,
             datasets: [{
-                label: 'Số gói thầu được phê duyệt',
+                label: 'Số gói thầu đăng tải KQLCNT',
                 data: values,
                 borderColor: '#127495',
                 backgroundColor: gradient,
@@ -4801,11 +5736,12 @@ function showHistoryModal() {
     if (!requireAuthenticatedSession('login', 'metadata')) return;
 
     const modal = document.getElementById('history-modal');
-    const hasData = Array.isArray(metadata?.approval_timeline) && metadata.approval_timeline.length > 0;
+    const updateTimeline = metadata?.update_timeline || [];
+    const hasData = Array.isArray(updateTimeline) && updateTimeline.length > 0;
     updateHistoryRangeButtons();
     
     if (hasData) {
-        renderHistoryData(metadata.approval_timeline);
+        renderHistoryData(updateTimeline);
     } else {
         renderEmptyHistory();
     }
@@ -4884,6 +5820,96 @@ function applyRange(tableId){
     st.lastActive = Date.now();
     st.suppressRowClick = true;
     setBarText(tableId, getTopLeftCellText(tableId));
+}
+
+function getNavigableCellIndexes(row) {
+    return Array.from(row?.cells || [])
+        .map((cell, index) => ({ cell, index }))
+        .filter(({ cell }) => {
+            if (cell.classList.contains('row-selector-cell') || cell.classList.contains('table-empty-state')) return false;
+            return !cell.hidden && window.getComputedStyle(cell).display !== 'none';
+        })
+        .map(({ index }) => index);
+}
+
+function moveTableActiveCell(tableId, rowDelta, columnDelta, extendRange = false) {
+    const table = document.getElementById(tableId);
+    const state = tableSel[tableId];
+    const rows = table?.tBodies?.[0]?.rows || [];
+    if (!table || !state?.end || !rows.length) return false;
+
+    const current = state.end;
+    const currentRow = rows[current.rowIndex];
+    const currentIndexes = getNavigableCellIndexes(currentRow);
+    if (!currentRow || !currentIndexes.includes(current.colIndex)) return false;
+
+    const targetRowIndex = Math.max(0, Math.min(rows.length - 1, current.rowIndex + rowDelta));
+    const targetRow = rows[targetRowIndex];
+    const targetIndexes = getNavigableCellIndexes(targetRow);
+    if (!targetIndexes.length) return false;
+
+    let targetColIndex = current.colIndex;
+    if (columnDelta) {
+        const currentPosition = currentIndexes.indexOf(current.colIndex);
+        const targetPosition = Math.max(0, Math.min(
+            currentIndexes.length - 1,
+            currentPosition + columnDelta,
+        ));
+        targetColIndex = currentIndexes[targetPosition];
+    }
+
+    if (!targetIndexes.includes(targetColIndex)) {
+        targetColIndex = targetIndexes.reduce((closest, index) => (
+            Math.abs(index - current.colIndex) < Math.abs(closest - current.colIndex) ? index : closest
+        ), targetIndexes[0]);
+    }
+
+    const next = { rowIndex: targetRowIndex, colIndex: targetColIndex };
+    if (extendRange) {
+        state.start = state.start || { ...state.end };
+    } else {
+        state.start = { ...next };
+    }
+    state.end = next;
+    clearRowSelection(tableId);
+    clearColumnSelection(tableId);
+    applyRange(tableId);
+
+    rows[targetRowIndex]?.cells?.[targetColIndex]?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+    return true;
+}
+
+function initTableKeyboardNavigation(tableId) {
+    const table = document.getElementById(tableId);
+    if (!table || table.dataset.keyboardNavigationBound === '1') return;
+
+    table.dataset.keyboardNavigationBound = '1';
+    table.tabIndex = 0;
+    table.addEventListener('mousedown', event => {
+        const cell = event.target.closest('td');
+        if (!cell || cell.classList.contains('row-selector-cell')) return;
+        try {
+            table.focus({ preventScroll: true });
+        } catch (_) {
+            table.focus();
+        }
+    });
+    table.addEventListener('keydown', event => {
+        const tagName = event.target?.tagName?.toLowerCase();
+        if (['input', 'select', 'textarea', 'button'].includes(tagName) || event.target?.isContentEditable) return;
+
+        const movement = {
+            ArrowUp: [-1, 0],
+            ArrowDown: [1, 0],
+            ArrowLeft: [0, -1],
+            ArrowRight: [0, 1],
+        }[event.key];
+        if (!movement || !tableSel[tableId]?.end) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        moveTableActiveCell(tableId, movement[0], movement[1], event.shiftKey);
+    });
 }
 
 function initTableRangeSelect(tableId){
@@ -5065,7 +6091,9 @@ function buildSelectionClipboardText(tableId) {
         const selectedColumns = columnOrder.filter(col => state.columns.has(col));
         if (!selectedColumns.length) return '';
 
-        const headerLine = selectedColumns.join('\t');
+        const headerLine = selectedColumns
+            .map(columnName => getResultColumnLabel(tableId, columnName))
+            .join('\t');
         const bodyLines = Array.from(table.tBodies?.[0]?.rows || []).map(row => {
             return selectedColumns
                 .map(columnName => {
@@ -5084,7 +6112,8 @@ function buildSelectionClipboardText(tableId) {
 // Formula bar
 const TABLE_BARS = {
     'standard-table': 'std-cell-value',
-    'extended-table': 'ext-cell-value'
+    'extended-table': 'ext-cell-value',
+    'traditional-table': 'trad-cell-value'
 };
 
 function setBarText(tableId, text) {
@@ -5128,7 +6157,7 @@ function resetCellSelection() {
         state.lastColumn = null;
     });
     
-    ['#std-cell-bar', '#ext-cell-bar'].forEach(selector => {
+    ['#std-cell-bar', '#ext-cell-bar', '#trad-cell-bar'].forEach(selector => {
         const bar = document.querySelector(selector);
         if (!bar) return;
         
@@ -5262,7 +6291,12 @@ function selectTableColumn(tableId, columnName, modifiers = {}) {
 
     state.lastColumn = columnIndex;
     syncSelectedColumns(tableId);
-    setBarText(tableId, Array.from(state.columns).join(' | '));
+    setBarText(
+        tableId,
+        Array.from(state.columns)
+            .map(column => getResultColumnLabel(tableId, column))
+            .join(' | '),
+    );
 }
 
 function syncWrappedColumns(tableId) {
@@ -5270,6 +6304,9 @@ function syncWrappedColumns(tableId) {
     const wrappedColumns = wrappedColumnsState[tableId];
     if (!table || !wrappedColumns) return;
 
+    table.querySelectorAll('tbody tr').forEach(row => {
+        row.classList.toggle('row-content-wrap', wrappedColumns.size > 0);
+    });
     table.querySelectorAll('.column-wrap').forEach(el => el.classList.remove('column-wrap'));
     wrappedColumns.forEach(columnName => {
         const selector = `[data-col-name="${CSS.escape(columnName)}"]`;
@@ -5361,7 +6398,7 @@ function syncFrozenColumns(tableId) {
 }
 
 function syncAllFrozenColumns() {
-    ['standard-table', 'extended-table'].forEach(syncFrozenColumns);
+    ['standard-table', 'extended-table', 'traditional-table'].forEach(syncFrozenColumns);
 }
 
 
@@ -5370,11 +6407,11 @@ function syncAllFrozenColumns() {
 // ============================== 
 let df1 = [];
 let df2 = [];
-let resultPanelSwitchTimer = null;
 
 const tableSel = {
     "standard-table": { isDown: false, start: null, end: null, text: "", lastActive: 0 },
-    "extended-table": { isDown: false, start: null, end: null, text: "", lastActive: 0 }
+    "extended-table": { isDown: false, start: null, end: null, text: "", lastActive: 0 },
+    "traditional-table": { isDown: false, start: null, end: null, text: "", lastActive: 0 }
 };
 
 function initStorageAndElements() {
@@ -5382,6 +6419,7 @@ function initStorageAndElements() {
 
     standardTbody = document.getElementById('standard-data');
     extendedTbody = document.getElementById('extended-data');
+    traditionalTbody = document.getElementById('traditional-data');
 
     syncHeadersWithLocalStorage();
     Object.keys(TABLE_MAP).forEach(initColumnSelection);
@@ -5413,7 +6451,7 @@ function initModalEvents() {
             if (!Number.isFinite(nextRange) || nextRange <= 0) return;
             activeHistoryRangeDays = nextRange;
             updateHistoryRangeButtons();
-            renderHistoryTimelineChart(metadata?.approval_timeline || []);
+            renderHistoryTimelineChart(metadata?.update_timeline || []);
         });
     });
 }
@@ -6047,12 +7085,12 @@ async function runBulkSearch(options = {}) {
     const defaultText = runButton?.textContent || 'Tra cứu';
     if (runButton) {
         runButton.disabled = true;
-        runButton.textContent = searchMode === 'full' ? 'Đang full search...' : 'Đang tra cứu...';
+        runButton.textContent = searchMode === 'full' ? 'Đang thực hiện...' : 'Đang tra cứu...';
     }
     const totalInputRows = payloads.reduce((sum, item) => sum + item.rows.length, 0);
     const runToken = ++bulkSearchRunToken;
     resetBulkDownloadUi();
-    setBulkSearchStatus(`${searchMode === 'full' ? 'Đang full search...' : 'Đang tra cứu...'}`);
+    setBulkSearchStatus(`${searchMode === 'full' ? 'Đang thực hiện...' : 'Đang tra cứu...'}`);
 
     try {
         const results = [];
@@ -6942,6 +7980,81 @@ function initFeedbackModalEvents() {
     });
 }
 
+function updateLegacyPagination() {
+    const definition = legacyDatasetDefinition();
+    const page = Math.max(1, Number(currentQueryMeta.page || currentQueryRequest?.page || 1));
+    const key = definition.resultPanel === 'df1-panel'
+        ? 'df1'
+        : definition.resultPanel === 'df2-panel' ? 'df2' : 'df3';
+    const activeTableId = definition.resultPanel === 'df1-panel'
+        ? 'standard-table'
+        : definition.resultPanel === 'df2-panel' ? 'extended-table' : 'traditional-table';
+    const pageMeta = currentQueryMeta;
+    const displayed = Number(pageMeta[`${key}Displayed`] || 0);
+    const pageSize = Math.max(1, Number(currentQueryRequest?.limit || displayed || 1));
+    const total = workingSetAvailable[activeTableId]
+        ? Number(pageMeta[`${key}WorkingCount`] || 0)
+        : Number(pageMeta[`${key}Total`] || 0);
+    const cumulativeDisplayed = Math.max(0, (page - 1) * pageSize + displayed);
+    const shownThrough = total > 0 ? Math.min(cumulativeDisplayed, total) : cumulativeDisplayed;
+    const resultLimit = getAppliedWorkingSetLimit(activeTableId);
+    const resultLimitReached = Number.isFinite(resultLimit) && cumulativeDisplayed >= resultLimit;
+    const totalLabel = workingSetAvailable[activeTableId]
+        ? total.toLocaleString('vi-VN')
+        : String(pageMeta[`${key}TotalLabel`] || displayed.toLocaleString('vi-VN'));
+    const hasMore = Boolean(pageMeta[`${key}HasMore`]);
+    const previous = document.getElementById('legacy-prev-page');
+    const next = document.getElementById('legacy-next-page');
+    const label = document.getElementById('legacy-page-label');
+    if (previous) previous.disabled = page <= 1;
+    if (next) next.disabled = !hasMore || resultLimitReached;
+    if (label) label.textContent = `Trang ${page} · ${shownThrough.toLocaleString('vi-VN')}/${totalLabel}`;
+}
+
+function initLegacyDatasetControls() {
+    const searchForm = getProcurementSearchForm();
+    if (!searchForm?.matches?.('typesense-search-form')) return;
+    searchForm.addEventListener('dataset-group-change', event => {
+        const group = normalizeLegacyDatasetGroup(event.detail?.group);
+        if (!group || !LEGACY_DATASET_GROUPS[group]) return;
+        activeLegacyDatasetGroup = group;
+        const definition = legacyDatasetDefinition(group);
+        currentQueryRequest = buildQueryRequest({ ...currentQueryRequest, filters: {} }, {
+            scope: definition.scope,
+            group,
+            sourceTypes: [],
+            columnFilters: {},
+            page: 1
+        });
+        resetQueryResultMeta();
+        updateResults([], [], [], { resetMiniFilters: true });
+        activateResultView(definition.resultPanel);
+        updateLegacyPagination();
+    });
+    initAdvancedContractControls();
+}
+
+function initLegacyPagination() {
+    document.getElementById('legacy-prev-page')?.addEventListener('click', () => {
+        const page = Math.max(1, Number(currentQueryRequest?.page || currentQueryMeta.page || 1) - 1);
+        document.dispatchEvent(new CustomEvent('bidfinder:page-request', { detail: { page } }));
+    });
+    document.getElementById('legacy-next-page')?.addEventListener('click', () => {
+        const page = Math.max(1, Number(currentQueryRequest?.page || currentQueryMeta.page || 1) + 1);
+        document.dispatchEvent(new CustomEvent('bidfinder:page-request', { detail: { page } }));
+    });
+    document.getElementById('close-legacy-row-detail')?.addEventListener('click', () => {
+        closeLegacyRowDetail();
+    });
+    document.querySelector('[data-close-legacy-row-detail]')?.addEventListener('click', () => closeLegacyRowDetail());
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && document.getElementById('legacy-row-detail')?.classList.contains('show')) {
+            closeLegacyRowDetail();
+        }
+    });
+    updateLegacyPagination();
+}
+
 function initResultViewSwitching() {
     const viewButtons = document.querySelectorAll('.scope-btn');
 
@@ -6953,7 +8066,7 @@ function initResultViewSwitching() {
     });
 }
 
-function activateResultView(targetId, { animate = true } = {}) {
+function activateResultView(targetId) {
     if (!targetId) return;
 
     const viewButtons = document.querySelectorAll('.scope-btn');
@@ -6962,7 +8075,6 @@ function activateResultView(targetId, { animate = true } = {}) {
     const activeButton = document.querySelector('.scope-btn.active');
     if (!button || activeButton === button) return;
 
-    const currentPanel = document.querySelector('.result-panel.active');
     const targetPanel = document.getElementById(targetId);
 
     viewButtons.forEach(btn => {
@@ -6975,53 +8087,8 @@ function activateResultView(targetId, { animate = true } = {}) {
     syncScopeSwitcherSlider();
 
     if (!targetPanel) return;
-    const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    if (!animate || prefersReducedMotion || !currentPanel || currentPanel === targetPanel) {
-        resultPanels.forEach(panel => panel.classList.remove('active'));
-        targetPanel.classList.add('active');
-        return;
-    }
-
-    transitionResultPanels(currentPanel, targetPanel, resultPanels);
-}
-
-function transitionResultPanels(currentPanel, targetPanel, allPanels) {
-    if (!currentPanel || !targetPanel || currentPanel === targetPanel) return;
-
-    if (resultPanelSwitchTimer) {
-        window.clearTimeout(resultPanelSwitchTimer);
-        resultPanelSwitchTimer = null;
-    }
-
-    currentPanel.animate(
-        [
-            { opacity: 1, transform: 'translateY(0px)' },
-            { opacity: 0, transform: 'translateY(6px)' }
-        ],
-        {
-            duration: 150,
-            easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
-            fill: 'forwards'
-        }
-    );
-
-    resultPanelSwitchTimer = window.setTimeout(() => {
-        allPanels.forEach(panel => panel.classList.remove('active'));
-        targetPanel.classList.add('active');
-
-        targetPanel.animate(
-            [
-                { opacity: 0, transform: 'translateY(6px)' },
-                { opacity: 1, transform: 'translateY(0px)' }
-            ],
-            {
-                duration: 180,
-                easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
-                fill: 'both'
-            }
-        );
-        resultPanelSwitchTimer = null;
-    }, 120);
+    resultPanels.forEach(panel => panel.classList.remove('active'));
+    targetPanel.classList.add('active');
 }
 
 function syncScopeSwitcherSlider() {
@@ -7053,20 +8120,26 @@ function generateExportFilename(suffix = '') {
     return `DuLieuTrungThau${suffix ? `_${suffix}` : ''}_${timestamp}.xlsx`;
 }
 
-function prepareExportData(data, headerOrder, currentOrder) {
-    return reorderDataByColumns(data, headerOrder || currentOrder)
-        .map(row => ({
-            ...row,
-            'Ngày phê duyệt': formatDateForExcel(row['Ngày phê duyệt']),
-            'Ngày hết hiệu lực': formatDateForExcel(row['Ngày hết hiệu lực'])
-        }));
+function prepareExportData(data, headerOrder, currentOrder, tableId) {
+    const columnOrder = headerOrder || currentOrder || [];
+    const configKey = tableId === 'extended-table'
+        ? 'df2'
+        : tableId === 'traditional-table' ? 'df3' : 'df1';
+    const fieldMappers = TABLE_CONFIGS[configKey]?.fieldMappers || {};
+    return data.map(row => Object.fromEntries(columnOrder.map(columnName => {
+        // Export the same display value as the table, including location
+        // ordering and bidder-count rounding.
+        const value = mapField(row, columnName, fieldMappers);
+        return [getResultColumnLabel(tableId, columnName), value ?? ''];
+    })));
 }
 
-function buildExportWorksheet(data, headerOrder, currentOrder) {
+function buildExportWorksheet(data, headerOrder, currentOrder, tableId) {
     const cleanHeaderOrder = (headerOrder || currentOrder || []).filter(col => col !== 'STT');
-    const preparedData = prepareExportData(data, cleanHeaderOrder, currentOrder);
+    const exportHeaders = cleanHeaderOrder.map(columnName => getResultColumnLabel(tableId, columnName));
+    const preparedData = prepareExportData(data, cleanHeaderOrder, currentOrder, tableId);
     const ws = XLSX.utils.json_to_sheet(preparedData, {
-        header: cleanHeaderOrder,
+        header: exportHeaders,
         origin: 'A3'
     });
 
@@ -7086,11 +8159,13 @@ function exportTableToExcel(tableId) {
 
     const sheetName = tableId === 'extended-table'
         ? 'Kết quả mua sắm hàng hóa'
-        : 'Kết quả mua sắm thuốc';
-    const filenameSuffix = tableId === 'extended-table' ? 'HangHoa' : 'Thuoc';
+        : tableId === 'traditional-table' ? 'Kết quả mua sắm dược liệu' : 'Kết quả mua sắm thuốc';
+    const filenameSuffix = tableId === 'extended-table'
+        ? 'HangHoa'
+        : tableId === 'traditional-table' ? 'DuocLieu' : 'Thuoc';
     const headerOrder = getVisibleColumnOrder(tableId);
     const wb = XLSX.utils.book_new();
-    const ws = buildExportWorksheet(tableData, headerOrder, TABLE_MAP[tableId]?.columnOrder?.() || headerOrder);
+    const ws = buildExportWorksheet(tableData, headerOrder, TABLE_MAP[tableId]?.columnOrder?.() || headerOrder, tableId);
 
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
 
@@ -7136,20 +8211,40 @@ function initSearchFormEvents() {
     });
     
     searchForm.addEventListener('reset-filters', () => {
-        currentQueryRequest = { scope: 'all', filters: {} };
+        const dataset = getLegacyDatasetRequest();
+        currentQueryRequest = { ...dataset, filters: {}, columnFilters: {}, page: 1 };
+        enableLegacyDatasetSearch();
         clearFilterUrlState();
         resetQueryResultMeta();
-        updateResults([], [], { resetMiniFilters: true });
+        updateResults([], [], [], { resetMiniFilters: true });
         document.dispatchEvent(new CustomEvent('bidfinder:query-reset'));
         hideLimitWarning();
     });
 
     document.addEventListener('bidfinder:page-request', async event => {
         const page = Math.max(1, Number(event.detail?.page || 1));
+        const currentPage = Math.max(1, Number(currentQueryRequest?.page || currentQueryMeta.page || 1));
+        const pageSize = Math.max(1, Number(currentQueryRequest?.limit || 1));
+        const activePanel = legacyDatasetDefinition().resultPanel;
+        const activeTableId = activePanel === 'df1-panel'
+            ? 'standard-table'
+            : activePanel === 'df2-panel' ? 'extended-table' : 'traditional-table';
+        if (workingSetAvailable[activeTableId]) {
+            currentQueryRequest = buildQueryRequest(currentQueryRequest, { page });
+            searchForm.setPage?.(page);
+            refreshBoundedWorkingSetViews({ page, resetScroll: false, redrawCharts: true });
+            setFilterUrlState(currentQueryRequest);
+            return;
+        }
+        const resultLimit = getAppliedWorkingSetLimit(activeTableId);
+        if (page > currentPage && Number.isFinite(resultLimit) && (page - 1) * pageSize >= resultLimit) {
+            updateLegacyPagination();
+            return;
+        }
         const nextRequest = buildQueryRequest(currentQueryRequest, { page });
         searchForm.setPage?.(page);
         try {
-            await applyFilters(nextRequest);
+            await applyFilters(nextRequest, { resetMiniFilters: false, resetScroll: false });
         } finally {
             searchForm.setApplyLoading?.(false);
         }
@@ -7170,8 +8265,9 @@ function initSearchFormEvents() {
             await waitForWarmupWithUi(searchForm, controller.signal);
             if (requestId !== previewRequestId || controller.signal.aborted) return;
 
+            const previewRequest = enrichLegacyQueryRequest(e.detail);
             const result = await fetchQueryPreview(
-                buildQueryRequest(e.detail),
+                previewRequest,
                 controller.signal
             );
             if (requestId !== previewRequestId) return;
@@ -7182,7 +8278,7 @@ function initSearchFormEvents() {
                 exact: Boolean(result?.exact)
             };
             latestFilterPreview = {
-                requestKey: stableStringify(buildQueryRequest(e.detail)),
+                requestKey: stableStringify(previewRequest),
                 payload: previewPayload
             };
             searchForm.setPreviewResult?.(previewPayload);
@@ -7364,7 +8460,7 @@ function getProductJourneySteps() {
         },
         {
             title: 'Cụm chức năng chính',
-            body: 'Xem lịch sử cập nhật, tra cứu hàng loạt từ file Excel hoặc tra cứu nâng cao.',
+            body: 'Xem lịch sử cập nhật, tra cứu hàng loạt từ file Excel hoặc tìm kiếm nâng cao.',
             selector: '.workspace-actions',
             placement: 'bottom',
             before: closeJourneySurfaces
@@ -7389,23 +8485,23 @@ function getProductJourneySteps() {
             afterClick: openBulkForJourney
         },
         {
-            title: 'Tra cứu nâng cao',
-            body: 'Tra cứu với bộ lọc nâng cao.',
-            afterTitle: 'Tra cứu nâng cao',
-            afterBody: 'Tra cứu với bộ lọc nâng cao.',
+            title: 'Tìm kiếm nâng cao',
+            body: 'Tìm kiếm với bộ lọc nâng cao.',
+            afterTitle: 'Tìm kiếm nâng cao',
+            afterBody: 'Tìm kiếm với bộ lọc nâng cao.',
             selector: '#open-filter-panel',
             focusAfterSelector: '#filter-panel',
             before: closeJourneySurfaces,
             afterClick: openFilterForJourney
         },
         {
-            title: 'Thuốc và hàng hóa',
-            body: 'Kết quả tìm kiếm được phân loại theo 02 biểu mẫu: Thuốc và Hàng hóa.',
+            title: 'Ba nhóm dữ liệu',
+            body: 'Kết quả tìm kiếm được phân loại theo ba nhóm: Hàng hóa, Thuốc và Dược liệu / Vị thuốc cổ truyền.',
             selector: '#data-view-switcher .result-table-tab-list',
             placement: 'bottom',
             before: () => {
                 closeJourneySurfaces();
-                activateResultView('df1-panel', { animate: false });
+                activateResultView('df1-panel');
             }
         },
         {
@@ -7846,12 +8942,90 @@ function initProductJourney() {
 
 
 
-function disableDefaultTooltips() {
-    document.querySelectorAll('.action-btn, .btn-meta-simple')
-        .forEach(button => {
-            button.removeAttribute('title');
-            button.removeAttribute('data-title');
-        });
+let actionTooltipElement = null;
+let actionTooltipAnchor = null;
+
+function getActionTooltipElement() {
+    if (actionTooltipElement) return actionTooltipElement;
+    actionTooltipElement = document.createElement('div');
+    actionTooltipElement.className = 'bf-action-tooltip';
+    actionTooltipElement.id = 'bf-action-tooltip';
+    actionTooltipElement.setAttribute('role', 'tooltip');
+    actionTooltipElement.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(actionTooltipElement);
+    return actionTooltipElement;
+}
+
+function positionActionTooltip() {
+    if (!actionTooltipElement || !actionTooltipAnchor || !actionTooltipElement.classList.contains('is-visible')) return;
+
+    const anchorRect = actionTooltipAnchor.getBoundingClientRect();
+    const tooltipRect = actionTooltipElement.getBoundingClientRect();
+    const viewportMargin = 10;
+    const gap = 8;
+    const centeredLeft = anchorRect.left + (anchorRect.width - tooltipRect.width) / 2;
+    const left = Math.max(
+        viewportMargin,
+        Math.min(centeredLeft, window.innerWidth - tooltipRect.width - viewportMargin)
+    );
+    const aboveTop = anchorRect.top - tooltipRect.height - gap;
+    const belowTop = anchorRect.bottom + gap;
+    const top = aboveTop >= viewportMargin || belowTop + tooltipRect.height > window.innerHeight - viewportMargin
+        ? Math.max(viewportMargin, aboveTop)
+        : belowTop;
+
+    actionTooltipElement.style.left = `${left}px`;
+    actionTooltipElement.style.top = `${top}px`;
+}
+
+function showActionTooltip(button) {
+    if (!button?.dataset.title) return;
+    const tooltip = getActionTooltipElement();
+    actionTooltipAnchor = button;
+    tooltip.textContent = button.dataset.title;
+    tooltip.setAttribute('aria-hidden', 'false');
+    tooltip.classList.add('is-visible');
+    button.setAttribute('aria-describedby', tooltip.id);
+    positionActionTooltip();
+}
+
+function hideActionTooltip(button) {
+    if (actionTooltipAnchor !== button || !actionTooltipElement) return;
+    actionTooltipElement.classList.remove('is-visible');
+    actionTooltipElement.setAttribute('aria-hidden', 'true');
+    button.removeAttribute('aria-describedby');
+    actionTooltipAnchor = null;
+}
+
+function setActionTooltip(button, label) {
+    if (!button || !label) return;
+    button.setAttribute('aria-label', label);
+    button.dataset.title = label;
+    button.removeAttribute('title');
+    if (actionTooltipAnchor === button && actionTooltipElement) {
+        actionTooltipElement.textContent = label;
+        positionActionTooltip();
+    }
+}
+
+function initActionTooltips() {
+    const tooltipTargets = document.querySelectorAll(
+        '.action-btn, .btn-meta-simple, .full-search-credit, .app-icon-btn'
+    );
+    tooltipTargets.forEach(button => {
+        const label = button.getAttribute('aria-label')
+            || button.getAttribute('title')
+            || button.dataset.title;
+        setActionTooltip(button, label);
+        if (button.dataset.tooltipBound === 'true') return;
+        button.dataset.tooltipBound = 'true';
+        button.addEventListener('mouseenter', () => showActionTooltip(button));
+        button.addEventListener('mouseleave', () => hideActionTooltip(button));
+        button.addEventListener('focusin', () => showActionTooltip(button));
+        button.addEventListener('focusout', () => hideActionTooltip(button));
+    });
+    window.addEventListener('resize', positionActionTooltip);
+    window.addEventListener('scroll', positionActionTooltip, true);
 }
 
 async function initializeAppData() {
@@ -7893,6 +9067,7 @@ async function initializeAppData() {
 function initTableRangeSelection() {
     Object.keys(tableSel).forEach(tableId => {
         initTableRangeSelect(tableId);
+        initTableKeyboardNavigation(tableId);
         initRowSelection(tableId);
         initColumnSelection(tableId);
     });
@@ -7911,9 +9086,11 @@ document.addEventListener('DOMContentLoaded', function() {
     initInsightDrawerEvents();
     initProductJourney();
     initResultViewSwitching();
+    initLegacyDatasetControls();
+    initLegacyPagination();
     initSearchFormEvents();
     initFilterUrlEvents();
-    disableDefaultTooltips();
+    initActionTooltips();
     initGlobalKeyboardShortcuts();
     initializeAppData();
     syncScopeSwitcherSlider();

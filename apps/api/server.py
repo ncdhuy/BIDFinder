@@ -1,7 +1,7 @@
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Literal
+from typing import Optional, List, Dict, Any, Literal, Mapping
 import time
 import copy
 import hashlib
@@ -11,18 +11,21 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import asyncio
 import asyncpg
+import ipaddress
 import json
 import os
 import ssl
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from urllib.request import Request as URLRequest, urlopen
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=False)
 
@@ -138,7 +141,25 @@ ANONYMOUS_ACCESS_LEVEL = normalize_anonymous_access_level(
         "none" if LEGACY_AUTH_REQUIRED_FOR_DATA_ACCESS else "preview",
     )
 )
-TRUST_PROXY_HEADERS = get_env_flag("TRUST_PROXY_HEADERS", False)
+PUBLIC_URL = os.getenv("BIDFINDER_PUBLIC_URL", "").strip()
+try:
+    _public_url = urlsplit(PUBLIC_URL)
+    PUBLIC_ORIGIN = (
+        f"{_public_url.scheme}://{_public_url.netloc}"
+        if _public_url.scheme and _public_url.netloc
+        else ""
+    )
+    PUBLIC_HOSTNAME = _public_url.hostname or ""
+except ValueError:
+    PUBLIC_ORIGIN = ""
+    PUBLIC_HOSTNAME = ""
+
+TRUST_PROXY_HEADERS = get_env_flag("TRUST_PROXY_HEADERS", bool(PUBLIC_ORIGIN))
+TRUSTED_PROXY_IPS = {
+    ipaddress.ip_address(value.strip())
+    for value in os.getenv("TRUSTED_PROXY_IPS", "127.0.0.1,::1").split(",")
+    if value.strip()
+}
 ANONYMOUS_AUTOCOMPLETE_ENABLED = get_env_flag(
     "ANONYMOUS_AUTOCOMPLETE_ENABLED",
     ANONYMOUS_ACCESS_LEVEL in {"preview", "full"},
@@ -178,10 +199,21 @@ ALLOWED_ORIGINS = [
         [
             os.getenv("ALLOWED_ORIGINS", ",".join(DEFAULT_ALLOWED_ORIGINS)),
             FRONTEND_URL,
+            PUBLIC_ORIGIN,
         ]
     ).split(",")
     if origin.strip()
 ]
+CONFIGURED_ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv("BIDFINDER_ALLOWED_HOSTS", "").split(",")
+    if host.strip()
+]
+ALLOWED_HOSTS = CONFIGURED_ALLOWED_HOSTS or (
+    ["localhost", "127.0.0.1", "::1", PUBLIC_HOSTNAME]
+    if PUBLIC_HOSTNAME
+    else ["*"]
+)
 RATE_LIMIT_WINDOW_SECONDS = get_env_int("RATE_LIMIT_WINDOW_SECONDS", 60, minimum=10)
 QUERY_RATE_LIMIT_PER_MINUTE = get_env_int("QUERY_RATE_LIMIT_PER_MINUTE", 30, minimum=1)
 AUTOCOMPLETE_RATE_LIMIT_PER_MINUTE = get_env_int("AUTOCOMPLETE_RATE_LIMIT_PER_MINUTE", 120, minimum=1)
@@ -201,8 +233,12 @@ ADMIN_EMAILS = {
     for email in os.getenv("ADMIN_EMAILS", "").split(",")
     if email.strip()
 }
-DEFAULT_QUERY_LIMIT = get_env_int("DEFAULT_QUERY_LIMIT", 200, minimum=50)
-MAX_QUERY_LIMIT = get_env_int("MAX_QUERY_LIMIT", 1000, minimum=DEFAULT_QUERY_LIMIT)
+# Standard and Full Search ceilings are configurable through the environment,
+# while remaining inside the product's supported bounds.
+DEFAULT_QUERY_LIMIT = get_env_int("DEFAULT_QUERY_LIMIT", 1000, minimum=1000, maximum=5000)
+MAX_QUERY_LIMIT = get_env_int("MAX_QUERY_LIMIT", 5000, minimum=DEFAULT_QUERY_LIMIT, maximum=5000)
+DEFAULT_QUERY_PAGE_SIZE = 50
+MAX_QUERY_PAGE_SIZE = 250
 BULK_EXPORT_QUERY_LIMIT = 1000
 FULL_SEARCH_DAILY_LIMIT = get_env_int("FULL_SEARCH_DAILY_LIMIT", 3, minimum=0)
 PREVIEW_BUCKET_LIMIT = get_env_int("PREVIEW_BUCKET_LIMIT", 100, minimum=10)
@@ -217,8 +253,27 @@ PREVIEW_CACHE_TTL_SECONDS = get_env_int("PREVIEW_CACHE_TTL_SECONDS", 15, minimum
 AUTOCOMPLETE_CACHE_TTL_SECONDS = get_env_int("AUTOCOMPLETE_CACHE_TTL_SECONDS", 20, minimum=1)
 METADATA_CACHE_TTL_SECONDS = get_env_int("METADATA_CACHE_TTL_SECONDS", 300, minimum=1)
 CACHE_MAX_ENTRIES = get_env_int("CACHE_MAX_ENTRIES", 500, minimum=50)
+MAX_REQUEST_BODY_BYTES = get_env_int(
+    "BIDFINDER_MAX_REQUEST_BODY_BYTES",
+    2 * 1024 * 1024,
+    minimum=64 * 1024,
+    maximum=10 * 1024 * 1024,
+)
+MAX_BULK_QUERY_CHILD_QUERIES = get_env_int(
+    "BIDFINDER_MAX_BULK_QUERY_CHILD_QUERIES",
+    100,
+    minimum=1,
+    maximum=500,
+)
+MAX_BULK_QUERY_FIELDS = get_env_int(
+    "BIDFINDER_MAX_BULK_QUERY_FIELDS",
+    20,
+    minimum=1,
+    maximum=100,
+)
 STANDARD_QUERY_EXACT_COUNT_ENABLED = get_env_flag("STANDARD_QUERY_EXACT_COUNT_ENABLED", False)
 SERVER_ERROR_MESSAGE = "Hệ thống đang bận hoặc gặp lỗi nội bộ. Vui lòng thử lại sau."
+SEARCH_UNAVAILABLE_MESSAGE = "Dịch vụ tìm kiếm tạm thời không khả dụng. Vui lòng thử lại sau."
 DRUG_GROUP_UNKNOWN = "UNKNOWN"
 DRUG_GROUP_CANONICAL = ("BDG", "N1", "N2", "N3", "N4", "N5")
 DRUG_GROUP_UI_OPTIONS = [
@@ -228,7 +283,7 @@ DRUG_GROUP_UI_OPTIONS = [
     {"value": "N3", "label": "Nhóm 3"},
     {"value": "N4", "label": "Nhóm 4"},
     {"value": "N5", "label": "Nhóm 5"},
-    {"value": DRUG_GROUP_UNKNOWN, "label": "Không xác định"},
+    {"value": DRUG_GROUP_UNKNOWN, "label": "Chưa xác định được"},
 ]
 APP_TIMEZONE_NAME = os.getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh").strip() or "Asia/Ho_Chi_Minh"
 try:
@@ -657,6 +712,7 @@ class FilterRequest(BaseModel):
     manufacturer: Optional[TokenFilter] = None
     country: Optional[TokenFilter] = None
     goodsKeyword: Optional[TokenFilter] = None
+    crossGroupProductKeyword: Optional[TokenFilter] = None
 
     selectionMethod: Optional[List[str]] = None
     place: Optional[List[str]] = None
@@ -682,10 +738,12 @@ class QueryRequest(BaseModel):
     dateRanges: Dict[str, Any] = Field(default_factory=dict)
     exactIdentifiers: Dict[str, Any] = Field(default_factory=dict)
     sort: Optional[List[SortRule]] = None
-    limit: int = DEFAULT_QUERY_LIMIT
+    limit: int = DEFAULT_QUERY_PAGE_SIZE
     page: int = 1
     searchMode: Literal["standard", "full"] = "standard"
     queryMode: Literal["search", "exact"] = "search"
+    crossGroupSearch: bool = False
+    crossGroupSearchFields: List[str] = Field(default_factory=list)
 
 
 class QueryPreviewRequest(BaseModel):
@@ -699,14 +757,16 @@ class QueryPreviewRequest(BaseModel):
     ranges: Dict[str, Any] = Field(default_factory=dict)
     dateRanges: Dict[str, Any] = Field(default_factory=dict)
     exactIdentifiers: Dict[str, Any] = Field(default_factory=dict)
+    crossGroupSearch: bool = False
+    crossGroupSearchFields: List[str] = Field(default_factory=list)
 
 
 class BulkQueryRequest(BaseModel):
     scope: Literal["medicine", "goods", "traditional"]
     group: Optional[Literal["goods", "medicines", "traditional", "traditional_medicine"]] = None
-    sourceTypes: List[str] = Field(default_factory=list)
-    fields: List[str] = Field(default_factory=list)
-    rows: List[Dict[str, Any]] = Field(default_factory=list)
+    sourceTypes: List[str] = Field(default_factory=list, max_length=7)
+    fields: List[str] = Field(default_factory=list, max_length=MAX_BULK_QUERY_FIELDS)
+    rows: List[Dict[str, Any]] = Field(default_factory=list, max_length=MAX_BULK_QUERY_CHILD_QUERIES)
     filters: Dict[str, Any] = Field(default_factory=dict)
     sort: List[SortRule] = Field(default_factory=list)
     page: int = 1
@@ -1059,7 +1119,13 @@ def clean_records(records):
 
 
 def get_client_ip(request: Request) -> str:
-    if TRUST_PROXY_HEADERS:
+    peer_host = getattr(request.client, "host", "") or ""
+    try:
+        trusted_peer = ipaddress.ip_address(peer_host) in TRUSTED_PROXY_IPS
+    except ValueError:
+        trusted_peer = False
+
+    if TRUST_PROXY_HEADERS and trusted_peer:
         forwarded_for = request.headers.get("x-forwarded-for", "").strip()
         if forwarded_for:
             return forwarded_for.split(",")[0].strip()
@@ -1380,6 +1446,8 @@ def normalize_drug_group_filter_values(value: Any) -> List[str]:
         "NHÓM 5": "N5",
         "KHONG XAC DINH": DRUG_GROUP_UNKNOWN,
         "KHÔNG XÁC ĐỊNH": DRUG_GROUP_UNKNOWN,
+        "CHUA XAC DINH DUOC": DRUG_GROUP_UNKNOWN,
+        "CHƯA XÁC ĐỊNH ĐƯỢC": DRUG_GROUP_UNKNOWN,
     }
     allowed = set(DRUG_GROUP_CANONICAL) | {DRUG_GROUP_UNKNOWN}
 
@@ -2129,35 +2197,52 @@ async def fetch_backend_page(
 ) -> Dict[str, Any]:
     config = procurement_backend_config()
     if not config.typesense_primary:
-        return await postgres_search_repository.search(conn, query, exact_count_enabled=exact_count_enabled)
+        page = await postgres_search_repository.search(conn, query, exact_count_enabled=exact_count_enabled)
+        return cap_standard_query_page(page, query)
     try:
+        can_use_document_lookup = bool(query.exact_identifiers) and not any((
+            query.source_types,
+            query.text,
+            query.search_fields,
+            query.filters,
+            query.structured_filters,
+            query.ranges,
+            query.date_ranges,
+        ))
         result = (
             await typesense_search_repository.exact_lookup(query)
-            if query.exact_identifiers
+            if can_use_document_lookup
             else await typesense_search_repository.search(query)
         )
-        return result.to_api_page()
+        return cap_standard_query_page(result.to_api_page(), query)
     except TypesenseShadowError as exc:
         if not (config.fallback_enabled and exc.code == SHADOW_INFRA_ERROR):
             raise
-        if conn is not None:
-            page = await asyncio.wait_for(
-                postgres_search_repository.search(conn, query, exact_count_enabled=exact_count_enabled),
-                timeout=config.fallback_timeout_seconds,
-            )
-        elif not isinstance(postgres_search_repository, PostgresSearchRepository):
-            # Preserve lightweight adapter tests that provide their own repository.
-            page = await asyncio.wait_for(
-                postgres_search_repository.search(None, query, exact_count_enabled=exact_count_enabled),
-                timeout=config.fallback_timeout_seconds,
-            )
-        else:
-            pool = await ensure_db_pool()
-            async with pool.acquire() as fallback_conn:
+        try:
+            if conn is not None:
                 page = await asyncio.wait_for(
-                    postgres_search_repository.search(fallback_conn, query, exact_count_enabled=exact_count_enabled),
+                    postgres_search_repository.search(conn, query, exact_count_enabled=exact_count_enabled),
                     timeout=config.fallback_timeout_seconds,
                 )
+            elif not isinstance(postgres_search_repository, PostgresSearchRepository):
+                # Preserve lightweight adapter tests that provide their own repository.
+                page = await asyncio.wait_for(
+                    postgres_search_repository.search(None, query, exact_count_enabled=exact_count_enabled),
+                    timeout=config.fallback_timeout_seconds,
+                )
+            else:
+                pool = await ensure_db_pool()
+                async with pool.acquire() as fallback_conn:
+                    page = await asyncio.wait_for(
+                        postgres_search_repository.search(fallback_conn, query, exact_count_enabled=exact_count_enabled),
+                        timeout=config.fallback_timeout_seconds,
+                    )
+        except Exception as fallback_exc:
+            # The legacy SQL path cannot represent the complete Typesense
+            # contract. Preserve that diagnostic in logs and return a truthful
+            # transient-unavailable response instead of a misleading 500.
+            log_server_exception("Typesense fallback failed", fallback_exc)
+            raise HTTPException(status_code=503, detail=SEARCH_UNAVAILABLE_MESSAGE) from exc
         record_procurement_fallback(query.endpoint, query.group, "typesense_infrastructure")
         page["backend_fallback"] = {
             "event": PROCUREMENT_FALLBACK_EVENT,
@@ -2166,7 +2251,7 @@ async def fetch_backend_page(
             "reason": "typesense_infrastructure",
             "classification": SHADOW_INFRA_ERROR,
         }
-        return page
+        return cap_standard_query_page(page, query)
 
 
 def _query_groups(payload: QueryRequest) -> list[str]:
@@ -2181,22 +2266,69 @@ def _query_groups(payload: QueryRequest) -> list[str]:
     return ["medicines", "goods", "traditional"]
 
 
+def cap_standard_query_page(page: Mapping[str, Any], query) -> Dict[str, Any]:
+    """Keep standard pagination inside the 1,000-row result window."""
+    if getattr(query, "search_mode", "standard") != "standard":
+        return dict(page)
+
+    page_size = max(1, int(query.limit or 1))
+    page_number = max(1, int(query.page or 1))
+    offset = (page_number - 1) * page_size
+    remaining = max(0, DEFAULT_QUERY_LIMIT - offset)
+    visible = list(page.get("data") or [])[:remaining]
+    capped = dict(page)
+    capped["data"] = visible
+    capped["displayed"] = len(visible)
+    capped["has_more"] = bool(page.get("has_more")) and offset + len(visible) < DEFAULT_QUERY_LIMIT
+    return capped
+
+
+def page_bounded_working_set(
+    page: Mapping[str, Any],
+    *,
+    page_number: int,
+    page_size: int,
+    working_set_limit: int,
+) -> Dict[str, Any]:
+    """Expose one page while retaining the bounded ordered result set for UI filters."""
+
+    working_set = [dict(row) for row in list(page.get("data") or [])[:working_set_limit]]
+    safe_page = max(1, int(page_number or 1))
+    safe_size = max(1, min(int(page_size or DEFAULT_QUERY_PAGE_SIZE), MAX_QUERY_PAGE_SIZE))
+    offset = (safe_page - 1) * safe_size
+    visible = working_set[offset:offset + safe_size]
+    bounded = dict(page)
+    bounded.update({
+        "data": visible,
+        "displayed": len(visible),
+        "has_more": offset + len(visible) < len(working_set),
+        "page": safe_page,
+        "limit": safe_size,
+        "working_set": working_set,
+        "working_set_count": len(working_set),
+        "working_set_limit": int(working_set_limit),
+        "working_set_truncated": bool(page.get("has_more")) or int(page.get("count") or 0) > len(working_set),
+    })
+    return bounded
+
+
 async def query_typesense_primary(request: Request, payload: QueryRequest) -> JSONResponse:
     """Serve complete canonical groups when Phase 4C switch is explicitly enabled."""
 
     filters = payload.filters or FilterRequest()
     sort_rules = payload.sort or []
     search_mode = payload.searchMode if payload.searchMode in {"standard", "full"} else "standard"
-    requested_limit = max(1, min(int(payload.limit or MAX_QUERY_LIMIT), MAX_QUERY_LIMIT))
-    limit = requested_limit if search_mode == "full" else min(requested_limit, DEFAULT_QUERY_LIMIT)
+    page_size = max(1, min(int(payload.limit or DEFAULT_QUERY_PAGE_SIZE), MAX_QUERY_PAGE_SIZE))
+    working_limit = MAX_QUERY_LIMIT if search_mode == "full" else DEFAULT_QUERY_LIMIT
     groups = _query_groups(payload)
     result: Dict[str, Any] = {
         "success": True,
         "search_mode": search_mode,
         "backend": "typesense",
         "diversify_prices": False,
-        "applied_limit_per_scope": limit,
-        "applied_total_limit": limit * len(groups),
+        "applied_limit_per_scope": working_limit,
+        "applied_total_limit": working_limit * len(groups),
+        "page_size": page_size,
     }
     count_parts: list[dict[str, Any]] = []
     async with optional_db_connection(request, "full_query") as conn:
@@ -2210,8 +2342,8 @@ async def query_typesense_primary(request: Request, payload: QueryRequest) -> JS
                 group,
                 filters,
                 sort_rules,
-                limit,
-                page=payload.page,
+                working_limit,
+                page=1,
                 search_mode=search_mode,
                 source_types=payload.sourceTypes,
                 text=payload.text,
@@ -2221,8 +2353,16 @@ async def query_typesense_primary(request: Request, payload: QueryRequest) -> JS
                 date_ranges=payload.dateRanges,
                 exact_identifiers=payload.exactIdentifiers,
                 query_mode=payload.queryMode,
+                cross_group_search=payload.crossGroupSearch,
+                cross_group_search_fields=payload.crossGroupSearchFields,
             )
             page = await fetch_backend_page(conn, query, exact_count_enabled=False)
+            page = page_bounded_working_set(
+                page,
+                page_number=payload.page,
+                page_size=page_size,
+                working_set_limit=working_limit,
+            )
             key = {"medicines": "df1", "goods": "df2", "traditional_medicine": "df3"}[query.group]
             result[key] = page
             count_parts.append({"count": page["count"], "exact": page["count_exact"]})
@@ -2350,6 +2490,8 @@ async def preview_typesense_primary(request: Request, payload: QueryPreviewReque
                 ranges=payload.ranges,
                 date_ranges=payload.dateRanges,
                 exact_identifiers=payload.exactIdentifiers,
+                cross_group_search=payload.crossGroupSearch,
+                cross_group_search_fields=payload.crossGroupSearchFields,
             )
             pages[query.group] = await fetch_backend_page(conn, query)
         auth = await build_auth_config(request, user=user)
@@ -2400,6 +2542,7 @@ async def bulk_typesense_primary(request: Request, payload: BulkQueryRequest) ->
     truncated = False
     async with optional_db_connection(request, "full_query") as conn:
         user = await enforce_data_access_policy(conn, request, "full_query")
+        # ponytail: sequential child work caps bulk concurrency at 1; add workers only with measured need.
         for index, row in enumerate(rows, start=1):
             if len(result_rows) >= result_limit:
                 truncated = True
@@ -2632,6 +2775,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -2640,6 +2784,30 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
     max_age=600,
 )
+
+
+@app.middleware("http")
+async def enforce_request_size(request: Request, call_next):
+    raw_length = request.headers.get("content-length", "").strip()
+    if raw_length:
+        try:
+            content_length = int(raw_length)
+        except ValueError:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "error": "Invalid request headers", "message": "Invalid request headers"},
+            )
+        if content_length < 0:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "error": "Invalid request headers", "message": "Invalid request headers"},
+            )
+        if content_length > MAX_REQUEST_BODY_BYTES:
+            return JSONResponse(
+                status_code=413,
+                content={"success": False, "error": "Request body too large", "message": "Request body too large"},
+            )
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -2693,6 +2861,25 @@ def validation_error_response(message: str, status_code: int = 400) -> JSONRespo
             "message": message,
         },
     )
+
+
+@app.get("/config.js", include_in_schema=False)
+async def public_config():
+    # The tunneled frontend and API share one origin. The checked-in static
+    # file remains the fallback for file:// and separately hosted deployments.
+    return Response(
+        content="window.BIDFINDER_API_BASE_URL = window.location.origin;\n",
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+async def unhandled_exception(request: Request, exc: Exception):
+    logger.exception("Unhandled public request error path=%s type=%s", request.url.path, type(exc).__name__)
+    return internal_error_response()
+
+
+app.add_exception_handler(Exception, unhandled_exception)
 
 
 async def get_optional_authenticated_user(conn: asyncpg.Connection, request: Request) -> Optional[Dict[str, Any]]:
@@ -3470,12 +3657,9 @@ async def query_data(request: Request, payload: QueryRequest):
         sort_rules = payload.sort or []
         search_mode = payload.searchMode if payload.searchMode in {"standard", "full"} else "standard"
         is_full_search = search_mode == "full"
-        requested_total_limit = max(1, min(int(payload.limit or MAX_QUERY_LIMIT), MAX_QUERY_LIMIT))
-
-        if is_full_search:
-            limit = requested_total_limit
-        else:
-            limit = max(1, min(int(payload.limit or DEFAULT_QUERY_LIMIT), DEFAULT_QUERY_LIMIT))
+        page_size = max(1, min(int(payload.limit or DEFAULT_QUERY_PAGE_SIZE), MAX_QUERY_PAGE_SIZE))
+        requested_total_limit = MAX_QUERY_LIMIT if is_full_search else DEFAULT_QUERY_LIMIT
+        limit = requested_total_limit
 
         result = {
             "success": True,
@@ -3483,6 +3667,7 @@ async def query_data(request: Request, payload: QueryRequest):
             "diversify_prices": False,
             "applied_limit_per_scope": limit,
             "applied_total_limit": limit * 2 if payload.scope == "all" and not is_full_search else limit,
+            "page_size": page_size,
         }
         count_parts: List[Dict[str, Any]] = []
         current_user: Optional[Dict[str, Any]] = None
@@ -3598,6 +3783,17 @@ async def query_data(request: Request, payload: QueryRequest):
         result["total_count_exact"] = bool(combined_meta["exact"])
         result["total_count_label"] = combined_meta["label"]
         result["total_count_summary"] = combined_meta["summary"]
+
+        for group, response_key in (("medicines", "df1"), ("goods", "df2"), ("traditional_medicine", "df3")):
+            if response_key not in result:
+                continue
+            allocation_key = "medicine" if group == "medicines" else "goods" if group == "goods" else "traditional"
+            result[response_key] = page_bounded_working_set(
+                result[response_key],
+                page_number=payload.page,
+                page_size=page_size,
+                working_set_limit=int(allocation.get(allocation_key, limit)),
+            )
 
         shadow_queries = []
         shadow_results: Dict[str, Any] = {}
@@ -4025,76 +4221,24 @@ async def get_metadata(request: Request):
         return limited
 
     try:
-        pool = await ensure_db_pool()
-        async with pool.acquire() as conn:
+        async with optional_db_connection(request, "metadata") as conn:
             await enforce_data_access_policy(conn, request, "metadata")
-            cached = await get_cached_payload(metadata_cache, "metadata:v1")
+            cache_key = "metadata:typesense-v1"
+            cached = await get_cached_payload(metadata_cache, cache_key)
             if cached is not None:
                 return JSONResponse(content=cached)
 
-            rows = await conn.fetch("""
-                SELECT start_time, end_time, duration_seconds, boxes_selected
-                FROM run_sessions
-                WHERE end_time IS NOT NULL
-                ORDER BY end_time DESC, start_time DESC
-                LIMIT 50
-            """)
-            total_runs = await conn.fetchval("""
-                SELECT COUNT(*)
-                FROM run_sessions
-                WHERE end_time IS NOT NULL
-            """)
-            approval_rows = await conn.fetch("""
-                SELECT
-                    approval_date,
-                    COUNT(*)::INT AS package_count
-                FROM (
-                    SELECT DISTINCT
-                        COALESCE(
-                            ngay_phe_duyet_date,
-                            CASE
-                                WHEN ngay_phe_duyet ~ '^\\d{2}/\\d{2}/\\d{4}$' THEN TO_DATE(ngay_phe_duyet, 'DD/MM/YYYY')
-                                ELSE NULL
-                            END
-                        ) AS approval_date,
-                        ma_tbmt,
-                        so_qd,
-                        version
-                    FROM package_metadata
-                ) approvals
-                WHERE approval_date IS NOT NULL
-                  AND approval_date >= CURRENT_DATE - INTERVAL '365 days'
-                GROUP BY approval_date
-                ORDER BY approval_date ASC
-            """)
-
-        history = clean_records(rows)
-        approval_timeline = [
-            {
-                "date": row["approval_date"].isoformat() if row["approval_date"] else None,
-                "count": int(row["package_count"] or 0),
-            }
-            for row in approval_rows
-            if row["approval_date"]
-        ]
-        if not history:
-            payload = {
-                "success": False,
-                "message": "Chưa có lịch sử cập nhật",
-                "history": [],
-                "approval_timeline": approval_timeline,
-            }
-            await set_cached_payload(metadata_cache, "metadata:v1", payload, METADATA_CACHE_TTL_SECONDS)
-            return JSONResponse(content=payload)
+            update_timeline = await typesense_search_repository.update_timeline()
 
         payload = {
             "success": True,
-            "history": history,
-            "approval_timeline": approval_timeline,
-            "last_run": history[0],
-            "total_runs": int(total_runs or 0)
+            "source": "typesense",
+            "history": [],
+            "update_timeline": update_timeline,
+            "last_run": None,
+            "total_runs": 0,
         }
-        await set_cached_payload(metadata_cache, "metadata:v1", payload, METADATA_CACHE_TTL_SECONDS)
+        await set_cached_payload(metadata_cache, cache_key, payload, METADATA_CACHE_TTL_SECONDS)
         return JSONResponse(content=payload)
 
     except HTTPException as exc:
@@ -4102,3 +4246,8 @@ async def get_metadata(request: Request):
     except Exception as e:
         log_server_exception("get_metadata failed", e)
         return internal_error_response()
+
+
+WEB_ROOT = Path(__file__).resolve().parents[2] / "apps" / "web"
+if WEB_ROOT.is_dir():
+    app.mount("/", StaticFiles(directory=WEB_ROOT, html=True), name="web")

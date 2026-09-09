@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "apps" / "api"))
 
 from typesense_contract import (
     PUBLIC_GROUPS,
+    build_search_contract,
     contract_counts,
     get_procurement_backend_config,
     get_search_contract,
@@ -29,6 +30,10 @@ from typesense_shadow import (
 
 
 class TypesenseContractTest(unittest.TestCase):
+    def test_contract_reports_runtime_serving_generation(self):
+        with patch.dict(os.environ, {"BIDFINDER_TYPESENSE_SERVING_GENERATION": "serving_v1_test_vi"}):
+            self.assertEqual("serving_v1_test_vi", build_search_contract()["serving_generation"])
+
     def test_schema_metadata_agreement_and_three_groups(self):
         report = validate_contract_against_schema()
         self.assertEqual("PASS", report["status"])
@@ -47,7 +52,7 @@ class TypesenseContractTest(unittest.TestCase):
         self.assertEqual(["tenThuoc"], medicine_fields["medicine_name"]["raw_aliases"])
         from tools.typesense_query_validation import corpus_summary
         summary = corpus_summary()
-        self.assertEqual(212, summary["corpus_size"])
+        self.assertEqual(211, summary["corpus_size"])
         self.assertEqual({"goods", "medicines", "traditional"}, set(summary["by_group"]))
 
     def test_field_capability_counts_are_complete(self):
@@ -94,6 +99,45 @@ class TypesenseContractTest(unittest.TestCase):
         self.assertEqual((), plan.unsupported_filters)
         self.assertEqual((), plan.unsupported_sorts)
 
+    def test_text_search_matches_prefixes_and_field_scoped_values(self):
+        field_scoped = translate_typesense_query(
+            build_canonical_query(
+                "medicines",
+                text="par",
+                search_fields=["medicine_name"],
+                limit=50,
+            ),
+            serving_generation="serving_v1_20260901",
+        )
+        self.assertEqual("true", field_scoped.params["prefix"])
+        self.assertEqual(0, field_scoped.params["num_typos"])
+        self.assertNotIn("infix", field_scoped.params)
+        self.assertEqual("medicine_name", field_scoped.params["query_by"])
+
+        global_search = translate_typesense_query(
+            build_canonical_query("medicines", text="par", limit=50),
+            serving_generation="serving_v1_20260901",
+        )
+        self.assertEqual("true", global_search.params["prefix"])
+        self.assertEqual(0, global_search.params["num_typos"])
+        self.assertNotIn("infix", global_search.params)
+
+    def test_quoted_advanced_phrase_does_not_degrade_to_independent_words(self):
+        phrase = translate_typesense_query(
+            build_canonical_query(
+                "goods",
+                text='"\u006d\u00e1y \u0111i\u1ec7n"',
+                search_fields=["item_name"],
+                limit=50,
+            ),
+            serving_generation="serving_v1_20260901",
+        )
+        self.assertEqual('"\u006d\u00e1y \u0111i\u1ec7n"', phrase.params["q"])
+        self.assertEqual("item_name", phrase.params["query_by"])
+        self.assertEqual("false", phrase.params["prefix"])
+        self.assertEqual(0, phrase.params["num_typos"])
+        self.assertEqual(0, phrase.params["drop_tokens_threshold"])
+
     def test_exact_identifier_and_filter_only_paths(self):
         exact = build_canonical_query("goods", exact_identifiers={"bid_invitation_code": "IB2600498667"}, query_mode="exact")
         plan = translate_typesense_query(exact, serving_generation="serving_v1_20260901")
@@ -120,8 +164,24 @@ class TypesenseContractTest(unittest.TestCase):
         self.assertIn("unit:min", text_range_plan.unsupported_filters)
 
     def test_typesense_response_page_is_api_compatible_and_deterministic(self):
-        page = TypesenseSearchResult("goods", 3, ({"id": "1", "item_name": "A"},), 4.0, 2, 1).to_api_page()
+        page = TypesenseSearchResult(
+            "goods",
+            3,
+            ({
+                "id": "1",
+                "item_name": "A",
+                "bidder_count": 1.7,
+                "production_year": "2024-2025",
+                "location": "Xã Dầu Tiếng, Thành phố Hồ Chí Minh",
+            },),
+            4.0,
+            2,
+            1,
+        ).to_api_page()
         self.assertEqual((3, True, 1, "typesense"), (page["count"], page["has_more"], page["displayed"], page["backend"]))
+        self.assertEqual(2, page["data"][0]["bidder_count"])
+        self.assertEqual("2024-2025", page["data"][0]["production_year"])
+        self.assertEqual("Xã Dầu Tiếng, Thành phố Hồ Chí Minh", page["data"][0]["location"])
 
     def test_backend_defaults_to_typesense_with_postgres_fallback_and_supports_rollback(self):
         names = ["BIDFINDER_PROCUREMENT_BACKEND", "BIDFINDER_CONTROLLED_TYPESENSE_ENABLED", "BIDFINDER_PROCUREMENT_FALLBACK_ENABLED"]

@@ -1,0 +1,99 @@
+from __future__ import annotations
+
+import inspect
+from pathlib import Path
+import tempfile
+import unittest
+
+from crawler_engine.msc.typesense_client import ImportResult
+from crawler_engine.msc.typesense_schema import SEARCH_CONFIGS, collection_schema, physical_collection_name
+from tools.migrate_typesense_vietnamese_locale import _final_schema, _import_group, _locale_status
+
+
+def source_schema(group: str) -> dict:
+    schema = collection_schema(group, "source")
+    schema["name"] = physical_collection_name(group, "source")
+    schema["fields"] = [{key: value for key, value in field.items() if key != "locale"} for field in schema["fields"]]
+    schema["num_documents"] = 0
+    return schema
+
+
+class FakeClient:
+    def __init__(self, group: str, documents: list[dict]):
+        source = source_schema(group)
+        source["num_documents"] = len(documents)
+        self.collections = {source["name"]: source}
+        self.documents = {source["name"]: documents}
+        self.import_calls = 0
+
+    def get_collection(self, name):
+        return self.collections.get(name)
+
+    def create_collection(self, schema):
+        target = dict(schema)
+        target["num_documents"] = 0
+        self.collections[target["name"]] = target
+        self.documents[target["name"]] = []
+        return target
+
+    def export_documents(self, name, *, timeout_seconds=None):
+        yield from self.documents[name]
+
+    def import_documents(self, name, documents, *, timeout_seconds=None):
+        self.import_calls += 1
+        self.documents[name].extend(dict(document) for document in documents)
+        self.collections[name]["num_documents"] = len(self.documents[name])
+        return ImportResult(len(documents), len(documents), 0)
+
+    def document_count(self, name):
+        return int(self.collections[name]["num_documents"])
+
+    def get_document(self, name, document_id):
+        return next((document for document in self.documents[name] if document["id"] == document_id), None)
+
+
+class VietnameseLocaleMigrationTest(unittest.TestCase):
+    def test_final_schema_localizes_search_fields_only(self):
+        source = source_schema("goods")
+        final = _final_schema("goods", "target", source)
+        status = _locale_status("goods", final)
+
+        self.assertTrue(status["ok"])
+        self.assertEqual(set(SEARCH_CONFIGS["goods"].query_by), set(status["localized_fields"]))
+        fields = {field["name"]: field for field in final["fields"]}
+        self.assertNotIn("locale", fields["production_year"])
+        self.assertNotIn("locale", fields["partition_date"])
+        self.assertEqual("vi", fields["item_name"]["locale"])
+        self.assertEqual(source["fields"][0]["type"], fields[source["fields"][0]["name"]]["type"])
+
+    def test_import_is_sequential_and_idempotent(self):
+        group = "goods"
+        source = physical_collection_name(group, "source")
+        target = physical_collection_name(group, "target")
+        documents = [{"id": f"id-{index}", "data_group": group} for index in range(5)]
+        client = FakeClient(group, documents)
+        with tempfile.TemporaryDirectory() as temporary:
+            first = _import_group(
+                client, group, source, target, "target", checkpoint_dir=Path(temporary),
+                batch_size=2, operation_timeout_seconds=60, progress_every=100,
+            )
+            calls_after_first = client.import_calls
+            second = _import_group(
+                client, group, source, target, "target", checkpoint_dir=Path(temporary),
+                batch_size=2, operation_timeout_seconds=60, progress_every=100,
+            )
+
+        self.assertEqual(5, first["target_documents"])
+        self.assertEqual("skip-complete", second["action"])
+        self.assertEqual(calls_after_first, client.import_calls)
+
+    def test_migration_tool_has_no_clone_or_schema_patch_path(self):
+        source = inspect.getsource(_import_group)
+        module_source = Path("tools/migrate_typesense_vietnamese_locale.py").read_text(encoding="utf-8")
+        self.assertNotIn("clone_collection", source)
+        self.assertNotIn("update_collection_schema", source)
+        self.assertNotIn("\"PATCH\"", module_source)
+
+
+if __name__ == "__main__":
+    unittest.main()

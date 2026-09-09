@@ -1,32 +1,28 @@
-"""Pure deterministic normalization from seven MSC sources to three groups."""
+"""Display normalization for Typesense-served documents.
+
+This module belongs to the API boundary. It must stay independent from the
+crawler/ingestion runtime because Typesense is the serving data source.
+"""
 
 from __future__ import annotations
 
 import re
 import unicodedata
 from math import floor, isfinite
-from typing import Any, Sequence
+from typing import Any
 
-from .models import CanonicalRecord, RawRecord, SourceContract
 
 _WHITESPACE_RE = re.compile(r"\s+")
-_YEAR_RE = re.compile(r"^(\d{4})(?:\s*[-–—]\s*(\d{4}))?$")
+_YEAR_RE = re.compile(r"^(\d{4})(?:\s*[-\u2013\u2014]\s*(\d{4}))?$")
 _LOCATION_PART_RE = re.compile(r"\s*[,;]\s*")
 _PROVINCE_PREFIX_RE = re.compile(
-    r"^(?:tỉnh|thành phố|tp\.?|city)\s+",
+    r"^(?:t\u1ec9nh|th\u00e0nh ph\u1ed1|tp\.?|city)\s+",
     re.IGNORECASE,
 )
 _LOCALITY_PREFIX_RE = re.compile(
     r"^(?:x\u00e3|ph\u01b0\u1eddng|th\u1ecb tr\u1ea5n|qu\u1eadn|huy\u1ec7n|th\u1ecb x\u00e3)\s+",
     re.IGNORECASE,
 )
-_ARRAY_FIELDS = {"winning_bidder_id", "winning_bidder_name"}
-_NUMBER_FIELDS = {
-    "quantity", "winning_unit_price", "bidder_count",
-}
-_YEAR_FIELDS = {"production_year"}
-_DATE_FIELDS = {"result_posted_at", "decision_issued_at"}
-_LOCATION_FIELDS = {"location"}
 
 
 class NormalizationError(ValueError):
@@ -43,19 +39,6 @@ def normalize_text(value: Any) -> str | None:
     return value or None
 
 
-def normalize_array(value: Any) -> list[str] | None:
-    if value is None:
-        return None
-    if not isinstance(value, list):
-        raise NormalizationError(f"array field expected list, got {type(value).__name__}")
-    result = []
-    for member in value:
-        text = normalize_text(member)
-        if text is not None:
-            result.append(text)
-    return result or None
-
-
 def normalize_number(value: Any) -> int | float | None:
     if value is None:
         return None
@@ -67,13 +50,6 @@ def normalize_number(value: Any) -> int | float | None:
 
 
 def normalize_bidder_count(value: Any) -> int | None:
-    """Normalize the source's fractional bidder count to a non-negative integer.
-
-    The source represents this aggregate as a ratio in some datasets.  The
-    product displays a count, so use conventional half-up rounding rather than
-    Python's banker's rounding (e.g. 1.5 must become 2).
-    """
-
     number = normalize_number(value)
     if number is None:
         return None
@@ -110,9 +86,6 @@ def _normalize_location_text(value: str) -> str | None:
         parts = [part for part in _LOCATION_PART_RE.split(entry) if part]
         if not parts:
             continue
-        # Display local administrative units before the province/city. The
-        # map still extracts the province independently, so display order does
-        # not change map aggregation or merger resolution.
         province_index = next(
             (index for index, part in enumerate(parts) if _PROVINCE_PREFIX_RE.match(part)),
             None,
@@ -126,27 +99,6 @@ def _normalize_location_text(value: str) -> str | None:
     return "; ".join(entries) or None
 
 
-def extract_location_province(value: Any) -> str | None:
-    """Extract the source province/city while preserving its administrative label.
-
-    This intentionally returns the source-era value (for example, ``Tỉnh
-    Bình Dương``), so the merger map can distinguish legacy and current names
-    instead of silently overwriting provenance.
-    """
-
-    normalized = _normalize_location_text(value) if isinstance(value, str) else normalize_location(value)
-    if not normalized:
-        return None
-    for entry in normalized.split(";"):
-        parts = [part.strip() for part in entry.split(",") if part.strip()]
-        province = next((part for part in parts if _PROVINCE_PREFIX_RE.match(part)), None)
-        if province:
-            return province
-        if parts:
-            return parts[-1]
-    return None
-
-
 def normalize_location(value: Any) -> str | None:
     if value is None:
         return None
@@ -156,6 +108,7 @@ def normalize_location(value: Any) -> str | None:
         value = [value]
     if not isinstance(value, list):
         raise NormalizationError("location expected object array or string")
+
     displays: list[str] = []
     for item in value:
         if isinstance(item, str):
@@ -178,46 +131,3 @@ def normalize_location(value: Any) -> str | None:
         if components:
             displays.append(", ".join(components))
     return "; ".join(displays) or None
-
-
-def _normalize_value(canonical_key: str, value: Any) -> Any:
-    if canonical_key in _ARRAY_FIELDS:
-        return normalize_array(value)
-    if canonical_key in _NUMBER_FIELDS:
-        if canonical_key == "bidder_count":
-            return normalize_bidder_count(value)
-        return normalize_number(value)
-    if canonical_key in _YEAR_FIELDS:
-        return normalize_year(value)
-    if canonical_key in _DATE_FIELDS:
-        if value is None:
-            return None
-        if not isinstance(value, str):
-            raise NormalizationError(f"date field expected string, got {type(value).__name__}")
-        return value or None
-    if canonical_key in _LOCATION_FIELDS:
-        return normalize_location(value)
-    return normalize_text(value)
-
-
-def normalize_record(contract: SourceContract, raw: RawRecord, partition_date: str) -> CanonicalRecord:
-    if not isinstance(raw, dict):
-        raise NormalizationError("source record must be an object")
-    source_id = raw.get("id")
-    if not isinstance(source_id, str) or not source_id:
-        raise NormalizationError("source record requires non-empty string id")
-    record: CanonicalRecord = {
-        "id": source_id,
-        "data_group": contract.data_group,
-        "source_key": contract.key,
-        "source_tab": contract.source_tab,
-        "source_tab_label": contract.source_tab_label,
-        "partition_date": partition_date,
-    }
-    for mapping in contract.canonical_mapping:
-        record[mapping.canonical_key] = _normalize_value(mapping.canonical_key, raw.get(mapping.source_field))
-    return record
-
-
-def normalize_records(contract: SourceContract, records: Sequence[RawRecord], partition_date: str) -> tuple[CanonicalRecord, ...]:
-    return tuple(normalize_record(contract, record, partition_date) for record in sorted(records, key=lambda item: item.get("id", "")))

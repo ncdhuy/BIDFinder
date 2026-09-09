@@ -308,7 +308,8 @@
       const user = state.user || {};
       if (els['auth-edit-profile-btn']) {
         els['auth-edit-profile-btn'].setAttribute('aria-label', 'Tài khoản');
-        els['auth-edit-profile-btn'].title = 'Tài khoản';
+        els['auth-edit-profile-btn'].dataset.title = 'Tài khoản';
+        els['auth-edit-profile-btn'].removeAttribute('title');
       }
       if (els['account-sidebar-name']) {
         els['account-sidebar-name'].textContent = user.full_name || 'Người dùng BIDFinder';

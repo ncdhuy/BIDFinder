@@ -1404,7 +1404,7 @@ class CustomSearchForm extends HTMLElement {
                         <!-- Buttons -->
                         <div class="actions">
                             <button class="btn btn-secondary" id="reset-filters-btn">Đặt lại toàn bộ</button>
-                            <button class="btn btn-primary" id="apply-filters-btn">Tra cứu nâng cao</button>
+                            <button class="btn btn-primary" id="apply-filters-btn">Tìm kiếm nâng cao</button>
                         </div>
 
                     </div> <!-- End Filter Content -->
@@ -1884,7 +1884,7 @@ class CustomSearchForm extends HTMLElement {
         }
 
         applyBtn.dataset.loading = '0';
-        applyBtn.textContent = applyBtn.dataset.defaultText || 'Tra cứu nâng cao';
+        applyBtn.textContent = applyBtn.dataset.defaultText || 'Tìm kiếm nâng cao';
         this.updateApplyButtonState();
     }
 

@@ -17,7 +17,14 @@ from crawler_engine.msc.config import MSCConfig
 from crawler_engine.msc.contracts import SOURCE_CONTRACTS
 from crawler_engine.msc.engine import MSCIngestionEngine
 from crawler_engine.msc.models import IngestionStatus, PartitionContext, SearchInterval, SinkWriteResult
-from crawler_engine.msc.normalize import NormalizationError, normalize_record, normalize_records
+from crawler_engine.msc.normalize import (
+    NormalizationError,
+    extract_location_province,
+    normalize_bidder_count,
+    normalize_location,
+    normalize_record,
+    normalize_records,
+)
 from crawler_engine.msc.partitioning import PartitioningError, official_day_interval, plan_partition, split_search_interval
 from crawler_engine.msc.sink import InMemorySink, JsonlValidationSink
 from crawler_engine.msc.validation import (
@@ -221,7 +228,7 @@ class NormalizationTest(unittest.TestCase):
             self.assertEqual(contract.source_tab, normalized["source_tab"])
             self.assertEqual(set(contract.canonical_keys) | {"id", "data_group", "source_key", "source_tab", "source_tab_label", "partition_date"}, set(normalized))
             self.assertEqual(raw["id"], normalized["id"])
-        self.assertEqual("Thành phố Hồ Chí Minh, Phường Khánh Hội", normalize_record(SOURCE_CONTRACTS["goods_general"], sample("goods_general"), "2026-08-28")["location"])
+        self.assertEqual("Phường Khánh Hội, Thành phố Hồ Chí Minh", normalize_record(SOURCE_CONTRACTS["goods_general"], sample("goods_general"), "2026-08-28")["location"])
         self.assertIsNone(normalize_record(SOURCE_CONTRACTS["medical_devices"], sample("medical_devices"), "2026-08-28")["production_year"])
         self.assertEqual(["vn1800665083"], normalize_record(SOURCE_CONTRACTS["medical_devices"], sample("medical_devices"), "2026-08-28")["winning_bidder_id"])
 
@@ -239,6 +246,36 @@ class NormalizationTest(unittest.TestCase):
         raw = sample("goods_general")
         raw.pop("danhMucHangHoa")
         self.assertIsNone(normalize_record(SOURCE_CONTRACTS["goods_general"], raw, "2026-08-28")["item_name"])
+
+    def test_new_data_cleanup_rounds_bidder_count_and_preserves_year_ranges(self):
+        self.assertEqual((1, 2, 2), (
+            normalize_bidder_count(1.3),
+            normalize_bidder_count(1.7),
+            normalize_bidder_count(1.5),
+        ))
+
+        raw = sample("goods_general")
+        raw.update({
+            "soNhaThauThamDu": 1.7,
+            "namSanXuat": "2024-2025",
+            "diaDiem": "Xã Dầu Tiếng, Thành phố Hồ Chí Minh",
+        })
+        normalized = normalize_record(SOURCE_CONTRACTS["goods_general"], raw, "2026-08-28")
+        self.assertEqual(2, normalized["bidder_count"])
+        self.assertEqual("2024-2025", normalized["production_year"])
+        self.assertEqual("Xã Dầu Tiếng, Thành phố Hồ Chí Minh", normalized["location"])
+        self.assertEqual("Thành phố Hồ Chí Minh", extract_location_province(normalized["location"]))
+
+        old_location = "Huyện Dầu tiếng, Tỉnh Bình Dương"
+        self.assertEqual("Huyện Dầu tiếng, Tỉnh Bình Dương", normalize_location(old_location))
+        self.assertEqual("Tỉnh Bình Dương", extract_location_province(old_location))
+
+        province_first = "Tỉnh Bình Dương, Xã Dầu Tiếng"
+        self.assertEqual("Xã Dầu Tiếng, Tỉnh Bình Dương", normalize_location(province_first))
+        self.assertEqual("Tỉnh Bình Dương", extract_location_province(province_first))
+
+        drift = validate_raw_records(SOURCE_CONTRACTS["goods_general"], [raw])
+        self.assertFalse(drift.has_breaking_change)
 
     def test_raw_schema_validation_reports_additive_fields_and_rejects_breaking_types(self):
         raw = sample("goods_general")

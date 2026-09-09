@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 import re
 import sqlite3
@@ -137,6 +138,60 @@ class SchemaContractTest(unittest.TestCase):
                 set(document) & {"id", "data_group", "source_tab", "source_tab_label", "partition_date"},
             )
 
+    def test_vietnamese_text_fields_keep_accents_in_the_index_contract(self):
+        for group in ("goods", "medicines", "traditional_medicine"):
+            fields = {field["name"]: field for field in collection_schema(group, "dev1")["fields"]}
+            self.assertEqual("vi", fields["manufacturer"].get("locale"), group)
+            self.assertNotIn("locale", fields["location"], group)
+            self.assertNotIn("locale", fields["id"], group)
+            self.assertNotIn("locale", fields["partition_date"], group)
+
+    def test_schema_signature_keeps_locale_as_a_compatibility_property(self):
+        schema = collection_schema("goods", "dev1")
+        signature = schema_signature(schema)
+        fields = {field["name"]: field for field in signature["fields"]}
+        self.assertEqual("vi", fields["item_name"]["locale"])
+
+    def test_schema_compatibility_treats_omitted_locale_as_empty(self):
+        expected = {"name": "test", "fields": [{"name": "title", "type": "string"}]}
+        actual = deepcopy(expected)
+        actual["fields"][0]["locale"] = ""
+        self.assertTrue(TypesenseCollectionManager._compatible(actual, expected))
+
+    def test_schema_compatibility_treats_none_locale_as_empty(self):
+        expected = {"name": "test", "fields": [{"name": "title", "type": "string", "locale": None}]}
+        actual = deepcopy(expected)
+        actual["fields"][0]["locale"] = ""
+        self.assertTrue(TypesenseCollectionManager._compatible(actual, expected))
+
+    def test_schema_compatibility_preserves_explicit_vietnamese_locale(self):
+        expected = {"name": "test", "fields": [{"name": "title", "type": "string", "locale": "vi"}]}
+        actual = deepcopy(expected)
+        self.assertTrue(TypesenseCollectionManager._compatible(actual, expected))
+
+    def test_schema_compatibility_rejects_vietnamese_locale_vs_empty(self):
+        expected = {"name": "test", "fields": [{"name": "title", "type": "string", "locale": "vi"}]}
+        actual = deepcopy(expected)
+        actual["fields"][0]["locale"] = ""
+        self.assertFalse(TypesenseCollectionManager._compatible(actual, expected))
+
+    def test_schema_compatibility_accepts_implicit_typesense_id(self):
+        expected = {
+            "name": "test",
+            "fields": [
+                {"name": "id", "type": "string"},
+                {"name": "title", "type": "string"},
+            ],
+        }
+        actual = {"name": "test", "fields": [expected["fields"][1]]}
+        self.assertTrue(TypesenseCollectionManager._compatible(actual, expected))
+
+    def test_schema_compatibility_rejects_real_field_mismatch(self):
+        expected = {"name": "test", "fields": [{"name": "title", "type": "string", "facet": True}]}
+        actual = deepcopy(expected)
+        actual["fields"][0]["type"] = "string[]"
+        self.assertFalse(TypesenseCollectionManager._compatible(actual, expected))
+
     def test_optional_nulls_are_omitted_and_raw_fields_are_rejected(self):
         contract = SOURCE_CONTRACTS["goods_general"]
         raw = _sample("goods_general")
@@ -227,6 +282,38 @@ class ImportProtocolTest(unittest.TestCase):
         self.assertIn("/operations/snapshot?", opener.request.full_url)
         self.assertIn("snapshot_path=%2Ftmp%2Fbidfinder.snapshot", opener.request.full_url)
         self.assertEqual(300.0, opener.kwargs["timeout"])
+
+    def test_collection_schema_update_uses_patch_and_explicit_timeout(self):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self):
+                return b'{"name":"updated"}'
+
+        class Opener:
+            def __init__(self):
+                self.request = None
+                self.kwargs = None
+
+            def __call__(self, request, **kwargs):
+                self.request = request
+                self.kwargs = kwargs
+                return Response()
+
+        opener = Opener()
+        result = TypesenseClient(TypesenseConfig(api_key="dev-only"), opener=opener).update_collection_schema(
+            "bidfinder_goods_v1_dev1",
+            {"fields": [{"name": "item_name", "drop": True}]},
+            timeout_seconds=900.0,
+        )
+        self.assertEqual("updated", result["name"])
+        self.assertEqual("PATCH", opener.request.method)
+        self.assertIn("/collections/bidfinder_goods_v1_dev1", opener.request.full_url)
+        self.assertEqual(900.0, opener.kwargs["timeout"])
 
 
 class FakeTypesenseClient:

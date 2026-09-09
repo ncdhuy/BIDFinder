@@ -10,13 +10,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "apps" / "api"))
 import auth_utils  # noqa: E402
 
 
-def request(*, scheme="https", host="example.test", cookie="", authorization=""):
+def request(*, scheme="https", host="example.test", cookie="", authorization="", client=None, forwarded_proto="", forwarded_for=""):
     headers = []
     if cookie:
         headers.append((b"cookie", cookie.encode()))
     if authorization:
         headers.append((b"authorization", authorization.encode()))
-    return Request({"type": "http", "scheme": scheme, "server": (host, 443), "headers": headers})
+    if forwarded_proto:
+        headers.append((b"x-forwarded-proto", forwarded_proto.encode()))
+    if forwarded_for:
+        headers.append((b"x-forwarded-for", forwarded_for.encode()))
+    return Request({
+        "type": "http",
+        "path": "/",
+        "root_path": "",
+        "query_string": b"",
+        "scheme": scheme,
+        "server": (host, 443),
+        "client": client,
+        "headers": headers,
+    })
 
 
 class AuthUtilsTest(unittest.TestCase):
@@ -37,6 +50,29 @@ class AuthUtilsTest(unittest.TestCase):
             self.assertFalse(auth_utils.resolve_cookie_secure(request()))
         with patch.object(auth_utils, "AUTH_COOKIE_SAMESITE_MODE", "strict"):
             self.assertEqual("strict", auth_utils.resolve_cookie_samesite(request()))
+
+    def test_forwarded_headers_require_loopback_proxy_peer(self):
+        with patch.object(auth_utils, "TRUST_PROXY_HEADERS", True), patch.object(
+            auth_utils,
+            "TRUSTED_PROXY_IPS",
+            {auth_utils.ipaddress.ip_address("127.0.0.1")},
+        ):
+            untrusted = request(
+                scheme="http",
+                client=("198.51.100.10", 443),
+                forwarded_proto="https",
+                forwarded_for="203.0.113.20",
+            )
+            trusted = request(
+                scheme="http",
+                client=("127.0.0.1", 443),
+                forwarded_proto="https",
+                forwarded_for="203.0.113.20",
+            )
+            self.assertEqual("http", auth_utils.get_request_scheme(untrusted))
+            self.assertEqual("https", auth_utils.get_request_scheme(trusted))
+            self.assertEqual("198.51.100.10", auth_utils.get_client_ip_from_request(untrusted))
+            self.assertEqual("203.0.113.20", auth_utils.get_client_ip_from_request(trusted))
 
 
 if __name__ == "__main__":
