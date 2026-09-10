@@ -328,13 +328,16 @@ class TypesenseClient:
         collection: str,
         documents: Sequence[Mapping[str, Any]],
         *,
+        action: str = "upsert",
         timeout_seconds: float | None = None,
     ) -> ImportResult:
+        if action not in {"upsert", "update"}:
+            raise ValueError("Typesense import action must be upsert or update")
         started = perf_counter()
         try:
             raw = self._request_raw(
                 "POST",
-                f"/collections/{quote(collection, safe='')}/documents/import?{urlencode({'action': 'upsert'})}",
+                f"/collections/{quote(collection, safe='')}/documents/import?{urlencode({'action': action})}",
                 serialize_ndjson(documents),
                 content_type="application/jsonl",
                 error_code=TYPESENSE_IMPORT_ERROR,
@@ -352,12 +355,18 @@ class TypesenseClient:
         self,
         collection: str,
         *,
+        include_fields: Sequence[str] | None = None,
         timeout_seconds: float | None = None,
     ) -> Iterator[dict[str, Any]]:
         """Stream one collection export without buffering its documents in RAM."""
 
+        query = ""
+        if include_fields:
+            fields = tuple(str(field).strip() for field in include_fields if str(field).strip())
+            if fields:
+                query = f"?{urlencode({'include_fields': ','.join(fields)})}"
         request = Request(
-            self._url(f"/collections/{quote(collection, safe='')}/documents/export"),
+            self._url(f"/collections/{quote(collection, safe='')}/documents/export{query}"),
             method="GET",
             headers={
                 "Accept": "application/jsonl",
