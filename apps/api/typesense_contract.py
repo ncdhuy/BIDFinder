@@ -34,7 +34,7 @@ except ModuleNotFoundError:  # ``uvicorn`` is documented from ``apps/api``.
 
 
 PUBLIC_GROUPS = ("goods", "medicines", "traditional")
-DEFAULT_SERVING_GENERATION = "serving_v1_20260901"
+DEFAULT_SERVING_GENERATION = "serving_v1_20260910_raw_v2"
 SCHEMA_GROUPS = {
     "goods": "goods",
     "medicines": "medicines",
