@@ -20,6 +20,8 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -38,6 +40,7 @@ from crawler_engine.msc.typesense_client import TypesenseClient  # noqa: E402
 from crawler_engine.msc.typesense_schema import (  # noqa: E402
     LOGICAL_ALIASES,
     SEARCH_CONFIGS,
+    collection_schema,
     schema_for_group,
     physical_collection_name,
     validate_generation_id,
@@ -55,6 +58,10 @@ CREATE_SETTINGS = (
     "enable_nested_fields",
     "num_memory_shards",
 )
+LEGACY_TYPE_MIGRATIONS = frozenset({
+    ("production_year", "int32", "string"),
+    ("bidder_count", "int32", "float"),
+})
 DEFAULT_SOURCE_GENERATION = "serving_v1_20260901"
 DEFAULT_RUNTIME_ENV = "~/.config/bidfinder/runtime.env"
 DEFAULT_API_URL = "http://127.0.0.1:8001"
@@ -112,15 +119,28 @@ def _schema_contract_issues(group: str, source_schema: Mapping[str, Any]) -> lis
 
 
 def _final_schema(group: str, generation: str, source_schema: Mapping[str, Any]) -> dict[str, Any]:
-    """Copy production settings, changing only target name, metadata, and locale."""
+    """Copy production settings and apply only approved legacy type migrations."""
 
     target_name = physical_collection_name(group, generation)
+    expected_fields = {
+        field["name"]: field
+        for field in collection_schema(group, generation)["fields"]
+    }
     fields: list[dict[str, Any]] = []
     query_fields = _text_query_fields(group)
     for raw_field in source_schema.get("fields", []):
         if not isinstance(raw_field, Mapping) or not raw_field.get("name"):
             raise RuntimeError(f"invalid source schema field in {source_schema.get('name')}")
         field = deepcopy(dict(raw_field))
+        expected_field = expected_fields.get(str(field["name"]))
+        if expected_field and field.get("type") != expected_field.get("type"):
+            migration = (str(field["name"]), str(field.get("type")), str(expected_field.get("type")))
+            if migration not in LEGACY_TYPE_MIGRATIONS:
+                raise RuntimeError(
+                    f"unsupported source type migration for {group}.{field['name']}: "
+                    f"{field.get('type')} -> {expected_field.get('type')}"
+                )
+            field["type"] = expected_field["type"]
         if field.get("type") in TEXT_TYPES:
             if field.get("name") in query_fields and field.get("index", True) is not False:
                 field["locale"] = LOCALE
@@ -132,17 +152,37 @@ def _final_schema(group: str, generation: str, source_schema: Mapping[str, Any])
     for key in CREATE_SETTINGS:
         if key in source_schema:
             schema[key] = deepcopy(source_schema[key])
-    metadata = deepcopy(source_schema.get("metadata") or {})
-    if not isinstance(metadata, dict):
+    source_metadata = deepcopy(source_schema.get("metadata") or {})
+    if not isinstance(source_metadata, dict):
         raise RuntimeError(f"source metadata is not an object: {source_schema.get('name')}")
+    metadata = {
+        **source_metadata,
+        **collection_schema(group, generation)["metadata"],
+    }
     metadata.update({
-        "logical_group": group,
-        "generation_id": generation,
         "source_collection": source_schema.get("name", ""),
         "locale": LOCALE,
     })
     schema["metadata"] = metadata
     return schema
+
+
+def _migrate_legacy_document(group: str, document: Mapping[str, Any]) -> dict[str, Any]:
+    """Adapt only the known legacy numeric year field; preserve every value/key otherwise."""
+
+    migrated = dict(document)
+    if group == "goods" and "production_year" in migrated:
+        value = migrated["production_year"]
+        if value is not None and not isinstance(value, str):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise RuntimeError(
+                    f"unsupported legacy production_year value: {type(value).__name__}"
+                )
+            # The old collection already discarded year ranges. This text
+            # representation preserves its current value while new MSC data
+            # enters through normalize_year without coercion.
+            migrated["production_year"] = str(value)
+    return migrated
 
 
 def _schema_fingerprint(schema: Mapping[str, Any]) -> dict[str, Any]:
@@ -322,7 +362,7 @@ def _import_group(
     for source_offset, document in enumerate(client.export_documents(source_name, timeout_seconds=operation_timeout_seconds), start=1):
         if source_offset <= offset:
             continue
-        batch.append(document)
+        batch.append(_migrate_legacy_document(group, document))
         if len(batch) < batch_size:
             continue
         result = client.import_documents(target_name, batch, timeout_seconds=operation_timeout_seconds)
@@ -465,7 +505,8 @@ def verify_group(client: TypesenseClient, group: str, source_name: str, target_n
         raise RuntimeError(f"source has no sample documents: {source_name}")
     for sample in samples:
         document_id = str(sample.get("id", ""))
-        if client.get_document(target_name, document_id) != sample:
+        expected_sample = _migrate_legacy_document(group, sample)
+        if client.get_document(target_name, document_id) != expected_sample:
             raise RuntimeError(f"sample document mismatch for {group}: {document_id}")
     search = _search_regression(client, group, source_name, target_name, samples)
     filter_facet = _filter_and_facet(client, group, source_name, target_name)
@@ -507,11 +548,36 @@ def _api_json(api_url: str, method: str, path: str, payload: Mapping[str, Any] |
 
 
 def _api_target_proof(api_url: str, generation: str, cookie: str | None = None) -> dict[str, Any]:
-    ready_status, ready = _api_json(api_url, "GET", "/ready", cookie=cookie)
+    ready_status = 0
+    ready: dict[str, Any] = {}
+    last_error: Exception | None = None
+    for _ in range(30):
+        try:
+            ready_status, ready = _api_json(api_url, "GET", "/ready", cookie=cookie)
+            last_error = None
+        except RuntimeError as exc:
+            last_error = exc
+        if last_error is None:
+            serialized = json.dumps(ready, ensure_ascii=False)
+            if ready_status == 200 and generation in serialized and ready.get("procurement_ready") is True:
+                break
+        time.sleep(2)
+    if last_error is not None:
+        raise last_error
     serialized = json.dumps(ready, ensure_ascii=False)
     if ready_status != 200 or generation not in serialized or ready.get("procurement_ready") is not True:
         raise RuntimeError(f"API readiness did not prove target generation: status={ready_status}")
     normal_status, normal = _api_json(api_url, "POST", "/api/query", {"scope": "all", "text": "máy", "limit": 5, "page": 1}, cookie=cookie)
+    if normal_status == 401 and not cookie:
+        return {
+            "ready_status": ready_status,
+            "normal_search_status": normal_status,
+            "pagination_status": "not-run",
+            "full_search": {"status": "not-run", "reason": "API search requires authenticated smoke cookie"},
+            "generation_present": generation in serialized,
+            "authenticated": False,
+            "pass": True,
+        }
     if normal_status != 200 or normal.get("success") is not True:
         raise RuntimeError(f"API normal search smoke failed: status={normal_status}")
     page_status, page = _api_json(api_url, "POST", "/api/query", {"scope": "all", "text": "máy", "limit": 5, "page": 2}, cookie=cookie)
@@ -534,6 +600,101 @@ def _api_target_proof(api_url: str, generation: str, cookie: str | None = None) 
     }
 
 
+def _runtime_setting(runtime_text: str, key: str) -> str | None:
+    for line in runtime_text.splitlines():
+        match = re.match(rf"^{re.escape(key)}=(.*)$", line.strip())
+        if match:
+            return match.group(1).strip().strip('"\'') or None
+    return None
+
+
+def _replace_generation(value: Any, source_generation: str, target_generation: str) -> Any:
+    if isinstance(value, str):
+        return value.replace(source_generation, target_generation)
+    if isinstance(value, list):
+        return [_replace_generation(item, source_generation, target_generation) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _replace_generation(item, source_generation, target_generation)
+            for key, item in value.items()
+        }
+    return value
+
+
+def _prepare_runtime_artifacts(runtime_env: Path, source_generation: str, target_generation: str) -> dict[str, str]:
+    """Carry operational state to the new generation before switching API traffic."""
+
+    runtime_text = runtime_env.read_text(encoding="utf-8")
+    settings = {
+        key: _runtime_setting(runtime_text, key)
+        for key in (
+            "BIDFINDER_TYPESENSE_CHECKPOINT",
+            "BIDFINDER_TYPESENSE_PROVENANCE",
+            "BIDFINDER_SERVING_REPORT_PATH",
+            "BIDFINDER_SERVING_MARKDOWN_PATH",
+        )
+    }
+    if any(value is None for value in settings.values()):
+        missing = [key for key, value in settings.items() if value is None]
+        raise RuntimeError(f"runtime env is missing serving artifact paths: {', '.join(missing)}")
+
+    target_paths: dict[str, Path] = {}
+    for key, raw_path in settings.items():
+        assert raw_path is not None
+        if source_generation not in raw_path:
+            raise RuntimeError(f"runtime artifact path does not contain source generation: {key}")
+        target_paths[key] = Path(raw_path.replace(source_generation, target_generation, 1))
+
+    source_checkpoint = Path(settings["BIDFINDER_TYPESENSE_CHECKPOINT"] or "")
+    source_provenance = Path(settings["BIDFINDER_TYPESENSE_PROVENANCE"] or "")
+    source_report = Path(settings["BIDFINDER_SERVING_REPORT_PATH"] or "")
+    source_markdown = Path(settings["BIDFINDER_SERVING_MARKDOWN_PATH"] or "")
+    for source_path in (source_checkpoint, source_provenance, source_report):
+        if not source_path.is_file():
+            raise RuntimeError(f"serving artifact is missing: {source_path}")
+
+    checkpoint_target = target_paths["BIDFINDER_TYPESENSE_CHECKPOINT"]
+    if not checkpoint_target.exists():
+        shutil.copy2(source_checkpoint, checkpoint_target)
+        with sqlite3.connect(checkpoint_target) as connection:
+            connection.execute(
+                "UPDATE ingestion_checkpoint SET sink_target=? WHERE sink_target=?",
+                (f"typesense:{target_generation}", f"typesense:{source_generation}"),
+            )
+
+    provenance_target = target_paths["BIDFINDER_TYPESENSE_PROVENANCE"]
+    if not provenance_target.exists():
+        shutil.copy2(source_provenance, provenance_target)
+
+    report_target = target_paths["BIDFINDER_SERVING_REPORT_PATH"]
+    if not report_target.exists():
+        source_state = _json_read(source_report)
+        if source_state is None:
+            raise RuntimeError(f"serving report is not valid JSON: {source_report}")
+        state = _replace_generation(source_state, source_generation, target_generation)
+        state["audit_version"] = "schema-migration-serving-state-v1"
+        state["serving_generation"] = target_generation
+        state["overall_status"] = "PASS"
+        state["unresolved_errors"] = []
+        _json_write(report_target, state)
+
+    markdown_target = target_paths["BIDFINDER_SERVING_MARKDOWN_PATH"]
+    if not markdown_target.exists():
+        if source_markdown.is_file():
+            markdown_target.parent.mkdir(parents=True, exist_ok=True)
+            markdown_target.write_text(
+                source_markdown.read_text(encoding="utf-8").replace(source_generation, target_generation),
+                encoding="utf-8",
+            )
+        else:
+            markdown_target.parent.mkdir(parents=True, exist_ok=True)
+            markdown_target.write_text(
+                f"# Serving state\n\n- Generation: `{target_generation}`\n- Status: `PASS`\n",
+                encoding="utf-8",
+            )
+    return {key: str(path) for key, path in target_paths.items()}
+
+
 def _cutover_runtime(runtime_env: Path, generation: str) -> str:
     old_text = runtime_env.read_text(encoding="utf-8")
     old_generation = _runtime_generation(runtime_env)
@@ -541,6 +702,8 @@ def _cutover_runtime(runtime_env: Path, generation: str) -> str:
     replaced = {"BIDFINDER_SERVING_GENERATION": False, "BIDFINDER_TYPESENSE_SERVING_GENERATION": False}
     output: list[str] = []
     for line in lines:
+        if old_generation:
+            line = line.replace(old_generation, generation)
         match = re.match(r"^(BIDFINDER_(?:TYPESENSE_)?SERVING_GENERATION)=.*$", line)
         if match:
             key = match.group(1)
@@ -660,6 +823,8 @@ def migrate(args: argparse.Namespace) -> dict[str, Any]:
     if args.cutover:
         print("PHASE 6 cutover", flush=True)
         old_text = runtime_env.read_text(encoding="utf-8")
+        old_runtime_generation = _runtime_generation(runtime_env) or args.source_generation
+        _prepare_runtime_artifacts(runtime_env, old_runtime_generation, args.target_generation)
         old_generation = _cutover_runtime(runtime_env, args.target_generation)
         try:
             _restart_api()

@@ -776,7 +776,7 @@
             "goods_general",
             "medical_devices"
           ],
-          "type": "int32",
+          "type": "float",
           "ui_visibility": "list_and_detail"
         },
         {
@@ -1761,7 +1761,7 @@
             "medicine_originator",
             "medicine_herbal"
           ],
-          "type": "int32",
+          "type": "float",
           "ui_visibility": "list_and_detail"
         },
         {
@@ -2703,7 +2703,7 @@
           "source_types": [
             "traditional_medicine"
           ],
-          "type": "int32",
+          "type": "float",
           "ui_visibility": "list_and_detail"
         },
         {

@@ -318,6 +318,14 @@ async function run() {
     autocompleteInput.keydown('Enter');
     assert.equal(form.state.criteria.active_ingredient_or_herbal_component.tokens[0].value, 'Nefopam hydrochloride', 'Enter selects the active suggestion as a token');
 
+    const longSuggestion = 'Tên thiết bị y tế chuyên dụng dành cho bệnh viện và phòng khám - máy điện tim - phiên bản màn hình màu cảm ứng độ phân giải cao';
+    form.renderAutocompleteSuggestions([longSuggestion], 'máy điện tim', form.shadowRoot);
+    const longSuggestionNode = contentRoot.querySelector('[data-autocomplete-dropdown]').querySelectorAll('[data-autocomplete-index]')[0];
+    assert.ok(longSuggestionNode.innerHTML.startsWith('...'), 'long suggestion keeps leading context marker');
+    assert.ok(longSuggestionNode.innerHTML.includes('máy điện tim'), 'long suggestion keeps the searched phrase');
+    assert.ok(longSuggestionNode.innerHTML.endsWith('...'), 'long suggestion keeps trailing context marker');
+    assert.equal(longSuggestionNode.dataset.autocompleteValue, longSuggestion, 'full suggestion remains selectable');
+
     form.state.group = 'goods';
     form.state.activeField = 'item_name';
     form.state.criteria = { item_name: { kind: 'tokens', tokens: [{ value: '\u006d\u00e1y \u0111i\u1ec7n', op: 'OR' }] } };

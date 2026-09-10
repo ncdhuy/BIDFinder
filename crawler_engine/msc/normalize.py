@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from math import floor, isfinite
+from math import isfinite
 from typing import Any, Sequence
 
 from .models import CanonicalRecord, RawRecord, SourceContract
@@ -66,20 +66,15 @@ def normalize_number(value: Any) -> int | float | None:
     return value
 
 
-def normalize_bidder_count(value: Any) -> int | None:
-    """Normalize the source's fractional bidder count to a non-negative integer.
-
-    The source represents this aggregate as a ratio in some datasets.  The
-    product displays a count, so use conventional half-up rounding rather than
-    Python's banker's rounding (e.g. 1.5 must become 2).
-    """
+def normalize_bidder_count(value: Any) -> int | float | None:
+    """Preserve the source's non-negative numeric bidder count unchanged."""
 
     number = normalize_number(value)
     if number is None:
         return None
     if number < 0:
         raise NormalizationError("bidder count cannot be negative")
-    return floor(float(number) + 0.5)
+    return number
 
 
 def normalize_year(value: Any) -> str | None:

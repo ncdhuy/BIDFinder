@@ -53,7 +53,7 @@
       anonymous_full_query_daily_used: 0,
       anonymous_full_query_daily_remaining: 10,
       anonymous_full_query_login_required: false,
-      anonymous_full_query_limit_message: 'Bạn đã dùng hết lượt tra cứu hôm nay. Vui lòng đăng nhập để tiếp tục.',
+      anonymous_full_query_limit_message: 'Bạn đã dùng hết lượt tìm kiếm hôm nay. Vui lòng đăng nhập để tiếp tục.',
       full_search_enabled: true,
       full_search_daily_limit: 3,
       full_search_daily_used: 0,
@@ -143,11 +143,8 @@
       'auth-password-title',
       'auth-password-desc',
       'open-account-nav',
-      'open-feedback-nav',
       'open-register-nav',
       'open-login-nav',
-      'open-register-app',
-      'open-login-app',
       'open-login-hero'
     ];
 
@@ -184,7 +181,7 @@
     if (state.config?.anonymous_full_query_login_required && state.config?.anonymous_full_query_limit_message) {
       return state.config.anonymous_full_query_limit_message;
     }
-    return 'Bạn cần đăng nhập để tra cứu dữ liệu.';
+    return 'Bạn cần đăng nhập để tìm kiếm dữ liệu.';
   }
 
   function saveToken(token) {
@@ -295,11 +292,10 @@
     document.body.classList.toggle('auth-state-authed', authed);
     document.body.classList.toggle('auth-state-guest', !authed);
 
-    els['app-auth-shell']?.classList.toggle('is-hidden', !authed);
     if (els['open-account-nav']) {
-      els['open-account-nav'].hidden = !authed;
+        els['open-account-nav'].hidden = !authed;
     }
-    [els['open-register-nav'], els['open-login-nav'], els['open-register-app'], els['open-login-app'], els['open-login-hero']].forEach((el) => {
+    [els['open-register-nav'], els['open-login-nav'], els['open-login-hero']].forEach((el) => {
       if (!el) return;
       el.hidden = authed;
     });
@@ -1370,12 +1366,19 @@
       openAuthModal('register');
     };
 
+    const openAccount = () => {
+      if (isAuthenticated()) {
+        openAuthModal('profile');
+        return;
+      }
+      state.pendingIntent = 'account';
+      openAuthModal('login');
+    };
+
     els['open-login-nav']?.addEventListener('click', openLogin);
-    els['open-login-app']?.addEventListener('click', openLogin);
     els['open-login-hero']?.addEventListener('click', openLogin);
     els['open-register-nav']?.addEventListener('click', openRegister);
-    els['open-register-app']?.addEventListener('click', openRegister);
-    els['open-account-nav']?.addEventListener('click', () => openAuthModal('profile'));
+    els['open-account-nav']?.addEventListener('click', openAccount);
     els['auth-close-btn']?.addEventListener('click', () => closeAuthModal());
     els.overlay?.addEventListener('click', () => closeAuthModal());
 
@@ -1425,7 +1428,7 @@
       setAlert('');
       focusFirstField();
     });
-    els['auth-edit-profile-btn']?.addEventListener('click', () => openAuthModal('profile'));
+    els['auth-edit-profile-btn']?.addEventListener('click', openAccount);
     els['auth-logout-btn']?.addEventListener('click', handleLogout);
     bindPasswordToggles();
     ['register-position', 'profile-position'].forEach((fieldId) => {

@@ -7,7 +7,13 @@ import unittest
 
 from crawler_engine.msc.typesense_client import ImportResult
 from crawler_engine.msc.typesense_schema import SEARCH_CONFIGS, collection_schema, physical_collection_name
-from tools.migrate_typesense_vietnamese_locale import _final_schema, _import_group, _locale_status
+from tools.migrate_typesense_vietnamese_locale import (
+    _cutover_runtime,
+    _final_schema,
+    _import_group,
+    _locale_status,
+    _migrate_legacy_document,
+)
 
 
 def source_schema(group: str) -> dict:
@@ -55,12 +61,17 @@ class FakeClient:
 class VietnameseLocaleMigrationTest(unittest.TestCase):
     def test_final_schema_localizes_search_fields_only(self):
         source = source_schema("goods")
+        for field in source["fields"]:
+            if field["name"] == "production_year":
+                field["type"] = "int32"
         final = _final_schema("goods", "target", source)
         status = _locale_status("goods", final)
 
         self.assertTrue(status["ok"])
         self.assertEqual(set(SEARCH_CONFIGS["goods"].query_by), set(status["localized_fields"]))
         fields = {field["name"]: field for field in final["fields"]}
+        self.assertEqual("string", fields["production_year"]["type"])
+        self.assertEqual("msc-source-schema-v1", final["metadata"]["schema_version"])
         self.assertNotIn("locale", fields["production_year"])
         self.assertNotIn("locale", fields["partition_date"])
         self.assertEqual("vi", fields["item_name"]["locale"])
@@ -86,6 +97,36 @@ class VietnameseLocaleMigrationTest(unittest.TestCase):
         self.assertEqual(5, first["target_documents"])
         self.assertEqual("skip-complete", second["action"])
         self.assertEqual(calls_after_first, client.import_calls)
+
+    def test_legacy_document_migration_preserves_values_and_keys(self):
+        document = {
+            "id": "id-1",
+            "production_year": 2024,
+            "bidder_count": 2.333,
+            "location": "Việt Nam",
+        }
+        migrated = _migrate_legacy_document("goods", document)
+
+        self.assertEqual(set(document), set(migrated))
+        self.assertEqual("2024", migrated["production_year"])
+        self.assertEqual(2.333, migrated["bidder_count"])
+        self.assertEqual(document["location"], migrated["location"])
+
+    def test_cutover_updates_generation_bound_runtime_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "runtime.env"
+            path.write_text(
+                "BIDFINDER_SERVING_GENERATION=old\n"
+                "BIDFINDER_TYPESENSE_SERVING_GENERATION=old\n"
+                "BIDFINDER_TYPESENSE_CHECKPOINT=/tmp/old.sqlite3\n",
+                encoding="utf-8",
+            )
+            self.assertEqual("old", _cutover_runtime(path, "new"))
+            text = path.read_text(encoding="utf-8")
+
+        self.assertNotIn("old", text)
+        self.assertIn("BIDFINDER_TYPESENSE_CHECKPOINT=/tmp/new.sqlite3", text)
+        self.assertIn("BIDFINDER_SERVING_GENERATION=new", text)
 
     def test_migration_tool_has_no_clone_or_schema_patch_path(self):
         source = inspect.getsource(_import_group)

@@ -122,6 +122,40 @@
     function html(value) {
         return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
+    function normalizeAutocompleteText(value) {
+        return String(value ?? '').trim().replace(/\s+/g, ' ');
+    }
+    function truncateAutocompleteValue(value, query, maxLength = 56) {
+        const text = normalizeAutocompleteText(value);
+        if (text.length <= maxLength) return text;
+        const safeQuery = normalizeAutocompleteText(query);
+        const queryStart = safeQuery ? text.toLocaleLowerCase().indexOf(safeQuery.toLocaleLowerCase()) : -1;
+        const queryEnd = queryStart + safeQuery.length;
+        const edgeLength = maxLength - 3;
+        if (queryStart >= 0 && queryEnd <= edgeLength) return `${text.slice(0, edgeLength)}...`;
+        if (queryStart >= 0 && queryStart >= text.length - edgeLength) return `...${text.slice(-edgeLength)}`;
+        if (queryStart >= 0 && safeQuery.length <= maxLength - 6) {
+            const contextLength = maxLength - safeQuery.length - 6;
+            let leftLength = Math.min(Math.ceil(contextLength / 2), queryStart);
+            let rightLength = Math.min(contextLength - leftLength, text.length - queryEnd);
+            const remaining = contextLength - leftLength - rightLength;
+            if (remaining > 0) {
+                const extraLeft = Math.min(remaining, queryStart - leftLength);
+                leftLength += extraLeft;
+                rightLength += Math.min(remaining - extraLeft, text.length - queryEnd - rightLength);
+            }
+            return `...${text.slice(queryStart - leftLength, queryEnd + rightLength)}...`;
+        }
+        return `${text.slice(0, edgeLength)}...`;
+    }
+    function highlightAutocompleteValue(value, query) {
+        const safeValue = normalizeAutocompleteText(value);
+        const safeQuery = normalizeAutocompleteText(query);
+        const queryStart = safeQuery ? safeValue.toLocaleLowerCase().indexOf(safeQuery.toLocaleLowerCase()) : -1;
+        if (queryStart < 0) return html(safeValue);
+        const queryEnd = queryStart + safeQuery.length;
+        return `${html(safeValue.slice(0, queryStart))}<strong>${html(safeValue.slice(queryStart, queryEnd))}</strong>${html(safeValue.slice(queryEnd))}`;
+    }
     const ICON_PATHS = {
         package: '<path d="m16.5 9.4-9-5.19M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="M3.27 6.96 12 12.01l8.73-5.05M12 22.08V12"/>',
         pill: '<path d="m10.5 20.5 9.5-9.5a4.95 4.95 0 0 0-7-7l-9.5 9.5a4.95 4.95 0 0 0 7 7Z"/><path d="m8.5 8.5 7 7"/>',
@@ -465,10 +499,12 @@
                 .autocomplete-dropdown.hidden { display: none; }
                 .autocomplete-dropdown li {
                     padding: 10px 12px;
+                    overflow: hidden;
                     border-radius: var(--radius-sm);
                     color: var(--c-text);
                     font-size: 13.5px;
                     line-height: 1.4;
+                    white-space: nowrap;
                     cursor: pointer;
                 }
                 .autocomplete-dropdown li:hover,
@@ -846,16 +882,16 @@
                 return;
             }
             const safeQuery = String(currentQuery || '').trim();
-            const queryPattern = safeQuery ? new RegExp(safeQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig') : null;
             dropdown.innerHTML = '';
             uniqueValues.forEach((value, index) => {
                 const item = document.createElement('li');
                 item.dataset.autocompleteIndex = String(index);
                 item.dataset.autocompleteValue = value;
                 item.setAttribute('role', 'option');
-                const safeValue = html(value);
-                const safeSearch = queryPattern ? html(safeQuery) : '';
-                item.innerHTML = queryPattern ? safeValue.replace(new RegExp(safeSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), match => `<strong>${match}</strong>`) : safeValue;
+                item.setAttribute('aria-label', value);
+                item.title = value;
+                const displayValue = truncateAutocompleteValue(value, safeQuery);
+                item.innerHTML = safeQuery ? highlightAutocompleteValue(displayValue, safeQuery) : html(displayValue);
                 item.addEventListener('mousedown', event => event.preventDefault());
                 item.addEventListener('click', () => this.appendValueToken(value));
                 dropdown.append(item);

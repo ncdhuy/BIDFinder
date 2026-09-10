@@ -247,8 +247,8 @@ class NormalizationTest(unittest.TestCase):
         raw.pop("danhMucHangHoa")
         self.assertIsNone(normalize_record(SOURCE_CONTRACTS["goods_general"], raw, "2026-08-28")["item_name"])
 
-    def test_new_data_cleanup_rounds_bidder_count_and_preserves_year_ranges(self):
-        self.assertEqual((1, 2, 2), (
+    def test_new_data_cleanup_preserves_bidder_count_and_year_ranges(self):
+        self.assertEqual((1.3, 1.7, 1.5), (
             normalize_bidder_count(1.3),
             normalize_bidder_count(1.7),
             normalize_bidder_count(1.5),
@@ -261,7 +261,7 @@ class NormalizationTest(unittest.TestCase):
             "diaDiem": "Xã Dầu Tiếng, Thành phố Hồ Chí Minh",
         })
         normalized = normalize_record(SOURCE_CONTRACTS["goods_general"], raw, "2026-08-28")
-        self.assertEqual(2, normalized["bidder_count"])
+        self.assertEqual(1.7, normalized["bidder_count"])
         self.assertEqual("2024-2025", normalized["production_year"])
         self.assertEqual("Xã Dầu Tiếng, Thành phố Hồ Chí Minh", normalized["location"])
         self.assertEqual("Thành phố Hồ Chí Minh", extract_location_province(normalized["location"]))

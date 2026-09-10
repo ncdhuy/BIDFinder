@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from math import floor, isfinite
+from math import isfinite
 from typing import Any
 
 
@@ -49,13 +49,13 @@ def normalize_number(value: Any) -> int | float | None:
     return value
 
 
-def normalize_bidder_count(value: Any) -> int | None:
+def normalize_bidder_count(value: Any) -> int | float | None:
     number = normalize_number(value)
     if number is None:
         return None
     if number < 0:
         raise NormalizationError("bidder count cannot be negative")
-    return floor(float(number) + 0.5)
+    return number
 
 
 def normalize_year(value: Any) -> str | None:

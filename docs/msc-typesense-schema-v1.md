@@ -44,7 +44,7 @@ Dates remain raw strings in V1 because response timestamps have no explicit time
 | `result_posted_at` | string | yes | no | no | no | raw local-naive MSC timestamp |
 | `decision_number` | string | yes | no | no | yes | |
 | `decision_issued_at` | string | yes | no | no | no | raw local-naive MSC timestamp |
-| `bidder_count` | int32 | yes | no | yes | no | source ratios rounded half-up to the nearest whole bidder |
+| `bidder_count` | float | yes | no | yes | no | preserve the non-negative numeric value from the source |
 | `location` | string | yes | no | no | yes | deterministic display join from `diaDiem` |
 
 `query_by` order: `item_name,country_of_origin,hs_code,model_mark,brand,manufacturer,technical_specification,model,registration_or_import_permit_number,winning_bidder_name,bid_invitation_code,procuring_entity_name,selection_method,unit`.
@@ -76,7 +76,7 @@ Dates remain raw strings in V1 because response timestamps have no explicit time
 | `result_posted_at` | string | yes | no | no | no |
 | `decision_number` | string | yes | no | no | yes |
 | `decision_issued_at` | string | yes | no | no | no |
-| `bidder_count` | int32 | yes | no | yes | no |
+| `bidder_count` | float | yes | no | yes | no |
 | `location` | string | yes | no | no | yes |
 
 `query_by` order: `medicine_name,active_ingredient_or_herbal_component,strength,marketing_authorization_or_import_permit,route_of_administration,dosage_form,shelf_life,manufacturer,production_country,packaging,winning_bidder_name,medicine_group,bid_invitation_code,procuring_entity_name,selection_method,unit`.
@@ -107,7 +107,7 @@ Dates remain raw strings in V1 because response timestamps have no explicit time
 | `result_posted_at` | string | yes | no | no | no |
 | `decision_number` | string | yes | no | no | yes |
 | `decision_issued_at` | string | yes | no | no | no |
-| `bidder_count` | int32 | yes | no | yes | no |
+| `bidder_count` | float | yes | no | yes | no |
 | `location` | string | yes | no | no | yes |
 
 `query_by` order: `item_name,used_part,scientific_name,origin,processing_method,registration_or_import_permit_number,manufacturer,production_country,packaging,winning_bidder_name,technical_group,bid_invitation_code,procuring_entity_name,selection_method,unit`.
@@ -115,7 +115,7 @@ Dates remain raw strings in V1 because response timestamps have no explicit time
 ## Freeze boundaries
 
 - High-cardinality names, IDs, codes, manufacturers, bidders, and procuring entities are searchable but not facets.
-- Numeric JSON values stay numeric. `bidder_count` is normalized to a non-negative integer; arrays remain arrays until an explicit API presentation rule is chosen.
+- Numeric JSON values stay numeric. `bidder_count` preserves its non-negative numeric value; arrays remain arrays until an explicit API presentation rule is chosen.
 - Unsupported legacy fields (`df1`/`df2` names, package joins, validity/approval fields, Excel-only columns) are absent or nullable; no guessed compatibility values enter these collections.
 - `result_posted_at` and `decision_issued_at` keep raw source strings in V1. A future typed date field requires a new schema version and proven timezone handling.
 - All canonical data fields are optional in V1. `id` is required; `data_group`, `source_tab`, `source_tab_label`, and `partition_date` are deterministic provenance derived from the verified contract and requested date.

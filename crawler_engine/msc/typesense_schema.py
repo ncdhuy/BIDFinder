@@ -95,7 +95,7 @@ _GROUP_FIELDS: Mapping[str, tuple[dict[str, Any], ...]] = {
         _field("winning_bidder_id", "string[]"), _field("winning_bidder_name", "string[]"),
         _field("bid_invitation_code"), _field("procuring_entity_id"), _field("procuring_entity_name"),
         _field("selection_method", facet=True), _field("result_posted_at"), _field("decision_number"),
-        _field("decision_issued_at"), _field("bidder_count", "int32", sort=True), _field("location"),
+        _field("decision_issued_at"), _field("bidder_count", "float", sort=True), _field("location"),
     ),
     "medicines": (
         _field("medicine_name"), _field("active_ingredient_or_herbal_component"), _field("strength"),
@@ -106,7 +106,7 @@ _GROUP_FIELDS: Mapping[str, tuple[dict[str, Any], ...]] = {
         _field("winning_bidder_id", "string[]"), _field("winning_bidder_name", "string[]"),
         _field("medicine_group", facet=True), _field("bid_invitation_code"), _field("procuring_entity_id"),
         _field("procuring_entity_name"), _field("selection_method", facet=True), _field("result_posted_at"),
-        _field("decision_number"), _field("decision_issued_at"), _field("bidder_count", "int32", sort=True),
+        _field("decision_number"), _field("decision_issued_at"), _field("bidder_count", "float", sort=True),
         _field("location"),
     ),
     "traditional_medicine": (
@@ -117,7 +117,7 @@ _GROUP_FIELDS: Mapping[str, tuple[dict[str, Any], ...]] = {
         _field("winning_bidder_id", "string[]"), _field("winning_bidder_name", "string[]"),
         _field("technical_group", facet=True), _field("bid_invitation_code"), _field("procuring_entity_id"),
         _field("procuring_entity_name"), _field("selection_method", facet=True), _field("result_posted_at"),
-        _field("decision_number"), _field("decision_issued_at"), _field("bidder_count", "int32", sort=True),
+        _field("decision_number"), _field("decision_issued_at"), _field("bidder_count", "float", sort=True),
         _field("location"),
     ),
 }

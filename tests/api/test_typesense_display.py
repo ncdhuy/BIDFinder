@@ -16,10 +16,10 @@ from typesense_display import (  # noqa: E402
 
 
 class TypesenseDisplayTest(unittest.TestCase):
-    def test_bidder_count_uses_half_up_rounding(self):
-        self.assertEqual(1, normalize_bidder_count(1.3))
-        self.assertEqual(2, normalize_bidder_count(1.7))
-        self.assertEqual(2, normalize_bidder_count(1.5))
+    def test_bidder_count_preserves_source_numeric_value(self):
+        self.assertEqual(1.3, normalize_bidder_count(1.3))
+        self.assertEqual(1.7, normalize_bidder_count(1.7))
+        self.assertEqual(1.5, normalize_bidder_count(1.5))
 
     def test_year_preserves_range_values(self):
         self.assertEqual("2024-2025", normalize_year("2024-2025"))

@@ -39,7 +39,6 @@
                 </a>
 
                 <nav class="bf-nav">
-                    <button class="bf-nav-link" id="open-feedback-nav" type="button">Diễn đàn</button>
                     <button class="bf-nav-link" id="open-account-nav" type="button">Tài khoản</button>
                     <button class="bf-nav-link" id="open-register-nav" type="button">Đăng ký</button>
                     <button class="bf-nav-link" id="open-login-nav" type="button">Đăng nhập</button>
@@ -63,7 +62,7 @@
 
                     <div class="bf-hero-actions">
                         <button id="enter-app-btn-hero" class="bf-btn bf-btn-primary bf-btn-lg" type="button">
-                            Bắt đầu tra cứu
+                            Bắt đầu tìm kiếm
                         </button>
                     </div>
 
@@ -81,7 +80,7 @@
                         <div class="bf-dashboard-meta">
                             <div>
                                 <p class="bf-kicker">BIDFinder Workspace</p>
-                                <!-- <h3>Tra cứu kết quả đấu thầu y tế</h3> -->
+                                <!-- <h3>Tìm kiếm kết quả đấu thầu y tế</h3> -->
                             </div>
                             <div class="bf-meta-badge">Tối ưu cho desktop</div>
                         </div>
@@ -92,7 +91,7 @@
                     </div>
 
                     <div class="bf-float bf-float-a">
-                        <span>Tra cứu tập trung</span>
+                        <span>Tìm kiếm tập trung</span>
                         <strong>Thuốc, thiết bị y tế, thực phẩm chức năng, thực phẩm bảo vệ sức khỏe, mỹ phẩm...</strong>
                     </div>
 
@@ -102,7 +101,7 @@
                     </div>
 
                     <div class="bf-float bf-float-c">
-                        <span>Tăng tốc độ tra cứu</span>
+                        <span>Tăng tốc độ tìm kiếm</span>
                         <strong>Truy xuất, tổng hợp dữ liệu nhanh chóng theo nhiều tiêu chí</strong>
                     </div>
                 </div>
@@ -128,17 +127,14 @@
                         <button class="app-auth-btn app-icon-btn app-icon-btn-help" id="open-product-journey" type="button" aria-label="Hướng dẫn" title="Hướng dẫn">
                             <i data-feather="help-circle" aria-hidden="true"></i>
                         </button>
-                        <div class="app-auth-shell is-hidden" id="app-auth-shell">
+                        <button class="app-auth-btn app-icon-btn app-icon-btn-notification" id="open-feedback-modal" type="button" aria-label="Thông báo" title="Thông báo">
+                            <i data-feather="bell" aria-hidden="true"></i>
+                        </button>
+                        <div class="app-auth-shell" id="app-auth-shell">
                             <button class="app-auth-btn app-icon-btn app-icon-btn-account" id="auth-edit-profile-btn" type="button" aria-label="Tài khoản" title="Tài khoản">
                                 <i data-feather="user" aria-hidden="true"></i>
                             </button>
                         </div>
-                        <button class="app-auth-btn app-icon-btn app-icon-btn-forum" id="open-feedback-modal" type="button" aria-label="Diễn đàn" title="Diễn đàn">
-                            <i data-feather="bell" aria-hidden="true"></i>
-                        </button>
-                        <button class="app-auth-btn" id="open-register-app" type="button">Đăng ký</button>
-                        <button class="app-auth-btn" id="open-login-app" type="button">Đăng nhập</button>
-                        
                     </div>
                 </header>
 
@@ -217,15 +213,15 @@
                                 <div class="table-meta-bar">
                                     <div class="table-hover-controls" data-table-id="standard-table">
                                         <div class="table-tool-group">
-                                            <button class="table-tool-btn" type="button" data-action="toggle-columns" data-table-id="standard-table" aria-haspopup="true" aria-expanded="false" title="Show/hide columns">
+                                            <button class="table-tool-btn" type="button" data-action="toggle-columns" data-table-id="standard-table" aria-haspopup="true" aria-expanded="false" title="Ẩn/hiện cột">
                                                 <i data-feather="eye"></i>
                                             </button>
                                             <div class="table-columns-popover" hidden></div>
                                         </div>
-                                        <button class="table-tool-btn" type="button" data-action="download" data-table-id="standard-table" title="Download Excel">
+                                        <button class="table-tool-btn" type="button" data-action="download" data-table-id="standard-table" title="Tải Excel" aria-label="Tải Excel">
                                             <i data-feather="download"></i>
                                         </button>
-                                        <button class="table-tool-btn" type="button" data-action="fullscreen" data-table-id="standard-table" title="Fullscreen">
+                                        <button class="table-tool-btn" type="button" data-action="fullscreen" data-table-id="standard-table" title="Toàn màn hình">
                                             <i data-feather="maximize"></i>
                                         </button>
                                     </div>
@@ -244,7 +240,7 @@
                                         <tbody id="standard-data">
                                             <tr>
                                                 <td colspan="26" class="table-empty-state">
-                                                    Chưa có dữ liệu. Thực hiện tra cứu để hiển thị kết quả theo biểu mẫu thuốc.
+                                                    Chưa có dữ liệu. Thực hiện tìm kiếm để hiển thị kết quả theo biểu mẫu thuốc.
                                                 </td>
                                             </tr>
                                         </tbody>
@@ -276,7 +272,7 @@
                                             </button>
                                             <div class="table-columns-popover" hidden></div>
                                         </div>
-                                        <button class="table-tool-btn" type="button" data-action="download" data-table-id="extended-table" title="Tải Excel">
+                                        <button class="table-tool-btn" type="button" data-action="download" data-table-id="extended-table" title="Tải Excel" aria-label="Tải Excel">
                                             <i data-feather="download"></i>
                                         </button>
                                         <button class="table-tool-btn" type="button" data-action="fullscreen" data-table-id="extended-table" title="Toàn màn hình">
@@ -298,7 +294,7 @@
                                         <tbody id="extended-data">
                                             <tr>
                                                 <td colspan="25" class="table-empty-state">
-                                                    Chưa có dữ liệu. Thực hiện tra cứu để hiển thị kết quả theo biểu mẫu hàng hóa.
+                                                    Chưa có dữ liệu. Thực hiện tìm kiếm để hiển thị kết quả theo biểu mẫu hàng hóa.
                                                 </td>
                                             </tr>
                                         </tbody>
@@ -330,7 +326,7 @@
                                             </button>
                                             <div class="table-columns-popover" hidden></div>
                                         </div>
-                                        <button class="table-tool-btn" type="button" data-action="download" data-table-id="traditional-table" title="Tải Excel">
+                                        <button class="table-tool-btn" type="button" data-action="download" data-table-id="traditional-table" title="Tải Excel" aria-label="Tải Excel">
                                             <i data-feather="download"></i>
                                         </button>
                                         <button class="table-tool-btn" type="button" data-action="fullscreen" data-table-id="traditional-table" title="Toàn màn hình">
@@ -347,7 +343,7 @@
                                     <table class="data-table" id="traditional-table">
                                         <thead><tr></tr></thead>
                                         <tbody id="traditional-data">
-                                            <tr><td colspan="25" class="table-empty-state">Chưa có dữ liệu. Thực hiện tra cứu để hiển thị kết quả dược liệu và vị thuốc.</td></tr>
+                                            <tr><td colspan="25" class="table-empty-state">Chưa có dữ liệu. Thực hiện tìm kiếm để hiển thị kết quả theo biểu mẫu dược liệu và vị thuốc.</td></tr>
                                         </tbody>
                                     </table>
                                 </div>
@@ -383,7 +379,7 @@
                     <h3><i data-feather="search"></i>Tìm kiếm nâng cao</h3>
                     <button id="filter-help-btn" class="help-icon" type="button" aria-label="Trợ giúp">i</button>
                 </div>
-                <button id="close-filter-panel" class="btn-close" aria-label="Đóng">
+                <button id="close-filter-panel" class="btn-close window-close-button" type="button" aria-label="Đóng">
                     <i data-feather="x"></i>
                 </button>
             </div>
@@ -418,15 +414,18 @@
             <header class="insight-drawer-header">
                 <div class="insight-drawer-title-group">
                     <span class="insight-drawer-kicker">Phân tích trực quan</span>
-                    <h3 id="insight-drawer-title">Insight từ kết quả tra cứu</h3>
+                    <h3 id="insight-drawer-title">Insight từ kết quả tìm kiếm</h3>
                 </div>
+                <button id="close-insight-drawer" class="btn-close window-close-button" type="button" aria-label="Đóng">
+                    <i data-feather="x"></i>
+                </button>
             </header>
 
             <div class="insight-drawer-body">
                 <nav class="insight-preview-list" aria-label="Chọn biểu đồ">
                     <button class="insight-preview-card active" type="button" data-chart-view="province" aria-pressed="true">
                         <span class="insight-preview-visual insight-preview-visual-map is-data-preview" id="insight-preview-province" aria-hidden="true">
-                            <span class="insight-preview-empty"></span>
+                            <i data-feather="map" class="insight-preview-icon-simple" aria-hidden="true"></i>
                         </span>
                         <span class="insight-preview-copy">
                             <strong>Theo tỉnh/thành</strong>
@@ -435,7 +434,7 @@
                     </button>
                     <button class="insight-preview-card" type="button" data-chart-view="timeline" aria-pressed="false">
                         <span class="insight-preview-visual insight-preview-visual-line is-data-preview" id="insight-preview-timeline" aria-hidden="true">
-                            <span></span><span></span><span></span><span></span>
+                            <i data-feather="trending-up" class="insight-preview-icon-simple" aria-hidden="true"></i>
                         </span>
                         <span class="insight-preview-copy">
                             <strong>Theo thời gian</strong>
@@ -444,7 +443,7 @@
                     </button>
                     <button class="insight-preview-card" type="button" data-chart-view="price" aria-pressed="false">
                         <span class="insight-preview-visual insight-preview-visual-bars is-data-preview" id="insight-preview-price" aria-hidden="true">
-                            <span></span><span></span><span></span><span></span><span></span>
+                            <i data-feather="bar-chart-2" class="insight-preview-icon-simple" aria-hidden="true"></i>
                         </span>
                         <span class="insight-preview-copy">
                             <strong>Phân bố đơn giá</strong>
@@ -482,7 +481,7 @@
     <div id="auth-modal" class="auth-modal" aria-hidden="true">
         <div class="auth-overlay"></div>
         <div class="auth-dialog" role="dialog" aria-modal="true" aria-labelledby="auth-dialog-title">
-            <button class="btn-close auth-close" id="auth-close-btn" aria-label="Đóng">
+            <button class="btn-close window-close-button auth-close" id="auth-close-btn" type="button" aria-label="Đóng">
                 <i data-feather="x"></i>
             </button>
 
@@ -827,16 +826,16 @@
 
                 <section class="readme-section">
                     <h2>Mục đích</h2>
-                    <p>Hỗ trợ cơ quan y tế, doanh nghiệp dược tra cứu thông tin thuốc trúng thầu nhanh chóng từ nguồn dữ liệu chính thống.</p>
+                    <p>Hỗ trợ cơ quan y tế, doanh nghiệp dược tìm kiếm thông tin thuốc trúng thầu nhanh chóng từ nguồn dữ liệu chính thống.</p>
                 </section>
                 
                 <!-- <section class="readme-section">
                     <h2>Lưu ý</h2>
-                    <p><strong>Giá trị sử dụng của hai bảng:</strong> Hai bảng phản ánh hai quy trình mua sắm khác nhau và có giá trị nghiệp vụ tương đương khi tra cứu, đối chiếu kết quả trúng thầu.</p>
+                    <p><strong>Giá trị sử dụng của hai bảng:</strong> Hai bảng phản ánh hai quy trình mua sắm khác nhau và có giá trị nghiệp vụ tương đương khi tìm kiếm, đối chiếu kết quả trúng thầu.</p>
                     <p><strong>Biểu mẫu thuốc chuyên biệt:</strong> Đối với đấu thầu rộng rãi, đấu thầu hạn chế và chào hàng cạnh tranh, Hệ thống áp dụng biểu mẫu chuyên biệt cho thuốc nên nhiều thuộc tính dược học được tách thành cột riêng.</p>
                     <p><strong>Biểu mẫu hàng hóa chuẩn:</strong> Đối với chào giá trực tuyến theo quy trình rút gọn, hệ thống dùng webform hàng hóa chung nên đặc tính của thuốc thường được gộp trong trường thông số kỹ thuật.</p>
                     <p><strong>Dữ liệu chuẩn hóa:</strong> Các gói thầu có các trường thông tin được tách riêng và được điền tương đối nhất quán (tên thuốc, tên hoạt chất, hàm lượng, đường dùng…), nên hệ thống có thể lọc theo từng tiêu chí rõ ràng.</p>
-                    <p><strong>Dữ liệu tổng hợp:</strong> Các gói thầu dùng một biến gộp chứa nhiều thông tin và được điền không nhất quán nên cấu trúc không thống nhất. Việc tách, chuẩn hóa nội dung từ biến gộp này vượt quá khả năng xử lý nên hệ thống giữ nguyên để người dùng tra cứu, đối chiếu bổ sung.</p>
+                    <p><strong>Dữ liệu tổng hợp:</strong> Các gói thầu dùng một biến gộp chứa nhiều thông tin và được điền không nhất quán nên cấu trúc không thống nhất. Việc tách, chuẩn hóa nội dung từ biến gộp này vượt quá khả năng xử lý nên hệ thống giữ nguyên để người dùng tìm kiếm, đối chiếu bổ sung.</p>
                     <p><strong>Tìm kiếm:</strong> Kết quả tìm kiếm phụ thuộc vào cách sử dụng từ khóa (xem thêm phần <strong><em>“Mẹo tìm kiếm”</em></strong>).</p>
                 </section> -->
 
@@ -870,7 +869,7 @@
                 <section class="readme-section">
                     <h2>Giới thiệu</h2>
                     <p>Ứng dụng được phát triển bởi nhóm nghiên cứu chuyên về phân tích dữ liệu y tế và đấu thầu công 
-                        nhằm cung cấp công cụ tra cứu minh bạch và hiệu quả cho cộng đồng y tế.</p>
+                        nhằm cung cấp công cụ tìm kiếm minh bạch và hiệu quả cho cộng đồng y tế.</p>
                     <p>Một số tính năng, giao diện có thể chưa hoàn thiện và được thay đổi trong các phiên bản tiếp theo. 
                         Mọi góp ý xin gửi về hòm thư của nhóm tác giả.</p>
                 </section>
@@ -907,7 +906,7 @@
                     <i data-feather="refresh-ccw"></i>
                     Lịch sử cập nhật
                 </h3>
-                <button class="btn-close" id="close-history" aria-label="Đóng">
+                <button class="btn-close window-close-button" id="close-history" type="button" aria-label="Đóng">
                     <i data-feather="x"></i>
                 </button>
             </div>
@@ -943,15 +942,15 @@
             <div class="bulk-search-header">
                 <h3 id="bulk-search-title">
                     <i data-feather="list"></i>
-                    Tra cứu hàng loạt
+                    Tìm kiếm hàng loạt
                 </h3>
-                <button class="btn-close" id="close-bulk-search-modal" type="button" aria-label="Đóng">
+                <button class="btn-close window-close-button" id="close-bulk-search-modal" type="button" aria-label="Đóng">
                     <i data-feather="x"></i>
                 </button>
             </div>
             <div class="bulk-search-body">
                 <div class="bulk-price-section">
-                    <span class="bulk-section-title">Tìm kiếm hàng hóa theo các tiêu chí</span>
+                    <span class="bulk-section-title">Giới hạn kết quả cho mỗi dòng tìm kiếm</span>
                     <div class="bulk-limit-row">
                         <div class="bulk-price-options" role="radiogroup" aria-label="Đa dạng giá">
                             <label><input type="radio" name="bulk-diversity-limit" value="price:3" checked> Tối đa 3 giá</label>
@@ -966,44 +965,9 @@
                     </div>
                 </div>
                 <div class="bulk-field-columns">
-                    <span class="bulk-field-columns-title">Cột tham chiếu tìm kiếm</span>
-                    <div class="bulk-field-panel" data-bulk-fields="medicine">
-                        <span class="bulk-section-title">Thuốc</span>
-                        <div class="bulk-field-options">
-                            <div class="bulk-field-option-column">
-                                <label><input type="checkbox" value="drugName"> Tên thuốc</label>
-                                <label><input type="checkbox" value="activeIngredient" checked> Tên hoạt chất</label>
-                                <label><input type="checkbox" value="concentration" checked> Nồng độ, hàm lượng</label>
-                                <label><input type="checkbox" value="route" checked> Đường dùng</label>
-                                <label><input type="checkbox" value="dosageForm" checked> Dạng bào chế</label>
-                                <label><input type="checkbox" value="drugGroup" checked> Nhóm thuốc</label>
-                            </div>
-                            <div class="bulk-field-option-column">
-                                <label><input type="checkbox" value="unit"> Đơn vị tính</label>
-                                <label><input type="checkbox" value="regNo"> GĐKLH hoặc GPNK</label>
-                                <label><input type="checkbox" value="specification"> Quy cách</label>
-                                <label><input type="checkbox" value="manufacturer"> Cơ sở sản xuất</label>
-                                <label><input type="checkbox" value="country"> Xuất xứ</label>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="bulk-field-panel" data-bulk-fields="goods">
-                        <span class="bulk-section-title">Hàng hóa</span>
-                        <div class="bulk-field-options">
-                            <div class="bulk-field-option-column">
-                                <label><input type="checkbox" value="lotName"> Tên phần/lô</label>
-                                <label><input type="checkbox" value="goodsName" checked> Danh mục hàng hóa</label>
-                                <label><input type="checkbox" value="technicalSpec" checked> Tính năng kỹ thuật</label>
-                                <label><input type="checkbox" value="bidItem"> Mặt hàng dự thầu</label>
-                                <label><input type="checkbox" value="brand"> Nhãn hiệu</label>
-                                <label><input type="checkbox" value="model"> Ký mã hiệu</label>
-                            </div>
-                            <div class="bulk-field-option-column">
-                                <label><input type="checkbox" value="country"> Xuất xứ</label>
-                                <label><input type="checkbox" value="manufacturer"> Hãng sản xuất</label>
-                                <label><input type="checkbox" value="unit"> Đơn vị tính</label>
-                            </div>
-                        </div>
+                    <span class="bulk-field-columns-title">Trường tham chiếu theo contract Typesense</span>
+                    <div id="bulk-field-panels" class="bulk-field-panels" aria-live="polite">
+                        <p class="bulk-contract-status" id="bulk-contract-status">Đang tải danh mục trường tìm kiếm…</p>
                     </div>
                 </div>
                 <div class="bulk-import-card" id="bulk-import-card">
@@ -1038,7 +1002,7 @@
                 <p class="bulk-search-status" id="bulk-search-status" aria-live="polite"></p>
             </div>
             <div class="bulk-search-footer">
-                <button class="btn-feedback-primary" id="run-bulk-search" type="button">Tra cứu hàng loạt</button>
+                <button class="btn-feedback-primary" id="run-bulk-search" type="button">Tìm kiếm hàng loạt</button>
             </div>
         </div>
     </div>
@@ -1050,12 +1014,12 @@
             <div class="feedback-header">
                 <div>
                     <h3 id="feedback-title">
-                        <i data-feather="message-square"></i>
-                        Diễn đàn
+                        <i data-feather="bell"></i>
+                        Thông báo
                     </h3>
-                    <p>Trao đổi, cập nhật thông tin mới nhất từ BIDFinder.</p>
+                    <p>Theo dõi thông báo và cập nhật mới nhất từ BIDFinder.</p>
                 </div>
-                <button class="btn-close" id="close-feedback-modal" type="button" aria-label="Đóng">
+                <button class="btn-close window-close-button" id="close-feedback-modal" type="button" aria-label="Đóng">
                     <i data-feather="x"></i>
                 </button>
             </div>
@@ -1073,7 +1037,7 @@
                     </div>
                     <div class="feedback-topic-list" id="feedback-topic-list" aria-label="Danh sách chủ đề"></div>
                     <div class="feedback-board-toolbar">
-                        <button class="btn-feedback-primary" id="new-feedback-topic" type="button">Tạo chủ đề</button>
+                        <button class="btn-feedback-primary" id="new-feedback-topic" type="button">Tạo bài viết</button>
                     </div>
                 </aside>
                 <section class="feedback-board-detail">
@@ -1135,9 +1099,7 @@
     </div>
 
 
-    <!-- Chart.js -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>

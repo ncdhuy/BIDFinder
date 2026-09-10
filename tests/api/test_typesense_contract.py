@@ -179,7 +179,7 @@ class TypesenseContractTest(unittest.TestCase):
             1,
         ).to_api_page()
         self.assertEqual((3, True, 1, "typesense"), (page["count"], page["has_more"], page["displayed"], page["backend"]))
-        self.assertEqual(2, page["data"][0]["bidder_count"])
+        self.assertEqual(1.7, page["data"][0]["bidder_count"])
         self.assertEqual("2024-2025", page["data"][0]["production_year"])
         self.assertEqual("Xã Dầu Tiếng, Thành phố Hồ Chí Minh", page["data"][0]["location"])
 

@@ -28,31 +28,21 @@
   color: #fff;
 }
 
-body.auth-state-authed #open-account-nav,
-body.auth-state-authed #open-feedback-nav,
-body.auth-state-authed #open-product-journey,
-body.auth-state-authed #open-feedback-modal {
+body.auth-state-authed #open-account-nav {
   display: inline-flex;
 }
 
 body.auth-state-authed #open-register-nav,
-body.auth-state-authed #open-login-nav,
-body.auth-state-authed #open-register-app,
-body.auth-state-authed #open-login-app {
+body.auth-state-authed #open-login-nav {
   display: none;
 }
 
-body.auth-state-guest #open-account-nav,
-body.auth-state-guest #open-feedback-nav,
-body.auth-state-guest #open-product-journey,
-body.auth-state-guest #open-feedback-modal {
+body.auth-state-guest #open-account-nav {
   display: none;
 }
 
 body.auth-state-guest #open-register-nav,
-body.auth-state-guest #open-login-nav,
-body.auth-state-guest #open-register-app,
-body.auth-state-guest #open-login-app {
+body.auth-state-guest #open-login-nav {
   display: inline-flex;
 }
 
@@ -149,7 +139,7 @@ body.auth-state-guest #open-login-app {
   color: #24715d;
 }
 
-.app-header-links .app-icon-btn-forum:hover {
+.app-header-links .app-icon-btn-notification:hover {
   border-color: #e9c896;
   background: #fff7e9;
   color: #a46318;

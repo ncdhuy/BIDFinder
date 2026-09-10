@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 import unittest
 from urllib.error import HTTPError
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "apps" / "api"))
@@ -320,6 +320,7 @@ class TestShadowPrimitives(unittest.TestCase):
         self.assertIn("medicine_name", plan.params["filter_by"])
         self.assertIn("manufacturer", plan.params["filter_by"])
 
+
     def test_translation_supports_all_advertised_exact_identifier_fields(self):
         for group, fields in IDENTIFIER_FIELDS.items():
             for field in fields:
@@ -399,6 +400,39 @@ class TestShadowPrimitives(unittest.TestCase):
                 ).params["filter_by"]
                 for value in values:
                     self.assertIn(f"{field}:=`{value}`", filter_by)
+
+
+class TestTypesenseBulkEndpoint(unittest.IsolatedAsyncioTestCase):
+    async def test_traditional_bulk_response_uses_df3_with_canonical_fields(self):
+        class ConnectionContext:
+            async def __aenter__(self):
+                return None
+
+            async def __aexit__(self, *_):
+                return False
+
+        payload = BulkQueryRequest(
+            scope="traditional",
+            group="traditional",
+            fields=["item_name"],
+            rows=[{"item_name": "Bạch linh"}],
+        )
+
+        async def fetch_page(_connection, query):
+            self.assertEqual("traditional_medicine", server_module.normalize_group(query.group))
+            self.assertIn("item_name", query.filters)
+            return {"data": [{"id": UUID, "item_name": "Bạch linh"}], "has_more": False}
+
+        with patch.object(server_module, "optional_db_connection", return_value=ConnectionContext()), \
+             patch.object(server_module, "enforce_data_access_policy", new=AsyncMock(return_value=None)), \
+             patch.object(server_module, "fetch_backend_page", new=AsyncMock(side_effect=fetch_page)), \
+             patch.object(server_module, "build_auth_config", new=AsyncMock(return_value={})):
+            response = await server_module.bulk_typesense_primary(None, payload)
+
+        body = json.loads(response.body)
+        self.assertEqual([{"id": UUID, "item_name": "Bạch linh", "Bulk query": 1, "Bulk query row": "Bạch linh"}], body["df3"]["data"])
+        self.assertEqual([], body["df1"]["data"])
+        self.assertEqual([], body["df2"]["data"])
 
 
 class TestAdapter(unittest.IsolatedAsyncioTestCase):

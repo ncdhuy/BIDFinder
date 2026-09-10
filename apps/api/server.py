@@ -2601,7 +2601,7 @@ async def bulk_typesense_primary(request: Request, payload: BulkQueryRequest) ->
         "total_count": count_meta["count"], "total_count_exact": count_meta["exact"], "total_count_label": count_meta["label"], "total_count_summary": count_meta["summary"], "applied_total_limit": result_limit,
         "df1": populated if group == "medicines" else empty,
         "df2": populated if group == "goods" else empty,
-        "df3": populated if group == "traditional_medicine" else empty,
+        "df3": populated if group in {"traditional", "traditional_medicine"} else empty,
         "auth": auth,
     })
 

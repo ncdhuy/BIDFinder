@@ -305,12 +305,15 @@ async function loadAdvancedSearchContract() {
             })
             .then(contract => {
                 advancedSearchContract = contract;
+                renderBulkFieldPanels();
                 return contract;
             })
             .catch(error => {
                 advancedSearchContractPromise = null;
                 const status = document.getElementById('advanced-contract-status');
                 if (status) status.textContent = 'Không tải được các tiêu chí mở rộng.';
+                const bulkStatus = document.getElementById('bulk-contract-status');
+                if (bulkStatus) bulkStatus.textContent = 'Không tải được danh mục trường tìm kiếm. Vui lòng tải lại trang.';
                 console.warn('Search contract unavailable:', error);
                 return null;
             });
@@ -572,6 +575,20 @@ const columnValueFilterState = {
     'extended-table': {},
     'traditional-table': {}
 };
+const columnTextFilterState = {
+    'standard-table': {},
+    'extended-table': {},
+    'traditional-table': {}
+};
+const TEXT_FILTER_OPERATOR_LABELS = Object.freeze({
+    equals: 'Bằng',
+    notEquals: 'Không bằng',
+    beginsWith: 'Bắt đầu bằng',
+    endsWith: 'Kết thúc bằng',
+    contains: 'Chứa',
+    notContains: 'Không chứa'
+});
+const TEXT_FILTER_OPERATORS = new Set(Object.keys(TEXT_FILTER_OPERATOR_LABELS));
 let activeSortRule = loadStoredSortRule();
 const selectionState = {
     'standard-table': { rows: new Set(), columns: new Set(), lastRow: null, lastColumn: null },
@@ -584,6 +601,9 @@ let currentDisplayedDf3 = [];
 let serverBaseDf1 = [];
 let serverBaseDf2 = [];
 let serverBaseDf3 = [];
+let baseWorkingDf1 = null;
+let baseWorkingDf2 = null;
+let baseWorkingDf3 = null;
 let orderedWorkingDf1 = null;
 let orderedWorkingDf2 = null;
 let orderedWorkingDf3 = null;
@@ -620,6 +640,7 @@ let currentQueryMeta = {
     appliedTotalLimit: 0,
     appliedLimitPerScope: 0
 };
+let fullSearchInFlight = false;
 
 // Configuration object cho từng loại table
 const TABLE_CONFIGS = {
@@ -822,6 +843,13 @@ function openLegacyRowDetail(item, configKey) {
     const fields = document.getElementById('legacy-row-detail-fields');
     if (!detail || !fields || !item) return;
 
+    // The detail dialog is declared inside the result layout, whose responsive
+    // container can create a local containing block/clipping context. Move the
+    // open dialog to body so its fixed backdrop always covers the full viewport.
+    if (detail.parentElement !== document.body) {
+        document.body.appendChild(detail);
+    }
+
     fields.replaceChildren();
     const tableId = getResultTableIdForConfig(configKey);
     const preferred = TABLE_CONFIGS[configKey]?.columnOrder?.() || [];
@@ -936,6 +964,24 @@ function getRawColumnValue(item, colName) {
     return getColumnFieldCandidates(colName)
         .map(field => item?.[field])
         .find(value => value !== undefined && value !== null && value !== '');
+}
+
+function getFirstRawColumnValue(item, columnNames) {
+    return columnNames
+        .map(columnName => getRawColumnValue(item, columnName))
+        .find(value => value !== undefined && value !== null && value !== '');
+}
+
+function getChartTotalValue(item) {
+    const explicitTotal = Number(getFirstRawColumnValue(item, ['total_value', 'winning_total_value']));
+    if (Number.isFinite(explicitTotal) && explicitTotal > 0) return explicitTotal;
+
+    // Typesense rows expose quantity and unit price; derive total for charts.
+    const quantity = Number(getFirstRawColumnValue(item, ['quantity']));
+    const unitPrice = Number(getFirstRawColumnValue(item, ['winning_unit_price']));
+    return Number.isFinite(quantity) && quantity > 0 && Number.isFinite(unitPrice) && unitPrice > 0
+        ? quantity * unitPrice
+        : 0;
 }
 
 const LOCATION_PROVINCE_PREFIX_RE = /^(?:T\u1ec9nh|Th\u00e0nh ph\u1ed1|TP\.?|City)\s+/i;
@@ -1482,15 +1528,150 @@ function getCanonicalColumnField(tableId, columnName) {
     return labelMatch?.name || null;
 }
 
+function getColumnFilterStateKey(tableId, columnName) {
+    const safeColumnName = String(columnName || '');
+    return getCanonicalColumnField(tableId, safeColumnName) || safeColumnName;
+}
+
+function getColumnFilterStateKeys(state, tableId, columnName) {
+    const canonical = getColumnFilterStateKey(tableId, columnName);
+    return Object.keys(state || {}).filter(key => (
+        key === columnName
+        || key === canonical
+        || getColumnFilterStateKey(tableId, key) === canonical
+    ));
+}
+
+function replaceColumnFilterState(state, tableId, columnName, value) {
+    const canonical = getColumnFilterStateKey(tableId, columnName);
+    getColumnFilterStateKeys(state, tableId, columnName).forEach(key => delete state[key]);
+    if (value !== undefined) state[canonical] = value;
+    return canonical;
+}
+
+function getColumnTextFilterEntries(tableId) {
+    const entries = new Map();
+    Object.entries(columnTextFilterState[tableId] || {}).forEach(([columnName, rule]) => {
+        entries.set(getColumnFilterStateKey(tableId, columnName), rule);
+    });
+    return entries;
+}
+
+function getColumnTextFilterRule(tableId, columnName) {
+    return getColumnTextFilterEntries(tableId).get(getColumnFilterStateKey(tableId, columnName));
+}
+
+function getColumnValueFilterEntries(tableId) {
+    const entries = new Map();
+    Object.entries(columnValueFilterState[tableId] || {}).forEach(([columnName, values]) => {
+        entries.set(getColumnFilterStateKey(tableId, columnName), values);
+    });
+    return entries;
+}
+
+function getColumnValueFilter(tableId, columnName) {
+    return getColumnValueFilterEntries(tableId).get(getColumnFilterStateKey(tableId, columnName));
+}
+
+function areColumnValueSetsEqual(left, right) {
+    if (!(left instanceof Set) || !(right instanceof Set)) return left === right;
+    if (left.size !== right.size) return false;
+    const normalizedRight = new Set(Array.from(right, normalizeColumnFilterValue));
+    return Array.from(left, normalizeColumnFilterValue)
+        .every(value => normalizedRight.has(value));
+}
+
 function getWorkingSetData(tableId) {
     if (!workingSetAvailable[tableId]) return [];
-    if (tableId === 'extended-table') return orderedWorkingDf2 || serverBaseDf2;
-    if (tableId === 'traditional-table') return orderedWorkingDf3 || serverBaseDf3;
-    return orderedWorkingDf1 || serverBaseDf1;
+    if (tableId === 'extended-table') return orderedWorkingDf2 || baseWorkingDf2 || serverBaseDf2;
+    if (tableId === 'traditional-table') return orderedWorkingDf3 || baseWorkingDf3 || serverBaseDf3;
+    return orderedWorkingDf1 || baseWorkingDf1 || serverBaseDf1;
 }
 
 function normalizeColumnFilterValue(value) {
     return String(value ?? '').trim().toLocaleLowerCase('vi');
+}
+
+function normalizeColumnTextFilterRule(rule) {
+    if (!rule || typeof rule !== 'object') return null;
+    const operator = TEXT_FILTER_OPERATORS.has(rule.operator) ? rule.operator : 'equals';
+    const secondOperator = TEXT_FILTER_OPERATORS.has(rule.secondOperator)
+        ? rule.secondOperator
+        : 'equals';
+    const value = String(rule.value ?? '');
+    const secondValue = String(rule.secondValue ?? '');
+    const isCustom = Boolean(rule.custom || rule.secondOperator || rule.secondValue);
+    if (!isCustom && !TEXT_FILTER_OPERATORS.has(rule.operator)) return null;
+    return {
+        operator,
+        value,
+        logic: rule.logic === 'or' ? 'or' : 'and',
+        ...(isCustom ? { custom: true, secondOperator, secondValue } : {})
+    };
+}
+
+function escapeTextFilterRegex(value) {
+    return String(value).replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+}
+
+function textFilterPattern(value) {
+    let pattern = '';
+    for (const character of normalizeColumnFilterValue(value)) {
+        if (character === '*') pattern += '.*';
+        else if (character === '?') pattern += '.';
+        else pattern += escapeTextFilterRegex(character);
+    }
+    return pattern;
+}
+
+function matchesColumnTextFilterCondition(value, operator, query) {
+    const candidate = normalizeColumnFilterValue(value);
+    const target = normalizeColumnFilterValue(query);
+    const hasWildcard = /[*?]/.test(target);
+    if (!hasWildcard) {
+        switch (operator) {
+            case 'equals': return candidate === target;
+            case 'notEquals': return candidate !== target;
+            case 'beginsWith': return candidate.startsWith(target);
+            case 'endsWith': return candidate.endsWith(target);
+            case 'contains': return candidate.includes(target);
+            case 'notContains': return !candidate.includes(target);
+            default: return true;
+        }
+    }
+
+    const pattern = textFilterPattern(target);
+    const matches = (source) => new RegExp(source).test(candidate);
+    switch (operator) {
+        case 'equals': return matches(`^${pattern}$`);
+        case 'notEquals': return !matches(`^${pattern}$`);
+        case 'beginsWith': return matches(`^${pattern}`);
+        case 'endsWith': return matches(`${pattern}$`);
+        case 'contains': return matches(pattern);
+        case 'notContains': return !matches(pattern);
+        default: return true;
+    }
+}
+
+function matchesColumnTextFilter(rawValues, rule) {
+    const normalizedRule = normalizeColumnTextFilterRule(rule);
+    if (!normalizedRule) return true;
+    const values = Array.isArray(rawValues) ? rawValues : [rawValues];
+    const firstMatch = values.some(value => matchesColumnTextFilterCondition(
+        value,
+        normalizedRule.operator,
+        normalizedRule.value
+    ));
+    if (!normalizedRule.custom || !String(normalizedRule.secondValue || '').trim()) return firstMatch;
+
+    const secondMatch = values.some(value => matchesColumnTextFilterCondition(
+        value,
+        normalizedRule.secondOperator,
+        normalizedRule.secondValue
+    ));
+    return normalizedRule.logic === 'or'
+        ? firstMatch || secondMatch
+        : firstMatch && secondMatch;
 }
 
 function getColumnRawValues(tableId, columnName, row) {
@@ -1507,13 +1688,25 @@ function getColumnRawValues(tableId, columnName, row) {
 }
 
 function getFilteredWorkingSet(tableId, excludedColumnName = null) {
-    const filters = columnValueFilterState[tableId] || {};
-    return getWorkingSetData(tableId).filter(row => Object.entries(filters).every(([columnName, selectedValues]) => {
-        if (columnName === excludedColumnName || !(selectedValues instanceof Set)) return true;
-        const selected = new Set(Array.from(selectedValues, normalizeColumnFilterValue));
-        return getColumnRawValues(tableId, columnName, row)
-            .some(value => selected.has(normalizeColumnFilterValue(value)));
-    }));
+    const filters = getColumnValueFilterEntries(tableId);
+    const textFilters = getColumnTextFilterEntries(tableId);
+    const excludedKey = excludedColumnName === null
+        ? null
+        : getColumnFilterStateKey(tableId, excludedColumnName);
+    return getWorkingSetData(tableId).filter(row => {
+        const matchesValues = Array.from(filters.entries()).every(([columnName, selectedValues]) => {
+            if (getColumnFilterStateKey(tableId, columnName) === excludedKey || !(selectedValues instanceof Set)) return true;
+            const selected = new Set(Array.from(selectedValues, normalizeColumnFilterValue));
+            return getColumnRawValues(tableId, columnName, row)
+                .some(value => selected.has(normalizeColumnFilterValue(value)));
+        });
+        if (!matchesValues) return false;
+
+        return Array.from(textFilters.entries()).every(([columnName, rule]) => (
+            columnName === excludedKey
+                || matchesColumnTextFilter(getColumnRawValues(tableId, columnName, row), rule)
+        ));
+    });
 }
 
 function getBoundedColumnValueOptions(tableId, columnName) {
@@ -1538,13 +1731,28 @@ function getBoundedColumnValueOptions(tableId, columnName) {
 
 function collectColumnFiltersForUrl() {
     const grouped = {};
-    Object.entries(columnValueFilterState).forEach(([tableId, columns]) => {
+    Object.keys(TABLE_QUERY_GROUPS).forEach(tableId => {
         const group = TABLE_QUERY_GROUPS[tableId];
         const scoped = {};
-        Object.entries(columns || {}).forEach(([columnName, values]) => {
-            if (!(values instanceof Set)) return;
+        const valueFilters = getColumnValueFilterEntries(tableId);
+        const textFilters = getColumnTextFilterEntries(tableId);
+        const columnNames = new Set([...valueFilters.keys(), ...textFilters.keys()]);
+        columnNames.forEach(columnName => {
+            const values = valueFilters.get(getColumnFilterStateKey(tableId, columnName));
+            const textRule = normalizeColumnTextFilterRule(
+                textFilters.get(getColumnFilterStateKey(tableId, columnName))
+            );
+            if (!(values instanceof Set) && !textRule) return;
             const canonical = getCanonicalColumnField(tableId, columnName);
-            if (canonical) scoped[canonical] = Array.from(values);
+            if (!canonical) return;
+            const serializedValues = values instanceof Set ? Array.from(values) : null;
+            if (serializedValues && textRule) {
+                scoped[canonical] = { values: serializedValues, text: textRule };
+            } else if (serializedValues) {
+                scoped[canonical] = serializedValues;
+            } else {
+                scoped[canonical] = { text: textRule };
+            }
         });
         if (Object.keys(scoped).length) grouped[group] = scoped;
     });
@@ -1554,6 +1762,7 @@ function collectColumnFiltersForUrl() {
 function restoreColumnFiltersFromRequest(queryRequest = {}) {
     Object.keys(columnValueFilterState).forEach(tableId => {
         columnValueFilterState[tableId] = {};
+        columnTextFilterState[tableId] = {};
     });
 
     const raw = queryRequest?.columnFilters;
@@ -1576,11 +1785,20 @@ function restoreColumnFiltersFromRequest(queryRequest = {}) {
             || (group === 'traditional_medicine' && TABLE_QUERY_GROUPS[id] === 'traditional')
         );
         if (!tableId) return;
-        Object.entries(columns).forEach(([canonical, values]) => {
-            if (!Array.isArray(values)) return;
+        Object.entries(columns).forEach(([canonical, filter]) => {
+            const values = Array.isArray(filter) ? filter : filter?.values;
+            const textRule = normalizeColumnTextFilterRule(
+                Array.isArray(filter) ? null : filter?.text || filter
+            );
             const columnName = (TABLE_DEFAULT_COLUMNS[tableId] || [])
                 .find(name => getCanonicalColumnField(tableId, name) === canonical);
-            if (columnName) columnValueFilterState[tableId][columnName] = new Set(values.map(String));
+            if (!columnName) return;
+            if (Array.isArray(values)) replaceColumnFilterState(
+                columnValueFilterState[tableId], tableId, columnName, new Set(values.map(String))
+            );
+            if (textRule) replaceColumnFilterState(
+                columnTextFilterState[tableId], tableId, columnName, textRule
+            );
         });
     });
 }
@@ -1589,6 +1807,29 @@ function getDisplayedData(tableId) {
     if (tableId === 'extended-table') return currentDisplayedDf2;
     if (tableId === 'traditional-table') return currentDisplayedDf3;
     return currentDisplayedDf1;
+}
+
+function getExportData(tableId) {
+    return workingSetAvailable[tableId]
+        ? getFilteredWorkingSet(tableId)
+        : getDisplayedData(tableId);
+}
+
+function getInsightChartData(tableId, displayedData) {
+    // Charts summarize the complete filtered working set, not only the page
+    // currently rendered in the table.
+    const data = workingSetAvailable[tableId]
+        ? getFilteredWorkingSet(tableId)
+        : displayedData;
+    return Array.isArray(data) ? data : [];
+}
+
+function getInsightChartDataSets() {
+    return {
+        df1: getInsightChartData('standard-table', currentFilteredDf1),
+        df2: getInsightChartData('extended-table', currentFilteredDf2),
+        df3: getInsightChartData('traditional-table', currentFilteredDf3)
+    };
 }
 
 function getWorkingSetPage(tableId, page) {
@@ -1984,6 +2225,36 @@ function getFullSearchQuotaState() {
     };
 }
 
+function setFullSearchQuotaState({ used, remaining } = {}) {
+    const applyAuthConfig = window.BIDFinderAuth?.applyAuthConfig;
+    if (typeof applyAuthConfig !== 'function') return;
+
+    applyAuthConfig({
+        full_search_daily_used: Math.max(0, Number(used) || 0),
+        full_search_daily_remaining: Math.max(0, Number(remaining) || 0)
+    });
+}
+
+function reserveFullSearchQuota(quota) {
+    fullSearchInFlight = true;
+    setFullSearchQuotaState({
+        used: Number(quota.used || 0) + 1,
+        remaining: Number(quota.remaining || 0) - 1
+    });
+    updateInsightEntryPoint();
+}
+
+function releaseFullSearchQuotaReservation() {
+    fullSearchInFlight = false;
+    updateInsightEntryPoint();
+}
+
+function rollbackFullSearchQuota(quota) {
+    fullSearchInFlight = false;
+    setFullSearchQuotaState(quota);
+    updateInsightEntryPoint();
+}
+
 async function fetchQueryResults(
     queryRequest,
     sortRule = activeSortRule,
@@ -1992,7 +2263,7 @@ async function fetchQueryResults(
     await window.BIDFinderAuth?.whenReady?.();
 
     if (!requireAuthenticatedSession('login', 'full_query')) {
-        throw new Error(window.BIDFinderAuth?.getFullQueryGateMessage?.() || 'Bạn cần đăng nhập để tra cứu dữ liệu.');
+        throw new Error(window.BIDFinderAuth?.getFullQueryGateMessage?.() || 'Bạn cần đăng nhập để tìm kiếm dữ liệu.');
     }
 
     const searchMode = options?.searchMode === 'full' ? 'full' : 'standard';
@@ -2051,7 +2322,7 @@ async function fetchQueryPreview(queryRequest, signal = null) {
     await window.BIDFinderAuth?.whenReady?.();
 
     if (!requireAuthenticatedSession('login', 'preview')) {
-        throw new Error('Bạn cần đăng nhập để tra cứu dữ liệu.');
+        throw new Error('Bạn cần đăng nhập để tìm kiếm dữ liệu.');
     }
 
     const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/query-preview`, {
@@ -2277,12 +2548,15 @@ function handleQuerySuccess(result, options = {}) {
         return;
     }
 
-    serverBaseDf1 = workingDf1;
-    serverBaseDf2 = workingDf2;
-    serverBaseDf3 = workingDf3;
-    orderedWorkingDf1 = [...workingDf1];
-    orderedWorkingDf2 = [...workingDf2];
-    orderedWorkingDf3 = [...workingDf3];
+    baseWorkingDf1 = [...workingDf1];
+    baseWorkingDf2 = [...workingDf2];
+    baseWorkingDf3 = [...workingDf3];
+    serverBaseDf1 = baseWorkingDf1;
+    serverBaseDf2 = baseWorkingDf2;
+    serverBaseDf3 = baseWorkingDf3;
+    orderedWorkingDf1 = [...baseWorkingDf1];
+    orderedWorkingDf2 = [...baseWorkingDf2];
+    orderedWorkingDf3 = [...baseWorkingDf3];
     workingSetAvailable['standard-table'] = hasWorkingDf1;
     workingSetAvailable['extended-table'] = hasWorkingDf2;
     workingSetAvailable['traditional-table'] = hasWorkingDf3;
@@ -2393,31 +2667,30 @@ async function triggerFullSearch() {
         return;
     }
 
-    const dockFullSearchButton = document.getElementById('insight-full-search');
-    if (dockFullSearchButton) {
-        dockFullSearchButton.disabled = true;
-        const dockFullSearchLabel = document.getElementById('insight-full-search-label');
-        if (dockFullSearchLabel) dockFullSearchLabel.textContent = '…';
-    }
-
-    if (currentQueryMeta.searchMode === 'bulk' && lastBulkSearchPayloads?.length) {
-        try {
-            await runBulkSearch({ searchMode: 'full', reuseLastPayloads: true });
-            return;
-        } catch (error) {
-            console.error('Bulk full search failed:', error);
-        } finally {
-            updateInsightEntryPoint();
-        }
-    }
+    const quotaSnapshot = {
+        used: quota.used,
+        remaining: quota.remaining
+    };
+    reserveFullSearchQuota(quotaSnapshot);
+    let serverAccepted = false;
 
     try {
+        if (currentQueryMeta.searchMode === 'bulk' && lastBulkSearchPayloads?.length) {
+            const completed = await runBulkSearch({ searchMode: 'full', reuseLastPayloads: true });
+            if (completed === false) {
+                throw new Error('tìm kiếm hàng loạt thất bại.');
+            }
+            serverAccepted = true;
+            return;
+        }
+
         const result = await fetchQueryResults(
             currentQueryRequest,
             activeSortRule,
             { searchMode: 'full' }
         );
         if (result.success) {
+            serverAccepted = true;
             handleQuerySuccess(result, { resetMiniFilters: false });
             return;
         }
@@ -2431,6 +2704,12 @@ async function triggerFullSearch() {
         });
         if (error?.message) {
             alert(error.message);
+        }
+    } finally {
+        if (serverAccepted) {
+            releaseFullSearchQuotaReservation();
+        } else {
+            rollbackFullSearchQuota(quotaSnapshot);
         }
     }
 }
@@ -2460,6 +2739,9 @@ function resetQueryResultMeta() {
     serverBaseDf1 = [];
     serverBaseDf2 = [];
     serverBaseDf3 = [];
+    baseWorkingDf1 = null;
+    baseWorkingDf2 = null;
+    baseWorkingDf3 = null;
     orderedWorkingDf1 = null;
     orderedWorkingDf2 = null;
     orderedWorkingDf3 = null;
@@ -2502,12 +2784,14 @@ function resetQueryResultMeta() {
 function resetMiniFilters(tableId = null) {
     if (tableId) {
         columnValueFilterState[tableId] = {};
+        columnTextFilterState[tableId] = {};
         syncHeaderDecorations(tableId);
         return;
     }
 
     Object.keys(columnValueFilterState).forEach(key => {
         columnValueFilterState[key] = {};
+        columnTextFilterState[key] = {};
         syncHeaderDecorations(key);
     });
 }
@@ -2544,24 +2828,37 @@ function refreshRenderedTables({ resetScroll = true, redrawCharts = true } = {})
     }
 
     if (redrawCharts) {
-        drawCharts(currentFilteredDf1, currentFilteredDf2, currentFilteredDf3);
+        insightChartsDirty = true;
+        if (isInsightDrawerOpen()) {
+            const chartData = getInsightChartDataSets();
+            void drawCharts(chartData.df1, chartData.df2, chartData.df3);
+        }
     }
 }
 
-function formatResultTabCount(total, fallbackLabel = '', fallbackCount = 0) {
-    const numericTotal = Number(total);
-    const numericFallback = Number(fallbackCount);
-    const rawLabel = String(fallbackLabel || '').trim();
-    const labelNumber = Number(rawLabel.replace(/[^\d]/g, ''));
-    const value = Number.isFinite(numericTotal)
-        ? numericTotal
-        : Number.isFinite(labelNumber)
-            ? labelNumber
-            : Number.isFinite(numericFallback) ? numericFallback : 0;
+function getResultTableCountLabel(tableId, fallbackCount = 0) {
+    const key = tableId === 'extended-table'
+        ? 'df2'
+        : tableId === 'traditional-table'
+            ? 'df3'
+            : 'df1';
+    const hasWorkingSet = workingSetAvailable[tableId];
+    const workingCount = Number(currentQueryMeta[`${key}WorkingCount`]);
+    const serverTotal = Number(currentQueryMeta[`${key}Total`]);
+    const fallback = Number(fallbackCount);
+    const total = hasWorkingSet
+        ? (Number.isFinite(workingCount) ? workingCount : fallback)
+        : (Number.isFinite(serverTotal) ? serverTotal : fallback);
+    const safeTotal = Math.max(0, Math.floor(Number.isFinite(total) ? total : 0));
+    const limit = Number(currentQueryMeta.appliedLimitPerScope || 0);
+    const isFullSearch = currentQueryMeta.searchMode === 'full'
+        || (currentQueryMeta.searchMode === 'bulk' && currentQueryMeta.bulkSearchMode === 'full');
+    const isWorkingSetTruncated = Boolean(currentQueryMeta[`${key}WorkingSetTruncated`]);
 
-    const rawValue = Number.isFinite(labelNumber) ? labelNumber : value;
-    if (rawLabel.includes('+') || rawValue > 1000 || value > 1000) return '1000+';
-    return String(Math.max(0, Math.floor(value)));
+    if (limit > 0 && (safeTotal > limit || (isWorkingSetTruncated && safeTotal >= limit))) {
+        return `${limit}+`;
+    }
+    return String(safeTotal);
 }
 
 function updateScopeSwitcherCounts(df1Count, df2Count, df3Count = 0) {
@@ -2570,38 +2867,10 @@ function updateScopeSwitcherCounts(df1Count, df2Count, df3Count = 0) {
         'df2-panel': Number(currentQueryMeta.df2Displayed || df2Count || 0),
         'df3-panel': Number(currentQueryMeta.df3Displayed || df3Count || 0)
     };
-    const totalLabels = {
-        'df1-panel': String(currentQueryMeta.df1TotalLabel || counts['df1-panel'].toLocaleString('vi-VN')),
-        'df2-panel': String(currentQueryMeta.df2TotalLabel || counts['df2-panel'].toLocaleString('vi-VN')),
-        'df3-panel': String(currentQueryMeta.df3TotalLabel || counts['df3-panel'].toLocaleString('vi-VN'))
-    };
-    const boundedTotals = {
-        'df1-panel': workingSetAvailable['standard-table']
-            ? Number(currentQueryMeta.df1WorkingCount || 0)
-            : Number(currentQueryMeta.df1Total || counts['df1-panel'] || 0),
-        'df2-panel': workingSetAvailable['extended-table']
-            ? Number(currentQueryMeta.df2WorkingCount || 0)
-            : Number(currentQueryMeta.df2Total || counts['df2-panel'] || 0),
-        'df3-panel': workingSetAvailable['traditional-table']
-            ? Number(currentQueryMeta.df3WorkingCount || 0)
-            : Number(currentQueryMeta.df3Total || counts['df3-panel'] || 0)
-    };
     const tabTotalCounts = {
-        'df1-panel': formatResultTabCount(
-            boundedTotals['df1-panel'],
-            totalLabels['df1-panel'],
-            counts['df1-panel']
-        ),
-        'df2-panel': formatResultTabCount(
-            boundedTotals['df2-panel'],
-            totalLabels['df2-panel'],
-            counts['df2-panel']
-        ),
-        'df3-panel': formatResultTabCount(
-            boundedTotals['df3-panel'],
-            totalLabels['df3-panel'],
-            counts['df3-panel']
-        )
+        'df1-panel': getResultTableCountLabel('standard-table', counts['df1-panel']),
+        'df2-panel': getResultTableCountLabel('extended-table', counts['df2-panel']),
+        'df3-panel': getResultTableCountLabel('traditional-table', counts['df3-panel'])
     };
 
     const df1CountEl = document.getElementById('df1-count-switcher');
@@ -2631,7 +2900,7 @@ function updateScopeSwitcherCounts(df1Count, df2Count, df3Count = 0) {
     document.querySelectorAll('.scope-btn').forEach(button => {
         const view = button.getAttribute('data-view');
         const count = counts[view] || 0;
-        const countLabel = tabTotalCounts[view] || formatResultTabCount(null, totalLabels[view], count);
+        const countLabel = tabTotalCounts[view] || String(count);
         button.classList.toggle('has-results', count > 0);
         button.classList.toggle('is-empty', count <= 0);
         button.dataset.count = String(count);
@@ -2952,6 +3221,7 @@ function initLandingShell() {
     };
 
     const goLanding = () => {
+        if (isInsightDrawerOpen()) closeInsightDrawer();
         syncLandingView('landing');
         window.BIDFinderAnalytics?.page?.({ view: 'landing' });
         landingShell.scrollTo({ top: 0, behavior: 'smooth' });
@@ -3319,6 +3589,22 @@ const LOCAL_VALIDITY_SORT_ORDER = {
     'Còn hiệu lực': 2
 };
 
+// Typesense only accepts fields declared as sortable in the public contract.
+// Other visible columns stay sortable on the bounded working set instead of
+// sending an unsupported sort rule to /api/query.
+const TYPESENSE_SORT_FIELD_BY_LOGICAL = {
+    approvalDate: 'partition_date',
+    quantity: 'quantity',
+    unitPrice: 'winning_unit_price',
+    productionYear: 'production_year',
+    bidderCount: 'bidder_count'
+};
+const TYPESENSE_SORTABLE_LOGICAL_FALLBACK = {
+    df1: new Set(['approvalDate', 'quantity', 'unitPrice', 'bidderCount']),
+    df2: new Set(['approvalDate', 'quantity', 'unitPrice', 'productionYear', 'bidderCount']),
+    df3: new Set(['approvalDate', 'quantity', 'unitPrice', 'bidderCount'])
+};
+
 let activeColumnMenuState = null;
 let activeColumnsPopoverState = null;
 
@@ -3387,19 +3673,51 @@ function buildSortPayload(sortRule = activeSortRule) {
     return [sortRule];
 }
 
+function getSortTargetTableIds() {
+    const scope = currentQueryRequest?.scope || 'all';
+    if (scope === 'medicine') return ['standard-table'];
+    if (scope === 'goods') return ['extended-table'];
+    if (scope === 'traditional') return ['traditional-table'];
+    return ['standard-table', 'extended-table', 'traditional-table'];
+}
+
+function isTypesenseSortSupported(sortRule = activeSortRule) {
+    if (!sortRule?.column) return true;
+
+    const fieldName = TYPESENSE_SORT_FIELD_BY_LOGICAL[sortRule.column];
+    if (!fieldName) return false;
+
+    return getSortTargetTableIds().every(tableId => {
+        const scopeKey = getTableScopeKey(tableId);
+        const group = TABLE_QUERY_GROUPS[tableId];
+        const contractFields = advancedSearchContract?.groups?.[group]?.fields;
+        if (!Array.isArray(contractFields) || !contractFields.length) {
+            return TYPESENSE_SORTABLE_LOGICAL_FALLBACK[scopeKey]?.has(sortRule.column) === true;
+        }
+
+        return contractFields.some(field => field.name === fieldName && field.sortable === true);
+    });
+}
+
 function shouldUseClientSideSort() {
     if (currentQueryMeta.searchMode === 'bulk') {
         return true;
     }
+    if (activeSortRule && !isTypesenseSortSupported(activeSortRule)) {
+        return true;
+    }
     const scope = currentQueryRequest?.scope || 'all';
     if (scope === 'all') {
-        return !currentQueryMeta.df1HasMore && !currentQueryMeta.df2HasMore;
+        return !currentQueryMeta.df1HasMore && !currentQueryMeta.df2HasMore && !currentQueryMeta.df3HasMore;
     }
     if (scope === 'medicine') {
         return !currentQueryMeta.df1HasMore;
     }
     if (scope === 'goods') {
         return !currentQueryMeta.df2HasMore;
+    }
+    if (scope === 'traditional') {
+        return !currentQueryMeta.df3HasMore;
     }
     return false;
 }
@@ -3449,8 +3767,11 @@ function compareLocalSortEntries(leftRow, rightRow, logicalKey, scopeKey, order,
     const label = getSortLabelForScope(logicalKey, scopeKey);
     if (!label) return leftIndex - rightIndex;
 
-    const leftParsed = parseLocalSortValue(leftRow?.[label], logicalKey);
-    const rightParsed = parseLocalSortValue(rightRow?.[label], logicalKey);
+    const logicalLabel = SORTABLE_COLUMNS.logical.find(item => item.key === logicalKey)?.label;
+    const aliases = logicalLabel ? (LEGACY_FIELD_ALIASES[logicalLabel] || []) : [];
+    const candidates = [label, ...aliases];
+    const leftParsed = parseLocalSortValue(getFirstRawColumnValue(leftRow, candidates), logicalKey);
+    const rightParsed = parseLocalSortValue(getFirstRawColumnValue(rightRow, candidates), logicalKey);
 
     if (leftParsed.empty && rightParsed.empty) return leftIndex - rightIndex;
     if (leftParsed.empty) return 1;
@@ -3493,9 +3814,12 @@ function sortRowsLocally(rows, scopeKey, sortRule = activeSortRule) {
 }
 
 function applyClientSideSort({ preserveMiniFilters = true } = {}) {
-    orderedWorkingDf1 = activeSortRule ? sortRowsLocally(serverBaseDf1, 'df1', activeSortRule) : null;
-    orderedWorkingDf2 = activeSortRule ? sortRowsLocally(serverBaseDf2, 'df2', activeSortRule) : null;
-    orderedWorkingDf3 = activeSortRule ? sortRowsLocally(serverBaseDf3, 'df3', activeSortRule) : null;
+    const sourceDf1 = serverBaseDf1.length ? serverBaseDf1 : currentFilteredDf1;
+    const sourceDf2 = serverBaseDf2.length ? serverBaseDf2 : currentFilteredDf2;
+    const sourceDf3 = serverBaseDf3.length ? serverBaseDf3 : currentFilteredDf3;
+    orderedWorkingDf1 = activeSortRule ? sortRowsLocally(sourceDf1, 'df1', activeSortRule) : null;
+    orderedWorkingDf2 = activeSortRule ? sortRowsLocally(sourceDf2, 'df2', activeSortRule) : null;
+    orderedWorkingDf3 = activeSortRule ? sortRowsLocally(sourceDf3, 'df3', activeSortRule) : null;
 
     if (!preserveMiniFilters) {
         closeColumnMenu();
@@ -3505,6 +3829,11 @@ function applyClientSideSort({ preserveMiniFilters = true } = {}) {
     if (Object.values(workingSetAvailable).some(Boolean)) {
         refreshBoundedWorkingSetViews({ resetScroll: false, redrawCharts: true });
     } else {
+        if (activeSortRule) {
+            currentFilteredDf1 = orderedWorkingDf1 || [];
+            currentFilteredDf2 = orderedWorkingDf2 || [];
+            currentFilteredDf3 = orderedWorkingDf3 || [];
+        }
         refreshRenderedTables({
             resetScroll: false,
             redrawCharts: true
@@ -3562,7 +3891,9 @@ function syncHeaderDecorations(tableId) {
     table.querySelectorAll('thead th[data-col-name]').forEach(th => {
         const columnName = th.dataset.colName;
         const sortState = getSortStateForColumn(tableId, columnName);
-        const hasMiniFilter = columnValueFilterState[tableId]?.[columnName] instanceof Set;
+        const hasValueFilter = getColumnValueFilter(tableId, columnName) instanceof Set;
+        const hasTextFilter = Boolean(getColumnTextFilterRule(tableId, columnName));
+        const hasMiniFilter = hasValueFilter || hasTextFilter;
         const isWrapped = wrappedColumns.has(columnName);
         const isPinned = pinnedColumns.has(columnName);
 
@@ -3595,7 +3926,9 @@ function refreshHeaderStructure(options = {}) {
 
 async function applyActiveSortRule({ preserveMiniFilters = true } = {}) {
     const hasFilter = hasActiveQueryFilters(currentQueryRequest);
-    const hasData = (currentFilteredDf1?.length || 0) > 0 || (currentFilteredDf2?.length || 0) > 0;
+    const hasData = (currentFilteredDf1?.length || 0) > 0
+        || (currentFilteredDf2?.length || 0) > 0
+        || (currentFilteredDf3?.length || 0) > 0;
 
     if (!hasFilter && !hasData) {
         syncAllHeaderDecorations();
@@ -3746,21 +4079,203 @@ function getDistinctColumnValues(tableId, columnName) {
         .sort((a, b) => a.localeCompare(b, 'vi', { numeric: true, sensitivity: 'base' }));
 }
 
-function applyColumnValueFilterFromMenu(menu, tableId, columnName) {
-    const facetOptions = getBoundedColumnValueOptions(tableId, columnName);
-    const draft = menu?.querySelector('.column-value-list')?.columnFilterDraft;
-    if (!draft) return;
-    const distinctValues = facetOptions.map(option => option.value);
-    const selectedValues = Array.from(draft.selectedKeys)
-        .map(key => draft.valuesByKey.get(key))
-        .filter(value => value !== undefined);
+function createTextFilterOperatorSelect(className) {
+    const select = document.createElement('select');
+    select.className = className;
+    select.setAttribute(
+        'aria-label',
+        className.endsWith('-1') ? 'Điều kiện lọc văn bản' : 'Điều kiện lọc văn bản thứ hai'
+    );
+    Object.entries(TEXT_FILTER_OPERATOR_LABELS).forEach(([value, label]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label.toLocaleLowerCase('vi');
+        select.appendChild(option);
+    });
+    return select;
+}
 
-    if (selectedValues.length === distinctValues.length) {
-        delete columnValueFilterState[tableId][columnName];
-    } else {
-        columnValueFilterState[tableId][columnName] = new Set(selectedValues);
+function createColumnTextFilterPanel(tableId, columnName) {
+    const currentRule = normalizeColumnTextFilterRule(getColumnTextFilterRule(tableId, columnName));
+    const panel = document.createElement('div');
+    panel.className = 'column-text-filter-panel';
+    panel.hidden = true;
+    panel.setAttribute('role', 'group');
+    panel.setAttribute('aria-label', 'Bộ lọc văn bản');
+
+    const options = document.createElement('div');
+    options.className = 'column-text-filter-options';
+    [
+        ['equals', 'Bằng...'],
+        ['notEquals', 'Không bằng...'],
+        ['beginsWith', 'Bắt đầu bằng...'],
+        ['endsWith', 'Kết thúc bằng...'],
+        ['contains', 'Chứa...'],
+        ['notContains', 'Không chứa...'],
+        ['custom', 'Bộ lọc tùy chỉnh...']
+    ].forEach(([operator, label]) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'column-text-filter-option';
+        button.dataset.operator = operator;
+        button.textContent = label;
+        options.appendChild(button);
+    });
+
+    if (currentRule) {
+        const clearButton = document.createElement('button');
+        clearButton.type = 'button';
+        clearButton.className = 'column-text-filter-clear';
+        clearButton.dataset.action = 'clear-text-filter';
+        clearButton.dataset.tableId = tableId;
+        clearButton.dataset.columnName = encodeColumnName(columnName);
+        clearButton.textContent = 'Bỏ lọc văn bản';
+        options.appendChild(clearButton);
     }
 
+    const editor = document.createElement('div');
+    editor.className = 'column-text-filter-editor';
+    editor.hidden = true;
+    editor.dataset.tableId = tableId;
+    editor.dataset.columnName = encodeColumnName(columnName);
+
+    const firstRow = document.createElement('div');
+    firstRow.className = 'column-text-filter-row';
+    const firstOperator = createTextFilterOperatorSelect('column-text-filter-operator-1');
+    const firstValue = document.createElement('input');
+    firstValue.type = 'text';
+    firstValue.className = 'column-text-filter-value-1';
+    firstValue.placeholder = 'Nhập giá trị';
+    firstValue.setAttribute('aria-label', 'Giá trị lọc văn bản');
+    firstValue.autocomplete = 'off';
+    firstRow.append(firstOperator, firstValue);
+    editor.appendChild(firstRow);
+
+    const logicRow = document.createElement('div');
+    logicRow.className = 'column-text-filter-logic';
+    logicRow.innerHTML = `
+        <label><input type="radio" name="column-text-filter-logic-${tableId}-${encodeColumnName(columnName)}" value="and" checked> Và</label>
+        <label><input type="radio" name="column-text-filter-logic-${tableId}-${encodeColumnName(columnName)}" value="or"> Hoặc</label>
+    `;
+    editor.appendChild(logicRow);
+
+    const secondRow = document.createElement('div');
+    secondRow.className = 'column-text-filter-row column-text-filter-second-row';
+    const secondOperator = createTextFilterOperatorSelect('column-text-filter-operator-2');
+    const secondValue = document.createElement('input');
+    secondValue.type = 'text';
+    secondValue.className = 'column-text-filter-value-2';
+    secondValue.placeholder = 'Nhập giá trị';
+    secondValue.setAttribute('aria-label', 'Giá trị lọc văn bản thứ hai');
+    secondValue.autocomplete = 'off';
+    secondRow.append(secondOperator, secondValue);
+    editor.appendChild(secondRow);
+
+    const hint = document.createElement('p');
+    hint.className = 'column-text-filter-hint';
+    hint.textContent = 'Dùng ? cho một ký tự, * cho nhiều ký tự.';
+    editor.appendChild(hint);
+
+    const error = document.createElement('p');
+    error.className = 'column-text-filter-error';
+    error.hidden = true;
+    editor.appendChild(error);
+
+    const footer = document.createElement('div');
+    footer.className = 'column-text-filter-footer';
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.className = 'column-text-filter-cancel';
+    cancelButton.textContent = 'Hủy';
+    const applyButton = document.createElement('button');
+    applyButton.type = 'button';
+    applyButton.className = 'column-text-filter-apply';
+    applyButton.textContent = 'OK';
+    footer.append(cancelButton, applyButton);
+    editor.appendChild(footer);
+
+    editor.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' || event.isComposing) return;
+        event.preventDefault();
+        event.stopPropagation();
+        applyColumnTextFilterFromMenu(panel.closest('.column-menu-popover'), tableId, columnName);
+    });
+
+    panel.append(options, editor);
+
+    if (currentRule) {
+        firstOperator.value = currentRule.operator;
+        firstValue.value = currentRule.value;
+        if (currentRule.custom) {
+            secondOperator.value = currentRule.secondOperator;
+            secondValue.value = currentRule.secondValue;
+            editor.querySelector(`input[value="${currentRule.logic}"]`)?.click();
+        }
+    }
+    secondRow.hidden = true;
+    logicRow.hidden = true;
+    return panel;
+}
+
+function showColumnTextFilterEditor(panel, operator) {
+    const options = panel?.querySelector('.column-text-filter-options');
+    const editor = panel?.querySelector('.column-text-filter-editor');
+    if (!options || !editor) return;
+
+    const firstOperator = editor.querySelector('.column-text-filter-operator-1');
+    const firstValue = editor.querySelector('.column-text-filter-value-1');
+    const secondRow = editor.querySelector('.column-text-filter-second-row');
+    const logicRow = editor.querySelector('.column-text-filter-logic');
+    const currentRule = normalizeColumnTextFilterRule(getColumnTextFilterRule(
+        editor.dataset.tableId,
+        decodeColumnName(editor.dataset.columnName)
+    ));
+    const isCustom = operator === 'custom';
+    editor.dataset.operator = isCustom ? 'custom' : operator;
+    options.hidden = true;
+    editor.hidden = false;
+    firstOperator.value = isCustom ? currentRule?.operator || 'equals' : operator;
+    firstValue.value = currentRule?.value || '';
+    secondRow.hidden = !isCustom;
+    logicRow.hidden = !isCustom;
+    if (isCustom) {
+        editor.querySelector('.column-text-filter-operator-2').value = currentRule?.secondOperator || 'equals';
+        editor.querySelector('.column-text-filter-value-2').value = currentRule?.secondValue || '';
+        editor.querySelector(`input[value="${currentRule?.logic || 'and'}"]`)?.click();
+    }
+    const error = editor.querySelector('.column-text-filter-error');
+    error.hidden = true;
+    error.textContent = '';
+    firstValue.focus();
+}
+
+function showColumnTextFilterOptions(panel) {
+    const options = panel?.querySelector('.column-text-filter-options');
+    const editor = panel?.querySelector('.column-text-filter-editor');
+    if (!options || !editor) return;
+    options.hidden = false;
+    editor.hidden = true;
+}
+
+function toggleColumnTextFilterPanel() {
+    const panel = activeColumnMenuState?.menu?.querySelector('.column-text-filter-panel');
+    const trigger = activeColumnMenuState?.menu?.querySelector('[data-action="toggle-text-filter"]');
+    if (!panel || !trigger) return;
+    panel.hidden = !panel.hidden;
+    trigger.classList.toggle('is-open', !panel.hidden);
+    trigger.setAttribute('aria-expanded', String(!panel.hidden));
+    if (!panel.hidden) {
+        showColumnTextFilterOptions(panel);
+        requestAnimationFrame(() => {
+            const rect = panel.getBoundingClientRect();
+            const opensLeft = rect.right > window.innerWidth - 12;
+            panel.style.left = opensLeft ? 'auto' : 'calc(100% + 6px)';
+            panel.style.right = opensLeft ? 'calc(100% + 6px)' : 'auto';
+        });
+    }
+}
+
+function commitColumnFilterChange(tableId) {
     syncHeaderDecorations(tableId);
     closeColumnMenu();
     currentQueryRequest = buildQueryRequest(currentQueryRequest, {
@@ -3770,6 +4285,90 @@ function applyColumnValueFilterFromMenu(menu, tableId, columnName) {
     getProcurementSearchForm()?.setPage?.(1);
     refreshBoundedWorkingSetViews({ page: 1, resetScroll: false, redrawCharts: true });
     setFilterUrlState(currentQueryRequest);
+}
+
+function applyColumnValueFilterFromMenu(menu, tableId, columnName) {
+    const facetOptions = getBoundedColumnValueOptions(tableId, columnName);
+    const draft = menu?.querySelector('.column-value-list')?.columnFilterDraft;
+    if (!draft) return;
+    const distinctValues = facetOptions.map(option => option.value);
+    const selectedValues = Array.from(draft.selectedKeys)
+        .map(key => draft.valuesByKey.get(key))
+        .filter(value => value !== undefined);
+    const nextValueSet = selectedValues.length === distinctValues.length
+        ? null
+        : new Set(selectedValues);
+    const currentValueSet = getColumnValueFilter(tableId, columnName);
+    const currentHasValueFilter = currentValueSet instanceof Set;
+    const nextHasValueFilter = nextValueSet instanceof Set;
+    if (!getColumnTextFilterRule(tableId, columnName)
+        && currentHasValueFilter === nextHasValueFilter
+        && (!currentHasValueFilter || areColumnValueSetsEqual(currentValueSet, nextValueSet))) {
+        closeColumnMenu();
+        return;
+    }
+
+    if (!nextHasValueFilter) {
+        replaceColumnFilterState(columnValueFilterState[tableId], tableId, columnName);
+    } else {
+        replaceColumnFilterState(columnValueFilterState[tableId], tableId, columnName, nextValueSet);
+    }
+    replaceColumnFilterState(columnTextFilterState[tableId], tableId, columnName);
+
+    commitColumnFilterChange(tableId);
+}
+
+function applyColumnTextFilterFromMenu(menu, tableId, columnName) {
+    const editor = menu?.querySelector('.column-text-filter-editor');
+    if (!editor) return;
+
+    const operator = editor.dataset.operator || 'equals';
+    const value = editor.querySelector('.column-text-filter-value-1')?.value || '';
+    const secondOperator = editor.querySelector('.column-text-filter-operator-2')?.value || 'equals';
+    const secondValue = editor.querySelector('.column-text-filter-value-2')?.value || '';
+    const isCustom = operator === 'custom';
+    const requiresValue = (candidateOperator, candidateValue) => (
+        !['equals', 'notEquals'].includes(candidateOperator) && !candidateValue.trim()
+    );
+    const error = editor.querySelector('.column-text-filter-error');
+    if (requiresValue(isCustom ? editor.querySelector('.column-text-filter-operator-1')?.value : operator, value)
+        || (isCustom && requiresValue(secondOperator, secondValue))) {
+        error.textContent = 'Vui lòng nhập giá trị cho điều kiện đã chọn.';
+        error.hidden = false;
+        return;
+    }
+
+    const rule = isCustom
+        ? {
+            custom: true,
+            operator: editor.querySelector('.column-text-filter-operator-1')?.value || 'equals',
+            value,
+            logic: editor.querySelector('.column-text-filter-logic input:checked')?.value || 'and',
+            secondOperator,
+            secondValue
+        }
+        : { operator, value };
+    const normalizedRule = normalizeColumnTextFilterRule(rule);
+    const currentRule = normalizeColumnTextFilterRule(getColumnTextFilterRule(tableId, columnName));
+    if (!(getColumnValueFilter(tableId, columnName) instanceof Set)
+        && stableStringify(currentRule) === stableStringify(normalizedRule)) {
+        closeColumnMenu();
+        return;
+    }
+    replaceColumnFilterState(columnValueFilterState[tableId], tableId, columnName);
+    replaceColumnFilterState(
+        columnTextFilterState[tableId],
+        tableId,
+        columnName,
+        normalizedRule
+    );
+    commitColumnFilterChange(tableId);
+}
+
+function clearColumnTextFilter(tableId, columnName) {
+    replaceColumnFilterState(columnTextFilterState[tableId], tableId, columnName);
+    replaceColumnFilterState(columnValueFilterState[tableId], tableId, columnName);
+    commitColumnFilterChange(tableId);
 }
 
 const MAX_COLUMN_VALUES_RENDERED = 250;
@@ -3914,6 +4513,27 @@ function renderColumnMenuShell(tableId, columnName) {
     }));
     fragment.appendChild(secondarySection);
 
+    const textFilterDivider = document.createElement('hr');
+    textFilterDivider.className = 'column-menu-divider';
+    fragment.appendChild(textFilterDivider);
+
+    const textFilterSection = document.createElement('div');
+    textFilterSection.className = 'column-text-filter-section';
+    const textFilterButton = createColumnMenuActionButton({
+        action: 'toggle-text-filter',
+        tableId,
+        columnName,
+        icon: 'type',
+        label: 'Bộ lọc văn bản',
+        isActive: Boolean(getColumnTextFilterRule(tableId, columnName))
+    });
+    textFilterButton.setAttribute('aria-haspopup', 'true');
+    textFilterButton.setAttribute('aria-expanded', 'false');
+    textFilterButton.appendChild(createFeatherIconElement('chevron-right', 'column-menu-submenu-icon'));
+    textFilterSection.appendChild(textFilterButton);
+    textFilterSection.appendChild(createColumnTextFilterPanel(tableId, columnName));
+    fragment.appendChild(textFilterSection);
+
     const filterDivider = document.createElement('hr');
     filterDivider.className = 'column-menu-divider';
     fragment.appendChild(filterDivider);
@@ -3941,7 +4561,7 @@ function renderColumnMenuShell(tableId, columnName) {
     // shell free of a second unbounded DOM build for high-cardinality columns.
     const facetOptions = [];
     const distinctValues = [];
-    const selectedValues = columnValueFilterState[tableId]?.[columnName];
+    const selectedValues = getColumnValueFilter(tableId, columnName);
     const valueList = document.createElement('div');
     valueList.className = 'column-value-list';
 
@@ -4023,7 +4643,7 @@ function renderColumnMenu(tableId, columnName) {
         normalizeColumnFilterValue(option.value),
         option.value
     ]));
-    const selectedValues = columnValueFilterState[tableId]?.[columnName];
+    const selectedValues = getColumnValueFilter(tableId, columnName);
     const selectedKeys = selectedValues instanceof Set
         ? new Set(Array.from(selectedValues, normalizeColumnFilterValue))
         : new Set(valuesByKey.keys());
@@ -4137,7 +4757,7 @@ function renderColumnsPopover(tableId) {
     header.className = 'table-columns-header';
 
     const title = document.createElement('strong');
-    title.textContent = 'Show/hide columns';
+    title.textContent = 'Ẩn/Hiện cột';
     header.appendChild(title);
 
     const resetButton = document.createElement('button');
@@ -4262,6 +4882,9 @@ async function handleColumnMenuAction(action, tableId, columnName) {
                 rerenderColumnsPopover();
             }
             return;
+        case 'toggle-text-filter':
+            toggleColumnTextFilterPanel();
+            return;
         default:
             break;
     }
@@ -4301,6 +4924,49 @@ function initTableWorkspaceControls() {
             e.preventDefault();
             e.stopPropagation();
             openColumnMenu(trigger.dataset.tableId, trigger.dataset.colName, trigger);
+            return;
+        }
+
+        const textFilterOption = e.target.closest('.column-text-filter-option');
+        if (textFilterOption) {
+            e.preventDefault();
+            e.stopPropagation();
+            showColumnTextFilterEditor(
+                textFilterOption.closest('.column-text-filter-panel'),
+                textFilterOption.dataset.operator
+            );
+            return;
+        }
+
+        const clearTextFilterButton = e.target.closest('.column-text-filter-clear');
+        if (clearTextFilterButton) {
+            e.preventDefault();
+            e.stopPropagation();
+            clearColumnTextFilter(
+                clearTextFilterButton.dataset.tableId,
+                decodeColumnName(clearTextFilterButton.dataset.columnName)
+            );
+            return;
+        }
+
+        const applyTextFilterButton = e.target.closest('.column-text-filter-apply');
+        if (applyTextFilterButton) {
+            e.preventDefault();
+            e.stopPropagation();
+            const editor = applyTextFilterButton.closest('.column-text-filter-editor');
+            applyColumnTextFilterFromMenu(
+                applyTextFilterButton.closest('.column-menu-popover'),
+                editor?.dataset.tableId,
+                decodeColumnName(editor?.dataset.columnName || '')
+            );
+            return;
+        }
+
+        const cancelTextFilterButton = e.target.closest('.column-text-filter-cancel');
+        if (cancelTextFilterButton) {
+            e.preventDefault();
+            e.stopPropagation();
+            showColumnTextFilterOptions(cancelTextFilterButton.closest('.column-text-filter-panel'));
             return;
         }
 
@@ -4433,6 +5099,9 @@ const chartInstances = {
     timeline: null
 };
 
+const CHART_JS_URL = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js';
+let chartJsLoadPromise = null;
+let insightChartsDirty = true;
 let vietnamMapDefinition = null;
 let vietnamMapLoadPromise = null;
 let lastProvinceMapData = [];
@@ -4450,6 +5119,27 @@ const CHART_THEME = {
     mapLow: '#8fc7d2',
     mapHigh: '#0a516d'
 };
+
+function ensureChartJsLoaded() {
+    if (window.Chart) return Promise.resolve(window.Chart);
+    if (chartJsLoadPromise) return chartJsLoadPromise;
+
+    chartJsLoadPromise = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = CHART_JS_URL;
+        script.async = true;
+        script.onload = () => window.Chart
+            ? resolve(window.Chart)
+            : reject(new Error('Chart.js loaded without exposing window.Chart'));
+        script.onerror = () => reject(new Error('Unable to load Chart.js'));
+        document.head.appendChild(script);
+    }).catch(error => {
+        chartJsLoadPromise = null;
+        throw error;
+    });
+
+    return chartJsLoadPromise;
+}
 
 const VIETNAM_PROVINCE_NAMES = [
     'An Giang', 'Bà Rịa - Vũng Tàu', 'Bắc Giang', 'Bắc Kạn', 'Bạc Liêu', 'Bắc Ninh',
@@ -4556,6 +5246,7 @@ ADMIN_UNITS_2025.forEach(unit => {
 
 function getProvinceMapKey(name) {
     let key = normalizeVietnameseText(name)
+        .replace(/\bt\s+p\b/g, 'tp')
         .replace(/\btp\b/g, ' ')
         .replace(/\btinh\b/g, ' ')
         .replace(/\bthanh pho\b/g, ' ')
@@ -4566,49 +5257,96 @@ function getProvinceMapKey(name) {
     return key;
 }
 
+const LOCATION_PROVINCE_MATCHES = VIETNAM_PROVINCE_LOOKUP
+    .map(province => ({
+        ...province,
+        mapKey: getProvinceMapKey(province.name)
+    }))
+    .filter(province => province.mapKey)
+    .sort((a, b) => b.mapKey.length - a.mapKey.length);
+
+function getLocationProvinceMatchKey(value) {
+    let key = normalizeVietnameseText(value)
+        .replace(/\bt\s+p\b/g, 'tp')
+        .replace(/\btp\b|\btinh\b|\bthanh pho\b|\bcity\b/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    // Expand aliases inside a long location string (for example "HCM,
+    // Thành phố Thủ Đức"), not only when the whole value is an alias.
+    let paddedKey = ` ${key} `;
+    [...PROVINCE_MAP_ALIASES.entries()]
+        .filter(([alias, target]) => alias !== target)
+        .sort(([a], [b]) => b.length - a.length)
+        .forEach(([alias, target]) => {
+            paddedKey = paddedKey.replaceAll(` ${alias} `, ` ${target} `);
+        });
+
+    return paddedKey.replace(/\s+/g, ' ').trim();
+}
+
+function getLocationTextForMatching(place) {
+    if (Array.isArray(place)) {
+        return place.map(getLocationTextForMatching).filter(Boolean).join('; ');
+    }
+    if (place && typeof place === 'object') {
+        return [
+            place.provName,
+            place.provinceName,
+            place.cityName,
+            place.province,
+            place.provCode,
+            place.provinceCode,
+            place.cityCode,
+            place.districtName,
+            place.wardName,
+            place.communeName
+        ].find(value => value !== undefined && value !== null && String(value).trim()) || '';
+    }
+    return String(place ?? '');
+}
+
+function findProvinceMatchInLocation(value) {
+    const normalizedLocation = getLocationProvinceMatchKey(value);
+    if (!normalizedLocation) return null;
+
+    const paddedLocation = ` ${normalizedLocation} `;
+    return LOCATION_PROVINCE_MATCHES.find(province =>
+        paddedLocation.includes(` ${province.mapKey} `)
+    ) || null;
+}
+
 function extractProvinceFromPlace(place) {
-    const rawPlace = String(place || '').replace(/\s+/g, ' ').trim();
+    const rawPlace = getLocationTextForMatching(place).replace(/\s+/g, ' ').trim();
     if (!rawPlace) return 'Không xác định';
 
-    const normalizedPlace = ` ${normalizeVietnameseText(rawPlace)} `;
-    const matchedProvince = VIETNAM_PROVINCE_LOOKUP.find(province =>
-        normalizedPlace.includes(` ${province.normalized} `)
-    );
-    if (matchedProvince) return matchedProvince.name;
-
-    // New MSC rows may put the commune/ward before the province and may use
-    // the full administrative prefix ("Thành phố ..." instead of the old
-    // "TP. ...").  Prefer the explicitly labelled province segment before
-    // falling back to the legacy last-segment behavior.
     const segments = rawPlace
-        .split(/[;,]/)
+        .split(/[;|\n]+/)
         .map(part => part.trim())
-        .filter(Boolean)
-    const provinceSegment = segments.find(part => {
-        const normalized = normalizeVietnameseText(part);
-        return /^(?:tinh|thanh pho|tp|city)\s+/.test(normalized);
-    });
-    if (provinceSegment) return provinceSegment;
+        .filter(Boolean);
+    const matchedProvince = segments
+        .map(findProvinceMatchInLocation)
+        .find(Boolean) || findProvinceMatchInLocation(rawPlace);
 
-    const lastSegment = segments.pop();
-
-    return lastSegment || rawPlace || 'Không xác định';
+    // Only return a value from the canonical catalog. Unknown free-form
+    // fragments must not become phantom map regions or inflate the legend.
+    return matchedProvince?.name || 'Không xác định';
 }
 
 function getProvinceValueEntries(data) {
     const adminValueMap = new Map();
 
     data.forEach(r => {
-        const province = extractProvinceFromPlace(r['Địa điểm']);
-        const value = Number(r['Thành tiền (VND)']) || 0;
+        const province = extractProvinceFromPlace(getFirstRawColumnValue(r, ['location']));
+        const value = getChartTotalValue(r);
         if (value <= 0) return;
 
         const provinceKey = getProvinceMapKey(province);
-        const adminUnit = ADMIN_2025_BY_LEGACY_KEY.get(provinceKey) || {
-            key: provinceKey,
-            name: province,
-            parts: province
-        };
+        // Do not let an unrecognised location become a phantom region. It is
+        // not rendered on the 34-region map, so including it here would make
+        // the legend max differ from every visible province.
+        const adminUnit = ADMIN_2025_BY_LEGACY_KEY.get(provinceKey);
+        if (!adminUnit) return;
         const current = adminValueMap.get(adminUnit.key) || {
             name: adminUnit.name,
             parts: adminUnit.parts,
@@ -4950,25 +5688,8 @@ function buildPreviewLineGradient(values = []) {
 }
 
 function renderInsightPreviewProvinceMap() {
-    const preview = document.getElementById('insight-preview-province');
-    const sourceSvg = document.querySelector('#chart-province-map svg');
-    if (!preview) return;
-
-    preview.replaceChildren();
-    if (!sourceSvg) {
-        const empty = document.createElement('span');
-        empty.className = 'insight-preview-empty';
-        preview.appendChild(empty);
-        return;
-    }
-
-    const clone = sourceSvg.cloneNode(true);
-    clone.removeAttribute('aria-hidden');
-    clone.querySelectorAll('path').forEach(path => {
-        path.removeAttribute('tabindex');
-        path.classList.remove('is-active');
-    });
-    preview.appendChild(clone);
+    // Keep the sidebar thumbnail lightweight; the full map is rendered in the
+    // selected chart panel.
 }
 
 function updateInsightDataPreviews(totalRecords = getInsightResultCounts().total) {
@@ -4979,17 +5700,13 @@ function updateInsightDataPreviews(totalRecords = getInsightResultCounts().total
         insightPreviewSignature = 'empty';
         renderInsightPreviewBars('insight-preview-price', []);
         renderInsightPreviewLine([]);
-        const preview = document.getElementById('insight-preview-province');
-        if (preview) {
-            preview.replaceChildren();
-            const empty = document.createElement('span');
-            empty.className = 'insight-preview-empty';
-            preview.appendChild(empty);
-        }
         return;
     }
 
-    const histogramData = (chartInstances.histogram?.data?.datasets?.[0]?.data || []).slice(0, 5);
+    const histogramData = (chartInstances.histogram?.data?.datasets?.[0]?.data || [])
+        .map(point => typeof point === 'object' ? point?.y : point)
+        .filter(value => Number.isFinite(Number(value)))
+        .slice(0, 5);
     const timelineData = (chartInstances.timeline?.data?.datasets?.[0]?.data || []).slice(-4);
     const nextSignature = [
         totalRecords,
@@ -5006,30 +5723,91 @@ function updateInsightDataPreviews(totalRecords = getInsightResultCounts().total
     renderInsightPreviewProvinceMap();
 }
 
+const MAX_EXACT_PRICE_VALUES = 10;
+const MAX_PRICE_BINS = 10;
+// Temporary chart-only guard for rows whose monetary fields are clearly
+// contaminated (for example, total value copied into unit price). The source
+// row remains untouched in the result tables and exports.
+const CHART_OUTLIER_THRESHOLD_VND = 50_000_000_000;
+
+function isChartOutlier(row) {
+    const unitPrice = Number(getFirstRawColumnValue(row, ['winning_unit_price']));
+    const explicitTotal = Number(getFirstRawColumnValue(row, ['total_value', 'winning_total_value']));
+    const quantity = Number(getFirstRawColumnValue(row, ['quantity']));
+    const derivedTotal = !Number.isFinite(explicitTotal) && Number.isFinite(quantity) && quantity > 0
+        && Number.isFinite(unitPrice) && unitPrice > 0
+        ? quantity * unitPrice
+        : 0;
+
+    return [unitPrice, explicitTotal, derivedTotal]
+        .some(value => Number.isFinite(value) && value > CHART_OUTLIER_THRESHOLD_VND);
+}
+
+function getChartRows(data = []) {
+    return (Array.isArray(data) ? data : []).filter(row => !isChartOutlier(row));
+}
+
+function buildPriceDistribution(priceValues = []) {
+    const priceMap = new Map();
+    priceValues.forEach(value => {
+        const price = Number(value);
+        if (Number.isFinite(price) && price > 0) {
+            priceMap.set(price, (priceMap.get(price) || 0) + 1);
+        }
+    });
+
+    const sorted = Array.from(priceMap.entries())
+        .map(([price, count]) => ({ price, count }))
+        .sort((a, b) => a.price - b.price);
+    const formatPrice = value => Number(value).toLocaleString('vi-VN', { maximumFractionDigits: 2 });
+
+    if (sorted.length <= MAX_EXACT_PRICE_VALUES) {
+        return {
+            mode: 'exact',
+            labels: sorted.map(item => item.price),
+            values: sorted.map(item => item.count),
+            datasetData: sorted.map(item => ({ x: item.price, y: item.count }))
+        };
+    }
+
+    const minPrice = sorted[0].price;
+    const maxPrice = sorted[sorted.length - 1].price;
+    const rawStep = (maxPrice - minPrice) / MAX_PRICE_BINS;
+    const magnitude = 10 ** Math.floor(Math.log10(rawStep));
+    const normalizedStep = rawStep / magnitude;
+    const stepMultiplier = normalizedStep <= 1 ? 1 : normalizedStep <= 2 ? 2 : normalizedStep <= 5 ? 5 : 10;
+    const step = stepMultiplier * magnitude;
+    const firstBinStart = Math.floor(minPrice / step) * step;
+    const binCount = Math.max(1, Math.ceil((maxPrice - firstBinStart) / step));
+    const bins = Array.from({ length: binCount }, (_, index) => ({
+        start: firstBinStart + index * step,
+        end: firstBinStart + (index + 1) * step,
+        count: 0
+    }));
+
+    sorted.forEach(item => {
+        const index = Math.min(bins.length - 1, Math.floor((item.price - firstBinStart) / step));
+        bins[index].count += item.count;
+    });
+
+    return {
+        mode: 'binned',
+        labels: bins.map(bin => `${formatPrice(bin.start)} – ${formatPrice(bin.end)}`),
+        values: bins.map(bin => bin.count),
+        binSize: step
+    };
+}
+
 const CHART_CONFIG = {
     histogram: {
         canvasId: 'chart-price-histogram',
         type: 'bar',
         color: CHART_THEME.primary,
-        getData: (data) => {
-            const priceMap = {};
-            data.forEach(r => {
-                const price = Number(r['Đơn giá trúng thầu (VND)']);
-                if (!isNaN(price) && price > 0) {
-                    priceMap[price] = (priceMap[price] || 0) + 1;
-                }
-            });
-
-            const sorted = Object.entries(priceMap)
-                .map(([price, count]) => ({ price: Number(price), count }))
-                .sort((a, b) => a.price - b.price);
-
-            return {
-                labels: sorted.map(x => x.price.toLocaleString('vi-VN')),
-                values: sorted.map(x => x.count)
-            };
-        },
-        getOptions: () => ({
+        getData: (data) => buildPriceDistribution(
+            data.map(row => getFirstRawColumnValue(row, ['winning_unit_price']))
+        ),
+        getType: (chartData = {}) => chartData.mode === 'exact' && chartData.labels?.length > 1 ? 'scatter' : 'bar',
+        getOptions: (chartData = {}) => ({
             responsive: true,
             maintainAspectRatio: false,
             interaction: { mode: 'nearest', axis: 'x', intersect: false },
@@ -5044,15 +5822,42 @@ const CHART_CONFIG = {
                     padding: 10,
                     displayColors: false,
                     callbacks: {
-                        title: (items) => `Giá: ${items[0].label}`,
+                        title: (items) => {
+                            const item = items[0];
+                            if (chartData.mode === 'exact') {
+                                const price = Number(chartData.labels?.length > 1
+                                    ? item?.parsed?.x
+                                    : item?.label);
+                                return `Giá: ${formatPriceAxis(price)}`;
+                            }
+                            return `Khoảng giá: ${item?.label || ''}`;
+                        },
                         label: (item) => `Số bản ghi: ${item.formattedValue}`
                     }
                 }
             },
             scales: {
                 x: {
+                    type: chartData.mode === 'exact' && chartData.labels?.length > 1 ? 'linear' : 'category',
+                    offset: !(chartData.mode === 'exact' && chartData.labels?.length > 1),
                     grid: { display: false },
-                    ticks: { autoSkip: true, maxRotation: 45, minRotation: 45, font: { size: 12 }, color: CHART_THEME.axis }
+                    ticks: chartData.mode === 'exact' && chartData.labels?.length > 1
+                        ? {
+                            autoSkip: true,
+                            maxTicksLimit: 8,
+                            maxRotation: 45,
+                            minRotation: 0,
+                            callback: value => formatPriceAxis(value),
+                            font: { size: 12 },
+                            color: CHART_THEME.axis
+                        }
+                        : {
+                            autoSkip: true,
+                            maxRotation: 45,
+                            minRotation: 45,
+                            font: { size: 12 },
+                            color: CHART_THEME.axis
+                        }
                 },
                 y: {
                     beginAtZero: true,
@@ -5072,8 +5877,8 @@ const CHART_CONFIG = {
             const monthlyValue = {};
             
             data.forEach(r => {
-                const dateStr = r['Ngày phê duyệt'];
-                const value = Number(r['Thành tiền (VND)']) || 0;
+                const dateStr = getFirstRawColumnValue(r, ['decision_issued_at', 'result_posted_at']);
+                const value = getChartTotalValue(r);
                 if (!dateStr || value === 0) return;
                 
                 const monthKey = parseMonthKey(dateStr);
@@ -5143,6 +5948,12 @@ const CHART_CONFIG = {
 };
 
 // Helper functions
+function formatPriceAxis(value) {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) return '';
+    return numericValue.toLocaleString('vi-VN', { maximumFractionDigits: 2 });
+}
+
 function formatCurrencyAxis(value) {
     if (value >= 1_000_000_000) {
         return `${(value / 1_000_000_000).toLocaleString('vi-VN', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} tỷ`;
@@ -5165,6 +5976,13 @@ function formatCurrencyTooltip(value) {
 
 function parseMonthKey(dateStr) {
     try {
+        if (dateStr instanceof Date) {
+            return isNaN(dateStr.getTime())
+                ? null
+                : `${dateStr.getFullYear()}-${String(dateStr.getMonth() + 1).padStart(2, '0')}`;
+        }
+
+        dateStr = String(dateStr || '').trim();
         let dateObj;
         if (dateStr.includes('/')) {
             const parts = dateStr.split('/');
@@ -5173,8 +5991,6 @@ function parseMonthKey(dateStr) {
             }
         } else if (dateStr.includes('-')) {
             dateObj = new Date(dateStr);
-        } else if (dateStr instanceof Date) {
-            dateObj = dateStr;
         }
         
         if (dateObj && !isNaN(dateObj.getTime())) {
@@ -5193,7 +6009,7 @@ const INSIGHT_CHART_META = {
     },
     price: {
         title: 'Phân bố đơn giá',
-        description: 'Biểu đồ giúp nhận diện nhanh cụm giá thấp, cao hoặc bất thường.'
+        description: 'Hiển thị từng mức giá khi có tối đa 10 giá khác nhau; nhiều hơn sẽ chia theo khoảng giá.'
     },
     timeline: {
         title: 'Theo thời gian',
@@ -5211,10 +6027,12 @@ let insightDrawerCloseTimer = null;
 function getInsightResultCounts() {
     const df1Count = currentFilteredDf1?.length || 0;
     const df2Count = currentFilteredDf2?.length || 0;
+    const df3Count = currentFilteredDf3?.length || 0;
     return {
         df1Count,
         df2Count,
-        total: df1Count + df2Count
+        df3Count,
+        total: df1Count + df2Count + df3Count
     };
 }
 
@@ -5222,7 +6040,8 @@ function formatInsightResultSummary(counts = getInsightResultCounts()) {
     const totalText = Number(counts.total || 0).toLocaleString('vi-VN');
     const df1Text = Number(counts.df1Count || 0).toLocaleString('vi-VN');
     const df2Text = Number(counts.df2Count || 0).toLocaleString('vi-VN');
-    return `${totalText} bản ghi: ${df1Text} thuốc, ${df2Text} hàng hóa`;
+    const df3Text = Number(counts.df3Count || 0).toLocaleString('vi-VN');
+    return `${totalText} bản ghi: ${df1Text} thuốc, ${df2Text} hàng hóa, ${df3Text} dược liệu`;
 }
 
 function formatDockQuotaLine(quota = getFullSearchQuotaState()) {
@@ -5246,6 +6065,7 @@ function canRunDockFullSearch(quota = getFullSearchQuotaState()) {
     return hasQuery
         && hasLoadedRows
         && hasMoreRows
+        && !fullSearchInFlight
         && !alreadyFullSearch
         && quota.enabled
         && Number(quota.limit || 0) > 0
@@ -5293,15 +6113,12 @@ function updateInsightEntryPoint(totalRecords = getInsightResultCounts().total) 
         setActionTooltip(dockFullSearchButton, `Tìm kiếm mở rộng. ${quotaText}`);
     }
     if (openButton) {
-        openButton.disabled = !hasData;
-        openButton.classList.toggle('is-disabled', !hasData);
+        openButton.disabled = false;
+        openButton.classList.toggle('is-empty', !hasData);
         openButton.classList.toggle('is-open', isInsightDrawerOpen());
-        setActionTooltip(openButton, 'Phân tích trực quan');
-    }
-
-    if (!hasData) {
-        if (isInsightDrawerOpen()) closeInsightDrawer();
-        return;
+        setActionTooltip(openButton, hasData
+            ? 'Phân tích trực quan'
+            : 'Phân tích trực quan');
     }
 }
 
@@ -5332,8 +6149,11 @@ function setActiveInsightChart(chartKey = 'province', { redraw = false } = {}) {
 
     updateInsightEntryPoint();
 
-    if (redraw) {
-        requestAnimationFrame(() => drawCharts(currentFilteredDf1, currentFilteredDf2));
+    if (redraw && insightChartsDirty) {
+        requestAnimationFrame(() => {
+            const chartData = getInsightChartDataSets();
+            void drawCharts(chartData.df1, chartData.df2, chartData.df3);
+        });
     } else {
         refreshVisibleInsightChart();
     }
@@ -5343,9 +6163,6 @@ function openInsightDrawer() {
     const drawer = document.getElementById('insight-drawer');
     const openButton = document.getElementById('open-insight-drawer');
     if (!drawer || !openButton) return;
-
-    const counts = getInsightResultCounts();
-    if (!counts.total) return;
 
     closeFloatingTableUi();
     if (insightDrawerCloseTimer) {
@@ -5403,6 +6220,7 @@ function initInsightDrawerEvents() {
         }
     });
     document.querySelector('[data-insight-close]')?.addEventListener('click', closeInsightDrawer);
+    document.getElementById('close-insight-drawer')?.addEventListener('click', closeInsightDrawer);
     document.getElementById('insight-full-search')?.addEventListener('click', () => {
         void triggerFullSearch();
     });
@@ -5434,16 +6252,21 @@ function initInsightDrawerEvents() {
 }
 
 function initEmptyCharts() {
+    destroyCharts();
     Object.values(CHART_CONFIG).forEach(config => {
         const canvas = document.getElementById(config.canvasId);
         if (!canvas) return;
-        
+
+        hideNoDataMessage(config.canvasId);
         const ctx = canvas.getContext('2d');
         if (ctx) {
             ctx.clearRect(0, 0, canvas.width || canvas.clientWidth || 300, canvas.height || canvas.clientHeight || 150);
         }
     });
-    renderProvinceValueMap([]);
+    document.getElementById('chart-province-map')?.replaceChildren();
+    lastProvinceMapData = [];
+    insightPreviewSignature = '';
+    insightChartsDirty = true;
     updateInsightEntryPoint(0);
 }
 
@@ -5456,7 +6279,7 @@ function destroyCharts() {
     });
 }
 
-function drawCharts(df1Data, df2Data, df3Data = []) {
+async function drawCharts(df1Data, df2Data, df3Data = []) {
     const totalRecords = (df1Data?.length || 0) + (df2Data?.length || 0) + (df3Data?.length || 0);
     const noDataMsg = 'Chưa có dữ liệu. Vui lòng thực hiện tìm kiếm.';
     
@@ -5464,6 +6287,7 @@ function drawCharts(df1Data, df2Data, df3Data = []) {
     updateInsightEntryPoint(totalRecords);
 
     if (!isInsightDrawerOpen()) {
+        insightChartsDirty = true;
         return;
     }
     
@@ -5473,17 +6297,40 @@ function drawCharts(df1Data, df2Data, df3Data = []) {
             showNoDataMessage(config.canvasId, noDataMsg);
         });
         updateInsightDataPreviews(0);
+        insightChartsDirty = false;
+        return;
+    }
+
+    try {
+        await ensureChartJsLoaded();
+    } catch (error) {
+        console.error('Unable to load Chart.js for visual analysis', error);
+        Object.values(CHART_CONFIG).forEach(config => {
+            showNoDataMessage(config.canvasId, 'Không tải được thư viện biểu đồ.');
+        });
+        return;
+    }
+
+    if (!isInsightDrawerOpen()) {
+        insightChartsDirty = true;
         return;
     }
     
     const allData = [...df1Data, ...df2Data, ...df3Data];
-    renderProvinceValueMap(allData);
+    const chartData = getChartRows(allData);
+    renderProvinceValueMap(chartData);
     
     // Draw each chart
     Object.entries(CHART_CONFIG).forEach(([key, config]) => {
-        drawChart(key, config, allData);
+        try {
+            drawChart(key, config, chartData);
+        } catch (error) {
+            console.error(`Unable to draw ${key} insight chart`, error);
+            showNoDataMessage(config.canvasId, 'Không thể hiển thị biểu đồ này.');
+        }
     });
     updateInsightDataPreviews(totalRecords);
+    insightChartsDirty = false;
 }
 
 function showNoDataMessage(canvasId, message) {
@@ -5517,30 +6364,47 @@ function drawChart(key, config, data) {
     
     const chartData = config.getData(data);
     
-    if (!chartData.labels.length || !chartData.values.length) return;
+    if (!chartData.labels.length || !chartData.values.length) {
+        showNoDataMessage(config.canvasId, 'Chưa đủ dữ liệu để hiển thị biểu đồ.');
+        return;
+    }
     
     hideNoDataMessage(config.canvasId);
     
     const ctx = canvas.getContext('2d');
+    const chartType = config.getType ? config.getType(chartData) : config.type;
     const dataset = {
         label: key === 'histogram' ? 'Số lượng bản ghi' : 'Tổng trị giá (VND)',
-        data: chartData.values,
+        // Point objects are only valid for the exact-price scatter chart.
+        // A singleton exact-price result is rendered as a category bar chart,
+        // so it must receive plain numeric values instead of { x, y } points.
+        data: chartType === 'scatter'
+            ? (chartData.datasetData || chartData.values)
+            : chartData.values,
         ...config.datasetConfig
     };
-    
     // Apply colors
-    if (config.type === 'bar' && key === 'histogram') {
+    if (chartType === 'bar' && key === 'histogram') {
         dataset.backgroundColor = config.color;
         dataset.borderRadius = 6;
-    } else if (config.type === 'line') {
+        dataset.maxBarThickness = 48;
+    } else if (chartType === 'scatter' && key === 'histogram') {
+        dataset.backgroundColor = config.color;
+        dataset.borderColor = config.color;
+        dataset.showLine = false;
+        dataset.parsing = { xAxisKey: 'x', yAxisKey: 'y' };
+        dataset.pointRadius = 6;
+        dataset.pointHoverRadius = 8;
+        dataset.pointHitRadius = 20;
+    } else if (chartType === 'line') {
         dataset.borderColor = config.color;
         dataset.pointBackgroundColor = config.color;
     }
     
-    chartInstances[key] = new Chart(ctx, {
-        type: config.type,
+    chartInstances[key] = new window.Chart(ctx, {
+        type: chartType,
         data: {
-            labels: chartData.labels,
+            ...(chartType === 'scatter' ? {} : { labels: chartData.labels }),
             datasets: [dataset]
         },
         options: config.getOptions(chartData)
@@ -5626,7 +6490,7 @@ function renderHistoryTimelineChart(timeline) {
     gradient.addColorStop(0, 'rgba(18, 116, 149, 0.24)');
     gradient.addColorStop(1, 'rgba(18, 116, 149, 0.02)');
 
-    historyTimelineChart = new Chart(ctx, {
+    historyTimelineChart = new window.Chart(ctx, {
         type: 'line',
         data: {
             labels,
@@ -5740,14 +6604,16 @@ function showHistoryModal() {
     const hasData = Array.isArray(updateTimeline) && updateTimeline.length > 0;
     updateHistoryRangeButtons();
     
+    modal.classList.add('show');
+    feather.replace();
+
     if (hasData) {
-        renderHistoryData(updateTimeline);
+        void ensureChartJsLoaded()
+            .then(() => renderHistoryData(updateTimeline))
+            .catch(error => console.error('Unable to load Chart.js for history', error));
     } else {
         renderEmptyHistory();
     }
-    
-    modal.classList.add('show');
-    feather.replace();
 }
 
 function renderHistoryData(historyTimeline) {
@@ -6451,68 +7317,130 @@ function initModalEvents() {
             if (!Number.isFinite(nextRange) || nextRange <= 0) return;
             activeHistoryRangeDays = nextRange;
             updateHistoryRangeButtons();
-            renderHistoryTimelineChart(metadata?.update_timeline || []);
+            void ensureChartJsLoaded()
+                .then(() => renderHistoryTimelineChart(metadata?.update_timeline || []))
+                .catch(error => console.error('Unable to load Chart.js for history', error));
         });
     });
 }
 
+const BULK_GROUP_ORDER = ['goods', 'medicines', 'traditional'];
+const BULK_GROUP_LABELS = {
+    goods: 'Hàng hóa',
+    medicines: 'Thuốc',
+    traditional: 'Dược liệu'
+};
+const BULK_GROUP_ICONS = {
+    goods: 'package',
+    medicines: 'pill',
+    traditional: 'leaf'
+};
+const BULK_GROUP_ICON_PATHS = {
+    goods: '<path d="m16.5 9.4-9-5.19M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="M3.27 6.96 12 12.01l8.73-5.05M12 22.08V12"/>',
+    medicines: '<path d="m10.5 20.5 9.5-9.5a4.95 4.95 0 0 0-7-7l-9.5 9.5a4.95 4.95 0 0 0 7 7Z"/><path d="m8.5 8.5 7 7"/>',
+    traditional: '<path d="M20.9 3.1C12.8 3.3 6.4 6.2 4 11.2c-1.5 3.1-.5 6.7 2.4 8.1 3.1 1.5 6.7-.1 8.1-3.2 1.2-2.7.7-5.7-.9-7.7"/><path d="M3 21c2.4-3.8 5.6-6.2 10-8"/>'
+};
+const BULK_GROUP_SCOPES = {
+    goods: 'goods',
+    medicines: 'medicine',
+    traditional: 'traditional'
+};
+const BULK_DEFAULT_FIELDS = {
+    goods: ['item_name', 'technical_specification'],
+    medicines: ['active_ingredient_or_herbal_component', 'strength', 'route_of_administration', 'dosage_form', 'medicine_group'],
+    traditional: ['item_name', 'used_part', 'processing_method', 'technical_group']
+};
 const BULK_SEARCH_FIELD_LABELS = {
-    medicine: {
-        drugName: 'Tên thuốc',
-        activeIngredient: 'Tên hoạt chất',
-        concentration: 'Nồng độ, hàm lượng',
-        route: 'Đường dùng',
-        dosageForm: 'Dạng bào chế',
-        drugGroup: 'Nhóm thuốc',
-        unit: 'Đơn vị tính',
-        regNo: 'GĐKLH hoặc GPNK',
-        specification: 'Quy cách',
-        manufacturer: 'Cơ sở sản xuất',
-        country: 'Xuất xứ'
-    },
     goods: {
-        lotName: 'Tên phần/lô',
-        goodsName: 'Danh mục hàng hóa',
-        technicalSpec: 'Tính năng kỹ thuật',
-        bidItem: 'Mặt hàng dự thầu',
-        model: 'Ký mã hiệu',
+        item_name: 'Tên hàng hóa / dược liệu',
+        unit: 'Đơn vị tính',
+        quantity: 'Số lượng / khối lượng',
+        country_of_origin: 'Xuất xứ',
+        hs_code: 'Mã HS',
+        model_mark: 'Ký mã hiệu',
         brand: 'Nhãn hiệu',
-        country: 'Xuất xứ',
-        manufacturer: 'Hãng sản xuất',
-        unit: 'Đơn vị tính'
+        manufacturer: 'Hãng / cơ sở sản xuất',
+        technical_specification: 'Cấu hình / tính năng kỹ thuật',
+        model: 'Chủng loại',
+        registration_or_import_permit_number: 'Số lưu hành / giấy phép nhập khẩu',
+        winning_bidder_name: 'Nhà thầu trúng thầu',
+        bid_invitation_code: 'Mã TBMT',
+        procuring_entity_name: 'Chủ đầu tư'
+    },
+    medicines: {
+        medicine_name: 'Tên thuốc',
+        active_ingredient_or_herbal_component: 'Hoạt chất / thành phần dược liệu',
+        strength: 'Nồng độ / hàm lượng',
+        marketing_authorization_or_import_permit: 'GĐKLH hoặc GPNK',
+        route_of_administration: 'Đường dùng',
+        dosage_form: 'Dạng bào chế',
+        shelf_life: 'Hạn dùng',
+        manufacturer: 'Hãng / cơ sở sản xuất',
+        production_country: 'Nước sản xuất',
+        packaging: 'Quy cách đóng gói',
+        unit: 'Đơn vị tính',
+        medicine_group: 'Nhóm thuốc',
+        winning_bidder_name: 'Nhà thầu trúng thầu',
+        bid_invitation_code: 'Mã TBMT',
+        procuring_entity_name: 'Chủ đầu tư'
+    },
+    traditional: {
+        item_name: 'Tên hàng hóa / dược liệu',
+        used_part: 'Bộ phận dùng',
+        scientific_name: 'Tên khoa học',
+        origin: 'Nguồn gốc',
+        processing_method: 'Phương pháp chế biến',
+        registration_or_import_permit_number: 'Số lưu hành / giấy phép nhập khẩu',
+        manufacturer: 'Hãng / cơ sở sản xuất',
+        production_country: 'Nước sản xuất',
+        packaging: 'Quy cách đóng gói',
+        unit: 'Đơn vị tính',
+        technical_group: 'Nhóm tiêu chí kỹ thuật',
+        winning_bidder_name: 'Nhà thầu trúng thầu',
+        bid_invitation_code: 'Mã TBMT',
+        procuring_entity_name: 'Chủ đầu tư'
     }
 };
-
 const BULK_COLUMN_ALIASES = {
-    medicine: {
-        drugName: ['Tên thuốc', 'Tên thương mại', 'Tên hàng hóa', 'Tên mặt hàng', 'Thuốc'],
-        activeIngredient: ['Tên hoạt chất', 'Hoạt chất'],
-        concentration: ['Nồng độ, hàm lượng', 'Nồng độ hoặc hàm lượng', 'Nồng độ hàm lượng', 'Hàm lượng', 'Nồng độ'],
-        route: ['Đường dùng'],
-        dosageForm: ['Dạng bào chế'],
-        drugGroup: ['Nhóm thuốc', 'Nhóm TCKT', 'Nhóm TCKT (nhóm thuốc)', 'Nhóm'],
-        unit: ['Đơn vị tính', 'ĐVT', 'Đơn vị'],
-        regNo: ['GĐKLH hoặc GPNK', 'GĐKLH/GPNK', 'Số đăng ký', 'SĐK', 'GPNK', 'Giấy đăng ký lưu hành'],
-        specification: ['Quy cách', 'Quy cách đóng gói'],
-        manufacturer: ['Cơ sở sản xuất', 'Nhà sản xuất', 'Hãng sản xuất', 'Đơn vị sản xuất'],
-        country: ['Xuất xứ', 'Nước sản xuất', 'Quốc gia sản xuất', 'Quốc gia']
-    },
     goods: {
-        lotName: ['Tên phần/lô', 'Tên phần', 'Tên lô', 'Phần/lô', 'Tên gói'],
-        goodsName: ['Danh mục hàng hóa', 'Tên hàng hóa', 'Tên hàng hoá', 'Hàng hóa', 'Hàng hoá', 'Tên mặt hàng'],
-        technicalSpec: ['Tính năng kỹ thuật', 'Thông số kỹ thuật', 'Thông số kĩ thuật', 'Mô tả kỹ thuật', 'Mô tả kĩ thuật'],
-        bidItem: ['Mặt hàng dự thầu', 'Tên mặt hàng dự thầu'],
-        brand: ['Nhãn hiệu', 'Thương hiệu'],
-        model: ['Ký mã hiệu', 'Kí mã hiệu', 'Model', 'Mã hiệu', 'Ký hiệu'],
-        country: ['Xuất xứ', 'Nước sản xuất', 'Quốc gia sản xuất', 'Quốc gia'],
+        item_name: ['Danh mục hàng hóa', 'Tên hàng hóa', 'Tên hàng hoá', 'Hàng hóa', 'Hàng hoá', 'Tên mặt hàng'],
+        technical_specification: ['Tính năng kỹ thuật', 'Thông số kỹ thuật', 'Thông số kĩ thuật', 'Mô tả kỹ thuật'],
+        model_mark: ['Ký mã hiệu', 'Kí mã hiệu', 'Model', 'Mã hiệu', 'Ký hiệu'],
+        country_of_origin: ['Xuất xứ', 'Nước sản xuất', 'Quốc gia sản xuất', 'Quốc gia'],
         manufacturer: ['Hãng sản xuất', 'Nhà sản xuất', 'Cơ sở sản xuất', 'Đơn vị sản xuất'],
         unit: ['Đơn vị tính', 'ĐVT', 'Đơn vị']
+    },
+    medicines: {
+        medicine_name: ['Tên thuốc', 'Tên thương mại', 'Tên hàng hóa', 'Tên mặt hàng', 'Thuốc'],
+        active_ingredient_or_herbal_component: ['Tên hoạt chất', 'Hoạt chất', 'Thành phần dược liệu'],
+        strength: ['Nồng độ, hàm lượng', 'Nồng độ hoặc hàm lượng', 'Hàm lượng', 'Nồng độ'],
+        route_of_administration: ['Đường dùng'],
+        dosage_form: ['Dạng bào chế'],
+        medicine_group: ['Nhóm thuốc', 'Nhóm TCKT', 'Nhóm'],
+        unit: ['Đơn vị tính', 'ĐVT', 'Đơn vị'],
+        marketing_authorization_or_import_permit: ['GĐKLH hoặc GPNK', 'GĐKLH/GPNK', 'Số đăng ký', 'SĐK', 'GPNK'],
+        packaging: ['Quy cách', 'Quy cách đóng gói'],
+        manufacturer: ['Cơ sở sản xuất', 'Nhà sản xuất', 'Hãng sản xuất', 'Đơn vị sản xuất'],
+        production_country: ['Xuất xứ', 'Nước sản xuất', 'Quốc gia sản xuất', 'Quốc gia']
+    },
+    traditional: {
+        item_name: ['Tên dược liệu', 'Tên vị thuốc', 'Tên hàng hóa', 'Tên mặt hàng'],
+        used_part: ['Bộ phận dùng'],
+        scientific_name: ['Tên khoa học'],
+        origin: ['Nguồn gốc'],
+        processing_method: ['Phương pháp chế biến'],
+        registration_or_import_permit_number: ['Số lưu hành', 'Giấy phép nhập khẩu'],
+        production_country: ['Xuất xứ', 'Nước sản xuất', 'Quốc gia sản xuất'],
+        manufacturer: ['Cơ sở sản xuất', 'Hãng sản xuất', 'Nhà sản xuất'],
+        packaging: ['Quy cách', 'Quy cách đóng gói'],
+        unit: ['Đơn vị tính', 'ĐVT', 'Đơn vị'],
+        technical_group: ['Nhóm TCKT', 'Nhóm tiêu chí kỹ thuật']
     }
 };
 
 let bulkImportedRows = [];
 let bulkImportedColumns = [];
-let bulkActiveScope = 'medicine';
+let bulkActiveScope = 'goods';
 let lastBulkSearchPayloads = null;
 let lastBulkSearchWarnings = [];
 let bulkImportReadToken = 0;
@@ -6521,14 +7449,18 @@ let lastBulkExportResult = null;
 
 const BULK_EXCEL_ACCEPTED_EXTENSIONS = ['.xlsx', '.xls', '.csv'];
 const BULK_SEARCH_EXPORT_LIMIT = 1000;
-const BULK_EXPORT_SOURCE_INDEX_FIELD = 'Tra cứu hàng loạt';
-const BULK_EXPORT_SOURCE_LABEL_FIELD = 'Dòng tra cứu';
+const BULK_EXPORT_SOURCE_INDEX_FIELD = 'Bulk query';
+const BULK_EXPORT_SOURCE_LABEL_FIELD = 'Bulk query row';
+const BULK_EXPORT_LEGACY_SOURCE_INDEX_FIELD = 'tìm kiếm hàng loạt';
+const BULK_EXPORT_LEGACY_SOURCE_LABEL_FIELD = 'Dòng tìm kiếm';
 const BULK_EXPORT_EXCLUDED_FIELDS = new Set([
     '_dataset',
     '__row_id',
     '__has_duplicate_warning',
     BULK_EXPORT_SOURCE_INDEX_FIELD,
-    BULK_EXPORT_SOURCE_LABEL_FIELD
+    BULK_EXPORT_SOURCE_LABEL_FIELD,
+    BULK_EXPORT_LEGACY_SOURCE_INDEX_FIELD,
+    BULK_EXPORT_LEGACY_SOURCE_LABEL_FIELD
 ]);
 
 function normalizeBulkColumnName(value) {
@@ -6562,6 +7494,71 @@ function getBulkProductLimit() {
     return selection.mode === 'product' ? selection.limit : 0;
 }
 
+function getBulkGroupContract(group) {
+    return advancedSearchContract?.groups?.[group] || null;
+}
+
+function getBulkFieldDefinitions(group) {
+    const fields = getBulkGroupContract(group)?.fields;
+    const definitions = Array.isArray(fields) && fields.length
+        ? fields.filter(field => field.searchable)
+        : Object.keys(BULK_SEARCH_FIELD_LABELS[group] || {}).map(name => ({
+        name,
+        label: BULK_SEARCH_FIELD_LABELS[group][name],
+        searchable: true
+    }));
+    const dataColumnOrder = RESULT_COLUMN_CATALOG.order?.[group] || [];
+    const orderIndex = new Map(dataColumnOrder.map((name, index) => [name, index]));
+    const originalIndex = new Map(definitions.map((field, index) => [field.name, index]));
+    return definitions.slice().sort((left, right) => {
+        const leftIndex = orderIndex.get(left.name) ?? Number.MAX_SAFE_INTEGER;
+        const rightIndex = orderIndex.get(right.name) ?? Number.MAX_SAFE_INTEGER;
+        return leftIndex - rightIndex
+            || (originalIndex.get(left.name) ?? 0) - (originalIndex.get(right.name) ?? 0);
+    });
+}
+
+function getBulkFieldLabel(group, field) {
+    return getBulkGroupContract(group)?.fields?.find(item => item.name === field)?.label
+        || BULK_SEARCH_FIELD_LABELS[group]?.[field]
+        || field;
+}
+
+function renderBulkGroupIcon(group) {
+    const iconName = BULK_GROUP_ICONS[group];
+    return renderFeatherIcon(iconName, 'bulk-group-nav-svg')
+        || `<svg class="bulk-group-nav-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${BULK_GROUP_ICON_PATHS[group] || ''}</svg>`;
+}
+
+function getSelectedBulkSourceTypes() {
+    return [];
+}
+
+function renderBulkFieldPanels() {
+    const root = document.getElementById('bulk-field-panels');
+    if (!root) return;
+    if (!advancedSearchContract?.groups) {
+        root.innerHTML = '<p class="bulk-contract-status" id="bulk-contract-status">Đang tải danh mục trường tìm kiếm…</p>';
+        return;
+    }
+    root.innerHTML = `<div class="bulk-field-layout">
+        <div class="bulk-group-nav" role="tablist" aria-label="Nhóm trường tham chiếu">
+            ${BULK_GROUP_ORDER.map(group => `<button id="bulk-group-tab-${group}" type="button" class="bulk-group-nav-button ${group === bulkActiveScope ? 'is-active' : ''}" data-bulk-group-tab="${group}" role="tab" aria-selected="${group === bulkActiveScope}" aria-controls="bulk-group-panel-${group}"><span class="bulk-group-nav-icon" aria-hidden="true">${renderBulkGroupIcon(group)}</span><span>${escapeHtml(BULK_GROUP_LABELS[group])}</span></button>`).join('')}
+        </div>
+        <div class="bulk-group-content">
+            ${BULK_GROUP_ORDER.map(group => {
+                const fields = getBulkFieldDefinitions(group);
+                const isActive = group === bulkActiveScope;
+                const rowCount = Math.max(1, Math.ceil(fields.length / 2));
+                return `<section id="bulk-group-panel-${group}" class="bulk-field-panel ${isActive ? 'is-active' : ''}" data-bulk-fields="${group}" role="tabpanel" aria-labelledby="bulk-group-tab-${group}"${isActive ? '' : ' hidden'}>
+                    <div class="bulk-field-options" style="--bulk-field-rows: ${rowCount};">${fields.map(field => `<label><input type="checkbox" value="${escapeHtml(field.name)}" ${BULK_DEFAULT_FIELDS[group]?.includes(field.name) ? 'checked' : ''}> ${escapeHtml(field.label || field.name)}</label>`).join('')}</div>
+                </section>`;
+            }).join('')}
+        </div>
+    </div>`;
+    setBulkActiveScope(bulkActiveScope, { resetOutput: false });
+}
+
 function getSelectedBulkFields(scope) {
     return Array.from(document.querySelectorAll(`[data-bulk-fields="${scope}"] input[type="checkbox"]:checked`))
         .map(input => input.value)
@@ -6569,16 +7566,22 @@ function getSelectedBulkFields(scope) {
 }
 
 function getAllSelectedBulkScopes() {
-    return getSelectedBulkFields(bulkActiveScope).length ? [bulkActiveScope] : [];
+    return BULK_GROUP_ORDER.filter(group => getSelectedBulkFields(group).length);
 }
 
 function setBulkActiveScope(scope, options = {}) {
-    if (!['medicine', 'goods'].includes(scope)) return;
+    if (!BULK_GROUP_ORDER.includes(scope)) return;
     bulkActiveScope = scope;
+    document.querySelectorAll('[data-bulk-group-tab]').forEach(button => {
+        const isActive = button.dataset.bulkGroupTab === scope;
+        button.classList.toggle('is-active', isActive);
+        button.setAttribute('aria-selected', String(isActive));
+    });
     document.querySelectorAll('[data-bulk-fields]').forEach(panel => {
         const isActive = panel.dataset.bulkFields === scope;
         panel.classList.toggle('is-active', isActive);
-        panel.setAttribute('aria-pressed', String(isActive));
+        panel.hidden = !isActive;
+        panel.setAttribute('aria-hidden', String(!isActive));
     });
     if (options.resetOutput !== false) {
         resetBulkDownloadUi();
@@ -6587,7 +7590,7 @@ function setBulkActiveScope(scope, options = {}) {
 }
 
 function findBulkColumnForField(scope, field, normalizedColumns) {
-    const aliases = [BULK_SEARCH_FIELD_LABELS[scope]?.[field], ...(BULK_COLUMN_ALIASES[scope]?.[field] || [])]
+    const aliases = [getBulkFieldLabel(scope, field), field, ...(BULK_COLUMN_ALIASES[scope]?.[field] || [])]
         .map(normalizeBulkColumnName)
         .filter(Boolean);
     const aliasSet = new Set(aliases);
@@ -6661,6 +7664,7 @@ function setBulkImportDragState(isDragging) {
 function openBulkSearchModal() {
     const modal = document.getElementById('bulk-search-modal');
     if (!modal) return;
+    void loadAdvancedSearchContract();
     modal.classList.add('show');
     modal.setAttribute('aria-hidden', 'false');
     setBulkSearchStatus('');
@@ -6784,14 +7788,18 @@ function buildEmptyBulkScope() {
 }
 
 function combineBulkResults(results) {
-    const medicineResult = results.find(item => item.scope === 'medicine')?.result || {};
-    const goodsResult = results.find(item => item.scope === 'goods')?.result || {};
+    const resultFor = group => results.find(item => (item.group || getBulkGroupFromScope(item.scope)) === group)?.result || {};
+    const medicineResult = resultFor('medicines');
+    const goodsResult = resultFor('goods');
+    const traditionalResult = resultFor('traditional');
     const medicineData = medicineResult.df1 || buildEmptyBulkScope();
     const goodsData = goodsResult.df2 || buildEmptyBulkScope();
-    const displayedTotal = Number(medicineData.data?.length || 0) + Number(goodsData.data?.length || 0);
-    const hasMore = Boolean(medicineData.has_more || goodsData.has_more);
-    const totalCount = Number(medicineData.count || 0) + Number(goodsData.count || 0);
-    const totalCountExact = medicineData.count_exact !== false && goodsData.count_exact !== false;
+    const traditionalData = traditionalResult.df3 || buildEmptyBulkScope();
+    const dataByGroup = { medicines: medicineData, goods: goodsData, traditional: traditionalData };
+    const displayedTotal = Object.values(dataByGroup).reduce((sum, data) => sum + Number(data.data?.length || 0), 0);
+    const hasMore = Object.values(dataByGroup).some(data => data.has_more);
+    const totalCount = Object.values(dataByGroup).reduce((sum, data) => sum + Number(data.count || 0), 0);
+    const totalCountExact = Object.values(dataByGroup).every(data => data.count_exact !== false);
     const totalCountLabel = totalCountExact ? String(totalCount) : `${totalCount}+`;
     const totalCountSummary = totalCountExact ? String(totalCount) : `hơn ${totalCount}`;
     const appliedTotalLimit = BULK_SEARCH_EXPORT_LIMIT;
@@ -6800,7 +7808,7 @@ function combineBulkResults(results) {
         success: true,
         search_mode: 'bulk',
         bulk: {
-            scope: results.length === 2 ? 'all' : (results[0]?.scope || 'all'),
+            scope: results.length > 1 ? 'all' : (results[0]?.group || getBulkGroupFromScope(results[0]?.scope) || 'all'),
             input_count: Math.max(...results.map(item => Number(item.result?.bulk?.input_count || 0)), 0),
             matched_count: displayedTotal,
             matched_input_count: results.reduce((sum, item) => sum + Number(item.result?.bulk?.matched_input_count || 0), 0),
@@ -6820,28 +7828,44 @@ function combineBulkResults(results) {
         applied_limit_per_scope: BULK_SEARCH_EXPORT_LIMIT,
         df1: medicineData,
         df2: goodsData,
-        auth: goodsResult.auth || medicineResult.auth,
-        full_search_daily_used: goodsResult.full_search_daily_used ?? medicineResult.full_search_daily_used,
-        full_search_daily_remaining: goodsResult.full_search_daily_remaining ?? medicineResult.full_search_daily_remaining
+        df3: traditionalData,
+        auth: goodsResult.auth || medicineResult.auth || traditionalResult.auth,
+        full_search_daily_used: goodsResult.full_search_daily_used ?? medicineResult.full_search_daily_used ?? traditionalResult.full_search_daily_used,
+        full_search_daily_remaining: goodsResult.full_search_daily_remaining ?? medicineResult.full_search_daily_remaining ?? traditionalResult.full_search_daily_remaining
     };
 }
 
+function getBulkGroupFromScope(scope) {
+    return scope === 'medicine' ? 'medicines'
+        : scope === 'goods' ? 'goods'
+            : ['traditional', 'traditional_medicine'].includes(scope) ? 'traditional'
+                : scope;
+}
+
+function getBulkResultKey(group) {
+    return group === 'medicines' ? 'df1' : group === 'goods' ? 'df2' : 'df3';
+}
+
 function getBulkResultRows(result, scope) {
-    const scopeData = scope === 'medicine' ? result?.df1 : result?.df2;
+    const scopeData = result?.[getBulkResultKey(getBulkGroupFromScope(scope))];
     return Array.isArray(scopeData?.data) ? scopeData.data : [];
 }
 
+function getBulkSourceIndex(row) {
+    return Number(row?.[BULK_EXPORT_SOURCE_INDEX_FIELD] || row?.[BULK_EXPORT_LEGACY_SOURCE_INDEX_FIELD] || 0);
+}
+
 function getBulkDisplayedTotal(result) {
-    return getBulkResultRows(result, 'medicine').length + getBulkResultRows(result, 'goods').length;
+    return BULK_GROUP_ORDER.reduce((sum, group) => sum + getBulkResultRows(result, group).length, 0);
 }
 
 function getBulkMatchedSourceCount(result) {
     const serverCount = Number(result?.bulk?.matched_input_count || 0);
     if (serverCount > 0) return serverCount;
     const indexes = new Set();
-    ['medicine', 'goods'].forEach(scope => {
+    BULK_GROUP_ORDER.forEach(scope => {
         getBulkResultRows(result, scope).forEach(row => {
-            const index = Number(row?.[BULK_EXPORT_SOURCE_INDEX_FIELD] || 0);
+            const index = getBulkSourceIndex(row);
             if (index > 0) indexes.add(index);
         });
     });
@@ -6862,23 +7886,26 @@ function sanitizeBulkExportRows(rows = []) {
 }
 
 function getBulkPayloadForScope(scope) {
-    return (lastBulkSearchPayloads || []).find(payload => payload.scope === scope) || null;
+    const group = getBulkGroupFromScope(scope);
+    return (lastBulkSearchPayloads || []).find(payload => (payload.group || getBulkGroupFromScope(payload.scope)) === group) || null;
 }
 
-function buildBulkSourceDisplayRow(sourceRow = {}, fields = [], scope = 'medicine') {
-    const labels = BULK_SEARCH_FIELD_LABELS?.[scope] || {};
+function buildBulkSourceDisplayRow(sourceRow = {}, fields = [], scope = 'goods') {
     return fields.reduce((row, field) => {
-        const label = labels[field] || field;
+        const label = getBulkFieldLabel(scope, field);
         row[label] = sourceRow?.[field] ?? '';
         return row;
     }, {});
 }
 
-function getBulkUiColumns(scope = 'medicine') {
-    return scope === 'goods' ? [...DF2_COLUMNS_ORDER] : [...DF1_COLUMNS_ORDER];
+function getBulkUiColumns(scope = 'goods') {
+    const group = getBulkGroupFromScope(scope);
+    if (group === 'goods') return [...DF2_COLUMNS_ORDER];
+    if (group === 'traditional') return [...DF3_COLUMNS_ORDER];
+    return [...DF1_COLUMNS_ORDER];
 }
 
-function buildBulkExportSheet(rows = [], scope = 'medicine') {
+function buildBulkExportSheet(rows = [], scope = 'goods') {
     const uiColumns = getBulkUiColumns(scope);
     const cleanedRows = sanitizeBulkExportRows(rows).map(row => (
         uiColumns.reduce((filtered, columnName) => {
@@ -6899,7 +7926,7 @@ function buildBulkExportSheet(rows = [], scope = 'medicine') {
     if (!headers.length) headers.push('Không có kết quả');
 
     const resultGroups = rows.reduce((groups, row) => {
-        const index = Number(row?.[BULK_EXPORT_SOURCE_INDEX_FIELD] || 0);
+        const index = getBulkSourceIndex(row);
         if (index > 0) {
             if (!groups.has(index)) groups.set(index, []);
             groups.get(index).push(row);
@@ -7014,20 +8041,18 @@ function downloadBulkSearchExcel() {
         return;
     }
 
-    const medicineRows = getBulkResultRows(lastBulkExportResult, 'medicine');
-    const goodsRows = getBulkResultRows(lastBulkExportResult, 'goods');
-    if (!medicineRows.length && !goodsRows.length) {
+    const rowsByGroup = BULK_GROUP_ORDER.map(group => ({ group, rows: getBulkResultRows(lastBulkExportResult, group) }))
+        .filter(item => item.rows.length);
+    if (!rowsByGroup.length) {
         setBulkSearchStatus('Không có dữ liệu để tải Excel.', 'error');
         return;
     }
 
     const workbook = window.XLSX.utils.book_new();
-    if (medicineRows.length) {
-        window.XLSX.utils.book_append_sheet(workbook, buildBulkExportSheet(medicineRows, 'medicine'), 'Thuoc');
-    }
-    if (goodsRows.length) {
-        window.XLSX.utils.book_append_sheet(workbook, buildBulkExportSheet(goodsRows, 'goods'), 'Hang hoa');
-    }
+    const sheetNames = { goods: 'Hang hoa', medicines: 'Thuoc', traditional: 'Duoc lieu' };
+    rowsByGroup.forEach(({ group, rows }) => {
+        window.XLSX.utils.book_append_sheet(workbook, buildBulkExportSheet(rows, group), sheetNames[group]);
+    });
 
     window.XLSX.writeFile(workbook, getBulkExportFilename());
     window.BIDFinderAnalytics?.track?.('bulk_search_excel_downloaded', {
@@ -7037,13 +8062,13 @@ function downloadBulkSearchExcel() {
 }
 
 async function runBulkSearch(options = {}) {
-    const searchMode = 'standard';
+    const searchMode = options.searchMode === 'full' ? 'full' : 'standard';
     const reuseLastPayloads = Boolean(options.reuseLastPayloads);
     await window.BIDFinderAuth?.whenReady?.();
     if (!requireAuthenticatedSession('login', 'full_query')) return;
 
     if (!reuseLastPayloads && !bulkImportedRows.length) {
-        setBulkSearchStatus('Chưa có dữ liệu để tra cứu.', 'error');
+        setBulkSearchStatus('Chưa có dữ liệu để tìm kiếm.', 'error');
         return;
     }
 
@@ -7056,7 +8081,7 @@ async function runBulkSearch(options = {}) {
     } else {
         const selectedScopes = getAllSelectedBulkScopes();
         if (!selectedScopes.length) {
-            setBulkSearchStatus('Cần chọn ít nhất một biến để tra cứu.', 'error');
+            setBulkSearchStatus('Cần chọn ít nhất một biến để tìm kiếm.', 'error');
             return;
         }
 
@@ -7067,30 +8092,37 @@ async function runBulkSearch(options = {}) {
                     return null;
                 }
                 if (!mapped.rows.length) {
-                    setBulkSearchStatus('Chưa có dữ liệu hợp lệ để tra cứu.', 'error');
+                    setBulkSearchStatus('Chưa có dữ liệu hợp lệ để tìm kiếm.', 'error');
                     return null;
                 }
-                return { scope, fields: mapped.fields, rows: mapped.rows };
+                return {
+                    scope: BULK_GROUP_SCOPES[scope],
+                    group: scope,
+                    sourceTypes: getSelectedBulkSourceTypes(scope),
+                    fields: mapped.fields,
+                    rows: mapped.rows
+                };
             })
             .filter(Boolean);
     }
 
     setBulkSearchWarnings([]);
     if (!payloads.length) {
-        setBulkSearchStatus('Chưa có dữ liệu hợp lệ để tra cứu.', 'error');
+        setBulkSearchStatus('Chưa có dữ liệu hợp lệ để tìm kiếm.', 'error');
         return;
     }
 
     const runButton = document.getElementById('run-bulk-search');
-    const defaultText = runButton?.textContent || 'Tra cứu';
+    const defaultText = runButton?.textContent || 'tìm kiếm';
     if (runButton) {
         runButton.disabled = true;
-        runButton.textContent = searchMode === 'full' ? 'Đang thực hiện...' : 'Đang tra cứu...';
+        runButton.textContent = searchMode === 'full' ? 'Đang thực hiện...' : 'Đang tìm kiếm...';
     }
     const totalInputRows = payloads.reduce((sum, item) => sum + item.rows.length, 0);
     const runToken = ++bulkSearchRunToken;
     resetBulkDownloadUi();
-    setBulkSearchStatus(`${searchMode === 'full' ? 'Đang thực hiện...' : 'Đang tra cứu...'}`);
+    setBulkSearchStatus(`${searchMode === 'full' ? 'Đang thực hiện...' : 'Đang tìm kiếm...'}`);
+    let completed = false;
 
     try {
         const results = [];
@@ -7111,10 +8143,10 @@ async function runBulkSearch(options = {}) {
             });
             const result = await response.json().catch(() => ({}));
             if (!response.ok || result.success === false) {
-                throw new Error(result.message || result.error || 'Tra cứu hàng loạt thất bại.');
+                throw new Error(result.message || result.error || 'tìm kiếm hàng loạt thất bại.');
             }
-            results.push({ scope: payload.scope, result });
-            const resultRows = getBulkResultRows(result, payload.scope).length;
+            results.push({ group: payload.group, scope: payload.scope, result });
+            const resultRows = getBulkResultRows(result, payload.group || payload.scope).length;
             remainingLimit = Math.max(0, remainingLimit - resultRows);
             if (result?.bulk?.truncated) break;
         }
@@ -7140,16 +8172,19 @@ async function runBulkSearch(options = {}) {
             price_limit: getBulkPriceLimit(),
             product_limit: getBulkProductLimit()
         });
+        completed = true;
     } catch (error) {
         if (runToken !== bulkSearchRunToken) return;
         console.error('Bulk search failed:', error);
-        setBulkSearchStatus(error?.message || 'Không thể tra cứu hàng loạt lúc này.', 'error');
+        setBulkSearchStatus(error?.message || 'Không thể tìm kiếm hàng loạt lúc này.', 'error');
+        if (searchMode === 'full') throw error;
     } finally {
     if (runButton) {
         runButton.disabled = Boolean(lastBulkExportResult);
         runButton.textContent = defaultText;
     }
     }
+    return completed;
 }
 
 function initBulkSearchEvents() {
@@ -7161,15 +8196,25 @@ function initBulkSearchEvents() {
             closeBulkSearchModal();
         }
     });
-    document.querySelectorAll('[data-bulk-fields]').forEach(panel => {
-        panel.addEventListener('click', () => setBulkActiveScope(panel.dataset.bulkFields));
-        panel.addEventListener('focusin', () => setBulkActiveScope(panel.dataset.bulkFields));
+    const bulkFieldPanels = document.getElementById('bulk-field-panels');
+    bulkFieldPanels?.addEventListener('click', event => {
+        const tab = event.target.closest('[data-bulk-group-tab]');
+        if (tab) {
+            event.preventDefault();
+            setBulkActiveScope(tab.dataset.bulkGroupTab);
+            return;
+        }
+        const panel = event.target.closest('[data-bulk-fields]');
+        if (panel) setBulkActiveScope(panel.dataset.bulkFields);
     });
-    document.querySelectorAll('[data-bulk-fields] input[type="checkbox"]').forEach(input => {
-        input.addEventListener('change', () => {
-            resetBulkDownloadUi();
-            setBulkSearchWarnings([]);
-        });
+    bulkFieldPanels?.addEventListener('focusin', event => {
+        const panel = event.target.closest('[data-bulk-fields]');
+        if (panel) setBulkActiveScope(panel.dataset.bulkFields);
+    });
+    bulkFieldPanels?.addEventListener('change', event => {
+        if (!event.target.matches('input[type="checkbox"]')) return;
+        resetBulkDownloadUi();
+        setBulkSearchWarnings([]);
     });
     document.querySelectorAll('input[name="bulk-diversity-limit"]').forEach(input => {
         input.addEventListener('change', () => {
@@ -7221,6 +8266,7 @@ function initBulkSearchEvents() {
     updateBulkImportFileName('Chưa chọn file', false);
     resetBulkDownloadUi();
     setBulkActiveScope(bulkActiveScope, { resetOutput: false });
+    void loadAdvancedSearchContract();
 }
 
 function getFeedbackContextText() {
@@ -7374,12 +8420,41 @@ function getVisibleFeedbackTopics() {
     return feedbackBoardState.topics;
 }
 
+function isFeedbackUserAuthenticated() {
+    return Boolean(window.BIDFinderAuth?.isAuthenticated?.());
+}
+
+function requireFeedbackAuthentication() {
+    if (isFeedbackUserAuthenticated()) return true;
+
+    const auth = window.BIDFinderAuth;
+    if (!auth) return true;
+    auth.requestIntent?.('feedback-write');
+    auth.openAuthModal?.('login');
+    setFeedbackStatus('Vui lòng đăng nhập để tạo chủ đề hoặc bình luận.', 'error');
+    return false;
+}
+
+function syncFeedbackComposerAuthState() {
+    const replyBody = document.getElementById('feedback-reply-body');
+    const isClosedForUser = feedbackBoardState.activeTopic?.status === 'closed' && !feedbackBoardState.isAdmin;
+    const isAuthenticated = isFeedbackUserAuthenticated();
+    if (replyBody) {
+        replyBody.disabled = isClosedForUser;
+        replyBody.readOnly = !isAuthenticated && !isClosedForUser;
+        replyBody.placeholder = isAuthenticated
+            ? 'Viết bình luận...'
+            : 'Đăng nhập để bình luận...';
+    }
+    updateFeedbackReplyButtonState();
+}
+
 function updateFeedbackReplyButtonState() {
     const replyBody = document.getElementById('feedback-reply-body');
     const sendButton = document.getElementById('send-feedback-reply');
     if (!replyBody || !sendButton) return;
     const isClosedForUser = feedbackBoardState.activeTopic?.status === 'closed' && !feedbackBoardState.isAdmin;
-    sendButton.disabled = isClosedForUser || !replyBody.value.trim();
+    sendButton.disabled = isClosedForUser || !isFeedbackUserAuthenticated() || !replyBody.value.trim();
 }
 
 function renderFeedbackReplies(replies = []) {
@@ -7471,6 +8546,8 @@ function showFeedbackEmptyDetail(message = 'Chọn một chủ đề để xem t
 }
 
 function showFeedbackTopicForm() {
+    if (!requireFeedbackAuthentication()) return;
+
     document.getElementById('feedback-empty-detail')?.setAttribute('hidden', '');
     document.getElementById('feedback-topic-detail')?.setAttribute('hidden', '');
     feedbackBoardState.activeTopic = null;
@@ -7522,7 +8599,6 @@ function renderFeedbackTopicDetail(topic, replies = [], options = {}) {
     if (closeButton) closeButton.hidden = topic.status === 'closed';
     if (reopenButton) reopenButton.hidden = topic.status !== 'closed';
 
-    const isClosedForUser = topic.status === 'closed' && !feedbackBoardState.isAdmin;
     const replyBody = document.getElementById('feedback-reply-body');
     const currentAvatar = document.getElementById('feedback-current-avatar');
     const currentUser = window.BIDFinderAuth?.getUser?.();
@@ -7530,12 +8606,8 @@ function renderFeedbackTopicDetail(topic, replies = [], options = {}) {
         currentAvatar.textContent = getFeedbackAuthorInitial(currentUser?.full_name, currentUser?.email, feedbackBoardState.isAdmin);
         currentAvatar.classList.toggle('is-admin', feedbackBoardState.isAdmin);
     }
-    if (replyBody) {
-        replyBody.disabled = isClosedForUser;
-        replyBody.value = '';
-        replyBody.placeholder = 'Viết bình luận...';
-    }
-    updateFeedbackReplyButtonState();
+    if (replyBody) replyBody.value = '';
+    syncFeedbackComposerAuthState();
 
     renderFeedbackReplies(replies);
 }
@@ -7684,8 +8756,8 @@ function openFeedbackModal() {
     feedbackBoardState.activeTopic = null;
     loadFeedbackTopics().catch(error => {
         console.error('Feedback topics load failed:', error);
-        setFeedbackStatus(error?.message || 'Không tải được diễn đàn lúc này.', 'error');
-        showFeedbackEmptyDetail('Không tải được diễn đàn');
+        setFeedbackStatus(error?.message || 'Không tải được thông báo lúc này.', 'error');
+        showFeedbackEmptyDetail('Không tải được thông báo');
     });
     window.feather?.replace?.();
     window.BIDFinderAnalytics?.track?.('feedback_opened');
@@ -7701,6 +8773,8 @@ function closeFeedbackModal() {
 
 async function createFeedbackTopic(event) {
     event?.preventDefault?.();
+    if (!requireFeedbackAuthentication()) return;
+
     const title = document.getElementById('feedback-topic-input')?.value?.trim() || '';
     const body = document.getElementById('feedback-topic-body-input')?.value?.trim() || '';
     const category = document.getElementById('feedback-category-input')?.value || 'idea';
@@ -7735,6 +8809,8 @@ async function createFeedbackTopic(event) {
 }
 
 async function sendFeedbackReply() {
+    if (!requireFeedbackAuthentication()) return;
+
     const topicId = feedbackBoardState.activeTopicId;
     if (!topicId) return;
     if (feedbackBoardState.activeTopic?.status === 'closed' && !feedbackBoardState.isAdmin) {
@@ -7909,7 +8985,6 @@ async function sendFeedback() {
 
 function initFeedbackModalEvents() {
     document.getElementById('open-feedback-modal')?.addEventListener('click', openFeedbackModal);
-    document.getElementById('open-feedback-nav')?.addEventListener('click', openFeedbackModal);
     document.getElementById('close-feedback-modal')?.addEventListener('click', closeFeedbackModal);
     document.querySelector('#feedback-modal .feedback-overlay')?.addEventListener('click', closeFeedbackModal);
     document.getElementById('new-feedback-topic')?.addEventListener('click', showFeedbackTopicForm);
@@ -7921,6 +8996,12 @@ function initFeedbackModalEvents() {
     document.getElementById('feedback-topic-form')?.addEventListener('submit', createFeedbackTopic);
     document.getElementById('send-feedback-reply')?.addEventListener('click', sendFeedbackReply);
     document.getElementById('feedback-reply-body')?.addEventListener('input', updateFeedbackReplyButtonState);
+    document.getElementById('feedback-reply-body')?.addEventListener('focus', event => {
+        if (isFeedbackUserAuthenticated()) return;
+        event.target.blur();
+        requireFeedbackAuthentication();
+    });
+    window.addEventListener('bidfinder:auth-changed', syncFeedbackComposerAuthState);
     document.querySelector('#feedback-topic-detail .feedback-discussion-scroll')?.addEventListener('scroll', handleFeedbackDiscussionScroll);
     document.getElementById('feedback-reply-body')?.addEventListener('keydown', event => {
         if (event.key !== 'Enter' || event.isComposing) return;
@@ -7980,15 +9061,20 @@ function initFeedbackModalEvents() {
     });
 }
 
+function getActiveResultViewContext() {
+    const fallbackView = legacyDatasetDefinition().resultPanel;
+    const view = document.querySelector('.scope-btn.active')?.getAttribute('data-view') || fallbackView;
+    const contexts = {
+        'df1-panel': { key: 'df1', tableId: 'standard-table' },
+        'df2-panel': { key: 'df2', tableId: 'extended-table' },
+        'df3-panel': { key: 'df3', tableId: 'traditional-table' }
+    };
+    return contexts[view] || contexts[fallbackView] || contexts['df1-panel'];
+}
+
 function updateLegacyPagination() {
-    const definition = legacyDatasetDefinition();
+    const { key, tableId: activeTableId } = getActiveResultViewContext();
     const page = Math.max(1, Number(currentQueryMeta.page || currentQueryRequest?.page || 1));
-    const key = definition.resultPanel === 'df1-panel'
-        ? 'df1'
-        : definition.resultPanel === 'df2-panel' ? 'df2' : 'df3';
-    const activeTableId = definition.resultPanel === 'df1-panel'
-        ? 'standard-table'
-        : definition.resultPanel === 'df2-panel' ? 'extended-table' : 'traditional-table';
     const pageMeta = currentQueryMeta;
     const displayed = Number(pageMeta[`${key}Displayed`] || 0);
     const pageSize = Math.max(1, Number(currentQueryRequest?.limit || displayed || 1));
@@ -7999,9 +9085,7 @@ function updateLegacyPagination() {
     const shownThrough = total > 0 ? Math.min(cumulativeDisplayed, total) : cumulativeDisplayed;
     const resultLimit = getAppliedWorkingSetLimit(activeTableId);
     const resultLimitReached = Number.isFinite(resultLimit) && cumulativeDisplayed >= resultLimit;
-    const totalLabel = workingSetAvailable[activeTableId]
-        ? total.toLocaleString('vi-VN')
-        : String(pageMeta[`${key}TotalLabel`] || displayed.toLocaleString('vi-VN'));
+    const totalLabel = getResultTableCountLabel(activeTableId, displayed);
     const hasMore = Boolean(pageMeta[`${key}HasMore`]);
     const previous = document.getElementById('legacy-prev-page');
     const next = document.getElementById('legacy-next-page');
@@ -8073,7 +9157,11 @@ function activateResultView(targetId) {
     const resultPanels = document.querySelectorAll('.result-panel');
     const button = document.querySelector(`.scope-btn[data-view="${targetId}"]`);
     const activeButton = document.querySelector('.scope-btn.active');
-    if (!button || activeButton === button) return;
+    if (!button) return;
+    if (activeButton === button) {
+        updateLegacyPagination();
+        return;
+    }
 
     const targetPanel = document.getElementById(targetId);
 
@@ -8086,9 +9174,13 @@ function activateResultView(targetId) {
     button.setAttribute('aria-selected', 'true');
     syncScopeSwitcherSlider();
 
-    if (!targetPanel) return;
+    if (!targetPanel) {
+        updateLegacyPagination();
+        return;
+    }
     resultPanels.forEach(panel => panel.classList.remove('active'));
     targetPanel.classList.add('active');
+    updateLegacyPagination();
 }
 
 function syncScopeSwitcherSlider() {
@@ -8151,32 +9243,61 @@ function buildExportWorksheet(data, headerOrder, currentOrder, tableId) {
 }
 
 function exportTableToExcel(tableId) {
-    const tableData = getDisplayedData(tableId);
-    if (!tableData.length) {
+    const exportDefinitions = [
+        {
+            tableId: 'standard-table',
+            sheetName: 'Kết quả mua sắm thuốc'
+        },
+        {
+            tableId: 'extended-table',
+            sheetName: 'Kết quả mua sắm hàng hóa'
+        },
+        {
+            tableId: 'traditional-table',
+            sheetName: 'Kết quả mua sắm dược liệu'
+        }
+    ];
+    const exportTables = exportDefinitions
+        .map(definition => {
+            const data = getExportData(definition.tableId);
+            if (!data.length) return null;
+            const headerOrder = getVisibleColumnOrder(definition.tableId);
+            return {
+                ...definition,
+                data,
+                headerOrder,
+                worksheet: buildExportWorksheet(
+                    data,
+                    headerOrder,
+                    TABLE_MAP[definition.tableId]?.columnOrder?.() || headerOrder,
+                    definition.tableId
+                )
+            };
+        })
+        .filter(Boolean);
+
+    if (!exportTables.length) {
         alert('Không có dữ liệu để xuất!');
         return;
     }
 
-    const sheetName = tableId === 'extended-table'
-        ? 'Kết quả mua sắm hàng hóa'
-        : tableId === 'traditional-table' ? 'Kết quả mua sắm dược liệu' : 'Kết quả mua sắm thuốc';
-    const filenameSuffix = tableId === 'extended-table'
-        ? 'HangHoa'
-        : tableId === 'traditional-table' ? 'DuocLieu' : 'Thuoc';
-    const headerOrder = getVisibleColumnOrder(tableId);
     const wb = XLSX.utils.book_new();
-    const ws = buildExportWorksheet(tableData, headerOrder, TABLE_MAP[tableId]?.columnOrder?.() || headerOrder, tableId);
-
-    XLSX.utils.book_append_sheet(wb, ws, sheetName);
-
-    const filename = generateExportFilename(filenameSuffix);
-    XLSX.writeFile(wb, filename);
-    window.BIDFinderAnalytics?.track?.('export_clicked', {
-        table_id: tableId,
-        row_count: tableData.length,
-        visible_column_count: headerOrder.length
+    exportTables.forEach(({ sheetName, worksheet }) => {
+        XLSX.utils.book_append_sheet(wb, worksheet, sheetName);
     });
-    console.log(`✅ Exported ${tableData.length} records from ${tableId} to ${filename}`);
+
+    const filename = generateExportFilename('TatCa');
+    XLSX.writeFile(wb, filename);
+    const rowCount = exportTables.reduce((total, table) => total + table.data.length, 0);
+    window.BIDFinderAnalytics?.track?.('export_clicked', {
+        table_id: 'all',
+        source_table_id: tableId,
+        row_count: rowCount,
+        sheet_count: exportTables.length,
+        visible_column_count: exportTables.reduce((total, table) => total + table.headerOrder.length, 0),
+        table_row_counts: Object.fromEntries(exportTables.map(table => [table.tableId, table.data.length]))
+    });
+    console.log(`✅ Exported ${rowCount} records from ${exportTables.length} result tables to ${filename}`);
 }
 
 function initSearchFormEvents() {
@@ -8225,10 +9346,7 @@ function initSearchFormEvents() {
         const page = Math.max(1, Number(event.detail?.page || 1));
         const currentPage = Math.max(1, Number(currentQueryRequest?.page || currentQueryMeta.page || 1));
         const pageSize = Math.max(1, Number(currentQueryRequest?.limit || 1));
-        const activePanel = legacyDatasetDefinition().resultPanel;
-        const activeTableId = activePanel === 'df1-panel'
-            ? 'standard-table'
-            : activePanel === 'df2-panel' ? 'extended-table' : 'traditional-table';
+        const { tableId: activeTableId } = getActiveResultViewContext();
         if (workingSetAvailable[activeTableId]) {
             currentQueryRequest = buildQueryRequest(currentQueryRequest, { page });
             searchForm.setPage?.(page);
@@ -8460,7 +9578,7 @@ function getProductJourneySteps() {
         },
         {
             title: 'Cụm chức năng chính',
-            body: 'Xem lịch sử cập nhật, tra cứu hàng loạt từ file Excel hoặc tìm kiếm nâng cao.',
+            body: 'Xem lịch sử cập nhật, tìm kiếm hàng loạt từ file Excel, tìm kiếm nâng cao hoặc phân tích trực quan',
             selector: '.workspace-actions',
             placement: 'bottom',
             before: closeJourneySurfaces
@@ -8475,10 +9593,10 @@ function getProductJourneySteps() {
             afterClick: openHistoryForJourney
         },
         {
-            title: 'Tra cứu hàng loạt',
-            body: 'Tra cứu hàng loạt sản phẩm từ file Excel.',
-            afterTitle: 'Tra cứu hàng loạt',
-            afterBody: 'Tìm kiếm dựa trên file Excel có danh sách sản phẩm cần tra cứu. BIDFinder không lưu trữ file này.',
+            title: 'Tìm kiếm hàng loạt',
+            body: 'Tìm kiếm hàng loạt sản phẩm từ file Excel.',
+            afterTitle: 'Tìm kiếm hàng loạt',
+            afterBody: 'Tìm kiếm dựa trên file Excel có danh sách sản phẩm cần tìm kiếm. BIDFinder không lưu trữ file này.',
             selector: '#open-bulk-search-modal',
             focusAfterSelector: '#bulk-search-modal .bulk-search-dialog',
             before: closeJourneySurfaces,
@@ -8513,14 +9631,14 @@ function getProductJourneySteps() {
         },
         {
             title: 'Thao tác trên từng cột',
-            body: 'Mở menu cột để sort, lọc nhanh, wrap text, autosize, ghim cột hoặc ẩn cột đang xem.',
+            body: 'Mở menu cột để sắp xếp, tự căn độ rộng, ngắt dòng, ghim hoặc ẩn cột đang xem, tìm kiếm nhanh.',
             getElement: () => document.querySelector('.column-menu-popover') || getFirstColumnMenuTriggerForJourney(),
             placement: 'right',
             before: openColumnMenuForJourney
         },
         {
             title: 'Cụm chức năng trên bảng',
-            body: 'Các chức năng Ẩn/hiện cột, tải Excel và chế độ toàn màn hình.',
+            body: 'Các chức năng ẩn/hiện cột, tải Excel và chế độ toàn màn hình.',
             getElement: getVisibleTableControlsForJourney,
             before: () => {
                 closeJourneySurfaces();
@@ -8565,24 +9683,24 @@ function getProductJourneySteps() {
             afterClick: () => setJourneyTableToolsVisible(true)
         },
         {
-            title: 'Hướng dẫn, diễn đàn và tài khoản',
-            body: 'Xem hướng dẫn, trao đổi trên diễn đàn và quản lý tài khoản.',
+            title: 'Hướng dẫn, thông báo và tài khoản',
+            body: 'Xem hướng dẫn sử dụng, theo dõi thông báo từ BIDFinder và quản lý tài khoản.',
             selector: '.app-header-links',
             placement: 'bottom',
             before: closeJourneySurfaces
         },
         {
-            title: 'Diễn đàn',
-            body: 'Nơi trao đổi, góp ý và theo dõi các cập nhật từ BIDFinder.',
-            afterTitle: 'Diễn đàn',
-            afterBody: 'Người dùng có thể theo dõi chủ đề, tạo chủ đề mới và tham gia bình luận.',
+            title: 'Thông báo',
+            body: 'Nơi theo dõi thông báo, cập nhật và trao đổi thông tin trong lĩnh vực đấu thầu.',
+            afterTitle: 'Thông báo',
+            afterBody: 'Bạn có thể theo dõi thông báo và cập nhật mới nhất trong lĩnh vực đấu thầu.',
             selector: '#open-feedback-modal',
             focusAfterSelector: '#feedback-modal .feedback-dialog',
             before: closeJourneySurfaces,
             afterClick: openFeedbackForJourney
         },
         {
-            title: 'Sẵn sàng tra cứu',
+            title: 'Sẵn sàng tìm kiếm',
             body: 'Bạn đã đi qua các chức năng chính của BIDFinder. Chúc bạn một ngày làm việc hiệu quả.',
             selector: '#open-filter-panel',
             placement: 'center',
