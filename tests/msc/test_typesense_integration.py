@@ -5,11 +5,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import json
+import tempfile
 import unittest
 
+from crawler_engine.msc.backfill import UUIDProvenanceStore
+from crawler_engine.msc.checkpoint import CheckpointStore
 from crawler_engine.msc.config import TypesenseConfig
 from crawler_engine.msc.contracts import SOURCE_CONTRACTS
-from crawler_engine.msc.models import PartitionContext
+from crawler_engine.msc.models import IngestionStatus, PartitionContext
 from crawler_engine.msc.normalize import normalize_record
 from crawler_engine.msc.partitioning import official_day_interval
 from crawler_engine.msc.sink import TypesenseSink
@@ -65,7 +68,24 @@ class TypesenseIntegrationTest(unittest.TestCase):
             after = {group: client.document_count(physical_collection_name(group, generation)) for group in LOGICAL_ALIASES}
             self.assertEqual((1, 1, 0), (rerun.attempted_count, rerun.accepted_count, rerun.rejected_count))
             self.assertEqual(before, after)
-            manager.activate_generation(generation)
+            with tempfile.TemporaryDirectory() as directory:
+                checkpoint = Path(directory) / "checkpoint.sqlite3"
+                with CheckpointStore(checkpoint) as store:
+                    store.start("goods_general", "2026-08-28", sink_target=f"typesense:{generation}")
+                    store.finish(
+                        "goods_general", "2026-08-28", IngestionStatus.COMPLETED,
+                        sink_target=f"typesense:{generation}", parent_pre_count=1, parent_post_count=1,
+                        raw_fetched_count=1, unique_uuid_count=1, normalized_count=1, sink_accepted_count=1,
+                    )
+                provenance = Path(directory) / "provenance.sqlite3"
+                with UUIDProvenanceStore(provenance):
+                    pass
+                manager.activate_generation(
+                    generation,
+                    expected_counts={group: len(grouped[group]) for group in LOGICAL_ALIASES},
+                    checkpoint_path=checkpoint,
+                    provenance_path=provenance,
+                )
             for group, records in grouped.items():
                 document = client.get_document(LOGICAL_ALIASES[group], records[0]["id"])
                 self.assertEqual(records[0]["id"], document["id"])

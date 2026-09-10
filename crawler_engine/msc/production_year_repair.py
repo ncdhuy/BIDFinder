@@ -22,6 +22,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from .client import MSCClient
 from .config import MSCConfig, TypesenseConfig
 from .contracts import get_contract
+from .exception_ledger import ensure_exception_ledger, exception_count, exception_rows, record_exception
 from .models import SearchInterval
 from .normalize import normalize_year
 from .partitioning import PartitioningError, official_day_interval, plan_partition
@@ -99,6 +100,7 @@ class RepairStats:
     planned_typesense_updates: int = 0
     typesense_write_batches: int = 0
     unresolved_document_ids: int = 0
+    exception_ledger_rows: int = 0
     pages_completed: int = 0
     partitions_completed: int = 0
     errors: int = 0
@@ -126,6 +128,7 @@ class RepairStats:
             "actual_typesense_updates": self.actual_typesense_updates,
             "typesense_write_batches": self.typesense_write_batches,
             "unresolved_document_ids": self.unresolved_document_ids,
+            "exception_ledger_rows": self.exception_ledger_rows,
             "pages_completed": self.pages_completed,
             "partitions_completed": self.partitions_completed,
             "errors": self.errors,
@@ -186,6 +189,7 @@ class RepairState:
                 errors INTEGER NOT NULL DEFAULT 0
             )"""
         )
+        ensure_exception_ledger(self.connection)
         self.connection.commit()
 
     def set_meta(self, key: str, value: Any) -> None:
@@ -213,6 +217,37 @@ class RepairState:
             (_utc_now(), status, msc_requests, msc_retries, errors, run_id),
         )
         self.connection.commit()
+
+    def record_exception(
+        self,
+        *,
+        operation_id: str,
+        source_id: str,
+        logical_group: str,
+        category: str,
+        reason: str,
+        source_key: str | None = None,
+        partition_date: str | None = None,
+        page_number: int | None = None,
+        leaf_index: int | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        record_exception(
+            self.connection,
+            operation_id=operation_id,
+            source_id=source_id,
+            logical_group=logical_group,
+            category=category,
+            reason=reason,
+            source_key=source_key,
+            partition_date=partition_date,
+            page_number=page_number,
+            leaf_index=leaf_index,
+            details=details,
+        )
+
+    def list_exceptions(self, operation_id: str | None = None) -> list[dict[str, Any]]:
+        return exception_rows(self.connection, operation_id)
 
     def page_done(
         self,
@@ -299,6 +334,7 @@ class RepairState:
         ).fetchall()
         stats.errors = len(failed)
         stats.error_messages = [str(row[0]) for row in failed]
+        stats.exception_ledger_rows = exception_count(self.connection)
         return stats
 
     def close(self) -> None:
@@ -522,6 +558,10 @@ def _observation_for_page(
     dry_run: bool,
     batch_size: int,
     stats: RepairStats,
+    state: RepairState | None = None,
+    operation_id: str = "direct-observation",
+    leaf_index: int | None = None,
+    page_number: int | None = None,
 ) -> dict[str, Any]:
     observation: dict[str, Any] = {
         "source_rows_scanned": len(raw_records),
@@ -545,6 +585,14 @@ def _observation_for_page(
         "yyyy_examples": [],
         "unresolved_examples": [],
     }
+    def ledger_record(source_id: str, category: str, reason: str, details: dict[str, Any] | None = None) -> None:
+        if state is not None:
+            state.record_exception(
+                operation_id=operation_id, source_id=source_id, logical_group="goods",
+                source_key=source_key, partition_date=partition_date, page_number=page_number,
+                leaf_index=leaf_index, category=category, reason=reason, details=details,
+            )
+
     candidates: list[dict[str, str]] = []
     candidate_ids: list[str] = []
     for raw in raw_records:
@@ -554,9 +602,15 @@ def _observation_for_page(
             raise RepairError(f"source row in {source_key}/{partition_date} has no id")
         source_value = source_production_year(source_key, raw)
         if source_id in seen_ids:
+            ledger_record(source_id, "duplicate_source_record", "source UUID repeated")
             stats.source_duplicate_rows += 1
             observation["source_duplicate_rows"] += 1
             if seen_values[source_id] != source_value:
+                ledger_record(
+                    source_id, "source_content_conflict",
+                    "same source UUID had conflicting production_year values",
+                    {"first_value": seen_values[source_id], "current_value": source_value},
+                )
                 stats.source_conflicts += 1
                 observation["source_conflicts"] += 1
                 raise RepairError(f"source UUID content conflict for {source_id}")
@@ -570,6 +624,7 @@ def _observation_for_page(
         seen_ids.add(source_id)
         seen_values[source_id] = source_value
         if source_value is None:
+            ledger_record(source_id, "source_value_empty_or_invalid", "source production_year is empty or invalid")
             stats.source_rows_empty_or_invalid += 1
             observation["source_rows_empty_or_invalid"] += 1
             continue
@@ -592,6 +647,7 @@ def _observation_for_page(
         source_id = candidate["id"]
         source_value = candidate["production_year"]
         if source_id not in current:
+            ledger_record(source_id, "missing_active_document", "source ID is not present in the active Typesense generation")
             stats.unresolved_document_ids += 1
             observation["unresolved_document_ids"] += 1
             if len(observation["unresolved_examples"]) < 5:
@@ -599,9 +655,18 @@ def _observation_for_page(
             continue
         reason, should_update = repair_decision(source_value, current[source_id])
         if reason == "current_missing_or_corrupt":
+            ledger_record(
+                source_id, "repair_candidate", reason,
+                {"source_production_year": source_value, "current_production_year": current[source_id]},
+            )
             stats.current_missing_or_corrupt += 1
             observation["current_missing_or_corrupt"] += 1
         elif reason == "current_valid_different":
+            ledger_record(
+                source_id, "current_valid_different",
+                "active document contains a valid different production_year; no automatic overwrite",
+                {"source_production_year": source_value, "current_production_year": current[source_id]},
+            )
             stats.current_valid_different_skipped += 1
             observation["current_valid_different_skipped"] += 1
         else:
@@ -755,6 +820,7 @@ def run_repair(
                             observation = _observation_for_page(
                                 client, collection, index, source_key, partition_date, records,
                                 seen_ids, seen_values, dry_run=dry_run, batch_size=batch_size, stats=local_stats,
+                                state=state, operation_id=str(run_id), leaf_index=leaf_index, page_number=page_number,
                             )
                             if page_number == 0 and response_count != int(leaf.expected_count or 0):
                                 observation["source_count_drift_events"] = 1

@@ -33,6 +33,27 @@ class ProductionYearRepairTests(unittest.TestCase):
         self.assertIsNone(source_production_year("goods_general", {"id": "a", "namSanXuat": None}))
         self.assertIsNone(source_production_year("goods_general", {"id": "b", "namSanXuat": ""}))
 
+    def test_repair_persists_full_exception_ledger(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            state_path = Path(temporary) / "repair.sqlite3"
+            index_path = Path(temporary) / "current.sqlite3"
+            with RepairState(state_path) as state, CurrentYearIndex(index_path) as index:
+                run_id = state.start_run()
+                observation = _observation_for_page(
+                    FakeTypesense(), "goods", index, "goods_general", "2024-01-01",
+                    [{"id": "missing-1", "namSanXuat": "2024-2025"}], set(), {},
+                    dry_run=True, batch_size=500,
+                    stats=__import__("crawler_engine.msc.production_year_repair", fromlist=["RepairStats"]).RepairStats(),
+                    state=state, operation_id=str(run_id), leaf_index=2, page_number=3,
+                )
+                rows = state.list_exceptions(str(run_id))
+                self.assertEqual(1, observation["unresolved_document_ids"])
+                self.assertEqual(1, len(rows))
+                self.assertEqual({"missing-1", "goods", "goods_general", "missing_active_document"}, {
+                    rows[0]["source_id"], rows[0]["logical_group"], rows[0]["source_key"], rows[0]["category"],
+                })
+                self.assertEqual((2, 3), (rows[0]["leaf_index"], rows[0]["page_number"]))
+
     def test_valid_current_value_is_not_replaced_when_source_differs(self):
         self.assertFalse(current_year_is_missing_or_corrupt("2024"))
         self.assertEqual(("current_valid_different", False), repair_decision("2024-2025", "2024"))

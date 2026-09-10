@@ -26,7 +26,7 @@ import subprocess
 import sys
 import time
 import unicodedata
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -36,11 +36,21 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from crawler_engine.msc.config import TypesenseConfig  # noqa: E402
-from crawler_engine.msc.typesense_client import TypesenseClient  # noqa: E402
+from crawler_engine.msc.exception_ledger import (  # noqa: E402
+    ensure_exception_ledger,
+    exception_count,
+    record_exception,
+)
+from crawler_engine.msc.typesense_client import (  # noqa: E402
+    TypesenseClient,
+    TypesenseCollectionManager,
+)
 from crawler_engine.msc.typesense_schema import (  # noqa: E402
     LOGICAL_ALIASES,
+    REQUIRED_SCHEMA_METADATA,
     SEARCH_CONFIGS,
     collection_schema,
+    schema_contract_mismatches,
     schema_for_group,
     physical_collection_name,
     validate_generation_id,
@@ -102,7 +112,12 @@ def _text_query_fields(group: str) -> set[str]:
     return set(SEARCH_CONFIGS[group].query_by)
 
 
-def _schema_contract_issues(group: str, source_schema: Mapping[str, Any]) -> list[str]:
+def _schema_contract_issues(
+    group: str,
+    source_schema: Mapping[str, Any],
+    *,
+    source_generation: str | None = None,
+) -> list[str]:
     expected = {field["name"]: field for field in schema_for_group(group)["fields"]}
     actual = {field["name"]: field for field in source_schema.get("fields", []) if isinstance(field, Mapping) and field.get("name")}
     expected_names = set(expected) - {IMPLICIT_ID}
@@ -112,6 +127,19 @@ def _schema_contract_issues(group: str, source_schema: Mapping[str, Any]) -> lis
         issues.append(f"missing field: {name}")
     for name in sorted(actual_names - expected_names):
         issues.append(f"unexpected field: {name}")
+    metadata = source_schema.get("metadata")
+    if not isinstance(metadata, Mapping):
+        issues.append("metadata is missing or not an object")
+    else:
+        for key in sorted(REQUIRED_SCHEMA_METADATA):
+            if key not in metadata:
+                issues.append(f"metadata missing: {key}")
+        if metadata.get("logical_group") not in (None, group):
+            issues.append(f"metadata.logical_group={metadata.get('logical_group')!r} != {group!r}")
+        if source_generation is not None and metadata.get("generation_id") != source_generation:
+            issues.append(
+                f"metadata.generation_id={metadata.get('generation_id')!r} != {source_generation!r}"
+            )
     # Production schema is authoritative for field types and flags.  The
     # target copies those values byte-for-byte; this guard only prevents a
     # missing or unexpected field from silently changing the document shape.
@@ -122,31 +150,29 @@ def _final_schema(group: str, generation: str, source_schema: Mapping[str, Any])
     """Copy production settings and apply only approved legacy type migrations."""
 
     target_name = physical_collection_name(group, generation)
-    expected_fields = {
-        field["name"]: field
-        for field in collection_schema(group, generation)["fields"]
+    expected_schema = collection_schema(group, generation)
+    expected_fields = {field["name"]: field for field in expected_schema["fields"]}
+    source_fields = {
+        str(field["name"]): field
+        for field in source_schema.get("fields", [])
+        if isinstance(field, Mapping) and field.get("name")
     }
     fields: list[dict[str, Any]] = []
-    query_fields = _text_query_fields(group)
-    for raw_field in source_schema.get("fields", []):
-        if not isinstance(raw_field, Mapping) or not raw_field.get("name"):
-            raise RuntimeError(f"invalid source schema field in {source_schema.get('name')}")
-        field = deepcopy(dict(raw_field))
-        expected_field = expected_fields.get(str(field["name"]))
-        if expected_field and field.get("type") != expected_field.get("type"):
-            migration = (str(field["name"]), str(field.get("type")), str(expected_field.get("type")))
+    for expected_field in expected_schema["fields"]:
+        name = str(expected_field["name"])
+        source_field = source_fields.get(name)
+        if source_field is None and name == IMPLICIT_ID:
+            continue
+        if source_field is None:
+            raise RuntimeError(f"source schema is missing canonical field {group}.{name}")
+        if source_field.get("type") != expected_field.get("type"):
+            migration = (name, str(source_field.get("type")), str(expected_field.get("type")))
             if migration not in LEGACY_TYPE_MIGRATIONS:
                 raise RuntimeError(
-                    f"unsupported source type migration for {group}.{field['name']}: "
-                    f"{field.get('type')} -> {expected_field.get('type')}"
+                    f"unsupported source type migration for {group}.{name}: "
+                    f"{source_field.get('type')} -> {expected_field.get('type')}"
                 )
-            field["type"] = expected_field["type"]
-        if field.get("type") in TEXT_TYPES:
-            if field.get("name") in query_fields and field.get("index", True) is not False:
-                field["locale"] = LOCALE
-            else:
-                field.pop("locale", None)
-        fields.append(field)
+        fields.append(deepcopy(expected_field))
 
     schema: dict[str, Any] = {"name": target_name, "fields": fields}
     for key in CREATE_SETTINGS:
@@ -157,7 +183,7 @@ def _final_schema(group: str, generation: str, source_schema: Mapping[str, Any])
         raise RuntimeError(f"source metadata is not an object: {source_schema.get('name')}")
     metadata = {
         **source_metadata,
-        **collection_schema(group, generation)["metadata"],
+        **expected_schema["metadata"],
     }
     metadata.update({
         "source_collection": source_schema.get("name", ""),
@@ -168,7 +194,7 @@ def _final_schema(group: str, generation: str, source_schema: Mapping[str, Any])
 
 
 def _migrate_legacy_document(group: str, document: Mapping[str, Any]) -> dict[str, Any]:
-    """Adapt only the known legacy numeric year field; preserve every value/key otherwise."""
+    """Adapt known legacy numeric fields without changing their represented value."""
 
     migrated = dict(document)
     if group == "goods" and "production_year" in migrated:
@@ -182,6 +208,11 @@ def _migrate_legacy_document(group: str, document: Mapping[str, Any]) -> dict[st
             # representation preserves its current value while new MSC data
             # enters through normalize_year without coercion.
             migrated["production_year"] = str(value)
+    if "bidder_count" in migrated and migrated["bidder_count"] is not None:
+        value = migrated["bidder_count"]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise RuntimeError(f"unsupported legacy bidder_count value: {type(value).__name__}")
+        migrated["bidder_count"] = float(value)
     return migrated
 
 
@@ -294,6 +325,53 @@ def _load_group_checkpoint(path: Path, source: str, target: str) -> dict[str, An
     return state
 
 
+def _record_exception_documents(
+    ledger_path: Path,
+    *,
+    operation_id: str,
+    group: str,
+    source_name: str,
+    target_name: str,
+    documents: Sequence[Mapping[str, Any]],
+    category: str,
+    reason: str,
+    leaf_start: int,
+) -> None:
+    """Persist every known source ID involved in one failed migration operation."""
+
+    connection = sqlite3.connect(str(ledger_path))
+    try:
+        ensure_exception_ledger(connection)
+        for index, document in enumerate(documents):
+            source_id = str(document.get("id") or f"<missing-source-id:{leaf_start + index}>")
+            record_exception(
+                connection,
+                operation_id=operation_id,
+                source_id=source_id,
+                logical_group=group,
+                source_key=document.get("source_key"),
+                partition_date=document.get("partition_date"),
+                leaf_index=leaf_start + index,
+                category=category,
+                reason=reason,
+                details={
+                    "source_collection": source_name,
+                    "target_collection": target_name,
+                    "missing_source_id": not bool(document.get("id")),
+                },
+            )
+    finally:
+        connection.close()
+
+
+def _ledger_count(ledger_path: Path, operation_id: str) -> int:
+    connection = sqlite3.connect(str(ledger_path))
+    try:
+        return exception_count(connection, operation_id)
+    finally:
+        connection.close()
+
+
 def _import_group(
     client: TypesenseClient,
     group: str,
@@ -305,11 +383,23 @@ def _import_group(
     batch_size: int,
     operation_timeout_seconds: float,
     progress_every: int,
+    operation_id: str | None = None,
+    source_generation: str | None = None,
 ) -> dict[str, Any]:
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    ledger_path = checkpoint_dir / "exception-ledger.sqlite3"
+    operation_id = operation_id or f"migration:{generation}"
+    connection = sqlite3.connect(str(ledger_path))
+    try:
+        ensure_exception_ledger(connection)
+    finally:
+        connection.close()
     source_schema = client.get_collection(source_name)
     if source_schema is None:
         raise RuntimeError(f"source collection is missing: {source_name}")
-    contract_issues = _schema_contract_issues(group, source_schema)
+    contract_issues = _schema_contract_issues(
+        group, source_schema, source_generation=source_generation
+    )
     if contract_issues:
         raise RuntimeError(f"source schema drift for {group}: {'; '.join(contract_issues[:12])}")
     source_count = int(source_schema.get("num_documents", 0))
@@ -327,7 +417,7 @@ def _import_group(
         target = client.get_collection(target_name)
     if target is None:
         raise RuntimeError(f"target collection is missing after create: {target_name}")
-    if _schema_fingerprint(target) != _schema_fingerprint(final_schema):
+    if schema_contract_mismatches(target, collection_schema(group, generation)):
         raise RuntimeError(f"target schema mismatch: {target_name}")
     target_count = int(target.get("num_documents", 0))
     checkpoint_path = _checkpoint_path(checkpoint_dir, group)
@@ -341,6 +431,7 @@ def _import_group(
             "target_documents": target_count,
             "action": "skip-complete",
             "checkpoint": str(checkpoint_path),
+            "exception_ledger": {"path": str(ledger_path), "rows": _ledger_count(ledger_path, operation_id)},
         }
     if target_count > source_count:
         raise RuntimeError(f"target document overflow for {group}: {target_count} > {source_count}")
@@ -362,11 +453,36 @@ def _import_group(
     for source_offset, document in enumerate(client.export_documents(source_name, timeout_seconds=operation_timeout_seconds), start=1):
         if source_offset <= offset:
             continue
-        batch.append(_migrate_legacy_document(group, document))
+        try:
+            batch.append(_migrate_legacy_document(group, document))
+        except Exception as exc:
+            _record_exception_documents(
+                ledger_path,
+                operation_id=operation_id,
+                group=group,
+                source_name=source_name,
+                target_name=target_name,
+                documents=[document],
+                category="normalization_exception",
+                reason=str(exc),
+                leaf_start=source_offset,
+            )
+            raise
         if len(batch) < batch_size:
             continue
         result = client.import_documents(target_name, batch, timeout_seconds=operation_timeout_seconds)
         if result.accepted_count != len(batch) or result.rejected_count:
+            _record_exception_documents(
+                ledger_path,
+                operation_id=operation_id,
+                group=group,
+                source_name=source_name,
+                target_name=target_name,
+                documents=batch,
+                category="import_rejected",
+                reason=f"accepted={result.accepted_count} rejected={result.rejected_count}; errors={result.errors[:3]}",
+                leaf_start=source_offset - len(batch) + 1,
+            )
             raise RuntimeError(
                 f"import failed for {group} at {source_offset}/{source_count}; "
                 f"accepted={result.accepted_count} rejected={result.rejected_count} errors={result.errors[:3]}"
@@ -388,6 +504,17 @@ def _import_group(
     if batch:
         result = client.import_documents(target_name, batch, timeout_seconds=operation_timeout_seconds)
         if result.accepted_count != len(batch) or result.rejected_count:
+            _record_exception_documents(
+                ledger_path,
+                operation_id=operation_id,
+                group=group,
+                source_name=source_name,
+                target_name=target_name,
+                documents=batch,
+                category="import_rejected",
+                reason=f"accepted={result.accepted_count} rejected={result.rejected_count}; errors={result.errors[:3]}",
+                leaf_start=source_count - len(batch) + 1,
+            )
             raise RuntimeError(
                 f"import failed for {group} at end; accepted={result.accepted_count} "
                 f"rejected={result.rejected_count} errors={result.errors[:3]}"
@@ -427,6 +554,7 @@ def _import_group(
         "target_documents": source_count,
         "action": action + "-imported",
         "checkpoint": str(checkpoint_path),
+        "exception_ledger": {"path": str(ledger_path), "rows": _ledger_count(ledger_path, operation_id)},
     }
 
 
@@ -763,6 +891,8 @@ def migrate(args: argparse.Namespace) -> dict[str, Any]:
     client = TypesenseClient(config)
     runtime_env = Path(args.runtime_env).expanduser()
     checkpoint_dir = Path(args.checkpoint_dir).expanduser()
+    ledger_path = checkpoint_dir / "exception-ledger.sqlite3"
+    operation_id = f"migration:{args.source_generation}:{args.target_generation}:{time.time_ns()}"
     report_path = Path(args.report).expanduser()
     print("PHASE 0 audit", flush=True)
     health = _wait_for_health(client, args.health_timeout_seconds)
@@ -785,6 +915,8 @@ def migrate(args: argparse.Namespace) -> dict[str, Any]:
         },
         "source_collections": source_names,
         "stale_candidates": stale,
+        "operation_id": operation_id,
+        "exception_ledger": {"path": str(ledger_path), "rows": 0},
         "groups": {},
         "status": "AUDIT_PASS",
     }
@@ -813,18 +945,32 @@ def migrate(args: argparse.Namespace) -> dict[str, Any]:
             batch_size=args.batch_size,
             operation_timeout_seconds=args.operation_timeout_seconds,
             progress_every=args.progress_every,
+            operation_id=operation_id,
+            source_generation=args.source_generation,
         )
         verified = verify_group(client, group, source_name, target_name)
         report["groups"][group] = {"import": imported, "verify": verified}
         print(f"{group}: PASS source={verified['source_documents']} target={verified['target_documents']}", flush=True)
     report["status"] = "PRE_CUTOVER_PASS"
+    report["exception_ledger"]["rows"] = _ledger_count(ledger_path, operation_id) if ledger_path.exists() else 0
     _json_write(report_path, report)
     print("PHASE 5 pre-cutover PASS", flush=True)
     if args.cutover:
         print("PHASE 6 cutover", flush=True)
         old_text = runtime_env.read_text(encoding="utf-8")
         old_runtime_generation = _runtime_generation(runtime_env) or args.source_generation
-        _prepare_runtime_artifacts(runtime_env, old_runtime_generation, args.target_generation)
+        artifact_paths = _prepare_runtime_artifacts(runtime_env, old_runtime_generation, args.target_generation)
+        TypesenseCollectionManager(client).preflight_generation(
+            args.target_generation,
+            expected_counts={
+                group: int(report["groups"][group]["verify"]["target_documents"])
+                for group in LOGICAL_ALIASES
+            },
+            checkpoint_path=artifact_paths["BIDFINDER_TYPESENSE_CHECKPOINT"],
+            provenance_path=artifact_paths["BIDFINDER_TYPESENSE_PROVENANCE"],
+            require_target=True,
+            require_continuity=True,
+        )
         old_generation = _cutover_runtime(runtime_env, args.target_generation)
         try:
             _restart_api()

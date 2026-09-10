@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import inspect
 from pathlib import Path
+import sqlite3
 import tempfile
 import unittest
 
+from crawler_engine.msc.exception_ledger import exception_rows
 from crawler_engine.msc.typesense_client import ImportResult
 from crawler_engine.msc.typesense_schema import SEARCH_CONFIGS, collection_schema, physical_collection_name
 from tools.migrate_typesense_vietnamese_locale import (
@@ -58,6 +60,12 @@ class FakeClient:
         return next((document for document in self.documents[name] if document["id"] == document_id), None)
 
 
+class RejectingClient(FakeClient):
+    def import_documents(self, name, documents, *, timeout_seconds=None):
+        self.import_calls += 1
+        return ImportResult(len(documents), 0, len(documents), ("forced rejection",), "TYPESENSE_PARTIAL_IMPORT")
+
+
 class VietnameseLocaleMigrationTest(unittest.TestCase):
     def test_final_schema_localizes_search_fields_only(self):
         source = source_schema("goods")
@@ -98,6 +106,29 @@ class VietnameseLocaleMigrationTest(unittest.TestCase):
         self.assertEqual("skip-complete", second["action"])
         self.assertEqual(calls_after_first, client.import_calls)
 
+    def test_failed_batch_records_every_source_id_in_exception_ledger(self):
+        group = "goods"
+        source = physical_collection_name(group, "source")
+        target = physical_collection_name(group, "target")
+        documents = [{"id": f"id-{index}", "data_group": group} for index in range(3)]
+        client = RejectingClient(group, documents)
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaises(RuntimeError):
+                _import_group(
+                    client, group, source, target, "target", checkpoint_dir=Path(temporary),
+                    batch_size=2, operation_timeout_seconds=60, progress_every=100,
+                )
+            ledger_path = Path(temporary) / "exception-ledger.sqlite3"
+            connection = sqlite3.connect(ledger_path)
+            try:
+                rows = exception_rows(connection, "migration:target")
+            finally:
+                connection.close()
+
+        self.assertEqual({"id-0", "id-1"}, {row["source_id"] for row in rows})
+        self.assertEqual({"goods"}, {row["logical_group"] for row in rows})
+        self.assertEqual({"import_rejected"}, {row["category"] for row in rows})
+
     def test_legacy_document_migration_preserves_values_and_keys(self):
         document = {
             "id": "id-1",
@@ -110,6 +141,9 @@ class VietnameseLocaleMigrationTest(unittest.TestCase):
         self.assertEqual(set(document), set(migrated))
         self.assertEqual("2024", migrated["production_year"])
         self.assertEqual(2.333, migrated["bidder_count"])
+        integer_count = _migrate_legacy_document("goods", {"id": "id-2", "bidder_count": 2})["bidder_count"]
+        self.assertEqual(2.0, integer_count)
+        self.assertIsInstance(integer_count, float)
         self.assertEqual(document["location"], migrated["location"])
 
     def test_cutover_updates_generation_bound_runtime_paths(self):

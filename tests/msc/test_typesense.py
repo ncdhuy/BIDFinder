@@ -5,6 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 import re
 import sqlite3
+import tempfile
 import unittest
 
 from crawler_engine.msc.checkpoint import CheckpointStore
@@ -31,6 +32,7 @@ from crawler_engine.msc.typesense_client import (
 from crawler_engine.msc.typesense_schema import (
     LOGICAL_ALIASES,
     SEARCH_CONFIGS,
+    canonical_field_contract,
     canonical_to_typesense_document,
     collection_schema,
     physical_collection_name,
@@ -145,6 +147,47 @@ class SchemaContractTest(unittest.TestCase):
             self.assertNotIn("locale", fields["location"], group)
             self.assertNotIn("locale", fields["id"], group)
             self.assertNotIn("locale", fields["partition_date"], group)
+
+    def test_canonical_contract_keeps_source_values_lossless(self):
+        for group in ("goods", "medicines", "traditional_medicine"):
+            fields = {field["name"]: field for field in canonical_field_contract(group)}
+            self.assertEqual("float", fields["bidder_count"]["type"], group)
+            self.assertEqual("vi", fields["manufacturer"].get("locale"), group)
+        goods_fields = {field["name"]: field for field in canonical_field_contract("goods")}
+        self.assertEqual("string", goods_fields["production_year"]["type"])
+        goods = {"id": "lossless", "data_group": "goods", "source_tab": "HANG_HOA",
+                 "source_tab_label": "goods", "partition_date": "2026-08-28"}
+        for index, (year, bidder_count) in enumerate((("2024", 2.0), ("2024-2025", 1.75))):
+            document = canonical_to_typesense_document({
+                **goods, "id": f"lossless-{index}", "production_year": year, "bidder_count": bidder_count,
+            })
+            self.assertEqual(year, document["production_year"])
+            self.assertIsInstance(document["production_year"], str)
+            self.assertEqual(bidder_count, document["bidder_count"])
+            self.assertIsInstance(document["bidder_count"], float)
+
+    def test_required_metadata_mismatch_is_not_compatible(self):
+        expected = collection_schema("goods", "dev1")
+        actual = deepcopy(expected)
+        actual["metadata"]["generation_id"] = "wrong"
+        self.assertFalse(TypesenseCollectionManager._compatible(actual, expected))
+
+    def test_preflight_count_gate_honors_configured_tolerance(self):
+        manager = TypesenseCollectionManager(FakeTypesenseClient())
+        result = manager.preflight_generation(
+            "dev1",
+            expected_counts={"goods": 0, "medicines": 0, "traditional_medicine": 0},
+            count_tolerance=0,
+            require_target=True,
+        )
+        self.assertEqual("PASS", result["schema_contract"])
+        with self.assertRaises(TypesenseError):
+            manager.preflight_generation(
+                "dev1",
+                expected_counts={"goods": 1, "medicines": 0, "traditional_medicine": 0},
+                count_tolerance=0,
+                require_target=True,
+            )
 
     def test_schema_signature_keeps_locale_as_a_compatibility_property(self):
         schema = collection_schema("goods", "dev1")
@@ -336,6 +379,9 @@ class FakeTypesenseClient:
         except StopIteration:
             return ImportResult(len(documents), len(documents), 0)
 
+    def document_count(self, _name):
+        return 0
+
 
 class SinkTest(unittest.TestCase):
     def test_batches_route_only_to_physical_generation(self):
@@ -395,6 +441,9 @@ class LifecycleTest(unittest.TestCase):
                 self.aliases[alias] = collection
                 return {"name": alias, "collection_name": collection}
 
+            def document_count(self, _name):
+                return 0
+
             def list_aliases(self):
                 return [{"name": alias, "collection_name": target} for alias, target in self.aliases.items()]
 
@@ -404,7 +453,27 @@ class LifecycleTest(unittest.TestCase):
         self.assertEqual(3, len(client.collections))
         self.assertEqual(3, len(manager.validate_generation("dev1")))
         manager.create_generation("dev1")
-        activated = manager.activate_generation("dev1")
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = Path(directory) / "checkpoint.sqlite3"
+            with CheckpointStore(checkpoint) as store:
+                store.start("goods_general", "2026-08-28", sink_target="typesense:dev1")
+                store.finish(
+                    "goods_general", "2026-08-28", IngestionStatus.COMPLETED,
+                    sink_target="typesense:dev1", parent_pre_count=0, parent_post_count=0,
+                    raw_fetched_count=0, unique_uuid_count=0, normalized_count=0, sink_accepted_count=0,
+                )
+            provenance = Path(directory) / "provenance.sqlite3"
+            connection = sqlite3.connect(provenance)
+            connection.execute("CREATE TABLE uuid_provenance (uuid TEXT PRIMARY KEY, data_group TEXT, source_key TEXT, partition_date TEXT, content_fingerprint TEXT, first_seen_at TEXT)")
+            connection.execute("CREATE TABLE uuid_conflict (conflict_id INTEGER PRIMARY KEY, uuid TEXT, detail TEXT, detected_at TEXT)")
+            connection.commit()
+            connection.close()
+            activated = manager.activate_generation(
+                "dev1",
+                expected_counts={"goods": 0, "medicines": 0, "traditional_medicine": 0},
+                checkpoint_path=checkpoint,
+                provenance_path=provenance,
+            )
         self.assertEqual(activated, client.aliases)
         self.assertEqual("bidfinder_goods_v1_dev1", client.aliases["bidfinder_goods"])
 

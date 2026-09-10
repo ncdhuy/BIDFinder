@@ -759,7 +759,7 @@ class AuditedSink:
 
 
 class BackfillReport:
-    """Small atomic JSON report; no record UUIDs are persisted here."""
+    """Small atomic JSON report; full record exceptions live in checkpoint SQLite."""
 
     def __init__(self, path: str | Path, manifest: Mapping[str, Any], checkpoint_path: str) -> None:
         self.path = Path(path)
@@ -821,6 +821,7 @@ class BackfillReport:
                 for group in LOGICAL_GROUPS
             },
             "errors": [],
+            "exception_ledger": {"checkpoint_db_path": checkpoint_path, "rows": 0},
             "quarantined_partitions": [],
             "last_completed_partition": None,
             "current_partition": None,
@@ -948,6 +949,7 @@ class BackfillRunner:
         self.checkpoint_store = checkpoint_store
         self.manifest = dict(manifest)
         self.report = BackfillReport(report_path, manifest, checkpoint_store.path)
+        self.engine.operation_id = f"backfill:{self.manifest['generation']}:{self.report.started_at}"
         self.resume = resume
         self.force = force
         self.max_partitions = max_partitions
@@ -1007,6 +1009,7 @@ class BackfillRunner:
                     )
                 results.append(result)
                 self.report.update(result)
+                self.report.data["exception_ledger"]["rows"] = self.checkpoint_store.exception_count()
                 self.report.write()
                 if self.on_partition_boundary is not None and not result.skipped:
                     self.on_partition_boundary(result, self.report)

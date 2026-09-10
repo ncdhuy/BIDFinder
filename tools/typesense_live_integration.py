@@ -21,6 +21,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from crawler_engine.msc.checkpoint import CheckpointStore
+from crawler_engine.msc.backfill import UUIDProvenanceStore
 from crawler_engine.msc.client import MSCClient
 from crawler_engine.msc.config import MSCConfig, TypesenseConfig
 from crawler_engine.msc.contracts import SOURCE_CONTRACTS
@@ -220,6 +221,7 @@ def _checkpoint_paths() -> Any:
     paths = (
         ROOT / f"{prefix}.sqlite3",
         ROOT / f"{prefix}-partial.sqlite3",
+        ROOT / f"{prefix}-provenance.sqlite3",
     )
     try:
         yield paths
@@ -360,7 +362,7 @@ def run_gate(report_path: Path, generation: str | None = None) -> dict[str, Any]
     inspected = {group: ts_client.get_collection(name) for group, name in created.items()}
     health = ts_client.health()
     started = perf_counter()
-    with _checkpoint_paths() as (checkpoint_path, partial_checkpoint_path):
+    with _checkpoint_paths() as (checkpoint_path, partial_checkpoint_path, provenance_path):
         checkpoints = CheckpointStore(checkpoint_path)
         sink = RecordingTypesenseSink(ts_client, generation_a)
         engine = MSCIngestionEngine(msc_client, checkpoints, sink, msc_config)
@@ -379,7 +381,13 @@ def run_gate(report_path: Path, generation: str | None = None) -> dict[str, Any]
             }
             expected_counts = {group: len(ids) for group, ids in sink.expected_ids.items()}
             main_import_timings = list(ts_client.import_timings)
-            alias_a = manager.activate_generation(generation_a)
+            with UUIDProvenanceStore(provenance_path):
+                alias_a = manager.activate_generation(
+                    generation_a,
+                    expected_counts=expected_counts,
+                    checkpoint_path=checkpoint_path,
+                    provenance_path=provenance_path,
+                )
             aliases_after_a = manager.inspect()
             search_smoke, filters, sorts = _run_search_proofs(ts_client, sink)
             multi_started = perf_counter()
@@ -423,10 +431,20 @@ def run_gate(report_path: Path, generation: str | None = None) -> dict[str, Any]
             )
             goods_record = next(iter(sink.expected_records["goods"].values()))
             sink_b.write_partition(_context(goods_record["source_key"], "2026-08-25"), [goods_record])
-            switched = manager.point_alias("goods", physical_collection_name("goods", generation_b))
+            b_counts = {
+                group: ts_client.document_count(physical_collection_name(group, generation_b))
+                for group in LOGICAL_ALIASES
+            }
+            switched = manager.point_alias(
+                "goods", physical_collection_name("goods", generation_b),
+                expected_counts=b_counts, checkpoint_path=checkpoint_path, provenance_path=provenance_path,
+            )
             switched_target = ts_client.get_alias(LOGICAL_ALIASES["goods"])
             switched_search = ts_client.search_group("goods", "*", per_page=1)
-            rolled_back = manager.rollback_alias("goods", generation_a)
+            rolled_back = manager.rollback_alias(
+                "goods", generation_a, expected_counts=expected_counts,
+                checkpoint_path=checkpoint_path, provenance_path=provenance_path,
+            )
             rollback_target = ts_client.get_alias(LOGICAL_ALIASES["goods"])
             rollback_search = ts_client.search_group("goods", "*", per_page=1)
 

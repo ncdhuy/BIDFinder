@@ -23,6 +23,13 @@ The engine never calls `/export`, performs login, uses cookies, automates
 reCAPTCHA/MFA, invokes Selenium, imports application Postgres modules, or
 contacts Typesense.
 
+## Post-incident hardening invariants
+
+No production generation may require lossy coercion of canonical source values.
+The canonical Typesense field contract is shared by collection creation,
+migration, incremental validation, and tests.  A generation may become serving
+only after its schema and required metadata, logical groups, configured count+tolerance, incremental compatibility, and checkpoint/provenance continuity+all pass preflight.  Migration, repair, and reconciliation exceptions retain a+full record-ID ledger in operational SQLite state in addition to aggregate+reports.
+
 ## Source keys
 
 | Source key | MSC label | Group | Exact tab | Fixed discriminator |

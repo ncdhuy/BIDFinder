@@ -76,6 +76,7 @@ class MSCIngestionEngine:
         if open_day and not allow_open_day:
             raise EngineError("MSC_CONTRACT_ERROR", "current/open day requires explicit allow_open_day")
         sink_target = getattr(self.sink, "sink_target", "validation-jsonl")
+        operation_id = getattr(self, "operation_id", sink_target)
         current = self.checkpoint_store.get(source_key, day.isoformat(), sink_target)
         previous_uuids: set[str] = set()
         if replace_existing:
@@ -102,6 +103,7 @@ class MSCIngestionEngine:
         sink_attempted_count = 0
         sink_batch_count = 0
         sink_elapsed_seconds = 0.0
+        exception_ids: set[str] = set()
         try:
             parent = official_day_interval(day)
             pre_count = self.client.count_interval(contract, parent)
@@ -142,6 +144,11 @@ class MSCIngestionEngine:
             )
             raw_fetched_count = union.raw_record_count
             unique_source_count = union.unique_uuid_count
+            exception_ids.update(
+                str(record["id"])
+                for record in union.records
+                if isinstance(record.get("id"), str) and record.get("id")
+            )
             drift = validate_raw_records(contract, union.records)
             if drift.additive_fields:
                 LOGGER.warning("msc_schema_drift source_key=%s partition_date=%s additive_fields=%s", source_key, day, ",".join(drift.additive_fields))
@@ -149,6 +156,7 @@ class MSCIngestionEngine:
             validate_parent_completeness(pre_count, union.unique_uuid_count, post_count)
             canonical = normalize_records(contract, union.records, day.isoformat())
             normalized_count = len(canonical)
+            exception_ids.update(str(record["id"]) for record in canonical if record.get("id"))
             if normalized_count != union.unique_uuid_count:
                 raise EngineError(
                     "NORMALIZATION_ERROR",
@@ -165,6 +173,16 @@ class MSCIngestionEngine:
                 if not callable(replace):
                     raise EngineError("MSC_CONTRACT_ERROR", "partition replacement requires an audited sink")
                 write_result = replace(context, canonical, stale_uuids)
+                for record_id in sorted(stale_uuids):
+                    self.checkpoint_store.record_exception(
+                        operation_id=operation_id,
+                        source_id=record_id,
+                        logical_group=contract.data_group,
+                        source_key=source_key,
+                        partition_date=day.isoformat(),
+                        category="reconciliation_stale_document",
+                        reason="completed partition replacement removed a source ID absent from the current source result",
+                    )
             else:
                 write_result = self.sink.write_partition(context, canonical)
             sink_attempted_count = write_result.attempted_count
@@ -222,6 +240,17 @@ class MSCIngestionEngine:
                 normalized_count=normalized_count,
                 sink_accepted_count=sink_accepted_count,
             )
+            for source_id in sorted(exception_ids):
+                self.checkpoint_store.record_exception(
+                    operation_id=operation_id,
+                    source_id=source_id,
+                    logical_group=contract.data_group,
+                    source_key=source_key,
+                    partition_date=day.isoformat(),
+                    category="partition_exception",
+                    reason=str(exc),
+                    details={"code": code},
+                )
             LOGGER.error("msc_partition_failed source_key=%s partition_date=%s code=%s error=%s", source_key, day, code, exc)
             return PartitionResult(
                 source_key, day.isoformat(), IngestionStatus.QUARANTINED if quarantine else IngestionStatus.FAILED,

@@ -248,11 +248,13 @@ class NormalizationTest(unittest.TestCase):
         self.assertIsNone(normalize_record(SOURCE_CONTRACTS["goods_general"], raw, "2026-08-28")["item_name"])
 
     def test_new_data_cleanup_preserves_bidder_count_and_year_ranges(self):
-        self.assertEqual((1.3, 1.7, 1.5), (
+        self.assertEqual((2.0, 1.3, 1.7, 1.5), (
+            normalize_bidder_count(2),
             normalize_bidder_count(1.3),
             normalize_bidder_count(1.7),
             normalize_bidder_count(1.5),
         ))
+        self.assertIsInstance(normalize_bidder_count(2), float)
 
         raw = sample("goods_general")
         raw.update({
@@ -264,6 +266,13 @@ class NormalizationTest(unittest.TestCase):
         self.assertEqual(1.7, normalized["bidder_count"])
         self.assertEqual("2024-2025", normalized["production_year"])
         self.assertEqual("Xã Dầu Tiếng, Thành phố Hồ Chí Minh", normalized["location"])
+        for year in ("2024", "2024-2025"):
+            raw = sample("goods_general")
+            raw.update({"soNhaThauThamDu": 2, "namSanXuat": year})
+            normalized = normalize_record(SOURCE_CONTRACTS["goods_general"], raw, "2026-08-28")
+            self.assertEqual(year, normalized["production_year"])
+            self.assertEqual(2.0, normalized["bidder_count"])
+            self.assertIsInstance(normalized["bidder_count"], float)
         self.assertEqual("Thành phố Hồ Chí Minh", extract_location_province(normalized["location"]))
 
         old_location = "Huyện Dầu tiếng, Tỉnh Bình Dương"

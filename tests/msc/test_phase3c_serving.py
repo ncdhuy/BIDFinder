@@ -172,12 +172,22 @@ class TestPhase3CServing(unittest.TestCase):
     def test_clone_parity_and_two_generation_retirement(self):
         with tempfile.TemporaryDirectory() as directory:
             provenance = Path(directory) / "provenance.sqlite3"
+            checkpoint = Path(directory) / "checkpoint.sqlite3"
+            with CheckpointStore(checkpoint) as store:
+                store.start("goods_general", "2026-08-29", sink_target=f"typesense:{HISTORICAL_GENERATION}")
+                store.finish(
+                    "goods_general", "2026-08-29", IngestionStatus.COMPLETED,
+                    sink_target=f"typesense:{HISTORICAL_GENERATION}", parent_pre_count=1,
+                    parent_post_count=1, raw_fetched_count=1, unique_uuid_count=1,
+                    normalized_count=1, sink_accepted_count=1,
+                )
             with UUIDProvenanceStore(provenance) as store:
                 store.begin_partition(_context("goods_general", "2026-08-29"), [{"id": "u1"}])
                 store.commit()
             client = FakeTypesense()
             clone = clone_generation(
                 client, HISTORICAL_GENERATION, "serving_v1_20260901",
+                checkpoint_path=checkpoint,
                 provenance_path=provenance, base_manifest_fingerprint="fingerprint",
             )
             self.assertTrue(all(item["parity"] for item in clone["groups"].values()))

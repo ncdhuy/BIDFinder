@@ -66,15 +66,15 @@ def normalize_number(value: Any) -> int | float | None:
     return value
 
 
-def normalize_bidder_count(value: Any) -> int | float | None:
-    """Preserve the source's non-negative numeric bidder count unchanged."""
+def normalize_bidder_count(value: Any) -> float | None:
+    """Store numeric bidder counts as float without changing their value."""
 
     number = normalize_number(value)
     if number is None:
         return None
     if number < 0:
         raise NormalizationError("bidder count cannot be negative")
-    return number
+    return float(number)
 
 
 def normalize_year(value: Any) -> str | None:

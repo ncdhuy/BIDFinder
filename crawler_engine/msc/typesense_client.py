@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
+import sqlite3
 import ssl
 from time import perf_counter
 from typing import Any, Callable, Iterator, Mapping, Sequence
@@ -14,13 +15,14 @@ from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from .config import TypesenseConfig
+from .exception_ledger import record_exception
 from .typesense_schema import (
     LOGICAL_ALIASES,
     SEARCH_CONFIGS,
     canonical_to_typesense_document,
     collection_schema,
     physical_collection_name,
-    schema_signature,
+    schema_contract_mismatches,
     validate_generation_id,
 )
 
@@ -42,6 +44,94 @@ class TypesenseHttpError(TypesenseError):
     def __init__(self, code: str, message: str, status_code: int | None = None) -> None:
         self.status_code = status_code
         super().__init__(code, message)
+
+
+def validate_checkpoint_provenance_continuity(
+    checkpoint_path: str | Path,
+    provenance_path: str | Path,
+    generation_id: str,
+) -> dict[str, Any]:
+    """Read-only proof that operational state exists for a cutover target."""
+
+    checkpoint = Path(checkpoint_path)
+    provenance = Path(provenance_path)
+    if not checkpoint.is_file() or not provenance.is_file():
+        raise TypesenseError(TYPESENSE_SCHEMA_ERROR, "checkpoint and provenance databases are required for cutover")
+    sink_target = f"typesense:{generation_id}"
+    try:
+        checkpoint_connection = sqlite3.connect(
+            f"file:{checkpoint.resolve().as_posix()}?mode=ro", uri=True
+        )
+        try:
+            checkpoint_quick_check = checkpoint_connection.execute("PRAGMA quick_check").fetchone()[0]
+            tables = {
+                row[0] for row in checkpoint_connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "ingestion_checkpoint" not in tables:
+                raise TypesenseError(TYPESENSE_SCHEMA_ERROR, "checkpoint database lacks ingestion_checkpoint")
+            checkpoint_rows = int(checkpoint_connection.execute(
+                "SELECT count(*) FROM ingestion_checkpoint WHERE sink_target=? AND status IN ('COMPLETED','VALIDATED')",
+                (sink_target,),
+            ).fetchone()[0])
+        finally:
+            checkpoint_connection.close()
+
+        provenance_connection = sqlite3.connect(
+            f"file:{provenance.resolve().as_posix()}?mode=ro", uri=True
+        )
+        try:
+            provenance_quick_check = provenance_connection.execute("PRAGMA quick_check").fetchone()[0]
+            tables = {
+                row[0] for row in provenance_connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if not {"uuid_provenance", "uuid_conflict"}.issubset(tables):
+                raise TypesenseError(TYPESENSE_SCHEMA_ERROR, "provenance database lacks required audit tables")
+            conflicts = int(provenance_connection.execute("SELECT count(*) FROM uuid_conflict").fetchone()[0])
+        finally:
+            provenance_connection.close()
+    except TypesenseError:
+        raise
+    except (OSError, sqlite3.DatabaseError) as exc:
+        raise TypesenseError(TYPESENSE_SCHEMA_ERROR, f"checkpoint/provenance continuity check failed: {exc}") from exc
+    if checkpoint_quick_check != "ok" or provenance_quick_check != "ok":
+        raise TypesenseError(TYPESENSE_SCHEMA_ERROR, "checkpoint/provenance quick_check failed")
+    if checkpoint_rows <= 0:
+        raise TypesenseError(TYPESENSE_SCHEMA_ERROR, f"no completed checkpoint state for {sink_target}")
+    if conflicts != 0:
+        raise TypesenseError(TYPESENSE_SCHEMA_ERROR, f"provenance conflict count is {conflicts}")
+    return {
+        "checkpoint_quick_check": checkpoint_quick_check,
+        "checkpoint_rows": checkpoint_rows,
+        "provenance_quick_check": provenance_quick_check,
+        "provenance_conflicts": conflicts,
+    }
+
+
+def _persist_generation_exception(
+    checkpoint_path: str | Path,
+    *,
+    operation_id: str,
+    source_id: str,
+    logical_group: str,
+    category: str,
+    reason: str,
+) -> None:
+    connection = sqlite3.connect(str(checkpoint_path))
+    try:
+        record_exception(
+            connection,
+            operation_id=operation_id,
+            source_id=source_id,
+            logical_group=logical_group,
+            category=category,
+            reason=reason,
+        )
+    finally:
+        connection.close()
 
 
 @dataclass(frozen=True)
@@ -510,33 +600,132 @@ class TypesenseCollectionManager:
 
     @staticmethod
     def _compatible(actual: Mapping[str, Any], expected: Mapping[str, Any]) -> bool:
-        actual_signature = schema_signature(actual)
-        expected_signature = schema_signature(expected)
-        if actual_signature == expected_signature:
-            return True
-        actual_metadata = actual_signature.get("metadata", {})
-        expected_metadata = expected_signature.get("metadata", {})
-        if actual_metadata in (None, {}):
-            actual_signature = {**actual_signature, "metadata": expected_metadata}
-            actual_metadata = expected_metadata
-        if (
-            isinstance(actual_metadata, Mapping)
-            and isinstance(expected_metadata, Mapping)
-            and all(actual_metadata.get(key) == value for key, value in expected_metadata.items())
-        ):
-            actual_signature = {**actual_signature, "metadata": expected_metadata}
-        # Typesense v30 stores the document id as an implicit field and omits
-        # it from GET /collections/{name}; canonical IDs remain fully usable.
-        actual_fields = {field["name"] for field in actual_signature["fields"]}
-        if "id" not in actual_fields:
-            expected_signature = {
-                **expected_signature,
-                "fields": [field for field in expected_signature["fields"] if field["name"] != "id"],
+        return not schema_contract_mismatches(actual, expected)
+
+    def _validate_collections(self, generation_id: str) -> dict[str, dict[str, Any]]:
+        validate_generation_id(generation_id)
+        result: dict[str, dict[str, Any]] = {}
+        for group in LOGICAL_ALIASES:
+            expected = collection_schema(group, generation_id)
+            actual = self.client.get_collection(expected["name"])
+            if actual is None:
+                raise TypesenseError(TYPESENSE_SCHEMA_ERROR, f"collection {expected['name']} does not exist")
+            mismatches = schema_contract_mismatches(actual, expected)
+            if mismatches:
+                raise TypesenseError(
+                    TYPESENSE_SCHEMA_ERROR,
+                    f"collection {expected['name']} failed canonical schema/metadata validation: {'; '.join(mismatches)}",
+                )
+            result[group] = {
+                "collection": expected["name"],
+                "num_documents": actual.get("num_documents", 0),
+                "metadata": actual.get("metadata", {}),
             }
-        return actual_signature == expected_signature
+        return result
+
+    def preflight_generation(
+        self,
+        generation_id: str,
+        *,
+        source_generation: str | None = None,
+        expected_counts: Mapping[str, int] | None = None,
+        count_tolerance: int = 0,
+        checkpoint_path: str | Path | None = None,
+        provenance_path: str | Path | None = None,
+        continuity_generation: str | None = None,
+        require_target: bool = False,
+        require_continuity: bool = False,
+    ) -> dict[str, Any]:
+        """Validate all cutover/incremental gates before work or alias writes."""
+
+        validate_generation_id(generation_id)
+        if count_tolerance < 0:
+            raise ValueError("count_tolerance cannot be negative")
+        target: dict[str, dict[str, Any]] = {}
+        missing: list[str] = []
+        for group in LOGICAL_ALIASES:
+            expected = collection_schema(group, generation_id)
+            actual = self.client.get_collection(expected["name"])
+            if actual is None:
+                missing.append(group)
+                continue
+            mismatches = schema_contract_mismatches(actual, expected)
+            if mismatches:
+                raise TypesenseError(
+                    TYPESENSE_SCHEMA_ERROR,
+                    f"preflight failed for {group}: {'; '.join(mismatches)}",
+                )
+            target[group] = {
+                "collection": expected["name"],
+                "num_documents": actual.get("num_documents", 0),
+                "metadata": actual.get("metadata", {}),
+            }
+        if require_target and missing:
+            raise TypesenseError(
+                TYPESENSE_SCHEMA_ERROR,
+                f"preflight target generation is incomplete; missing groups: {', '.join(missing)}",
+            )
+
+        source: dict[str, dict[str, Any]] = {}
+        if source_generation is not None:
+            validate_generation_id(source_generation)
+            if source_generation == generation_id:
+                raise TypesenseError(TYPESENSE_SCHEMA_ERROR, "source and target generations must be distinct")
+            source = self._validate_collections(source_generation)
+            if set(source) != set(LOGICAL_ALIASES):
+                raise TypesenseError(TYPESENSE_SCHEMA_ERROR, "source and target logical groups do not match")
+
+        counts: dict[str, dict[str, int | bool]] = {}
+        if expected_counts is not None:
+            if set(expected_counts) != set(LOGICAL_ALIASES):
+                raise TypesenseError(
+                    TYPESENSE_SCHEMA_ERROR,
+                    "expected_counts must contain exactly goods, medicines, and traditional_medicine",
+                )
+            if missing:
+                raise TypesenseError(TYPESENSE_SCHEMA_ERROR, "cannot validate counts for a missing target collection")
+            for group in LOGICAL_ALIASES:
+                actual_count = self.client.document_count(target[group]["collection"])
+                expected_count = expected_counts[group]
+                if not isinstance(expected_count, int) or isinstance(expected_count, bool) or expected_count < 0:
+                    raise ValueError("expected document counts must be non-negative integers")
+                difference = abs(actual_count - expected_count)
+                counts[group] = {
+                    "expected": expected_count,
+                    "actual": actual_count,
+                    "difference": difference,
+                    "within_tolerance": difference <= count_tolerance,
+                }
+                if difference > count_tolerance:
+                    raise TypesenseError(
+                        TYPESENSE_SCHEMA_ERROR,
+                        f"preflight count mismatch for {group}: {actual_count} != {expected_count} +/- {count_tolerance}",
+                    )
+
+        continuity: dict[str, Any] | None = None
+        if require_continuity:
+            if checkpoint_path is None or provenance_path is None:
+                raise TypesenseError(TYPESENSE_SCHEMA_ERROR, "checkpoint and provenance paths are required for cutover")
+            continuity = validate_checkpoint_provenance_continuity(
+                checkpoint_path, provenance_path, continuity_generation or generation_id
+            )
+        return {
+            "generation": generation_id,
+            "schema_contract": "PASS",
+            "required_metadata": "PASS",
+            "source_generation": source_generation,
+            "source_logical_groups": sorted(source),
+            "target_logical_groups": sorted(target),
+            "missing_target_groups": missing,
+            "incremental_compatibility": "PASS" if not missing else "PENDING_TARGET",
+            "counts": counts,
+            "checkpoint_provenance_continuity": continuity or "NOT_REQUIRED",
+            "collections": target,
+        }
 
     def create_generation(self, generation_id: str) -> dict[str, str]:
         validate_generation_id(generation_id)
+        self.preflight_generation(generation_id)
         created: dict[str, str] = {}
         for group in LOGICAL_ALIASES:
             expected = collection_schema(group, generation_id)
@@ -549,24 +738,28 @@ class TypesenseCollectionManager:
         return created
 
     def validate_generation(self, generation_id: str) -> dict[str, dict[str, Any]]:
-        validate_generation_id(generation_id)
-        result: dict[str, dict[str, Any]] = {}
-        for group in LOGICAL_ALIASES:
-            expected = collection_schema(group, generation_id)
-            actual = self.client.get_collection(expected["name"])
-            if actual is None:
-                raise TypesenseError(TYPESENSE_SCHEMA_ERROR, f"collection {expected['name']} does not exist")
-            if not self._compatible(actual, expected):
-                raise TypesenseError(TYPESENSE_SCHEMA_ERROR, f"collection {expected['name']} failed schema validation")
-            result[group] = {
-                "collection": expected["name"],
-                "num_documents": actual.get("num_documents", 0),
-                "metadata": actual.get("metadata", {}),
-            }
-        return result
+        return self._validate_collections(generation_id)
 
-    def activate_generation(self, generation_id: str) -> dict[str, str]:
-        self.validate_generation(generation_id)
+    def activate_generation(
+        self,
+        generation_id: str,
+        *,
+        expected_counts: Mapping[str, int],
+        count_tolerance: int = 0,
+        checkpoint_path: str | Path,
+        provenance_path: str | Path,
+        source_generation: str | None = None,
+    ) -> dict[str, str]:
+        self.preflight_generation(
+            generation_id,
+            source_generation=source_generation,
+            expected_counts=expected_counts,
+            count_tolerance=count_tolerance,
+            checkpoint_path=checkpoint_path,
+            provenance_path=provenance_path,
+            require_target=True,
+            require_continuity=True,
+        )
         activated: dict[str, str] = {}
         for group, alias in LOGICAL_ALIASES.items():
             physical = physical_collection_name(group, generation_id)
@@ -574,21 +767,53 @@ class TypesenseCollectionManager:
             activated[alias] = physical
         return activated
 
-    def point_alias(self, logical_group: str, collection_name: str) -> dict[str, Any]:
+    def point_alias(
+        self,
+        logical_group: str,
+        collection_name: str,
+        *,
+        expected_counts: Mapping[str, int],
+        count_tolerance: int = 0,
+        checkpoint_path: str | Path,
+        provenance_path: str | Path,
+        source_generation: str | None = None,
+    ) -> dict[str, Any]:
         if logical_group not in LOGICAL_ALIASES:
             raise ValueError(f"unknown logical group: {logical_group}")
         prefix = f"{LOGICAL_ALIASES[logical_group]}_v1_"
         if not collection_name.startswith(prefix):
             raise TypesenseError(TYPESENSE_ALIAS_ERROR, f"collection {collection_name} does not belong to {logical_group}")
         generation_id = collection_name[len(prefix):]
-        expected = collection_schema(logical_group, generation_id)
-        actual = self.client.get_collection(collection_name)
-        if actual is None or not self._compatible(actual, expected):
-            raise TypesenseError(TYPESENSE_ALIAS_ERROR, f"rollback target {collection_name} failed schema validation")
+        self.preflight_generation(
+            generation_id,
+            source_generation=source_generation,
+            expected_counts=expected_counts,
+            count_tolerance=count_tolerance,
+            checkpoint_path=checkpoint_path,
+            provenance_path=provenance_path,
+            require_target=True,
+            require_continuity=True,
+        )
         return self.client.upsert_alias(LOGICAL_ALIASES[logical_group], collection_name)
 
-    def rollback_alias(self, logical_group: str, generation_id: str) -> dict[str, Any]:
-        return self.point_alias(logical_group, physical_collection_name(logical_group, generation_id))
+    def rollback_alias(
+        self,
+        logical_group: str,
+        generation_id: str,
+        *,
+        expected_counts: Mapping[str, int],
+        count_tolerance: int = 0,
+        checkpoint_path: str | Path,
+        provenance_path: str | Path,
+    ) -> dict[str, Any]:
+        return self.point_alias(
+            logical_group,
+            physical_collection_name(logical_group, generation_id),
+            expected_counts=expected_counts,
+            count_tolerance=count_tolerance,
+            checkpoint_path=checkpoint_path,
+            provenance_path=provenance_path,
+        )
 
     def inspect(self) -> dict[str, Any]:
         aliases: dict[str, Any] = {}

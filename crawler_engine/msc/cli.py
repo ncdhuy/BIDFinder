@@ -69,6 +69,17 @@ def _day(value: str) -> str:
     return value
 
 
+def _expected_count(value: str) -> tuple[str, int]:
+    try:
+        group, raw_count = value.split("=", 1)
+        count = int(raw_count)
+    except (ValueError, TypeError) as exc:
+        raise argparse.ArgumentTypeError("expected count must use GROUP=COUNT") from exc
+    if group not in {"goods", "medicines", "traditional_medicine"} or count < 0:
+        raise argparse.ArgumentTypeError("expected count must use a known group and non-negative count")
+    return group, count
+
+
 def _write_or_print(payload: dict, output: Path | None) -> None:
     if output:
         atomic_write_json(output, payload)
@@ -192,13 +203,24 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark.add_argument("--output", type=Path)
     typesense = sub.add_parser("typesense", help="manage versioned Typesense collections and aliases")
     typesense_sub = typesense.add_subparsers(dest="typesense_operation", required=True)
-    for operation in ("create-generation", "validate-generation", "activate-generation"):
+    for operation in ("create-generation", "validate-generation"):
         command = typesense_sub.add_parser(operation)
         command.add_argument("--generation", required=True)
+    activate = typesense_sub.add_parser("activate-generation")
+    activate.add_argument("--generation", required=True)
+    activate.add_argument("--expected-count", action="append", required=True, type=_expected_count, metavar="GROUP=COUNT")
+    activate.add_argument("--count-tolerance", type=int, default=0)
+    activate.add_argument("--checkpoint", required=True, type=Path)
+    activate.add_argument("--provenance", required=True, type=Path)
+    activate.add_argument("--source-generation")
     typesense_sub.add_parser("inspect", help="show known aliases and targets")
     rollback = typesense_sub.add_parser("rollback-alias", help="point one stable alias to a known generation")
     rollback.add_argument("--group", required=True, choices=tuple(("goods", "medicines", "traditional_medicine")))
     rollback.add_argument("--generation", required=True)
+    rollback.add_argument("--expected-count", action="append", required=True, type=_expected_count, metavar="GROUP=COUNT")
+    rollback.add_argument("--count-tolerance", type=int, default=0)
+    rollback.add_argument("--checkpoint", required=True, type=Path)
+    rollback.add_argument("--provenance", required=True, type=Path)
     return parser
 
 
@@ -406,9 +428,29 @@ def main(argv: list[str] | None = None) -> int:
             elif args.typesense_operation == "validate-generation":
                 result = manager.validate_generation(args.generation)
             elif args.typesense_operation == "activate-generation":
-                result = manager.activate_generation(args.generation)
+                expected_counts = dict(args.expected_count)
+                if len(expected_counts) != len(args.expected_count):
+                    raise ValueError("each expected count group may be specified only once")
+                result = manager.activate_generation(
+                    args.generation,
+                    expected_counts=expected_counts,
+                    count_tolerance=args.count_tolerance,
+                    checkpoint_path=args.checkpoint,
+                    provenance_path=args.provenance,
+                    source_generation=args.source_generation,
+                )
             elif args.typesense_operation == "rollback-alias":
-                result = manager.rollback_alias(args.group, args.generation)
+                expected_counts = dict(args.expected_count)
+                if len(expected_counts) != len(args.expected_count):
+                    raise ValueError("each expected count group may be specified only once")
+                result = manager.rollback_alias(
+                    args.group,
+                    args.generation,
+                    expected_counts=expected_counts,
+                    count_tolerance=args.count_tolerance,
+                    checkpoint_path=args.checkpoint,
+                    provenance_path=args.provenance,
+                )
             else:
                 result = manager.inspect()
             print(json.dumps(result, ensure_ascii=False, sort_keys=True))

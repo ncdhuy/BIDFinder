@@ -122,6 +122,16 @@ _GROUP_FIELDS: Mapping[str, tuple[dict[str, Any], ...]] = {
     ),
 }
 
+# This is the single field contract consumed by collection creation, migration,
+# incremental validation, and tests.  Keep field definitions here rather than
+# allowing lifecycle code to reconstruct them independently.
+TYPESENSE_FIELD_CONTRACT: Mapping[str, tuple[dict[str, Any], ...]] = {
+    group: (*_COMMON_FIELDS, *_GROUP_FIELDS[group]) for group in LOGICAL_ALIASES
+}
+REQUIRED_SCHEMA_METADATA = frozenset({
+    "schema_version", "ingestion_engine_version", "logical_group", "generation_id",
+})
+
 _QUERY_BY = {
     "goods": (
         "item_name", "country_of_origin", "hs_code", "model_mark", "brand", "manufacturer",
@@ -152,7 +162,7 @@ class SearchConfig:
 
 
 def _search_config(group: str) -> SearchConfig:
-    fields = {field["name"]: field for field in (*_COMMON_FIELDS, *_GROUP_FIELDS[group])}
+    fields = {field["name"]: field for field in TYPESENSE_FIELD_CONTRACT[group]}
     filter_fields = frozenset(
         name for name, field in fields.items()
         if field.get("facet") or field["type"] in {"float", "int32"} or name in FILTERABLE_TEXT_FIELDS
@@ -170,7 +180,7 @@ def collection_schema(logical_group: str, generation_id: str) -> dict[str, Any]:
     validate_generation_id(generation_id)
     return {
         "name": physical_collection_name(logical_group, generation_id),
-        "fields": deepcopy([*_COMMON_FIELDS, *_GROUP_FIELDS[logical_group]]),
+        "fields": deepcopy(list(TYPESENSE_FIELD_CONTRACT[logical_group])),
         "metadata": {
             "schema_version": SCHEMA_VERSION,
             "ingestion_engine_version": ENGINE_VERSION,
@@ -182,6 +192,40 @@ def collection_schema(logical_group: str, generation_id: str) -> dict[str, Any]:
 
 def schema_for_group(logical_group: str) -> dict[str, Any]:
     return collection_schema(logical_group, "validation")
+
+
+def canonical_field_contract(logical_group: str) -> list[dict[str, Any]]:
+    """Return a defensive copy of the one canonical field contract."""
+
+    if logical_group not in LOGICAL_ALIASES:
+        raise ValueError(f"unknown logical group: {logical_group}")
+    return deepcopy(list(TYPESENSE_FIELD_CONTRACT[logical_group]))
+
+
+def schema_contract_mismatches(actual: Mapping[str, Any], expected: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return fail-closed differences between a server and canonical schema."""
+
+    actual_signature = schema_signature(actual)
+    expected_signature = schema_signature(expected)
+    actual_fields = actual_signature["fields"]
+    expected_fields = expected_signature["fields"]
+    if not any(field["name"] == "id" for field in actual_fields):
+        expected_fields = [field for field in expected_fields if field["name"] != "id"]
+    mismatches: list[str] = []
+    if actual_signature["name"] != expected_signature["name"]:
+        mismatches.append(f"name:{actual_signature['name']} != {expected_signature['name']}")
+    if actual_fields != expected_fields:
+        mismatches.append("fields differ")
+    actual_metadata = actual_signature.get("metadata") or {}
+    expected_metadata = expected_signature.get("metadata") or {}
+    if not isinstance(actual_metadata, Mapping):
+        actual_metadata = {}
+    if not isinstance(expected_metadata, Mapping):
+        expected_metadata = {}
+    for key in sorted(REQUIRED_SCHEMA_METADATA & set(expected_metadata)):
+        if actual_metadata.get(key) != expected_metadata[key]:
+            mismatches.append(f"metadata.{key}:{actual_metadata.get(key)!r} != {expected_metadata[key]!r}")
+    return tuple(mismatches)
 
 
 def _matches_type(value: Any, field_type: str) -> bool:
@@ -214,6 +258,9 @@ def canonical_to_typesense_document(record: Mapping[str, Any], logical_group: st
         if value is None:
             if not field.get("optional", False):
                 errors.append(f"{name} is required")
+            continue
+        if name == "bidder_count" and not isinstance(value, float):
+            errors.append(f"{name} expected canonical float, got {type(value).__name__}")
             continue
         if not _matches_type(value, field["type"]):
             errors.append(f"{name} expected {field['type']}, got {type(value).__name__}")

@@ -288,6 +288,7 @@ def main(argv: list[str] | None = None) -> int:
         client,
         HISTORICAL_GENERATION,
         serving_generation,
+        checkpoint_path=args.historical_checkpoint,
         provenance_path=args.historical_provenance,
         base_manifest_fingerprint=base_fingerprint,
     )

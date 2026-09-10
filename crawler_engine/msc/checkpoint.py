@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import ENGINE_VERSION, SCHEMA_VERSION
+from .exception_ledger import ensure_exception_ledger, exception_count, exception_rows, record_exception
 from .models import IngestionStatus
 
 DEFAULT_SINK_TARGET = "validation-jsonl"
@@ -47,6 +48,7 @@ class CheckpointStore:
         self._connection.execute("PRAGMA busy_timeout = 30000")
         self._connection.execute("PRAGMA foreign_keys = ON")
         self._migrate()
+        ensure_exception_ledger(self._connection)
         self._connection.commit()
 
     def _create_table(self) -> None:
@@ -120,6 +122,40 @@ class CheckpointStore:
 
     def close(self) -> None:
         self._connection.close()
+
+    def record_exception(
+        self,
+        *,
+        operation_id: str,
+        source_id: str,
+        logical_group: str,
+        category: str,
+        reason: str,
+        source_key: str | None = None,
+        partition_date: str | None = None,
+        page_number: int | None = None,
+        leaf_index: int | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        record_exception(
+            self._connection,
+            operation_id=operation_id,
+            source_id=source_id,
+            logical_group=logical_group,
+            category=category,
+            reason=reason,
+            source_key=source_key,
+            partition_date=partition_date,
+            page_number=page_number,
+            leaf_index=leaf_index,
+            details=details,
+        )
+
+    def list_exceptions(self, operation_id: str | None = None) -> list[dict[str, Any]]:
+        return exception_rows(self._connection, operation_id)
+
+    def exception_count(self, operation_id: str | None = None) -> int:
+        return exception_count(self._connection, operation_id)
 
     def __enter__(self) -> "CheckpointStore":
         return self

@@ -38,7 +38,12 @@ from .contracts import (
 from .engine import MSCIngestionEngine, operational_today, parse_partition_date
 from .models import IngestionStatus
 from .sink import TypesenseSink
-from .typesense_client import TypesenseClient, TypesenseCollectionManager, TypesenseError
+from .typesense_client import (
+    TypesenseClient,
+    TypesenseCollectionManager,
+    TypesenseError,
+    _persist_generation_exception,
+)
 from .typesense_schema import (
     LOGICAL_ALIASES,
     collection_schema,
@@ -264,6 +269,7 @@ def clone_generation(
     base_generation: str,
     serving_generation: str,
     *,
+    checkpoint_path: str | Path,
     provenance_path: str | Path,
     base_manifest_fingerprint: str,
     created_at: str | None = None,
@@ -273,8 +279,16 @@ def clone_generation(
     if base_generation == serving_generation:
         raise ValueError("base and serving generations must be distinct")
     manager = TypesenseCollectionManager(client)
-    manager.validate_generation(base_generation)
+    manager.preflight_generation(
+        serving_generation,
+        source_generation=base_generation,
+        checkpoint_path=checkpoint_path,
+        provenance_path=provenance_path,
+        continuity_generation=base_generation,
+        require_continuity=True,
+    )
     created = created_at or datetime.now(timezone.utc).isoformat(timespec="seconds")
+    operation_id = f"migration:{serving_generation}:{created}"
     result: dict[str, Any] = {
         "method": "Typesense server-side clone with copy_documents=true",
         "base_generation": base_generation,
@@ -313,10 +327,21 @@ def clone_generation(
         for record_id in samples:
             source_doc = client.get_document(source, record_id)
             destination_doc = client.get_document(destination, record_id)
-            if source_doc is not None and source_doc != destination_doc:
+            if source_doc is None:
+                _persist_generation_exception(
+                    checkpoint_path, operation_id=operation_id, source_id=record_id,
+                    logical_group=group, category="migration_source_sample_missing",
+                    reason="provenance sample ID is absent from the migration source collection",
+                )
+                raise ValueError(f"clone source sample missing for {group}:{record_id}")
+            if source_doc != destination_doc:
+                _persist_generation_exception(
+                    checkpoint_path, operation_id=operation_id, source_id=record_id,
+                    logical_group=group, category="migration_sample_mismatch",
+                    reason="destination sample differs from source sample after clone",
+                )
                 raise ValueError(f"clone document mismatch for {group}:{record_id}")
-            if source_doc is not None:
-                sample_parity.append(record_id)
+            sample_parity.append(record_id)
         search = client.search_group(group, "*", per_page=1, collection=destination)
         result["groups"][group] = {
             "source_collection": source,
@@ -585,6 +610,15 @@ def run_incremental(
         raise ValueError("incremental run requires explicit max_partitions")
     config = msc_config or MSCConfig()
     ts_config = typesense_config or TypesenseConfig.from_env()
+    client = TypesenseClient(ts_config)
+    manager = TypesenseCollectionManager(client)
+    manager.preflight_generation(
+        generation,
+        checkpoint_path=checkpoint_path,
+        provenance_path=provenance_path,
+        require_target=True,
+        require_continuity=True,
+    )
     msc_client = MSCClient(config)
     source_preflight = source_population_preflight(msc_client, effective_start, end)
     manifest = build_manifest(
@@ -595,8 +629,6 @@ def run_incremental(
         page_size=config.page_size,
         typesense_batch_size=ts_config.batch_size,
     )
-    client = TypesenseClient(ts_config)
-    TypesenseCollectionManager(client).validate_generation(generation)
     run_report_path = Path(checkpoint_path).with_name(f".{generation}.backfill.json")
     sink_target = f"typesense:{generation}"
     revalidation: list[dict[str, Any]] = []
@@ -706,6 +738,15 @@ def run_prefix_extension(
         raise ValueError("prefix run requires explicit max_partitions")
     config = msc_config or MSCConfig()
     ts_config = typesense_config or TypesenseConfig.from_env()
+    client = TypesenseClient(ts_config)
+    manager = TypesenseCollectionManager(client)
+    manager.preflight_generation(
+        generation,
+        checkpoint_path=checkpoint_path,
+        provenance_path=provenance_path,
+        require_target=True,
+        require_continuity=True,
+    )
     msc_client = MSCClient(config)
     source_preflight = source_population_preflight(msc_client, start, end, sources)
     manifest = build_manifest(
@@ -718,8 +759,6 @@ def run_prefix_extension(
         source_keys=sources,
     )
     atomic_write_json(manifest_path, manifest)
-    client = TypesenseClient(ts_config)
-    TypesenseCollectionManager(client).validate_generation(generation)
     run_report_path = Path(checkpoint_path).with_name(f".{generation}.prefix.backfill.json")
     sink_target = f"typesense:{generation}"
     with CheckpointStore(checkpoint_path) as checkpoints, UUIDProvenanceStore(provenance_path) as provenance:
