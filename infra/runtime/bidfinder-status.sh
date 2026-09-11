@@ -17,7 +17,7 @@ else
 fi
 
 if ready="$(curl --fail --silent --max-time 10 http://127.0.0.1:8001/ready 2>/dev/null)"; then
-  if summary="$(printf '%s' "$ready" | python3 -c 'import json,sys; p=json.load(sys.stdin); t=p.get("typesense",{}); print("ready={} procurement_ready={} generation={} counts={}".format(p.get("status")=="ready", p.get("procurement_ready") is True, t.get("generation"), t.get("counts", t.get("physical_counts")))); raise SystemExit(0 if p.get("status")=="ready" and p.get("procurement_ready") is True else 1)')"; then
+  if summary="$(printf '%s' "$ready" | python3 -c 'import json,sys; p=json.load(sys.stdin); t=p.get("typesense",{}); print("ready={} procurement_ready={} generation={} counts={}".format(p.get("status")=="ready", p.get("procurement_ready") is True, t.get("generation"), t.get("counts", t.get("physical_counts", t.get("collections"))))); raise SystemExit(0 if p.get("status")=="ready" and p.get("procurement_ready") is True else 1)')"; then
     pass api-readiness "$summary"
   else
     fail api-readiness "API response was not ready/procurement_ready"
