@@ -42,7 +42,7 @@ try {
             Ensure-Services
         }
 
-        $health = Invoke-Wsl 'curl --fail --silent --max-time 5 http://127.0.0.1:8108/health && printf " typesense"; curl --fail --silent --max-time 10 http://127.0.0.1:8001/ready && printf " api"'
+        $health = Invoke-Wsl 'curl --fail --silent --max-time 5 http://127.0.0.1:8108/health; curl --fail --silent --max-time 10 http://127.0.0.1:8001/ready'
         if ($health -match 'true' -and $health -match 'ready') {
             Write-Log 'health PASS'
         } else {
