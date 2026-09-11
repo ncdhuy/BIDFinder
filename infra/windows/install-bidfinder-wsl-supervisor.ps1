@@ -13,7 +13,8 @@ if (-not $Distro) {
     else { throw "Cannot determine the WSL distro. Pass -Distro with the registered name." }
 }
 
-if (-not (& wsl.exe --distribution $Distro --exec true 2>$null)) {
+& wsl.exe --distribution $Distro --exec true 2>$null
+if ($LASTEXITCODE -ne 0) {
     throw "WSL distro is not available: $Distro"
 }
 
