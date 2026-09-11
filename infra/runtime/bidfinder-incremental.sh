@@ -89,7 +89,7 @@ ensure_runtime_dirs
 require_serving_state
 acquire_maintenance_lock
 resource_guard
-"$BIDFINDER_REPO_ROOT/infra/typesense/local-typesense.sh" health >/dev/null
+bash "$BIDFINDER_REPO_ROOT/infra/typesense/local-typesense.sh" health >/dev/null
 
 base_fingerprint="${BIDFINDER_BASE_MANIFEST_FINGERPRINT:-}"
 if [[ -z "$base_fingerprint" ]]; then
