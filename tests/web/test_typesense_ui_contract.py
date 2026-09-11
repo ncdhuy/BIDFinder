@@ -179,8 +179,8 @@ class TypesenseUiContractTest(unittest.TestCase):
         for element_id in ("df1-count-switcher", "df2-count-switcher", "df3-count-switcher"):
             self.assertIn(f'<span class="scope-count" id="{element_id}">0</span>', self.index_source)
 
-        self.assertIn("function formatResultTabCount(total, fallbackLabel = '', fallbackCount = 0)", self.script_source)
-        self.assertIn("if (rawLabel.includes('+') || rawValue > 1000 || value > 1000) return '1000+';", self.script_source)
+        self.assertIn("function getResultTableCountLabel(tableId, fallbackCount = 0)", self.script_source)
+        self.assertIn("if (limit > 0 && (safeTotal > limit || (isWorkingSetTruncated && safeTotal >= limit)))", self.script_source)
         self.assertIn("const updateTabCountElement = (element, view) => {", self.script_source)
         self.assertIn("className: 'scope-count-plus'", self.script_source)
         self.assertIn("element.classList.toggle('has-value', label !== '0');", self.script_source)
@@ -561,9 +561,9 @@ class TypesenseUiContractTest(unittest.TestCase):
         distinct_source = self.script_source[distinct_start:distinct_end]
         self.assertIn("getFilteredWorkingSet(tableId, columnName)", distinct_source)
         self.assertIn("getFilteredWorkingSet(tableId, columnName).forEach", distinct_source)
-        self.assertIn("Object.entries(filters).every", self.script_source)
+        self.assertIn("const matchesValues = Array.from(filters.entries()).every", self.script_source)
         self.assertIn(".some(value => selected.has", self.script_source)
-        self.assertIn("columnValueFilterState[tableId][columnName] = new Set(selectedValues)", self.script_source)
+        self.assertIn("replaceColumnFilterState(columnValueFilterState[tableId], tableId, columnName, nextValueSet);", self.script_source)
         self.assertIn("page: 1", self.script_source[self.script_source.index("function applyColumnValueFilterFromMenu"):])
         self.assertNotIn("currentFilteredDf1", distinct_source)
         self.assertNotIn("currentFilteredDf2", distinct_source)
@@ -780,11 +780,10 @@ class TypesenseUiContractTest(unittest.TestCase):
 
     def test_location_cleanup_reads_new_and_legacy_province_segment_order(self):
         for token in (
-            "const provinceSegment = segments.find",
-            "split(/[;,]/)",
+            "const LOCATION_PROVINCE_PREFIX_RE =",
+            "const provinceIndex = parts.findIndex",
             "ADMIN_UNITS_2025",
-            "Bình Dương",
-            "Thành phố Hồ Chí Minh",
+            "LOCATION_PROVINCE_MATCHES.find",
         ):
             self.assertIn(token, self.script_source)
 
