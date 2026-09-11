@@ -120,9 +120,10 @@ switch_release() {
 }
 
 deploy() {
-  local commit="${1:-$(git -C "$repo_root" rev-parse HEAD)}" release state
+  local requested_commit="${1:-}" commit release state
+  commit="${requested_commit:-$(git -C "$repo_root" rev-parse HEAD)}"
   git -C "$repo_root" cat-file -e "$commit^{commit}"
-  [[ -z "$(git -C "$repo_root" status --porcelain --untracked-files=all)" ]] || {
+  [[ -n "$requested_commit" || -z "$(git -C "$repo_root" status --porcelain --untracked-files=all)" ]] || {
     echo "refusing deploy from a dirty checkout; commit or stash first" >&2
     exit 2
   }
