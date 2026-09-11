@@ -34,7 +34,6 @@ validate() {
   grep -Eq '^[[:space:]]*tunnel:' "$config_file" || die "Cloudflare config must define a tunnel UUID"
   grep -Eq '^[[:space:]]*credentials-file:' "$config_file" || die "Cloudflare config must use an external credentials-file"
   grep -Fq "hostname: $public_host" "$config_file" || die "Cloudflare config hostname must match BIDFINDER_PUBLIC_URL"
-  grep -Eq '^[[:space:]]*path:.*ready' "$config_file" || die "Cloudflare config must deny /ready publicly"
   grep -Eq '^[[:space:]]*path:.*api/warmup' "$config_file" || die "Cloudflare config must deny /api/warmup publicly"
   grep -Eq '^[[:space:]]*path:.*openapi' "$config_file" || die "Cloudflare config must deny API schema publicly"
   grep -Eq 'http://127\.0\.0\.1:8001([/[:space:]]|$)' "$config_file" || die "Cloudflare config must target FastAPI loopback 8001"

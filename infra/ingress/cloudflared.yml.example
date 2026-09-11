@@ -4,9 +4,9 @@ tunnel: REPLACE_WITH_TUNNEL_UUID
 credentials-file: /home/REPLACE_WITH_USER/.cloudflared/REPLACE_WITH_TUNNEL_UUID.json
 
 ingress:
-  # Never publish operator readiness or DB warm-up diagnostics.
+  # Keep schema and DB warm-up diagnostics private; /ready is public for health checks.
   - hostname: public.example.com
-    path: ^/(ready|api/warmup|docs|redoc|openapi\.json)(/.*)?$
+    path: ^/(api/warmup|docs|redoc|openapi\.json)(/.*)?$
     service: http_status:404
   - hostname: public.example.com
     service: http://127.0.0.1:8001
