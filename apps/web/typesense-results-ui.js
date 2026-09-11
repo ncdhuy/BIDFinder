@@ -119,7 +119,7 @@
             const total = Number(page.count || 0);
             const pageNumber = Number(page.page || this.query?.page || 1);
             const limit = Number(page.limit || this.query?.limit || 50);
-            const backendLabel = fallback ? 'Postgres dự phòng · phạm vi dữ liệu cũ' : `Typesense · ${this.contract?.serving_generation || 'serving_v1_20260910_raw_v2'}`;
+            const backendLabel = fallback ? 'Postgres dự phòng · phạm vi dữ liệu cũ' : `Typesense · ${this.contract?.serving_generation || 'serving state unavailable'}`;
             const head = fields.map(name => `<th>${html(this.fieldInfo(name)?.label || name)}</th>`).join('');
             const body = rows.map((row, index) => {
                 const cells = fields.map(name => `<td>${html(displayValue(row[name], this.fieldInfo(name)))}</td>`).join('');

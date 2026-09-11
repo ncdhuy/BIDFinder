@@ -39,6 +39,7 @@ from typesense_contract import (
     get_group_contract,
     normalize_group,
     public_group,
+    resolve_serving_generation,
     source_selector,
 )
 
@@ -1035,7 +1036,7 @@ def translate_typesense_query(query: ProcurementQuery, *, serving_generation: st
 @dataclass(frozen=True)
 class TypesenseShadowConfig:
     enabled: bool = False
-    serving_generation: str = "serving_v1_20260910_raw_v2"
+    serving_generation: str = ""
     sample_rate: float = 0.0
     timeout_seconds: float = 0.5
     host: str = "127.0.0.1"
@@ -1057,8 +1058,7 @@ class TypesenseShadowConfig:
             rate = min(1.0, max(0.0, float(raw_rate)))
         except ValueError:
             rate = 0.0
-        generation = os.getenv("BIDFINDER_TYPESENSE_SERVING_GENERATION", "serving_v1_20260910_raw_v2").strip()
-        validate_generation_id(generation)
+        generation = resolve_serving_generation()
         try:
             timeout = max(0.05, float(os.getenv("BIDFINDER_TYPESENSE_SHADOW_TIMEOUT_SECONDS", "0.5")))
         except ValueError:

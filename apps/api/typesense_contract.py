@@ -8,6 +8,7 @@ catalog without exposing Typesense query syntax.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 import os
 import sys
@@ -20,6 +21,7 @@ try:
         LOGICAL_ALIASES,
         SEARCH_CONFIGS,
         schema_for_group,
+        validate_generation_id,
     )
 except ModuleNotFoundError:  # ``uvicorn`` is documented from ``apps/api``.
     repo_root = str(Path(__file__).resolve().parents[2])
@@ -30,11 +32,11 @@ except ModuleNotFoundError:  # ``uvicorn`` is documented from ``apps/api``.
         LOGICAL_ALIASES,
         SEARCH_CONFIGS,
         schema_for_group,
+        validate_generation_id,
     )
 
 
 PUBLIC_GROUPS = ("goods", "medicines", "traditional")
-DEFAULT_SERVING_GENERATION = "serving_v1_20260910_raw_v2"
 SCHEMA_GROUPS = {
     "goods": "goods",
     "medicines": "medicines",
@@ -42,6 +44,45 @@ SCHEMA_GROUPS = {
     # Kept for Phase 4A callers and old shadow reports.
     "traditional_medicine": "traditional_medicine",
 }
+
+
+def resolve_serving_generation() -> str:
+    """Resolve the active generation from serving state, never an app default."""
+    configured = [
+        value.strip()
+        for name in ("BIDFINDER_TYPESENSE_SERVING_GENERATION", "BIDFINDER_SERVING_GENERATION")
+        for value in (os.getenv(name, ""),)
+        if value.strip()
+    ]
+    if len(set(configured)) > 1:
+        raise RuntimeError("serving generation environment values disagree")
+    configured_generation = configured[0] if configured else ""
+
+    report_path = os.getenv("BIDFINDER_SERVING_REPORT_PATH", "").strip()
+    report_generation = ""
+    if report_path:
+        try:
+            payload = json.loads(Path(report_path).read_text(encoding="utf-8"))
+            report_generation = str(payload.get("serving_generation", "")).strip()
+        except (OSError, ValueError, TypeError) as exc:
+            raise RuntimeError(f"cannot read serving state report: {report_path}") from exc
+        if not report_generation:
+            raise RuntimeError(f"serving state report has no generation: {report_path}")
+
+    if configured_generation and report_generation and configured_generation != report_generation:
+        raise RuntimeError("serving generation environment and report disagree")
+    if report_generation or configured_generation:
+        return validate_generation_id(report_generation or configured_generation)
+
+    if os.getenv("ENV", "").strip().lower() in {"production", "prod"}:
+        raise RuntimeError("production serving generation state is not configured")
+
+    artifact = Path(__file__).resolve().parents[2] / "typesense-search-contract.json"
+    try:
+        payload = json.loads(artifact.read_text(encoding="utf-8"))
+        return validate_generation_id(str(payload["serving_generation"]).strip())
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError("no serving generation state is available") from exc
 
 GROUP_LABELS = {
     "goods": "Hàng hóa",
@@ -319,7 +360,7 @@ def build_search_contract() -> dict[str, Any]:
         }
     return {
         "contract_version": "typesense-search-contract-v1",
-        "serving_generation": os.getenv("BIDFINDER_TYPESENSE_SERVING_GENERATION", DEFAULT_SERVING_GENERATION).strip() or DEFAULT_SERVING_GENERATION,
+        "serving_generation": resolve_serving_generation(),
         "backend_independent": True,
         "groups": groups,
         "legacy_compatibility": {

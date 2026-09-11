@@ -1,6 +1,7 @@
 [Unit]
 Description=BIDFinder closed-day incremental ingestion
-After=bidfinder-typesense.service
+Wants=network-online.target
+After=network-online.target bidfinder-typesense.service
 
 [Service]
 Type=oneshot
@@ -11,7 +12,7 @@ Environment=BIDFINDER_REPO_ROOT=@BIDFINDER_REPO@
 Environment=BIDFINDER_PYTHON=@BIDFINDER_VENV@/bin/python
 WorkingDirectory=@BIDFINDER_REPO@
 ExecStart=/usr/bin/env bash @BIDFINDER_REPO@/infra/runtime/bidfinder-incremental.sh
-TimeoutStartSec=infinity
+TimeoutStartSec=6h
 Nice=10
 StandardOutput=journal
 StandardError=journal

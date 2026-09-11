@@ -16,6 +16,7 @@ target="$recovery_root/$bundle_name"
 staging="$snapshot_staging_root/$bundle_name"
 
 ensure_runtime_dirs
+require_serving_state
 acquire_maintenance_lock
 resource_guard
 mkdir -p "$snapshot_staging_root" "$temporary"

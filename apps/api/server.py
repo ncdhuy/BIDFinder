@@ -81,10 +81,6 @@ cache_lock = asyncio.Lock()
 preview_cache: Dict[str, Dict[str, Any]] = {}
 autocomplete_cache: Dict[str, Dict[str, Any]] = {}
 metadata_cache: Dict[str, Dict[str, Any]] = {}
-SERVING_GENERATION = os.getenv(
-    "BIDFINDER_TYPESENSE_SERVING_GENERATION",
-    "serving_v1_20260910_raw_v2",
-).strip()
 SERVING_REPORT_PATH = os.getenv("BIDFINDER_SERVING_REPORT_PATH", "").strip()
 
 

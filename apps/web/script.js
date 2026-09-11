@@ -5,7 +5,7 @@ const API_BASE_URL =
       window.location.hostname === 'localhost' ||
       window.location.hostname === '127.0.0.1')
     ? 'http://127.0.0.1:8001'
-    : 'https://bidfinder-api-staging-774667987564.asia-southeast1.run.app');
+    : 'https://api.bidfinder.vn');
 
 window.API_BASE_URL = API_BASE_URL;
 

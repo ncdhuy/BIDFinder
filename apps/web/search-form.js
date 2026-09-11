@@ -3167,7 +3167,7 @@ class AdvancedFilterManager {
 
         return isLocal
             ? 'http://127.0.0.1:8001'
-            : 'https://bidfinder-api-staging-774667987564.asia-southeast1.run.app';
+            : 'https://api.bidfinder.vn';
     }
 
 

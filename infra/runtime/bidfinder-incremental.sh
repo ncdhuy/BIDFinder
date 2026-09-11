@@ -86,6 +86,7 @@ PY
 }
 
 ensure_runtime_dirs
+require_serving_state
 acquire_maintenance_lock
 resource_guard
 "$BIDFINDER_REPO_ROOT/infra/typesense/local-typesense.sh" health >/dev/null

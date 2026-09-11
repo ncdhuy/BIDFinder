@@ -38,6 +38,8 @@ runtime_root="${BIDFINDER_RUNTIME_ROOT:-$HOME/.local/share/bidfinder/runtime}"
 typesense_root="${BIDFINDER_TYPESENSE_ROOT:-$HOME/.local/share/bidfinder/typesense}"
 venv_dir="$runtime_root/venv"
 typesense_config="$config_dir/typesense.env"
+production_root="${BIDFINDER_PRODUCTION_ROOT:-$HOME/.local/share/bidfinder/production}"
+production_repo="$production_root/current"
 
 require_typesense_config() {
   [[ -f "$typesense_config" ]] || {
@@ -56,10 +58,14 @@ write_if_missing() {
 }
 
 install_units() {
-  local template target rendered
+  local template target rendered serving_state generation checkpoint provenance report markdown
   mkdir -p "$config_dir" "$unit_dir" "$runtime_root/locks" "$typesense_root/recovery"
   chmod 700 "$config_dir" "$runtime_root" "$runtime_root/locks" || true
   require_typesense_config
+  [[ -d "$production_repo/apps/api" ]] || {
+    echo "missing native production checkout: $production_repo; deploy a release first" >&2
+    exit 2
+  }
 
   if [[ ! -x "$venv_dir/bin/python" ]]; then
     python3 -m venv --without-pip "$venv_dir"
@@ -80,18 +86,25 @@ install_units() {
     fi
   fi
 
+  serving_state="$(python3 "$repo_root/infra/runtime/bidfinder-serving-state.py" --reports-root "$typesense_root/reports")"
+  generation="$(printf '%s' "$serving_state" | python3 -c 'import json,sys; print(json.load(sys.stdin)["generation"])')"
+  checkpoint="$(printf '%s' "$serving_state" | python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"])')"
+  provenance="$(printf '%s' "$serving_state" | python3 -c 'import json,sys; print(json.load(sys.stdin)["provenance"])')"
+  report="$(printf '%s' "$serving_state" | python3 -c 'import json,sys; print(json.load(sys.stdin)["report"])')"
+  markdown="$(printf '%s' "$serving_state" | python3 -c 'import json,sys; print(json.load(sys.stdin)["markdown"])')"
   write_if_missing "$config_dir/runtime.env" \
-    "BIDFINDER_REPO_ROOT=$repo_root" \
+    "BIDFINDER_REPO_ROOT=$production_repo" \
     "BIDFINDER_RUNTIME_ROOT=$runtime_root" \
     "BIDFINDER_TYPESENSE_ROOT=$typesense_root" \
     "BIDFINDER_TYPESENSE_DATA_DIR=$typesense_root/data" \
-    "BIDFINDER_TYPESENSE_CHECKPOINT=$typesense_root/checkpoints/serving_v1_20260910_raw_v2.sqlite3" \
-    "BIDFINDER_TYPESENSE_PROVENANCE=$typesense_root/checkpoints/serving_v1_20260910_raw_v2.uuid.sqlite3" \
-    "BIDFINDER_SERVING_REPORT_PATH=$typesense_root/reports/serving-state-serving_v1_20260910_raw_v2.json" \
-    "BIDFINDER_SERVING_MARKDOWN_PATH=$typesense_root/reports/serving-state-serving_v1_20260910_raw_v2.md" \
-    "BIDFINDER_SERVING_GENERATION=serving_v1_20260910_raw_v2" \
-    "BIDFINDER_TYPESENSE_SERVING_GENERATION=serving_v1_20260910_raw_v2" \
+    "BIDFINDER_TYPESENSE_CHECKPOINT=$checkpoint" \
+    "BIDFINDER_TYPESENSE_PROVENANCE=$provenance" \
+    "BIDFINDER_SERVING_REPORT_PATH=$report" \
+    "BIDFINDER_SERVING_MARKDOWN_PATH=$markdown" \
+    "BIDFINDER_SERVING_GENERATION=$generation" \
+    "BIDFINDER_TYPESENSE_SERVING_GENERATION=$generation" \
     "BIDFINDER_TYPESENSE_SHADOW_TIMEOUT_SECONDS=5.0" \
+    "ENV=production" \
     "BIDFINDER_PUBLIC_URL=${BIDFINDER_PUBLIC_URL:-}" \
     "TRUSTED_PROXY_IPS=127.0.0.1,::1" \
     "BIDFINDER_MAX_REQUEST_BODY_BYTES=2097152" \
@@ -116,7 +129,7 @@ install_units() {
 
   for template in "$repo_root"/infra/systemd/*.in; do
     target="$unit_dir/$(basename "$template" .in)"
-    rendered="$(sed -e "s|@BIDFINDER_REPO@|$repo_root|g" -e "s|@BIDFINDER_VENV@|$venv_dir|g" "$template")"
+    rendered="$(sed -e "s|@BIDFINDER_REPO@|$production_repo|g" -e "s|@BIDFINDER_VENV@|$venv_dir|g" "$template")"
     printf '%s\n' "$rendered" > "$target"
     chmod 600 "$target"
   done
