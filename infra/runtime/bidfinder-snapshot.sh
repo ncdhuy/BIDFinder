@@ -24,7 +24,7 @@ export BIDFINDER_TYPESENSE_ROOT
 export BIDFINDER_TYPESENSE_CONFIG="${BIDFINDER_TYPESENSE_CONFIG:-$BIDFINDER_CONFIG_DIR/typesense.env}"
 
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-"$BIDFINDER_REPO_ROOT/infra/typesense/local-typesense.sh" snapshot "$staging" >/dev/null
+bash "$BIDFINDER_REPO_ROOT/infra/typesense/local-typesense.sh" snapshot "$staging" >/dev/null
 [[ -d "$staging/state" ]] || { echo "snapshot missing state directory" >&2; exit 2; }
 mv "$staging" "$temporary/typesense-snapshot"
 
