@@ -74,7 +74,8 @@ normal PowerShell session belonging to the Windows user that owns `Ubuntu`:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\infra\windows\install-bidfinder-wsl-supervisor.ps1
 ```
 
-The task uses `AtLogOn`, `IgnoreNew` duplicate policy, a named mutex, and a
+The installer copies the supervisor to `%LOCALAPPDATA%\BIDFinder\bin` and the
+task runs that stable copy. It uses `AtLogOn`, `IgnoreNew` duplicate policy, a named mutex, and a
 long-lived `wsl.exe` keepalive. It starts the registered distro, ensures the
 Typesense/API/timer units are running, and checks both local health endpoints.
 It does not contain secrets. Logs are under
