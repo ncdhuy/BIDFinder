@@ -10,6 +10,7 @@ Type=simple
 EnvironmentFile=-%h/.config/bidfinder/typesense.env
 EnvironmentFile=-%h/.config/bidfinder/runtime.env
 EnvironmentFile=-%h/.config/bidfinder/backend.env
+EnvironmentFile=-%h/.config/bidfinder/api.env
 Environment=BIDFINDER_REPO_ROOT=@BIDFINDER_REPO@
 Environment=BIDFINDER_PYTHON=@BIDFINDER_VENV@/bin/python
 Environment=BIDFINDER_TYPESENSE_SHADOW_ENABLED=false

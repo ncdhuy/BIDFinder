@@ -46,6 +46,19 @@ ensure_state() {
   printf '%s\n' "$state"
 }
 
+prepare_api_env() {
+  local target="$config_dir/api.env" source_env="$repo_root/apps/api/.env"
+  if [[ ! -f "$target" ]]; then
+    [[ -f "$source_env" ]] || { echo "missing protected API env and source dotenv: $target" >&2; exit 2; }
+    install -m 600 -- "$source_env" "$target"
+  fi
+  chmod 600 "$target"
+  grep -q '^DATABASE_URL=' "$target" || {
+    echo "protected API env has no DATABASE_URL: $target" >&2
+    exit 2
+  }
+}
+
 upsert_runtime_env() {
   local target="$config_dir/runtime.env" state="$1" tmp
   local generation checkpoint provenance report markdown
@@ -128,6 +141,7 @@ deploy() {
     exit 2
   }
   state="$(ensure_state)"
+  prepare_api_env
   [[ "$(systemctl --user is-active bidfinder-incremental.service 2>/dev/null || true)" != active ]] || {
     echo "incremental service is active; refusing release switch" >&2
     exit 2
@@ -147,7 +161,11 @@ deploy() {
   upsert_runtime_env "$state"
   render_units "$release"
   systemctl --user restart bidfinder-api.service
-  curl --fail --silent --show-error --max-time 30 http://127.0.0.1:8001/ready >/dev/null
+  for _ in {1..30}; do
+    curl --fail --silent --show-error --max-time 2 http://127.0.0.1:8001/ready >/dev/null 2>&1 && break
+    sleep 2
+  done
+  curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8001/ready >/dev/null
   echo "deployed commit=$commit release=$release; Typesense was not restarted"
 }
 
@@ -157,6 +175,7 @@ rollback() {
   release="$release_root/$commit"
   [[ -d "$release" ]] || { echo "release not found: $release" >&2; exit 2; }
   state="$(ensure_state)"
+  prepare_api_env
   [[ "$(systemctl --user is-active bidfinder-incremental.service 2>/dev/null || true)" != active ]] || {
     echo "incremental service is active; refusing rollback" >&2
     exit 2
@@ -165,7 +184,11 @@ rollback() {
   upsert_runtime_env "$state"
   render_units "$release"
   systemctl --user restart bidfinder-api.service
-  curl --fail --silent --show-error --max-time 30 http://127.0.0.1:8001/ready >/dev/null
+  for _ in {1..30}; do
+    curl --fail --silent --show-error --max-time 2 http://127.0.0.1:8001/ready >/dev/null 2>&1 && break
+    sleep 2
+  done
+  curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8001/ready >/dev/null
   echo "rolled back API code to commit=$commit; Typesense was not restarted"
 }
 
