@@ -2830,6 +2830,9 @@ async def health(request: Request):
 async def ready():
     try:
         status = await runtime_status()
+        typesense_status = status.get("typesense")
+        if isinstance(typesense_status, dict):
+            typesense_status.pop("endpoint", None)
         code = 200 if status["procurement_ready"] else 503
         return JSONResponse(status_code=code, content=status)
     except Exception as exc:

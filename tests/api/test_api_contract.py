@@ -68,6 +68,14 @@ class ApiContractTest(unittest.TestCase):
         }
         self.assertIn("app", assigned_names)
 
+    def test_public_readiness_does_not_expose_internal_typesense_endpoint(self):
+        source = SERVER.read_text(encoding="utf-8")
+        ready_start = source.index('@app.get("/ready")')
+        ready_end = source.index('\n\ndef auth_error_response', ready_start)
+        ready_source = source[ready_start:ready_end]
+        self.assertIn('typesense_status = status.get("typesense")', ready_source)
+        self.assertIn('typesense_status.pop("endpoint", None)', ready_source)
+
 
 if __name__ == "__main__":
     unittest.main()
