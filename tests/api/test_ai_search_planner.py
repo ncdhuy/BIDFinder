@@ -209,10 +209,35 @@ class PlannerSchemaTest(unittest.TestCase):
 
     def test_prompt_states_procurement_company_role_policy(self):
         prompt = build_planner_system_prompt("medicines")
-        self.assertIn("without an explicit manufacturing cue defaults to winning_bidder_name", prompt)
+        self.assertIn("Commercial companies or businesses", prompt)
+        self.assertIn("without an explicit manufacturing", prompt)
         self.assertIn("Use manufacturer only for explicit cues", prompt)
         self.assertIn("hãng", prompt)
         self.assertIn("nhà sản xuất", prompt)
+
+    def test_prompt_states_institution_role_hierarchy(self):
+        prompt = build_planner_system_prompt("traditional")
+        for cue in ("Bệnh viện", "Trung tâm y tế", "Trạm y tế", "Phòng khám", "Viện", "Trường", "Đại học", "Sở", "Ban quản lý"):
+            with self.subTest(cue=cue):
+                self.assertIn(cue, prompt)
+        self.assertIn("default to procuring_entity_name", prompt)
+        self.assertIn("Commercial companies or businesses", prompt)
+
+        for cue, field in (
+            ("Công ty", "winning_bidder_name"),
+            ("nhà sản xuất", "manufacturer"),
+            ("nhà thầu", "winning_bidder_name"),
+            ("chủ đầu tư", "procuring_entity_name"),
+        ):
+            with self.subTest(cue=cue):
+                self.assertIn(cue, prompt)
+                self.assertIn(field, prompt)
+
+    def test_prompt_preserves_supplied_medicine_salt_form(self):
+        prompt = build_planner_system_prompt("medicines")
+        self.assertIn("X (dưới dạng Y)", prompt)
+        self.assertIn("same active-ingredient concept", prompt)
+        self.assertIn("Do not discard Y", prompt)
 
     def test_bounds_and_extra_keys_are_rejected(self):
         too_many = make_plan("goods", [clause("item_name", *[str(i) for i in range(25)])])
@@ -461,7 +486,7 @@ class PlannerRateLimitTest(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         self.assertTrue(body["success"])
         self.assertEqual("goods", body["plan"]["group"])
-        self.assertEqual("v0.1.2", body["meta"]["planner_version"])
+        self.assertEqual("v0.1.3", body["meta"]["planner_version"])
 
     def test_ai_specific_rate_limit_uses_existing_limiter(self):
         import server

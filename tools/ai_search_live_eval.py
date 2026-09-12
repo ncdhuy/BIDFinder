@@ -177,7 +177,6 @@ CASES: tuple[dict[str, Any], ...] = (
                 {"fields": ["medicine_name", "active_ingredient_or_herbal_component"], "all": ["Meropenem"]},
                 {"field": "strength", "any": ["1g", "1 g"]},
                 {"fields": ["dosage_form", "packaging"], "all": ["bột pha tiêm"]},
-                {"fields": ["packaging", "dosage_form"], "any": ["lọ"]},
                 {"field": "route_of_administration", "all": ["tĩnh mạch"]},
             ]
         },

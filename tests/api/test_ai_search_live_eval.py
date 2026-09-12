@@ -140,6 +140,16 @@ class LiveSemanticEvaluatorTest(unittest.TestCase):
         ])
         self.assertEqual([], evaluate_semantics(explicit_plan, explicit["expectations"]))
 
+    def test_meropenem_container_is_not_required(self):
+        case = next(case for case in CASES if case["id"] == "medicine_meropenem_form_route")
+        returned = plan("medicines", [
+            text_clause("medicine_name", "Meropenem"),
+            text_clause("strength", "1g"),
+            text_clause("dosage_form", "bột pha tiêm"),
+            text_clause("route_of_administration", "tĩnh mạch"),
+        ])
+        self.assertEqual([], evaluate_semantics(returned, case["expectations"]))
+
     def test_live_evaluation_skips_without_credentials(self):
         environment = {"BIDFINDER_AI_LIVE_EVAL": "1"}
         self.assertEqual({"status": "SKIP", "reason": "missing_api_key", "model": "gpt-5.6-luna"}, live_eval_preflight(environment))

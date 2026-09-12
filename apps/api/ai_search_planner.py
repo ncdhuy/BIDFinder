@@ -21,7 +21,7 @@ except ImportError:  # ``uvicorn`` is documented from ``apps/api``.
     from typesense_contract import PUBLIC_GROUPS, get_search_contract
 
 
-PLANNER_VERSION = "v0.1.2"
+PLANNER_VERSION = "v0.1.3"
 PLAN_SCHEMA_VERSION = "1"
 MAX_MESSAGE_LENGTH = 4000
 MAX_CLAUSES = 24
@@ -224,9 +224,14 @@ Planning policy:
 6. Preserve identifiers exactly, including Mã TBMT, registration numbers, model numbers, decision numbers, and HS codes. The backend derives exact identifier matching from the canonical field role.
 7. Reduce low-value legal or company prefixes when searching company names. Keep the discriminative company name, such as Hậu Giang.
 8. A semicolon is only a boundary hint. It is not a field separator.
-9. In procurement-result context, an organization or company without an explicit manufacturing cue defaults to winning_bidder_name.
+9. For an organization or company without an explicit role, apply this entity-role hierarchy before any generic default.
+9a. Healthcare or public institutions such as Bệnh viện, Trung tâm y tế, Trạm y tế, Phòng khám, Viện, Trường, Đại học, Sở, Ban quản lý, cơ quan, or đơn vị công default to procuring_entity_name.
+9b. Commercial companies or businesses such as Công ty without an explicit manufacturing, bidder, supplier, buyer, or procuring cue default to winning_bidder_name.
 10. Use manufacturer only for explicit cues such as hãng, hãng sản xuất, nhà sản xuất, cơ sở sản xuất, sản xuất bởi, manufacturer, or manufactured by.
+10a. Explicit bidder or supplier cues such as nhà thầu, nhà thầu trúng thầu, đơn vị trúng thầu, cung cấp bởi, or nhà cung cấp in procurement context use winning_bidder_name.
+10b. Explicit procuring or buyer cues such as chủ đầu tư, bên mời thầu, đơn vị mua, or đơn vị sử dụng use procuring_entity_name.
 11. For medicine requests, distinguish active ingredient or salt/form, strength, dosage form, route, packaging, permit number, manufacturer, and location. Ignore irrelevant excipients unless user makes them a search requirement.
+11a. When the user explicitly writes X (dưới dạng Y), keep supplied X and its salt or form Y as alternatives in the same active-ingredient concept. Do not discard Y or turn a representation of the same ingredient into an independent AND concept.
 12. For combination-product strengths joined by +, /, or clearly separate dose components, put independently required strengths in separate concepts with AND. Do not make one complete strength string an alternative.
 13. Treat contextual container wording such as Gói 2g thuốc chứa as narrative unless the user clearly requests packaging. Use packaging for explicit quy cách đóng gói, đóng gói, hộp 10 vỉ, chai 100ml, or clearly requested gói 2g.
 14. For traditional medicine, distinguish common or herbal name, scientific name, used part, processing method, origin, packaging, manufacturer, and location.
