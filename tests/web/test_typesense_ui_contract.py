@@ -339,7 +339,7 @@ class TypesenseUiContractTest(unittest.TestCase):
         self.assertIn("overflow-x: scroll !important;", scroll_rule)
         self.assertIn("overflow-y: scroll !important;", scroll_rule)
         self.assertIn("scrollbar-gutter: stable;", scroll_rule)
-        self.assertIn("padding: 0 16px 16px 0;", scroll_rule)
+        self.assertIn("padding: 0;", scroll_rule)
         self.assertNotIn("overflow: auto !important;", scroll_rule)
         self.assertEqual(style_source.count("scrollbar-gutter: stable;"), 1)
         self.assertNotIn("#df1-panel .table-scroll", style_source)

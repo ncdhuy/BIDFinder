@@ -1510,10 +1510,9 @@ body:not(.landing-active) .btn-export {
   overflow-x: scroll !important;
   overflow-y: scroll !important;
   scrollbar-gutter: stable;
-  /* Keep the final column resizer and the last data row clear of the
-     browser scrollbar tracks. The width calculation in script.js subtracts
-     this inline-end gutter before sizing the table. */
-  padding: 0 16px 16px 0;
+  /* scrollbar-gutter reserves the native track; do not add a second manual
+     gutter, otherwise the table gets a visibly oversized gray strip. */
+  padding: 0;
 }
 
 /* =========================
