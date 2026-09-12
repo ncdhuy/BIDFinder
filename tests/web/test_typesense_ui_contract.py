@@ -370,7 +370,7 @@ class TypesenseUiContractTest(unittest.TestCase):
             self.assertIn(token, style_source)
         self.assertIn("scrollbar-width: auto !important;", shared_rule)
         self.assertIn("scrollbar-color: var(--table-scroll-thumb) var(--table-scroll-track) !important;", shared_rule)
-        self.assertIn("width: 10px !important; height: 10px !important;", webkit_rule)
+        self.assertIn("width: 6px !important; height: 6px !important;", webkit_rule)
         self.assertNotIn("--t-scroll-thumb:", style_source)
         self.assertIn("background: var(--table-scroll-track);", scrollbar_rules)
         self.assertIn("background: var(--table-scroll-thumb);", scrollbar_rules)
