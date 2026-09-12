@@ -288,7 +288,7 @@ except ZoneInfoNotFoundError:
     APP_TIMEZONE = ZoneInfo("UTC")
 ANONYMOUS_FULL_QUERY_DAILY_LIMIT = max(
     0,
-    get_env_int("ANONYMOUS_FULL_QUERY_DAILY_LIMIT", 10),
+    get_env_int("ANONYMOUS_FULL_QUERY_DAILY_LIMIT", 5),
 )
 ANONYMOUS_FULL_QUERY_LIMIT_MESSAGE = (
     f"Bạn đã dùng hết {ANONYMOUS_FULL_QUERY_DAILY_LIMIT} lượt tra cứu hôm nay. "
@@ -2329,6 +2329,10 @@ async def query_typesense_primary(request: Request, payload: QueryRequest) -> JS
     count_parts: list[dict[str, Any]] = []
     async with optional_db_connection(request, "full_query") as conn:
         user = await enforce_data_access_policy(conn, request, "full_query")
+        if user is None and ANONYMOUS_ACCESS_LEVEL == "full" and ANONYMOUS_FULL_QUERY_DAILY_LIMIT > 0:
+            quota = await get_anonymous_full_query_usage_snapshot(request)
+            if quota["remaining"] <= 0:
+                raise HTTPException(status_code=401, detail=ANONYMOUS_FULL_QUERY_LIMIT_MESSAGE)
         if search_mode == "full":
             quota = await get_full_search_usage_snapshot(request, user)
             if quota["remaining"] <= 0:
@@ -2362,6 +2366,10 @@ async def query_typesense_primary(request: Request, payload: QueryRequest) -> JS
             key = {"medicines": "df1", "goods": "df2", "traditional_medicine": "df3"}[query.group]
             result[key] = page
             count_parts.append({"count": page["count"], "exact": page["count_exact"]})
+        if user is None and ANONYMOUS_ACCESS_LEVEL == "full" and ANONYMOUS_FULL_QUERY_DAILY_LIMIT > 0:
+            quota = await consume_anonymous_full_query_usage(request)
+            result["anonymous_full_query_daily_used"] = quota["used"]
+            result["anonymous_full_query_daily_remaining"] = quota["remaining"]
         if search_mode == "full":
             quota = await consume_full_search_usage(request, user)
             result["full_search_daily_used"] = quota["used"]

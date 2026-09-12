@@ -76,6 +76,15 @@ class ApiContractTest(unittest.TestCase):
         self.assertIn('typesense_status = status.get("typesense")', ready_source)
         self.assertIn('typesense_status.pop("endpoint", None)', ready_source)
 
+    def test_typesense_primary_enforces_anonymous_query_quota(self):
+        source = SERVER.read_text(encoding="utf-8")
+        primary_start = source.index("async def query_typesense_primary")
+        primary_end = source.index("\n\nasync def autocomplete_typesense_primary", primary_start)
+        primary_source = source[primary_start:primary_end]
+        self.assertIn("get_anonymous_full_query_usage_snapshot(request)", primary_source)
+        self.assertIn("consume_anonymous_full_query_usage(request)", primary_source)
+        self.assertIn('get_env_int("ANONYMOUS_FULL_QUERY_DAILY_LIMIT", 5)', source)
+
 
 if __name__ == "__main__":
     unittest.main()
