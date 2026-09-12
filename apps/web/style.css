@@ -1646,25 +1646,28 @@ body:not(.landing-active) .btn-export {
 /* =========================
    SCROLLBAR (dùng chung cho mọi bảng)
    ========================= */
-.data-card .table-scroll {
+#data-tab .table-wrapper .table-scroll {
   /* Firefox supports these standard properties but does not support a pixel
      width. `auto` keeps the normal, always-available scrollbar instead of the
      compact `thin`/overlay treatment. */
-  scrollbar-width: auto;
-  scrollbar-color: var(--table-scroll-thumb) var(--table-scroll-track);
+  scrollbar-width: auto !important;
+  scrollbar-color: var(--table-scroll-thumb) var(--table-scroll-track) !important;
 }
 
-.data-card .table-scroll::-webkit-scrollbar{ width: 14px; height: 14px; }
-.data-card .table-scroll::-webkit-scrollbar-track{
+#data-tab .table-wrapper .table-scroll::-webkit-scrollbar{ width: 14px !important; height: 14px !important; }
+#data-tab .table-wrapper .table-scroll::-webkit-scrollbar-track{
   background: var(--table-scroll-track);
   border-radius: 10px;
 }
-.data-card .table-scroll::-webkit-scrollbar-thumb{
+#data-tab .table-wrapper .table-scroll::-webkit-scrollbar-thumb{
   background: var(--table-scroll-thumb);
   border-radius: 10px;
 }
-.data-card .table-scroll::-webkit-scrollbar-thumb:hover{
+#data-tab .table-wrapper .table-scroll::-webkit-scrollbar-thumb:hover{
   background: var(--table-scroll-thumb-hover);
+}
+#data-tab .table-wrapper .table-scroll::-webkit-scrollbar-corner{
+  background: var(--table-scroll-track);
 }
 
 /* =========================
