@@ -28,6 +28,7 @@ EXPECTED_ROUTES = [
     ("POST", "/api/feedback/topics/{topic_id}/replies"),
     ("GET", "/api/filter-config"),
     ("GET", "/api/search-contract"),
+    ("POST", "/api/ai/search-plan"),
     ("POST", "/api/query"),
     ("POST", "/api/bulk-query"),
     ("POST", "/api/query-preview"),

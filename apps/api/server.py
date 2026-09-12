@@ -64,6 +64,17 @@ from typesense_contract import (
     get_search_contract as get_typesense_search_contract,
     normalize_group,
 )
+from ai_search_planner import (
+    AIPlanRequest,
+    AIPlannerConfigurationError,
+    AIPlannerInputError,
+    AIPlannerProviderError,
+    AIPlannerValidationError,
+    PLANNER_VERSION,
+    create_search_plan,
+    get_planner_settings,
+    serialize_plan,
+)
 
 logger = logging.getLogger("bidfinder.api")
 logger.setLevel(os.getenv("BIDFINDER_LOG_LEVEL", "INFO").upper())
@@ -218,6 +229,7 @@ METADATA_RATE_LIMIT_PER_MINUTE = get_env_int("METADATA_RATE_LIMIT_PER_MINUTE", 2
 FILTER_CONFIG_RATE_LIMIT_PER_MINUTE = get_env_int("FILTER_CONFIG_RATE_LIMIT_PER_MINUTE", 30, minimum=1)
 AUTH_RATE_LIMIT_PER_MINUTE = get_env_int("AUTH_RATE_LIMIT_PER_MINUTE", 20, minimum=1)
 AUTH_CONFIG_RATE_LIMIT_PER_MINUTE = get_env_int("AUTH_CONFIG_RATE_LIMIT_PER_MINUTE", 60, minimum=1)
+AI_SEARCH_PLAN_RATE_LIMIT_PER_MINUTE = get_env_int("BIDFINDER_AI_RATE_LIMIT_PER_MINUTE", 10, minimum=1)
 FEEDBACK_RATE_LIMIT_PER_MINUTE = get_env_int("FEEDBACK_RATE_LIMIT_PER_MINUTE", 10, minimum=1)
 FEEDBACK_READ_RATE_LIMIT_PER_MINUTE = get_env_int(
     "FEEDBACK_READ_RATE_LIMIT_PER_MINUTE",
@@ -3645,6 +3657,83 @@ async def get_search_contract(request: Request):
     except Exception as exc:
         log_server_exception("get_search_contract failed", exc)
         return internal_error_response()
+
+
+@app.post("/api/ai/search-plan")
+async def create_ai_search_plan(request: Request, payload: AIPlanRequest):
+    started = time.perf_counter()
+    settings = get_planner_settings()
+    limited = await enforce_rate_limit(
+        request,
+        "ai-search-plan",
+        AI_SEARCH_PLAN_RATE_LIMIT_PER_MINUTE,
+    )
+    if limited:
+        logger.warning(
+            "ai_search_plan group=%s model=%s latency_ms=%.1f success=false category=rate_limited",
+            payload.group,
+            settings.model,
+            (time.perf_counter() - started) * 1000,
+        )
+        return limited
+
+    try:
+        plan = await create_search_plan(payload.group, payload.message)
+    except AIPlannerInputError as exc:
+        logger.warning(
+            "ai_search_plan group=%s model=%s latency_ms=%.1f success=false category=%s",
+            payload.group,
+            settings.model,
+            (time.perf_counter() - started) * 1000,
+            exc.category,
+        )
+        return validation_error_response("Yêu cầu lập kế hoạch tìm kiếm không hợp lệ.")
+    except AIPlannerConfigurationError as exc:
+        logger.warning(
+            "ai_search_plan group=%s model=%s latency_ms=%.1f success=false category=%s",
+            payload.group,
+            settings.model,
+            (time.perf_counter() - started) * 1000,
+            exc.category,
+        )
+        return validation_error_response("AI search planner hiện không khả dụng.", status_code=503)
+    except AIPlannerValidationError as exc:
+        logger.warning(
+            "ai_search_plan group=%s model=%s latency_ms=%.1f success=false category=%s",
+            payload.group,
+            settings.model,
+            (time.perf_counter() - started) * 1000,
+            exc.category,
+        )
+        return validation_error_response("AI search planner trả về kế hoạch không hợp lệ.", status_code=502)
+    except AIPlannerProviderError as exc:
+        logger.warning(
+            "ai_search_plan group=%s model=%s latency_ms=%.1f success=false category=%s",
+            payload.group,
+            settings.model,
+            (time.perf_counter() - started) * 1000,
+            exc.category,
+        )
+        status_code = 504 if exc.category == "provider_transport" else 502
+        return validation_error_response("Không thể hoàn tất AI search planner lúc này.", status_code=status_code)
+    except Exception as exc:
+        log_server_exception("create_ai_search_plan failed", exc)
+        return internal_error_response("AI search planner hiện không khả dụng.")
+
+    logger.info(
+        "ai_search_plan group=%s model=%s latency_ms=%.1f success=true",
+        payload.group,
+        settings.model,
+        (time.perf_counter() - started) * 1000,
+    )
+    return JSONResponse(content={
+        "success": True,
+        "plan": serialize_plan(plan),
+        "meta": {
+            "model": settings.model,
+            "planner_version": PLANNER_VERSION,
+        },
+    })
 
 
 @app.post("/api/query")
