@@ -46,8 +46,11 @@
   --shadow-md: 0 8px 18px rgba(21, 37, 48, 0.08);
   --shadow-lg: 0 16px 34px rgba(21, 37, 48, 0.12);
 
-  /* Desktop side rails reserved for future sponsor placements */
-  --sponsor-side-space: clamp(0px, calc(60vw - 768px), 180px);
+  /* Responsive side rails for sponsor placements. The rail grows smoothly
+     from 0px at tablet width to 180px on wide desktop instead of dropping to
+     zero abruptly below 1280px. Narrow phones intentionally collapse the side
+     rails; a responsive in-flow/mobile ad belongs there instead. */
+  --sponsor-side-space: clamp(0px, calc(25vw - 192px), 180px);
 
   --surface-enter-duration: 300ms;
   --surface-enter-easing: cubic-bezier(0.4, 0, 0.2, 1);

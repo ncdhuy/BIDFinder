@@ -350,6 +350,18 @@ class TypesenseUiContractTest(unittest.TestCase):
         self.assertIn("const horizontalPadding =", script_source)
         self.assertIn("(scrollContainer?.clientWidth || 0) - horizontalPadding", script_source)
 
+    def test_sponsor_side_space_scales_smoothly_with_viewport(self):
+        style_source = (ROOT / "apps/web/style.css").read_text(encoding="utf-8")
+        self.assertIn(
+            "--sponsor-side-space: clamp(0px, calc(25vw - 192px), 180px);",
+            style_source,
+        )
+        self.assertIn(
+            "width: calc(100% - (2 * var(--sponsor-side-space)));",
+            style_source,
+        )
+        self.assertNotIn("calc(60vw - 768px)", style_source)
+
     def test_all_result_tables_use_one_always_visible_scrollbar_style(self):
         style_source = (ROOT / "apps/web/style.css").read_text(encoding="utf-8")
         shared_rule_start = style_source.index("#data-tab .table-wrapper .table-scroll {")
