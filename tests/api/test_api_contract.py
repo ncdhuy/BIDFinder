@@ -83,7 +83,23 @@ class ApiContractTest(unittest.TestCase):
         primary_source = source[primary_start:primary_end]
         self.assertIn("get_anonymous_full_query_usage_snapshot(request)", primary_source)
         self.assertIn("consume_anonymous_full_query_usage(request)", primary_source)
-        self.assertIn('get_env_int("ANONYMOUS_FULL_QUERY_DAILY_LIMIT", 5)', source)
+        self.assertIn('get_env_int("ANONYMOUS_FULL_QUERY_DAILY_LIMIT", 3)', source)
+
+    def test_feedback_reads_allow_anonymous_but_writes_still_require_authentication(self):
+        source = SERVER.read_text(encoding="utf-8")
+        list_start = source.index('@app.get("/api/feedback/topics")')
+        list_end = source.index('@app.post("/api/feedback/topics")', list_start)
+        detail_start = source.index('@app.get("/api/feedback/topics/{topic_id}")')
+        detail_end = source.index('@app.patch("/api/feedback/topics/{topic_id}")', detail_start)
+        create_start = source.index('@app.post("/api/feedback/topics")')
+        create_end = source.index('@app.get("/api/feedback/topics/{topic_id}")', create_start)
+        reply_start = source.index('@app.post("/api/feedback/topics/{topic_id}/replies")')
+        reply_end = source.index('@app.get("/api/filter-config")', reply_start)
+
+        self.assertIn("get_optional_authenticated_user(conn, request)", source[list_start:list_end])
+        self.assertIn("get_optional_authenticated_user(conn, request)", source[detail_start:detail_end])
+        self.assertIn("require_authenticated_user(conn, request)", source[create_start:create_end])
+        self.assertIn("require_authenticated_user(conn, request)", source[reply_start:reply_end])
 
 
 if __name__ == "__main__":

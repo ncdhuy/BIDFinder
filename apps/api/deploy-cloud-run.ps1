@@ -21,7 +21,7 @@ param(
     [string]$AllowedOrigins = "https://bidfinder.vn,https://www.bidfinder.vn,https://bidfinder.netlify.app,http://localhost:3000,http://127.0.0.1:3000",
     [string]$AppTimezone = "Asia/Ho_Chi_Minh",
     [string]$AnonymousAccessLevel = "full",
-    [int]$AnonymousFullQueryDailyLimit = 5,
+    [int]$AnonymousFullQueryDailyLimit = 3,
     [int]$FullSearchDailyLimit = 3,
     [string]$SmtpHost = "",
     [int]$SmtpPort = 587,

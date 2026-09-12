@@ -8441,10 +8441,8 @@ function syncFeedbackComposerAuthState() {
     const isAuthenticated = isFeedbackUserAuthenticated();
     if (replyBody) {
         replyBody.disabled = isClosedForUser;
-        replyBody.readOnly = !isAuthenticated && !isClosedForUser;
-        replyBody.placeholder = isAuthenticated
-            ? 'Viết bình luận...'
-            : 'Đăng nhập để bình luận...';
+        replyBody.readOnly = false;
+        replyBody.placeholder = 'Viết bình luận...';
     }
     updateFeedbackReplyButtonState();
 }
@@ -8454,7 +8452,7 @@ function updateFeedbackReplyButtonState() {
     const sendButton = document.getElementById('send-feedback-reply');
     if (!replyBody || !sendButton) return;
     const isClosedForUser = feedbackBoardState.activeTopic?.status === 'closed' && !feedbackBoardState.isAdmin;
-    sendButton.disabled = isClosedForUser || !isFeedbackUserAuthenticated() || !replyBody.value.trim();
+    sendButton.disabled = isClosedForUser || !replyBody.value.trim();
 }
 
 function renderFeedbackReplies(replies = []) {
@@ -8996,11 +8994,6 @@ function initFeedbackModalEvents() {
     document.getElementById('feedback-topic-form')?.addEventListener('submit', createFeedbackTopic);
     document.getElementById('send-feedback-reply')?.addEventListener('click', sendFeedbackReply);
     document.getElementById('feedback-reply-body')?.addEventListener('input', updateFeedbackReplyButtonState);
-    document.getElementById('feedback-reply-body')?.addEventListener('focus', event => {
-        if (isFeedbackUserAuthenticated()) return;
-        event.target.blur();
-        requireFeedbackAuthentication();
-    });
     window.addEventListener('bidfinder:auth-changed', syncFeedbackComposerAuthState);
     document.querySelector('#feedback-topic-detail .feedback-discussion-scroll')?.addEventListener('scroll', handleFeedbackDiscussionScroll);
     document.getElementById('feedback-reply-body')?.addEventListener('keydown', event => {

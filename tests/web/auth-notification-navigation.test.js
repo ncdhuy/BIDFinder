@@ -54,6 +54,11 @@ assert(section('async function createFeedbackTopic', 'async function sendFeedbac
   'Topic submit should require authentication');
 assert(section('async function sendFeedbackReply', 'function initFeedbackModalEvents').includes('requireFeedbackAuthentication'),
   'Reply submit should require authentication');
+const feedbackEvents = section('function initFeedbackModalEvents', 'function getActiveResultViewContext');
+assert(!feedbackEvents.includes("feedback-reply-body')?.addEventListener('focus'"),
+  'Opening the anonymous reply composer should not immediately require authentication');
+assert(section('function updateFeedbackReplyButtonState', 'function renderFeedbackReplies').includes('sendButton.disabled = isClosedForUser || !replyBody.value.trim()'),
+  'Anonymous users should be able to submit a reply attempt and receive the login prompt at send time');
 assert(scriptJs.includes('Hướng dẫn, thông báo và tài khoản'), 'Product guide should use the notification wording');
 assert(!/diễn đàn|forum/i.test(indexHtml + authCss + authJs + scriptJs),
   'Visible web UI should not retain the old forum wording');

@@ -288,7 +288,7 @@ except ZoneInfoNotFoundError:
     APP_TIMEZONE = ZoneInfo("UTC")
 ANONYMOUS_FULL_QUERY_DAILY_LIMIT = max(
     0,
-    get_env_int("ANONYMOUS_FULL_QUERY_DAILY_LIMIT", 5),
+    get_env_int("ANONYMOUS_FULL_QUERY_DAILY_LIMIT", 3),
 )
 ANONYMOUS_FULL_QUERY_LIMIT_MESSAGE = (
     f"Bạn đã dùng hết {ANONYMOUS_FULL_QUERY_DAILY_LIMIT} lượt tra cứu hôm nay. "
@@ -3386,7 +3386,7 @@ async def list_feedback_topics(request: Request):
     try:
         pool = await ensure_db_pool()
         async with pool.acquire() as conn:
-            current_user = await require_authenticated_user(conn, request)
+            current_user = await get_optional_authenticated_user(conn, request)
             rows = await conn.fetch(
                 """
                 SELECT t.id, t.user_id, t.user_email, u.full_name AS author_name,
@@ -3472,7 +3472,7 @@ async def get_feedback_topic(request: Request, topic_id: int):
         comments_offset = max(comments_offset, 0)
         pool = await ensure_db_pool()
         async with pool.acquire() as conn:
-            current_user = await require_authenticated_user(conn, request)
+            current_user = await get_optional_authenticated_user(conn, request)
             topic = await conn.fetchrow(
                 """
                 SELECT t.id, t.user_id, t.user_email, u.full_name AS author_name,
