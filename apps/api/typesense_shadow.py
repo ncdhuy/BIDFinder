@@ -654,6 +654,7 @@ def _drug_group_clause(field_name: str, value: Any) -> str | None:
 def _token_clauses(fields: Sequence[str], token_filter: Any) -> str | None:
     plain = _plain(token_filter)
     tokens = plain.get("tokens", []) if isinstance(plain, Mapping) else []
+    groups = plain.get("groups", []) if isinstance(plain, Mapping) else []
     and_parts: list[str] = []
     or_parts: list[str] = []
     not_parts: list[str] = []
@@ -677,6 +678,22 @@ def _token_clauses(fields: Sequence[str], token_filter: Any) -> str | None:
     if or_parts:
         clauses.append(" || ".join(or_parts))
     clauses.extend(not_parts)
+
+    if isinstance(groups, list):
+        for group in groups:
+            if not isinstance(group, Mapping):
+                continue
+            alternatives = []
+            for raw_value in group.get("alternatives", []):
+                value = str(raw_value or "").strip()
+                if not value:
+                    continue
+                positive = " || ".join(_prefix_clause(name, value) for name in fields)
+                if positive:
+                    alternatives.append(positive)
+            if alternatives:
+                clauses.append(" || ".join(alternatives))
+
     return " && ".join(f"({item})" for item in clauses) if clauses else None
 
 

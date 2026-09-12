@@ -18,12 +18,16 @@ from server import (  # noqa: E402
     AutocompleteRequest,
     BulkQueryRequest,
     FilterRequest,
+    TokenFilter,
+    TokenFilterGroup,
+    TokenFilterItem,
     PROCUREMENT_FALLBACK_EVENT,
     QueryPreviewRequest,
     QueryRequest,
     SortRule,
     build_count_meta,
     build_sort_order_parts,
+    build_token_condition,
     cap_standard_query_page,
     fetch_backend_page,
 )
@@ -232,6 +236,102 @@ class TestShadowPrimitives(unittest.TestCase):
         plan = translate_typesense_query(query, serving_generation="serving_v1_20260901")
         self.assertIn("active_ingredient_or_herbal_component:nefo*", plan.params["filter_by"])
         self.assertNotIn("*nefo*", plan.params["filter_by"])
+
+    def test_grouped_token_filter_keeps_independent_or_concepts_anded(self):
+        query = build_canonical_query(
+            "medicines",
+            filters={"activeIngredient": {
+                "groups": [
+                    {"alternatives": ["clavulanic", "clavulanat"]},
+                    {"alternatives": ["amoxicilin", "amoxicillin"]},
+                ],
+            }},
+            limit=50,
+        )
+        filter_by = translate_typesense_query(
+            query,
+            serving_generation="serving_v1_20260901",
+        ).params["filter_by"]
+        self.assertEqual(
+            "(active_ingredient_or_herbal_component:clavulanic* || "
+            "active_ingredient_or_herbal_component:clavulanat*) && "
+            "(active_ingredient_or_herbal_component:amoxicilin* || "
+            "active_ingredient_or_herbal_component:amoxicillin*)",
+            filter_by,
+        )
+
+    def test_legacy_flat_token_filter_keeps_previous_typesense_shape(self):
+        query = build_canonical_query(
+            "medicines",
+            filters={"activeIngredient": {
+                "tokens": [
+                    {"value": "A", "op": "AND"},
+                    {"value": "B", "op": "OR"},
+                ],
+            }},
+            limit=50,
+        )
+        filter_by = translate_typesense_query(
+            query,
+            serving_generation="serving_v1_20260901",
+        ).params["filter_by"]
+        self.assertEqual(
+            "((active_ingredient_or_herbal_component:A*)) && "
+            "((active_ingredient_or_herbal_component:B*))",
+            filter_by,
+        )
+
+    def test_flat_and_grouped_token_filters_are_anded(self):
+        query = build_canonical_query(
+            "medicines",
+            filters={"activeIngredient": {
+                "tokens": [{"value": "required", "op": "AND"}],
+                "groups": [{"alternatives": ["clavulanic", "clavulanat"]}],
+            }},
+            limit=50,
+        )
+        filter_by = translate_typesense_query(
+            query,
+            serving_generation="serving_v1_20260901",
+        ).params["filter_by"]
+        self.assertEqual(
+            "((active_ingredient_or_herbal_component:required*)) && "
+            "(active_ingredient_or_herbal_component:clavulanic* || "
+            "active_ingredient_or_herbal_component:clavulanat*)",
+            filter_by,
+        )
+
+    def test_grouped_and_legacy_sql_token_conditions_are_compatible(self):
+        legacy_params = []
+        legacy = build_token_condition(
+            "ingredient",
+            TokenFilter(tokens=[
+                TokenFilterItem(value="A", op="AND"),
+                TokenFilterItem(value="B", op="OR"),
+            ]),
+            legacy_params,
+        )
+        self.assertEqual("(ingredient ILIKE $1) AND (ingredient ILIKE $2)", legacy)
+        self.assertEqual(["%A%", "%B%"], legacy_params)
+
+        grouped_params = []
+        grouped = build_token_condition(
+            "ingredient",
+            TokenFilter(groups=[
+                TokenFilterGroup(alternatives=["clavulanic", "clavulanat"]),
+                TokenFilterGroup(alternatives=["amoxicilin", "amoxicillin"]),
+            ]),
+            grouped_params,
+        )
+        self.assertEqual(
+            "(ingredient ILIKE $1 OR ingredient ILIKE $2) AND "
+            "(ingredient ILIKE $3 OR ingredient ILIKE $4)",
+            grouped,
+        )
+        self.assertEqual(
+            ["%clavulanic%", "%clavulanat%", "%amoxicilin%", "%amoxicillin%"],
+            grouped_params,
+        )
 
     def test_goods_keyword_filter_spans_all_four_shared_search_fields(self):
         query = build_canonical_query(

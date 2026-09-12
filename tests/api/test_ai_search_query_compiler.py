@@ -76,23 +76,50 @@ class AIQueryCompilerTest(unittest.TestCase):
         compiled = compile_ai_search_plan(raw_plan(
             "medicines",
             [
-                clause("active_ingredient_or_herbal_component", ("clavulanic", "clavulanat"), "amoxicilin"),
+                clause(
+                    "active_ingredient_or_herbal_component",
+                    ("clavulanic", "clavulanat"),
+                    ("amoxicilin", "amoxicillin"),
+                ),
                 clause("strength", "62,5", "500"),
             ],
         ))
+        self.assertEqual(
+            [
+                {"alternatives": ["clavulanic", "clavulanat"]},
+                {"alternatives": ["amoxicilin", "amoxicillin"]},
+            ],
+            compiled.filters["activeIngredient"]["groups"],
+        )
+        self.assertNotIn("tokens", compiled.filters["activeIngredient"])
+        self.assertEqual(
+            [
+                {"alternatives": ["62,5"]},
+                {"alternatives": ["500"]},
+            ],
+            compiled.filters["concentration"]["groups"],
+        )
         translated = translate_typesense_query(
             build_canonical_query("medicines", compiled.filters, limit=50),
             serving_generation="serving_v1_20260901",
         )
         filter_by = translated.params["filter_by"]
 
-        self.assertIn("active_ingredient_or_herbal_component:clavulanic*", filter_by)
-        self.assertIn("active_ingredient_or_herbal_component:clavulanat*", filter_by)
-        self.assertIn("active_ingredient_or_herbal_component:amoxicilin*", filter_by)
+        active_group_expression = (
+            "(active_ingredient_or_herbal_component:clavulanic* || "
+            "active_ingredient_or_herbal_component:clavulanat*) && "
+            "(active_ingredient_or_herbal_component:amoxicilin* || "
+            "active_ingredient_or_herbal_component:amoxicillin*)"
+        )
+        self.assertIn(active_group_expression, filter_by)
         self.assertIn("strength:62,5*", filter_by)
         self.assertIn("strength:500*", filter_by)
-        self.assertIn("||", filter_by)
-        self.assertIn("&&", filter_by)
+        self.assertNotIn(
+            "active_ingredient_or_herbal_component:clavulanic* || "
+            "active_ingredient_or_herbal_component:clavulanat* || "
+            "active_ingredient_or_herbal_component:amoxicilin*",
+            filter_by,
+        )
 
     def test_company_and_location_reuse_existing_filters(self):
         compiled = compile_ai_search_plan(raw_plan(
@@ -103,7 +130,7 @@ class AIQueryCompilerTest(unittest.TestCase):
             ],
         ))
 
-        self.assertIn("Hậu Giang", compiled.filters["winner"]["tokens"][0]["value"])
+        self.assertIn("Hậu Giang", compiled.filters["winner"]["groups"][0]["alternatives"])
         self.assertEqual(["Hà Nội"], compiled.filters["place"])
 
     def test_goods_product_terms_use_current_field_scope_and_can_broaden_safely(self):
@@ -154,6 +181,30 @@ class AIQueryCompilerTest(unittest.TestCase):
                 "clauses": [clause("decision_issued_at", "2026")],
                 "date_constraints": [],
             })
+
+    def test_unaliased_text_field_keeps_binding_when_used_alone(self):
+        compiled = compile_ai_search_plan(raw_plan(
+            "traditional",
+            [clause("used_part", "rễ")],
+        ))
+        self.assertEqual(("used_part",), compiled.search_fields)
+        self.assertEqual("rễ", compiled.text)
+
+    def test_unaliased_text_fields_fail_closed_instead_of_merging_bindings(self):
+        with self.assertRaises(AIQueryCompilationError) as context:
+            compile_ai_search_plan(raw_plan(
+                "traditional",
+                [clause("used_part", "rễ"), clause("origin", "Lào Cai")],
+            ))
+        self.assertEqual("text_field_binding_unsupported", context.exception.category)
+
+    def test_unaliased_text_alternatives_fail_closed_instead_of_flattening_or(self):
+        with self.assertRaises(AIQueryCompilationError) as context:
+            compile_ai_search_plan(raw_plan(
+                "traditional",
+                [clause("used_part", ("rễ", "lá"))],
+            ))
+        self.assertEqual("text_fallback_boolean_unsupported", context.exception.category)
 
     def test_empty_strict_product_query_has_at_most_one_safe_broadening_round(self):
         compiled = compile_ai_search_plan(raw_plan("goods", [clause("item_name", "máy thở")]))

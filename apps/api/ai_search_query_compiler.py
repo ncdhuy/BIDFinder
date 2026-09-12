@@ -98,27 +98,27 @@ def _terms(concepts: list[Any]) -> list[str]:
 
 
 def _token_filter(concepts: list[Any]) -> dict[str, Any]:
-    """Use the existing TokenFilter operators for concept OR and clause AND."""
+    """Encode each planner concept as one grouped TokenFilter condition."""
 
-    tokens: list[dict[str, str]] = []
+    groups: list[dict[str, list[str]]] = []
     for concept in concepts:
         alternatives = _alternatives(concept)
-        operation = "OR" if len(alternatives) > 1 else "AND"
-        tokens.extend({"value": term, "op": operation} for term in alternatives)
-    return {"tokens": tokens}
+        if alternatives:
+            groups.append({"alternatives": alternatives})
+    return {"groups": groups}
 
 
 def _merge_tokens(filters: dict[str, Any], name: str, concepts: list[Any]) -> None:
-    incoming = _token_filter(concepts)["tokens"]
+    incoming = _token_filter(concepts)["groups"]
     if not incoming:
         return
     existing = filters.get(name)
     if not isinstance(existing, Mapping):
-        filters[name] = {"tokens": incoming}
+        filters[name] = {"groups": incoming}
         return
     filters[name] = {
         **dict(existing),
-        "tokens": [*(existing.get("tokens") or []), *incoming],
+        "groups": [*(existing.get("groups") or []), *incoming],
     }
 
 
@@ -150,7 +150,12 @@ def _legacy_alias(schema_group: str, field: str) -> str | None:
     exact = next((name for name, fields in mapping.items() if tuple(fields) == (field,)), None)
     if exact:
         return exact
-    return next((name for name, fields in mapping.items() if field in fields), None)
+    # Traditional scientific names intentionally reuse the product/ingredient
+    # family already established by the existing advanced-search path. Other
+    # broad mappings would silently unbind a planner field to unrelated fields.
+    if schema_group == "traditional_medicine" and field == "scientific_name":
+        return next((name for name, fields in mapping.items() if field in fields), None)
+    return None
 
 
 def _product_fields(group: str) -> tuple[str, ...]:
@@ -191,6 +196,7 @@ def compile_ai_search_plan(
     structured_filters: dict[str, Any] = {}
     text_terms: list[str] = []
     search_fields: list[str] = []
+    text_fallback_fields: list[str] = []
     date_ranges: dict[str, Any] = {}
     exact_identifiers: dict[str, Any] = {}
     product_fields = _product_fields(group) if group == "goods" else ()
@@ -280,6 +286,18 @@ def compile_ai_search_plan(
                 f"existing exactIdentifiers query cannot retain text field: {field}",
                 category="identifier_text_combination_unsupported",
             )
+        if any(len(_alternatives(concept)) > 1 for concept in concepts):
+            raise AIQueryCompilationError(
+                f"text fallback cannot preserve alternative concepts: {field}",
+                category="text_fallback_boolean_unsupported",
+            )
+        if text_fallback_fields and field not in text_fallback_fields:
+            raise AIQueryCompilationError(
+                f"text fallback cannot preserve field binding: {field}",
+                category="text_field_binding_unsupported",
+            )
+        if field not in text_fallback_fields:
+            text_fallback_fields.append(field)
         if not info.get("searchable") or info.get("type") not in {"string", "string[]"}:
             raise AIQueryCompilationError(f"field is not text searchable: {field}", category="unsupported_text_field")
         if field not in search_fields:

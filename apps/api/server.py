@@ -710,8 +710,13 @@ class TokenFilterItem(BaseModel):
     op: Literal["OR", "AND", "NOT"] = "OR"
 
 
+class TokenFilterGroup(BaseModel):
+    alternatives: List[str] = Field(default_factory=list)
+
+
 class TokenFilter(BaseModel):
     tokens: List[TokenFilterItem] = Field(default_factory=list)
+    groups: List[TokenFilterGroup] = Field(default_factory=list)
 
 
 class FilterRequest(BaseModel):
@@ -1407,7 +1412,7 @@ def next_param(params: List[Any], value: Any) -> str:
 
 
 def build_token_condition(column: str, token_filter: TokenFilter, params: List[Any]) -> Optional[str]:
-    if not token_filter or not token_filter.tokens:
+    if not token_filter or (not token_filter.tokens and not token_filter.groups):
         return None
 
     and_parts = []
@@ -1435,6 +1440,17 @@ def build_token_condition(column: str, token_filter: TokenFilter, params: List[A
     if or_parts:
         clauses.append("(" + " OR ".join(or_parts) + ")")
     clauses.extend(not_parts)
+
+    for group in token_filter.groups:
+        alternatives = []
+        for value in group.alternatives:
+            value = (value or "").strip()
+            if not value:
+                continue
+            p = next_param(params, f"%{value}%")
+            alternatives.append(f"{column} ILIKE {p}")
+        if alternatives:
+            clauses.append("(" + " OR ".join(alternatives) + ")")
 
     return " AND ".join(clauses) if clauses else None
 
