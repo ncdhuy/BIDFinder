@@ -155,6 +155,65 @@ IDENTIFIER_FIELDS = {
     "traditional": ("id", "bid_invitation_code", "decision_number", "registration_or_import_permit_number", "winning_bidder_id", "procuring_entity_id"),
 }
 
+_AI_PLANNER_COMMON_FIELD_ROLES = {
+    "winning_bidder_name": "text",
+    "bid_invitation_code": "identifier",
+    "procuring_entity_name": "text",
+    "decision_number": "identifier",
+    "decision_issued_at": "date",
+    "selection_method": "categorical",
+    "result_posted_at": "date",
+    "location": "text",
+}
+
+# This is the authoritative AI-search surface. Keep internal fields, numeric
+# measures, and unsupported metadata out of planner-visible contract fields.
+AI_PLANNER_FIELD_ROLES = {
+    "goods": {
+        **_AI_PLANNER_COMMON_FIELD_ROLES,
+        "item_name": "text",
+        "model_mark": "text",
+        "brand": "text",
+        "technical_specification": "text",
+        "unit": "categorical",
+        "manufacturer": "text",
+        "production_year": "categorical",
+        "country_of_origin": "categorical",
+        "model": "text",
+        "registration_or_import_permit_number": "identifier",
+        "hs_code": "identifier",
+    },
+    "medicines": {
+        **_AI_PLANNER_COMMON_FIELD_ROLES,
+        "medicine_name": "text",
+        "active_ingredient_or_herbal_component": "text",
+        "strength": "text",
+        "marketing_authorization_or_import_permit": "identifier",
+        "unit": "categorical",
+        "medicine_group": "categorical",
+        "route_of_administration": "text",
+        "dosage_form": "text",
+        "packaging": "text",
+        "shelf_life": "text",
+        "manufacturer": "text",
+        "production_country": "categorical",
+    },
+    "traditional": {
+        **_AI_PLANNER_COMMON_FIELD_ROLES,
+        "item_name": "text",
+        "used_part": "text",
+        "scientific_name": "text",
+        "registration_or_import_permit_number": "identifier",
+        "unit": "categorical",
+        "technical_group": "categorical",
+        "origin": "text",
+        "processing_method": "text",
+        "packaging": "text",
+        "manufacturer": "text",
+        "production_country": "categorical",
+    },
+}
+
 FIELD_WEIGHTS = {
     "item_name": 10,
     "medicine_name": 10,
@@ -310,6 +369,7 @@ def build_search_contract() -> dict[str, Any]:
         for field in schema:
             name = field["name"]
             identifier = name in IDENTIFIER_FIELDS[group]
+            planner_role = AI_PLANNER_FIELD_ROLES[group].get(name)
             autocomplete = name in AUTOCOMPLETE_FIELDS[group]
             fields.append({
                 "name": name,
@@ -331,6 +391,8 @@ def build_search_contract() -> dict[str, Any]:
                 "identifier": identifier,
                 "exact_lookup": identifier,
                 "allowed_operators": _operators(field),
+                "ai_planning": planner_role is not None,
+                "ai_planner_role": planner_role,
             })
         weights = [FIELD_WEIGHTS.get(name, 2) for name in query_by]
         groups[group] = {
@@ -421,6 +483,13 @@ def validate_contract_against_schema() -> dict[str, Any]:
                 errors.append(f"{group}.{name}: filterable drift")
             if field["sortable"] != (name in actual_sorts):
                 errors.append(f"{group}.{name}: sortable drift")
+            planner_role = field.get("ai_planner_role")
+            if field.get("ai_planning") != (planner_role is not None):
+                errors.append(f"{group}.{name}: ai planning metadata drift")
+            if planner_role is not None and planner_role not in {"text", "identifier", "date", "categorical"}:
+                errors.append(f"{group}.{name}: invalid ai planner role")
+            if planner_role != AI_PLANNER_FIELD_ROLES[group].get(name):
+                errors.append(f"{group}.{name}: ai planner role contract drift")
         for name in query_by | actual_filters | actual_sorts:
             if name not in names:
                 errors.append(f"{group}.{name}: schema capability omitted from catalog")

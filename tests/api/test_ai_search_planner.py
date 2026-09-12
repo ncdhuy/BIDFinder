@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date
+from datetime import date, datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "apps" / "api"))
 
 from ai_search_planner import (  # noqa: E402
     AI_SEARCH_PLAN_JSON_SCHEMA,
+    BIDFINDER_TIMEZONE,
     AIPlannerConfigurationError,
     AIPlannerProviderError,
     AIPlannerValidationError,
@@ -28,6 +29,7 @@ from ai_search_planner import (  # noqa: E402
     serialize_plan,
     validate_ai_search_plan,
 )
+from typesense_contract import get_search_contract  # noqa: E402
 
 
 def make_plan(group: str, clauses=None, dates=None, warnings=None, explanation=None):
@@ -95,6 +97,25 @@ class PlannerSchemaTest(unittest.TestCase):
         self.assertIn("medicine_name", allowed_fields_for_group("medicines"))
         self.assertNotIn("medicine_name", allowed_fields_for_group("goods"))
         self.assertIn("scientific_name", allowed_fields_for_group("traditional"))
+        self.assertIn("decision_issued_at", allowed_fields_for_group("goods"))
+        self.assertNotIn("id", allowed_fields_for_group("goods"))
+        self.assertNotIn("data_group", allowed_fields_for_group("goods"))
+        self.assertNotIn("source_tab", allowed_fields_for_group("goods"))
+        self.assertNotIn("partition_date", allowed_fields_for_group("goods"))
+        self.assertNotIn("quantity", allowed_fields_for_group("goods"))
+        self.assertNotIn("winning_unit_price", allowed_fields_for_group("goods"))
+        self.assertNotIn("bidder_count", allowed_fields_for_group("goods"))
+
+    def test_contract_exposes_ai_planner_roles(self):
+        fields = {
+            field["name"]: field
+            for field in get_search_contract()["groups"]["goods"]["fields"]
+        }
+        self.assertEqual("text", fields["item_name"]["ai_planner_role"])
+        self.assertTrue(fields["item_name"]["ai_planning"])
+        self.assertEqual("date", fields["decision_issued_at"]["ai_planner_role"])
+        self.assertFalse(fields["quantity"]["ai_planning"])
+        self.assertIsNone(fields["id"]["ai_planner_role"])
 
     def test_wrong_group_is_rejected(self):
         with self.assertRaisesRegex(AIPlannerValidationError, "invalid AI search plan"):
@@ -147,6 +168,20 @@ class PlannerSchemaTest(unittest.TestCase):
             validate_ai_search_plan(invalid, requested_group="goods")
         self.assertEqual("invalid_date_field", context.exception.category)
 
+        date_clause = make_plan("goods", [clause("result_posted_at", "recent")])
+        with self.assertRaises(AIPlannerValidationError) as context:
+            validate_ai_search_plan(date_clause, requested_group="goods")
+        self.assertEqual("date_field_as_text", context.exception.category)
+
+    def test_prompt_states_supported_date_field_policy(self):
+        prompt = build_planner_system_prompt("goods")
+        self.assertIn("decision_issued_at", prompt)
+        self.assertIn("result_posted_at", prompt)
+        self.assertIn("Generic recent-period language", prompt)
+        self.assertIn("ngày đăng tải KQLCNT", prompt)
+        self.assertNotIn("partition_date", prompt)
+        self.assertNotIn("quantity", prompt)
+
     def test_bounds_and_extra_keys_are_rejected(self):
         too_many = make_plan("goods", [clause("item_name", *[str(i) for i in range(25)])])
         with self.assertRaises(AIPlannerValidationError) as context:
@@ -170,6 +205,25 @@ class PlannerSchemaTest(unittest.TestCase):
             now=date(2026, 9, 12),
         )
         self.assertEqual((date(2026, 1, 1), date(2026, 12, 31)), (start, end))
+
+        start, end = resolve_relative_period(
+            AIRelativePeriod(kind="relative", amount=1, unit="months", direction="previous"),
+            now=date(2024, 3, 31),
+        )
+        self.assertEqual((date(2024, 2, 29), date(2024, 3, 31)), (start, end))
+
+        start, end = resolve_relative_period(
+            AIRelativePeriod(kind="relative", amount=1, unit="years", direction="current"),
+            now=date(2024, 12, 31),
+        )
+        self.assertEqual((date(2024, 1, 1), date(2024, 12, 31)), (start, end))
+
+        start, end = resolve_relative_period(
+            AIRelativePeriod(kind="relative", amount=1, unit="days", direction="previous"),
+            now=datetime(2026, 9, 11, 17, tzinfo=timezone.utc),
+        )
+        self.assertEqual((date(2026, 9, 11), date(2026, 9, 12)), (start, end))
+        self.assertEqual("Asia/Ho_Chi_Minh", getattr(BIDFINDER_TIMEZONE, "key", BIDFINDER_TIMEZONE.tzname(None)))
 
 
 class GoldenPlannerSemanticTest(unittest.TestCase):
@@ -267,7 +321,6 @@ class GoldenPlannerSemanticTest(unittest.TestCase):
             ("medicine permit exact", "medicines", [("marketing_authorization_or_import_permit", "893110140124")]),
             ("medicine production country", "medicines", [("production_country", "India")]),
             ("common selection method", "goods", [("selection_method", "đấu thầu rộng rãi")]),
-            ("common result date", "traditional", [("result_posted_at", "recent")]),
             ("common bidder", "traditional", [("winning_bidder_name", "Công ty TNHH Đông Dược")]),
             ("common procuring entity", "medicines", [("procuring_entity_name", "Bệnh viện Nguyễn Trãi")]),
             ("same field from separate segments", "goods", [("item_name", "máy thở"), ("item_name", "di động")]),
@@ -376,7 +429,7 @@ class PlannerRateLimitTest(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         self.assertTrue(body["success"])
         self.assertEqual("goods", body["plan"]["group"])
-        self.assertEqual("v0.1", body["meta"]["planner_version"])
+        self.assertEqual("v0.1.1", body["meta"]["planner_version"])
 
     def test_ai_specific_rate_limit_uses_existing_limiter(self):
         import server

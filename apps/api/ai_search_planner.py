@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import calendar
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import json
 import os
 from typing import Any, Mapping, Protocol, Literal
 from urllib.error import HTTPError, URLError
 from urllib.request import Request as URLRequest, urlopen
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -20,7 +21,7 @@ except ImportError:  # ``uvicorn`` is documented from ``apps/api``.
     from typesense_contract import PUBLIC_GROUPS, get_search_contract
 
 
-PLANNER_VERSION = "v0.1"
+PLANNER_VERSION = "v0.1.1"
 PLAN_SCHEMA_VERSION = "1"
 MAX_MESSAGE_LENGTH = 4000
 MAX_CLAUSES = 24
@@ -32,6 +33,11 @@ MAX_EXPLANATION_LENGTH = 240
 MAX_DATE_CONSTRAINTS = 4
 MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
+
+try:
+    BIDFINDER_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
+except ZoneInfoNotFoundError:  # Windows may not ship the IANA database.
+    BIDFINDER_TIMEZONE = timezone(timedelta(hours=7), "Asia/Ho_Chi_Minh")
 
 
 class _StrictModel(BaseModel):
@@ -154,7 +160,13 @@ def _contract_fields(group: str) -> list[dict[str, Any]]:
         raise AIPlannerValidationError("canonical field contract unavailable", category="canonical_contract") from exc
     if not isinstance(fields, list):
         raise AIPlannerValidationError("canonical field contract is malformed", category="canonical_contract")
-    return [field for field in fields if isinstance(field, Mapping) and isinstance(field.get("name"), str)]
+    return [
+        field
+        for field in fields
+        if isinstance(field, Mapping)
+        and isinstance(field.get("name"), str)
+        and field.get("ai_planning") is True
+    ]
 
 
 def allowed_fields_for_group(group: str) -> frozenset[str]:
@@ -168,12 +180,10 @@ def _field_metadata(group: str) -> dict[str, dict[str, Any]]:
 
 
 def _date_fields(group: str) -> frozenset[str]:
-    # Date semantics are inferred from the canonical contract names. No second
-    # field registry is maintained here.
     return frozenset(
-        name
-        for name in allowed_fields_for_group(group)
-        if name == "partition_date" or name.endswith("_at")
+        field["name"]
+        for field in _contract_fields(group)
+        if field.get("ai_planner_role") == "date"
     )
 
 
@@ -182,7 +192,10 @@ def build_planner_system_prompt(group: str) -> str:
     field_lines = []
     for field in fields:
         flags = []
-        if field.get("identifier"):
+        role = field.get("ai_planner_role")
+        if role:
+            flags.append(role)
+        if field.get("identifier") and role != "identifier":
             flags.append("identifier")
         if field.get("searchable"):
             flags.append("searchable")
@@ -209,8 +222,12 @@ Planning policy:
 8. A semicolon is only a boundary hint. It is not a field separator.
 9. For medicine requests, distinguish active ingredient or salt/form, strength, dosage form, route, packaging, permit number, manufacturer, and location. Ignore irrelevant excipients unless user makes them a search requirement.
 10. For traditional medicine, distinguish common or herbal name, scientific name, used part, processing method, origin, packaging, manufacturer, and location.
-11. For recent-period language without another explicit date field, use the canonical result_posted_at field. Represent periods structurally: previous 6 months means amount 6, unit months, direction previous; current year means amount 1, unit years, direction current. Never calculate calendar dates.
-12. Keep explanation entries short field mappings only. Do not include chain-of-thought.
+11. Date-only fields may appear only in date_constraints, never as text clauses.
+12. Generic recent-period language without an explicit date-field phrase defaults to decision_issued_at. This includes 6 tháng gần nhất, 30 ngày gần đây, and trong năm nay.
+13. Explicit ngày đăng kết quả, ngày đăng tải KQLCNT, or đăng kết quả overrides the default and uses result_posted_at.
+14. Explicit ngày quyết định or ngày ban hành quyết định uses decision_issued_at.
+15. Represent periods structurally: previous 6 months means amount 6, unit months, direction previous; current year means amount 1, unit years, direction current. Never calculate calendar dates.
+16. Keep explanation entries short field mappings only. Do not include chain-of-thought.
 
 The output must preserve this group and use only allowed fields. Empty terms are not useful. Add a warning when wording is ambiguous or unsupported.
 """
@@ -349,6 +366,8 @@ def validate_ai_search_plan(payload: Mapping[str, Any] | AISearchPlan, *, reques
         field = field.strip()
         if field not in allowed_fields:
             _raise_plan_error("unknown_field")
+        if metadata.get(field, {}).get("ai_planner_role") == "date":
+            _raise_plan_error("date_field_as_text")
         if clause.get("join") != "AND":
             _raise_plan_error("boolean_structure")
         concepts = clause.get("concepts")
@@ -371,7 +390,11 @@ def validate_ai_search_plan(payload: Mapping[str, Any] | AISearchPlan, *, reques
             match = concept.get("match", "text")
             if match not in {"text", "exact"}:
                 _raise_plan_error("match_mode")
-            if match == "exact" and not metadata.get(field, {}).get("identifier", False):
+            field_metadata = metadata.get(field, {})
+            if match == "exact" and not (
+                field_metadata.get("identifier", False)
+                or field_metadata.get("ai_planner_role") == "identifier"
+            ):
                 _raise_plan_error("exact_value_requires_identifier")
             cleaned_concepts.append({"alternatives": alternatives, "match": match})
         if not cleaned_concepts:
@@ -433,11 +456,21 @@ def _subtract_months(value: date, months: int) -> date:
     return value.replace(year=year, month=month, day=min(value.day, calendar.monthrange(year, month)[1]))
 
 
+def _today_in_bidfinder_timezone(now: date | datetime | None) -> date:
+    if now is None:
+        return datetime.now(BIDFINDER_TIMEZONE).date()
+    if isinstance(now, datetime):
+        if now.tzinfo is not None:
+            return now.astimezone(BIDFINDER_TIMEZONE).date()
+        return now.date()
+    return now
+
+
 def resolve_relative_period(period: AIRelativePeriod | Mapping[str, Any], *, now: date | datetime | None = None) -> tuple[date, date]:
     """Resolve structural periods in Python; planner output stays date-arithmetic free."""
 
     relative = period if isinstance(period, AIRelativePeriod) else _model_validate(AIRelativePeriod, period)
-    today = now.date() if isinstance(now, datetime) else (now or date.today())
+    today = _today_in_bidfinder_timezone(now)
     if relative.direction == "previous":
         if relative.unit == "days":
             start = today - timedelta(days=relative.amount)

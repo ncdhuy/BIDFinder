@@ -13,6 +13,8 @@
       "collection_alias": "bidfinder_goods",
       "fields": [
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -39,6 +41,8 @@
           "ui_visibility": "detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [
             "eq",
             "in"
@@ -68,6 +72,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [
             "eq",
             "in"
@@ -97,6 +103,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [
             "eq",
             "in"
@@ -124,6 +132,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [
             "eq",
             "from",
@@ -154,6 +164,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": true,
@@ -181,6 +193,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "categorical",
+          "ai_planning": true,
           "allowed_operators": [
             "eq",
             "in"
@@ -210,6 +224,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [
             "eq",
             "min",
@@ -240,6 +256,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "categorical",
+          "ai_planning": true,
           "allowed_operators": [
             "eq",
             "in"
@@ -269,6 +287,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "identifier",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -295,6 +315,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -321,6 +343,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -347,6 +371,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "categorical",
+          "ai_planning": true,
           "allowed_operators": [
             "eq",
             "in"
@@ -376,6 +402,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": true,
@@ -402,6 +430,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -428,6 +458,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -453,6 +485,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "identifier",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -478,6 +512,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [
             "eq",
             "min",
@@ -509,6 +545,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -537,6 +575,8 @@
           "ui_visibility": "detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": true,
@@ -565,6 +605,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "identifier",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": true,
@@ -591,6 +633,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -617,6 +661,8 @@
           "ui_visibility": "detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": true,
@@ -643,6 +689,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "categorical",
+          "ai_planning": true,
           "allowed_operators": [
             "eq",
             "in"
@@ -672,6 +720,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "date",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -698,6 +748,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "identifier",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -724,6 +776,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "date",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -750,6 +804,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [
             "eq",
             "min",
@@ -780,6 +836,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -937,6 +995,8 @@
       "collection_alias": "bidfinder_medicines",
       "fields": [
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -964,6 +1024,8 @@
           "ui_visibility": "detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [
             "eq",
             "in"
@@ -994,6 +1056,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [
             "eq",
             "in"
@@ -1024,6 +1088,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [
             "eq",
             "in"
@@ -1052,6 +1118,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [
             "eq",
             "from",
@@ -1083,6 +1151,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": true,
@@ -1110,6 +1180,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": true,
@@ -1137,6 +1209,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -1164,6 +1238,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "identifier",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -1191,6 +1267,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [
             "eq",
             "in"
@@ -1221,6 +1299,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [
             "eq",
             "in"
@@ -1251,6 +1331,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -1278,6 +1360,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": true,
@@ -1305,6 +1389,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "categorical",
+          "ai_planning": true,
           "allowed_operators": [
             "eq",
             "in"
@@ -1335,6 +1421,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -1362,6 +1450,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "categorical",
+          "ai_planning": true,
           "allowed_operators": [
             "eq",
             "in"
@@ -1392,6 +1482,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [
             "eq",
             "min",
@@ -1423,6 +1515,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [
             "eq",
             "min",
@@ -1454,6 +1548,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -1483,6 +1579,8 @@
           "ui_visibility": "detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": true,
@@ -1512,6 +1610,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "categorical",
+          "ai_planning": true,
           "allowed_operators": [
             "eq",
             "in"
@@ -1542,6 +1642,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "identifier",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": true,
@@ -1569,6 +1671,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -1596,6 +1700,8 @@
           "ui_visibility": "detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": true,
@@ -1623,6 +1729,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "categorical",
+          "ai_planning": true,
           "allowed_operators": [
             "eq",
             "in"
@@ -1653,6 +1761,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "date",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -1680,6 +1790,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "identifier",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -1707,6 +1819,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "date",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -1734,6 +1848,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [
             "eq",
             "min",
@@ -1765,6 +1881,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -1937,6 +2055,8 @@
       "collection_alias": "bidfinder_traditional",
       "fields": [
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -1963,6 +2083,8 @@
           "ui_visibility": "detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [
             "eq",
             "in"
@@ -1992,6 +2114,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [
             "eq",
             "in"
@@ -2021,6 +2145,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [
             "eq",
             "in"
@@ -2048,6 +2174,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [
             "eq",
             "from",
@@ -2078,6 +2206,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": true,
@@ -2105,6 +2235,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -2131,6 +2263,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": true,
@@ -2157,6 +2291,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [
             "eq",
             "in"
@@ -2186,6 +2322,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -2212,6 +2350,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "identifier",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -2238,6 +2378,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": true,
@@ -2264,6 +2406,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "categorical",
+          "ai_planning": true,
           "allowed_operators": [
             "eq",
             "in"
@@ -2293,6 +2437,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -2319,6 +2465,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "categorical",
+          "ai_planning": true,
           "allowed_operators": [
             "eq",
             "in"
@@ -2348,6 +2496,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [
             "eq",
             "min",
@@ -2378,6 +2528,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [
             "eq",
             "min",
@@ -2408,6 +2560,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -2436,6 +2590,8 @@
           "ui_visibility": "detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": true,
@@ -2464,6 +2620,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "categorical",
+          "ai_planning": true,
           "allowed_operators": [
             "eq",
             "in"
@@ -2493,6 +2651,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "identifier",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": true,
@@ -2519,6 +2679,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -2545,6 +2707,8 @@
           "ui_visibility": "detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": true,
@@ -2571,6 +2735,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "categorical",
+          "ai_planning": true,
           "allowed_operators": [
             "eq",
             "in"
@@ -2600,6 +2766,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "date",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -2626,6 +2794,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "identifier",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -2652,6 +2822,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "date",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
@@ -2678,6 +2850,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": null,
+          "ai_planning": false,
           "allowed_operators": [
             "eq",
             "min",
@@ -2707,6 +2881,8 @@
           "ui_visibility": "list_and_detail"
         },
         {
+          "ai_planner_role": "text",
+          "ai_planning": true,
           "allowed_operators": [],
           "api_exposure": "canonical",
           "autocomplete": false,
