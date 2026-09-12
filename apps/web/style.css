@@ -1532,9 +1532,6 @@ body:not(.landing-active) .btn-export {
 
   --t-border: var(--color-border-strong, var(--color-border));
   --t-border-accent: var(--color-primary); /* dùng làm “hint” màu */
-  --t-scroll-thumb: var(--color-primary);
-  --t-scroll-thumb-hover: var(--color-primary-dark);
-
   border: 1px solid var(--t-border);
   border-radius: 12px;
   background: var(--color-surface);
@@ -1570,8 +1567,6 @@ body:not(.landing-active) .btn-export {
   --t-head-bg: var(--history-action-active-bg);
   --t-range-bg: var(--history-action-active-bg);
   --t-border-accent: var(--history-action-ink);
-  --t-scroll-thumb: var(--history-action-ink);
-  --t-scroll-thumb-hover: var(--history-action-ink);
 }
 
 /* DF2 theme */
@@ -1582,8 +1577,6 @@ body:not(.landing-active) .btn-export {
   --t-head-bg: var(--insight-action-active-bg);
   --t-range-bg: var(--insight-action-active-bg);
   --t-border-accent: var(--insight-action-ink);
-  --t-scroll-thumb: var(--insight-action-ink);
-  --t-scroll-thumb-hover: var(--insight-action-ink);
 }
 
 /* DF3 theme */
@@ -1594,8 +1587,6 @@ body:not(.landing-active) .btn-export {
   --t-head-bg: var(--advanced-action-active-bg);
   --t-range-bg: var(--advanced-action-active-bg);
   --t-border-accent: var(--advanced-action-ink);
-  --t-scroll-thumb: var(--advanced-action-ink);
-  --t-scroll-thumb-hover: var(--advanced-action-ink);
 }
 
 /* (optional) nhấn nhẹ màu theme trên card bằng inset line, không “pha” màu */
@@ -1654,7 +1645,7 @@ body:not(.landing-active) .btn-export {
   scrollbar-color: var(--table-scroll-thumb) var(--table-scroll-track) !important;
 }
 
-#data-tab .table-wrapper .table-scroll::-webkit-scrollbar{ width: 14px !important; height: 14px !important; }
+#data-tab .table-wrapper .table-scroll::-webkit-scrollbar{ width: 10px !important; height: 10px !important; }
 #data-tab .table-wrapper .table-scroll::-webkit-scrollbar-track{
   background: var(--table-scroll-track);
   border-radius: 10px;
