@@ -350,6 +350,32 @@ class TypesenseUiContractTest(unittest.TestCase):
         self.assertIn("const horizontalPadding =", script_source)
         self.assertIn("(scrollContainer?.clientWidth || 0) - horizontalPadding", script_source)
 
+    def test_all_result_tables_use_one_always-visible_scrollbar_style(self):
+        style_source = (ROOT / "apps/web/style.css").read_text(encoding="utf-8")
+        shared_rule_start = style_source.index(".data-card .table-scroll {")
+        shared_rule_end = style_source.index("}", shared_rule_start)
+        shared_rule = style_source[shared_rule_start:shared_rule_end]
+        webkit_rule_start = style_source.index(".data-card .table-scroll::-webkit-scrollbar{")
+        webkit_rule_end = style_source.index("}", webkit_rule_start)
+        webkit_rule = style_source[webkit_rule_start:webkit_rule_end]
+        scrollbar_start = style_source.index(".data-card .table-scroll::-webkit-scrollbar-track{")
+        scrollbar_end = style_source.index("/* =========================\n   TABLE CORE", scrollbar_start)
+        scrollbar_rules = style_source[scrollbar_start:scrollbar_end]
+
+        for token in (
+            "--table-scroll-thumb: #6f7d86;",
+            "--table-scroll-thumb-hover: #596972;",
+            "--table-scroll-track: #e6ebee;",
+        ):
+            self.assertIn(token, style_source)
+        self.assertIn("scrollbar-width: auto;", shared_rule)
+        self.assertIn("scrollbar-color: var(--table-scroll-thumb) var(--table-scroll-track);", shared_rule)
+        self.assertIn("width: 14px; height: 14px;", webkit_rule)
+        self.assertIn("background: var(--table-scroll-track);", scrollbar_rules)
+        self.assertIn("background: var(--table-scroll-thumb);", scrollbar_rules)
+        self.assertNotIn("background: var(--t-scroll-thumb);", scrollbar_rules)
+        self.assertNotIn("background: var(--t-scroll-thumb-hover);", scrollbar_rules)
+
     def test_table_does_not_render_scroll_hint_and_supports_cell_keyboard_navigation(self):
         style_source = (ROOT / "apps/web/style.css").read_text(encoding="utf-8")
         script_source = (ROOT / "apps/web/script.js").read_text(encoding="utf-8")
