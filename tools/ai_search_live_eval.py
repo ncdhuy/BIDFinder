@@ -20,9 +20,9 @@ from ai_search_planner import (  # noqa: E402
     AIPlannerError,
     AISearchPlan,
     OpenAIResponsesPlanner,
-    create_search_plan,
     get_planner_settings,
     serialize_plan,
+    validate_ai_search_plan,
 )
 
 
@@ -150,14 +150,20 @@ CASES: tuple[dict[str, Any], ...] = (
         "Gói 2g thuốc chứa: Acid clavulanic (dưới dạng kali clavulanat & silicon dioxyd); Amoxicilin (dưới dạng amoxicilin trihydrat); 62,5mg + 500mg; CÔNG TY CỔ PHẦN DƯỢC HẬU GIANG; Hà Nội",
         {
             "required": [
-                {"field": "strength", "all": ["62,5", "500"]},
                 {"field": "winning_bidder_name", "all": ["Hậu Giang"]},
                 {"field": "location", "all": ["Hà Nội"]},
             ],
             "concept_groups": [{
                 "field": "active_ingredient_or_herbal_component",
                 "groups": [{"alternatives_all": ["clavulanic", "clavulanat"]}, {"all": ["amoxicilin"]}],
+            }, {
+                "field": "strength",
+                "groups": [
+                    {"any": ["62,5", "62,5mg", "62.5", "62.5 mg"]},
+                    {"any": ["500", "500mg", "500 mg"]},
+                ],
             }],
+            "forbidden_fields": ["packaging"],
             "not_terms": ["silicon dioxyd"],
             "not_phrases": ["Gói 2g thuốc chứa: Acid clavulanic (dưới dạng kali clavulanat & silicon dioxyd)"],
         },
@@ -192,7 +198,7 @@ CASES: tuple[dict[str, Any], ...] = (
     _case(
         "medicine_mixed_english_permit",
         "medicines",
-        "Amoxicillin 500mg viên nang cứng, uống; GĐKLH 893110140124; CÔNG TY TNHH ABC Pharma",
+        "Amoxicillin 500mg viên nang cứng, uống; GĐKLH 893110140124; nhà sản xuất CÔNG TY TNHH ABC Pharma",
         {
             "required": [
                 {"fields": ["medicine_name", "active_ingredient_or_herbal_component"], "all": ["Amoxicillin"]},
@@ -288,7 +294,7 @@ CASES: tuple[dict[str, Any], ...] = (
     _case(
         "traditional_material_processing_origin",
         "traditional",
-        "Bạch linh (Poria); thân nấm; chế biến thái phiến, phơi khô; Việt Nam; gói 500g; Đông Dược Văn Hương",
+        "Bạch linh (Poria); thân nấm; chế biến thái phiến, phơi khô; Việt Nam; gói 500g; CÔNG TY TNHH Đông Dược Văn Hương cung cấp",
         {
             "required": [
                 {"fields": ["item_name"], "all": ["Bạch linh"]},
@@ -297,7 +303,7 @@ CASES: tuple[dict[str, Any], ...] = (
                 {"field": "processing_method", "all": ["thái phiến", "phơi khô"]},
                 {"fields": ["production_country", "origin"], "all": ["Việt Nam"]},
                 {"field": "packaging", "all": ["500g"]},
-                {"field": "manufacturer", "all": ["Đông Dược Văn Hương"]},
+                {"field": "winning_bidder_name", "all": ["Đông Dược Văn Hương"]},
             ]
         },
     ),
@@ -305,6 +311,19 @@ CASES: tuple[dict[str, Any], ...] = (
         "traditional_manufacturer_hospital_location",
         "traditional",
         "Dược liệu đan sâm; Công ty cổ phần Dược Traphaco; Bệnh viện Y học cổ truyền Trung ương; Hà Nội",
+        {
+            "required": [
+                {"field": "item_name", "all": ["đan sâm"]},
+                {"field": "winning_bidder_name", "all": ["Traphaco"]},
+                {"field": "procuring_entity_name", "all": ["Y học cổ truyền Trung ương"]},
+                {"field": "location", "all": ["Hà Nội"]},
+            ]
+        },
+    ),
+    _case(
+        "traditional_explicit_manufacturer_hospital_location",
+        "traditional",
+        "Dược liệu đan sâm; nhà sản xuất Công ty cổ phần Dược Traphaco; Bệnh viện Y học cổ truyền Trung ương; Hà Nội",
         {
             "required": [
                 {"field": "item_name", "all": ["đan sâm"]},
@@ -338,20 +357,6 @@ CASES: tuple[dict[str, Any], ...] = (
                 {"field": "unit", "all": ["kg"]},
             ],
             "exact_identifiers": [{"field": "registration_or_import_permit_number", "value": "4979/BYT-YDCT"}],
-        },
-    ),
-    _case(
-        "traditional_noisy_company_country",
-        "traditional",
-        "CÔNG TY TNHH Đông Dược Văn Hương cung cấp hoàng kỳ (Astragalus membranaceus), bộ phận rễ, nước sản xuất Việt Nam",
-        {
-            "required": [
-                {"field": "item_name", "all": ["hoàng kỳ"]},
-                {"field": "scientific_name", "all": ["Astragalus membranaceus"]},
-                {"field": "used_part", "all": ["rễ"]},
-                {"field": "manufacturer", "all": ["Đông Dược Văn Hương"]},
-                {"field": "production_country", "all": ["Việt Nam"]},
-            ]
         },
     ),
     _case(
@@ -450,6 +455,9 @@ def evaluate_semantics(plan: AISearchPlan | Mapping[str, Any], expectations: Map
                 alternatives = concept.get("alternatives", [])
                 if all(any(_contains(actual, expected) for actual in alternatives) for expected in group.get("alternatives_all", [])) and all(
                     any(_contains(actual, expected) for actual in alternatives) for expected in group.get("all", [])
+                ) and (
+                    not group.get("any")
+                    or any(_contains(actual, expected) for actual in alternatives for expected in group["any"])
                 ):
                     match_index = index
                     break
@@ -510,6 +518,95 @@ def live_eval_preflight(environ: Mapping[str, str] | None = None) -> dict[str, s
     return {"status": "READY", "model": model}
 
 
+def _safe_scalar(value: Any) -> Any:
+    if isinstance(value, str):
+        return value[:240]
+    if value is None or type(value) in {int, float, bool}:
+        return value
+    return f"<{type(value).__name__}>"
+
+
+def _sanitize_provider_plan(raw: Any) -> dict[str, Any]:
+    """Keep only safe structured fields needed to diagnose live validation failures."""
+
+    if not isinstance(raw, Mapping):
+        return {"type": type(raw).__name__}
+
+    sanitized: dict[str, Any] = {}
+    for key in ("version", "group"):
+        if key in raw:
+            sanitized[key] = _safe_scalar(raw[key])
+
+    clauses = raw.get("clauses")
+    if isinstance(clauses, list):
+        safe_clauses = []
+        for clause in clauses[:32]:
+            if not isinstance(clause, Mapping):
+                safe_clauses.append({"type": type(clause).__name__})
+                continue
+            safe_clause: dict[str, Any] = {}
+            for key in ("field", "join"):
+                if key in clause:
+                    safe_clause[key] = _safe_scalar(clause[key])
+            concepts = clause.get("concepts")
+            if isinstance(concepts, list):
+                safe_concepts = []
+                for concept in concepts[:32]:
+                    if not isinstance(concept, Mapping):
+                        safe_concepts.append({"type": type(concept).__name__})
+                        continue
+                    safe_concept: dict[str, Any] = {}
+                    alternatives = concept.get("alternatives")
+                    if isinstance(alternatives, list):
+                        safe_concept["alternatives"] = [_safe_scalar(term) for term in alternatives[:32]]
+                    if "match" in concept:
+                        safe_concept["match"] = _safe_scalar(concept["match"])
+                    unexpected = sorted(set(concept) - {"alternatives", "match"})
+                    if unexpected:
+                        safe_concept["unexpected_keys"] = unexpected
+                    safe_concepts.append(safe_concept)
+                safe_clause["concepts"] = safe_concepts
+            unexpected = sorted(set(clause) - {"field", "concepts", "join"})
+            if unexpected:
+                safe_clause["unexpected_keys"] = unexpected
+            safe_clauses.append(safe_clause)
+        sanitized["clauses"] = safe_clauses
+
+    date_constraints = raw.get("date_constraints")
+    if isinstance(date_constraints, list):
+        safe_dates = []
+        for constraint in date_constraints[:16]:
+            if not isinstance(constraint, Mapping):
+                safe_dates.append({"type": type(constraint).__name__})
+                continue
+            safe_constraint: dict[str, Any] = {}
+            for key in ("field", "inclusive"):
+                if key in constraint:
+                    safe_constraint[key] = _safe_scalar(constraint[key])
+            period = constraint.get("period")
+            if isinstance(period, Mapping):
+                safe_constraint["period"] = {
+                    key: _safe_scalar(period[key])
+                    for key in ("kind", "amount", "unit", "direction")
+                    if key in period
+                }
+            unexpected = sorted(set(constraint) - {"field", "period", "inclusive"})
+            if unexpected:
+                safe_constraint["unexpected_keys"] = unexpected
+            safe_dates.append(safe_constraint)
+        sanitized["date_constraints"] = safe_dates
+
+    for key in ("warnings", "explanation"):
+        value = raw.get(key)
+        if isinstance(value, list):
+            sanitized[key] = [_safe_scalar(item) for item in value[:32]]
+
+    unexpected = sorted(set(raw) - {"version", "group", "clauses", "date_constraints", "warnings", "explanation"})
+    if unexpected:
+        sanitized["unexpected_keys"] = unexpected
+    return sanitized
+
+
 async def run_cases(
     cases: Sequence[Mapping[str, Any]],
     provider_factory: Callable[[], Any],
@@ -520,9 +617,12 @@ async def run_cases(
     for case in cases:
         case_started = time.perf_counter()
         returned_plan: Mapping[str, Any] | None = None
+        raw_provider_plan: Mapping[str, Any] | None = None
         failure_reasons: list[str] = []
         try:
-            plan = await create_search_plan(case["group"], case["message"], provider=provider_factory())
+            raw = await provider_factory().create_plan(group=case["group"], message=case["message"])
+            raw_provider_plan = _sanitize_provider_plan(raw)
+            plan = validate_ai_search_plan(raw, requested_group=case["group"])
             returned_plan = serialize_plan(plan)
             expectations = dict(case["expectations"])
             expectations.setdefault("group", case["group"])
@@ -542,6 +642,8 @@ async def run_cases(
             result["failure_reason"] = failure_reasons
             if returned_plan is not None:
                 result["returned_plan"] = returned_plan
+            elif raw_provider_plan is not None:
+                result["raw_provider_plan"] = raw_provider_plan
         else:
             passed += 1
         case_reports.append(result)
@@ -554,6 +656,7 @@ async def run_cases(
         "failed": total - passed,
         "pass_rate": round(passed / total, 4) if total else 0.0,
         "aggregate_latency_ms": round((time.perf_counter() - started) * 1000, 2),
+        "average_latency_ms": round(sum(case["latency_ms"] for case in case_reports) / total, 2) if total else 0.0,
         "cases": case_reports,
     }
 
@@ -574,6 +677,7 @@ async def run_live_evaluation(
             "pass_rate": None,
             "model": preflight["model"],
             "aggregate_latency_ms": 0.0,
+            "average_latency_ms": 0.0,
             "cases": [],
         }
 
@@ -590,7 +694,8 @@ def _print_report(report: Mapping[str, Any]) -> None:
         print(
             f"{report['status']}: total={report['total_cases']} passed={report['passed']} "
             f"failed={report['failed']} pass_rate={report['pass_rate']:.2%} "
-            f"model={report['model']} aggregate_latency_ms={report['aggregate_latency_ms']}"
+            f"model={report['model']} aggregate_latency_ms={report['aggregate_latency_ms']} "
+            f"average_latency_ms={report['average_latency_ms']}"
         )
         for case in report["cases"]:
             if not case["passed"]:

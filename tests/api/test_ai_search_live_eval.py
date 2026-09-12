@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 import sys
 import unittest
@@ -34,7 +35,7 @@ def plan(group: str, clauses, dates=None):
 def text_clause(field: str, *terms: str):
     return {
         "field": field,
-        "concepts": [{"alternatives": [term], "match": "text"} for term in terms],
+        "concepts": [{"alternatives": [term]} for term in terms],
         "join": "AND",
     }
 
@@ -62,9 +63,9 @@ class LiveSemanticEvaluatorTest(unittest.TestCase):
         split = plan("medicines", [{
             "field": "active_ingredient_or_herbal_component",
             "concepts": [
-                {"alternatives": ["clavulanic"], "match": "text"},
-                {"alternatives": ["clavulanat"], "match": "text"},
-                {"alternatives": ["amoxicilin"], "match": "text"},
+                {"alternatives": ["clavulanic"]},
+                {"alternatives": ["clavulanat"]},
+                {"alternatives": ["amoxicilin"]},
             ],
             "join": "AND",
         }])
@@ -86,7 +87,58 @@ class LiveSemanticEvaluatorTest(unittest.TestCase):
         report = asyncio.run(run_cases([case], lambda: FakeProvider()))
         self.assertEqual("PASS", report["status"])
         self.assertEqual(1, report["passed"])
+        self.assertGreaterEqual(report["average_latency_ms"], 0.0)
         self.assertEqual([], [item for item in report["cases"] if not item["passed"]])
+
+    def test_validation_failure_reports_sanitized_raw_provider_plan(self):
+        case = {
+            "id": "invalid-provider-plan",
+            "group": "goods",
+            "message": "máy thở",
+            "expectations": {},
+        }
+        raw = plan("goods", [text_clause("item_name", "máy thở")])
+        raw["clauses"][0]["concepts"][0]["match"] = "exact"
+        raw["headers"] = {"Authorization": "Bearer should-not-appear"}
+
+        class FakeProvider:
+            async def create_plan(self, **_kwargs):
+                return raw
+
+        report = asyncio.run(run_cases([case], lambda: FakeProvider()))
+        failure = report["cases"][0]
+        self.assertFalse(failure["passed"])
+        self.assertIn("raw_provider_plan", failure)
+        self.assertNotIn("returned_plan", failure)
+        self.assertEqual("exact", failure["raw_provider_plan"]["clauses"][0]["concepts"][0]["match"])
+        self.assertIn("headers", failure["raw_provider_plan"]["unexpected_keys"])
+        self.assertNotIn("should-not-appear", json.dumps(report))
+
+    def test_contextual_packaging_can_be_omitted_but_explicit_packaging_is_supported(self):
+        core = next(case for case in CASES if case["id"] == "medicine_salts_strength_bidder_location")
+        core_plan = plan("medicines", [
+            {
+                "field": "active_ingredient_or_herbal_component",
+                "concepts": [
+                    {"alternatives": ["clavulanic", "clavulanat"]},
+                    {"alternatives": ["amoxicilin"]},
+                ],
+                "join": "AND",
+            },
+            text_clause("strength", "62,5", "500"),
+            text_clause("winning_bidder_name", "Hậu Giang"),
+            text_clause("location", "Hà Nội"),
+        ])
+        self.assertEqual([], evaluate_semantics(core_plan, core["expectations"]))
+
+        explicit = next(case for case in CASES if case["id"] == "medicine_packaging_shelf_life_group")
+        explicit_plan = plan("medicines", [
+            text_clause("medicine_group", "N2"),
+            text_clause("unit", "viên"),
+            text_clause("packaging", "hộp 3 vỉ x 10 viên"),
+            text_clause("shelf_life", "36 tháng"),
+        ])
+        self.assertEqual([], evaluate_semantics(explicit_plan, explicit["expectations"]))
 
     def test_live_evaluation_skips_without_credentials(self):
         environment = {"BIDFINDER_AI_LIVE_EVAL": "1"}
@@ -96,6 +148,7 @@ class LiveSemanticEvaluatorTest(unittest.TestCase):
         self.assertEqual("SKIP", report["status"])
         self.assertEqual("missing_api_key", report["reason"])
         self.assertEqual(0, report["total_cases"])
+        self.assertIsNone(report["pass_rate"])
 
 
 if __name__ == "__main__":

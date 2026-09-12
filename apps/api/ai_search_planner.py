@@ -21,7 +21,7 @@ except ImportError:  # ``uvicorn`` is documented from ``apps/api``.
     from typesense_contract import PUBLIC_GROUPS, get_search_contract
 
 
-PLANNER_VERSION = "v0.1.1"
+PLANNER_VERSION = "v0.1.2"
 PLAN_SCHEMA_VERSION = "1"
 MAX_MESSAGE_LENGTH = 4000
 MAX_CLAUSES = 24
@@ -52,12 +52,16 @@ class AIPlanRequest(_StrictModel):
 
 class AIConcept(_StrictModel):
     alternatives: list[str] = Field(..., min_length=1, max_length=MAX_ALTERNATIVES_PER_CONCEPT)
+
+
+class AINormalizedConcept(_StrictModel):
+    alternatives: list[str] = Field(..., min_length=1, max_length=MAX_ALTERNATIVES_PER_CONCEPT)
     match: Literal["text", "exact"] = "text"
 
 
 class AIClause(_StrictModel):
     field: str = Field(..., min_length=1, max_length=80)
-    concepts: list[AIConcept] = Field(..., min_length=1, max_length=MAX_CONCEPTS_PER_CLAUSE)
+    concepts: list[AINormalizedConcept] = Field(..., min_length=1, max_length=MAX_CONCEPTS_PER_CLAUSE)
     # Alternatives express OR inside one concept. AND is the only clause join,
     # so the intermediate representation never depends on Boolean precedence.
     join: Literal["AND"]
@@ -217,17 +221,21 @@ Planning policy:
 3. Use separate concepts with join AND when both concepts are independently required.
 4. Put spelling, form, or synonym alternatives for the same concept in one alternatives array. Never use Boolean syntax inside a term.
 5. Prefer recall when procurement wording varies, but do not invent unsupported facts or synonyms.
-6. Preserve identifiers exactly, including Mã TBMT, registration numbers, model numbers, decision numbers, and HS codes. Mark identifier concepts exact.
+6. Preserve identifiers exactly, including Mã TBMT, registration numbers, model numbers, decision numbers, and HS codes. The backend derives exact identifier matching from the canonical field role.
 7. Reduce low-value legal or company prefixes when searching company names. Keep the discriminative company name, such as Hậu Giang.
 8. A semicolon is only a boundary hint. It is not a field separator.
-9. For medicine requests, distinguish active ingredient or salt/form, strength, dosage form, route, packaging, permit number, manufacturer, and location. Ignore irrelevant excipients unless user makes them a search requirement.
-10. For traditional medicine, distinguish common or herbal name, scientific name, used part, processing method, origin, packaging, manufacturer, and location.
-11. Date-only fields may appear only in date_constraints, never as text clauses.
-12. Generic recent-period language without an explicit date-field phrase defaults to decision_issued_at. This includes 6 tháng gần nhất, 30 ngày gần đây, and trong năm nay.
-13. Explicit ngày đăng kết quả, ngày đăng tải KQLCNT, or đăng kết quả overrides the default and uses result_posted_at.
-14. Explicit ngày quyết định or ngày ban hành quyết định uses decision_issued_at.
-15. Represent periods structurally: previous 6 months means amount 6, unit months, direction previous; current year means amount 1, unit years, direction current. Never calculate calendar dates.
-16. Keep explanation entries short field mappings only. Do not include chain-of-thought.
+9. In procurement-result context, an organization or company without an explicit manufacturing cue defaults to winning_bidder_name.
+10. Use manufacturer only for explicit cues such as hãng, hãng sản xuất, nhà sản xuất, cơ sở sản xuất, sản xuất bởi, manufacturer, or manufactured by.
+11. For medicine requests, distinguish active ingredient or salt/form, strength, dosage form, route, packaging, permit number, manufacturer, and location. Ignore irrelevant excipients unless user makes them a search requirement.
+12. For combination-product strengths joined by +, /, or clearly separate dose components, put independently required strengths in separate concepts with AND. Do not make one complete strength string an alternative.
+13. Treat contextual container wording such as Gói 2g thuốc chứa as narrative unless the user clearly requests packaging. Use packaging for explicit quy cách đóng gói, đóng gói, hộp 10 vỉ, chai 100ml, or clearly requested gói 2g.
+14. For traditional medicine, distinguish common or herbal name, scientific name, used part, processing method, origin, packaging, manufacturer, and location.
+15. Date-only fields may appear only in date_constraints, never as text clauses.
+16. Generic recent-period language without an explicit date-field phrase defaults to decision_issued_at. This includes 6 tháng gần nhất, 30 ngày gần đây, and trong năm nay.
+17. Explicit ngày đăng kết quả, ngày đăng tải KQLCNT, or đăng kết quả overrides the default and uses result_posted_at.
+18. Explicit ngày quyết định or ngày ban hành quyết định uses decision_issued_at.
+19. Represent periods structurally: previous 6 months means amount 6, unit months, direction previous; current year means amount 1, unit years, direction current. Never calculate calendar dates.
+20. Keep explanation entries short field mappings only. Do not include chain-of-thought.
 
 The output must preserve this group and use only allowed fields. Empty terms are not useful. Add a warning when wording is ambiguous or unsupported.
 """
@@ -261,9 +269,8 @@ AI_SEARCH_PLAN_JSON_SCHEMA: dict[str, Any] = {
                                     "maxItems": MAX_ALTERNATIVES_PER_CONCEPT,
                                     "items": {"type": "string", "maxLength": MAX_TERM_LENGTH},
                                 },
-                                "match": {"type": "string", "enum": ["text", "exact"]},
                             },
-                            "required": ["alternatives", "match"],
+                            "required": ["alternatives"],
                         },
                     },
                     "join": {"type": "string", "enum": ["AND"]},
@@ -331,9 +338,10 @@ def _clean_text_list(value: Any, *, max_length: int, category: str) -> list[str]
 
 
 def validate_ai_search_plan(payload: Mapping[str, Any] | AISearchPlan, *, requested_group: str | None = None) -> AISearchPlan:
-    """Validate model output before any future translation to the search contract."""
+    """Validate provider output and derive canonical match semantics."""
 
-    raw = _model_dump(payload) if isinstance(payload, AISearchPlan) else payload
+    normalized_input = isinstance(payload, AISearchPlan)
+    raw = _model_dump(payload) if normalized_input else payload
     if not isinstance(raw, Mapping):
         _raise_plan_error("top_level_shape")
 
@@ -376,7 +384,8 @@ def validate_ai_search_plan(payload: Mapping[str, Any] | AISearchPlan, *, reques
 
         cleaned_concepts = []
         for concept in concepts:
-            if not isinstance(concept, Mapping) or set(concept) not in ({"alternatives"}, {"alternatives", "match"}):
+            expected_concept_keys = {"alternatives", "match"} if normalized_input else {"alternatives"}
+            if not isinstance(concept, Mapping) or set(concept) != expected_concept_keys:
                 _raise_plan_error("concept_shape")
             alternatives = _clean_text_list(
                 concept.get("alternatives"),
@@ -387,15 +396,8 @@ def validate_ai_search_plan(payload: Mapping[str, Any] | AISearchPlan, *, reques
                 continue
             if len(alternatives) > MAX_ALTERNATIVES_PER_CONCEPT:
                 _raise_plan_error("alternative_bounds")
-            match = concept.get("match", "text")
-            if match not in {"text", "exact"}:
-                _raise_plan_error("match_mode")
             field_metadata = metadata.get(field, {})
-            if match == "exact" and not (
-                field_metadata.get("identifier", False)
-                or field_metadata.get("ai_planner_role") == "identifier"
-            ):
-                _raise_plan_error("exact_value_requires_identifier")
+            match = "exact" if field_metadata.get("ai_planner_role") == "identifier" else "text"
             cleaned_concepts.append({"alternatives": alternatives, "match": match})
         if not cleaned_concepts:
             _raise_plan_error("empty_concepts")

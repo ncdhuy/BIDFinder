@@ -43,11 +43,11 @@ def make_plan(group: str, clauses=None, dates=None, warnings=None, explanation=N
     }
 
 
-def clause(field: str, *terms: str, match: str = "text"):
+def clause(field: str, *terms: str):
     return {
         "field": field,
         "concepts": [
-            {"alternatives": [term], "match": match}
+            {"alternatives": [term]}
             for term in terms
         ],
         "join": "AND",
@@ -117,6 +117,11 @@ class PlannerSchemaTest(unittest.TestCase):
         self.assertFalse(fields["quantity"]["ai_planning"])
         self.assertIsNone(fields["id"]["ai_planner_role"])
 
+    def test_provider_schema_does_not_expose_match(self):
+        concept_schema = AI_SEARCH_PLAN_JSON_SCHEMA["properties"]["clauses"]["items"]["properties"]["concepts"]["items"]
+        self.assertNotIn("match", concept_schema["properties"])
+        self.assertNotIn("match", concept_schema["required"])
+
     def test_wrong_group_is_rejected(self):
         with self.assertRaisesRegex(AIPlannerValidationError, "invalid AI search plan"):
             validate_ai_search_plan(make_plan("medicines", [clause("medicine_name", "amoxicilin")]), requested_group="goods")
@@ -128,7 +133,7 @@ class PlannerSchemaTest(unittest.TestCase):
 
     def test_malformed_boolean_structure_is_rejected(self):
         payload = make_plan("goods", [
-            {"field": "item_name", "concepts": [{"alternatives": ["máy"], "match": "text"}], "join": "OR"}
+            {"field": "item_name", "concepts": [{"alternatives": ["máy"]}], "join": "OR"}
         ])
         with self.assertRaises(AIPlannerValidationError) as context:
             validate_ai_search_plan(payload, requested_group="goods")
@@ -136,7 +141,7 @@ class PlannerSchemaTest(unittest.TestCase):
 
     def test_empty_terms_are_removed_but_empty_concepts_fail_closed(self):
         payload = make_plan("goods", [
-            {"field": "item_name", "concepts": [{"alternatives": ["", " máy  "], "match": "text"}], "join": "AND"}
+            {"field": "item_name", "concepts": [{"alternatives": ["", " máy  "]}], "join": "AND"}
         ])
         plan = validate_ai_search_plan(payload, requested_group="goods")
         self.assertEqual(["máy"], plan.clauses[0].concepts[0].alternatives)
@@ -146,14 +151,31 @@ class PlannerSchemaTest(unittest.TestCase):
             validate_ai_search_plan(empty, requested_group="goods")
         self.assertEqual("empty_concepts", context.exception.category)
 
-    def test_exact_values_require_contract_identifiers(self):
-        valid = make_plan("goods", [clause("bid_invitation_code", "IB2600498667", match="exact")])
-        self.assertEqual("exact", validate_ai_search_plan(valid, requested_group="goods").clauses[0].concepts[0].match)
+    def test_match_is_derived_from_contract_roles(self):
+        identifier = validate_ai_search_plan(
+            make_plan("goods", [clause("bid_invitation_code", "IB2600498667")]),
+            requested_group="goods",
+        )
+        self.assertEqual("exact", identifier.clauses[0].concepts[0].match)
 
-        invalid = make_plan("goods", [clause("item_name", "máy", match="exact")])
+        text = validate_ai_search_plan(
+            make_plan("goods", [clause("item_name", "máy")]),
+            requested_group="goods",
+        )
+        self.assertEqual("text", text.clauses[0].concepts[0].match)
+
+        categorical = validate_ai_search_plan(
+            make_plan("goods", [clause("unit", "cái")]),
+            requested_group="goods",
+        )
+        self.assertEqual("text", categorical.clauses[0].concepts[0].match)
+
+    def test_provider_controlled_match_is_rejected(self):
+        payload = make_plan("goods", [clause("item_name", "máy")])
+        payload["clauses"][0]["concepts"][0]["match"] = "exact"
         with self.assertRaises(AIPlannerValidationError) as context:
-            validate_ai_search_plan(invalid, requested_group="goods")
-        self.assertEqual("exact_value_requires_identifier", context.exception.category)
+            validate_ai_search_plan(payload, requested_group="goods")
+        self.assertEqual("concept_shape", context.exception.category)
 
     def test_date_constraints_are_structural_and_date_fields_are_validated(self):
         plan = validate_ai_search_plan(
@@ -178,9 +200,19 @@ class PlannerSchemaTest(unittest.TestCase):
         self.assertIn("decision_issued_at", prompt)
         self.assertIn("result_posted_at", prompt)
         self.assertIn("Generic recent-period language", prompt)
+        self.assertIn("winning_bidder_name", prompt)
+        self.assertIn("combination-product strengths", prompt)
+        self.assertIn("contextual container wording", prompt)
         self.assertIn("ngày đăng tải KQLCNT", prompt)
         self.assertNotIn("partition_date", prompt)
         self.assertNotIn("quantity", prompt)
+
+    def test_prompt_states_procurement_company_role_policy(self):
+        prompt = build_planner_system_prompt("medicines")
+        self.assertIn("without an explicit manufacturing cue defaults to winning_bidder_name", prompt)
+        self.assertIn("Use manufacturer only for explicit cues", prompt)
+        self.assertIn("hãng", prompt)
+        self.assertIn("nhà sản xuất", prompt)
 
     def test_bounds_and_extra_keys_are_rejected(self):
         too_many = make_plan("goods", [clause("item_name", *[str(i) for i in range(25)])])
@@ -261,8 +293,8 @@ class GoldenPlannerSemanticTest(unittest.TestCase):
                     {
                         "field": "active_ingredient_or_herbal_component",
                         "concepts": [
-                            {"alternatives": ["clavulanic", "clavulanat"], "match": "text"},
-                            {"alternatives": ["amoxicilin"], "match": "text"},
+                            {"alternatives": ["clavulanic", "clavulanat"]},
+                            {"alternatives": ["amoxicilin"]},
                         ],
                         "join": "AND",
                     },
@@ -429,7 +461,7 @@ class PlannerRateLimitTest(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         self.assertTrue(body["success"])
         self.assertEqual("goods", body["plan"]["group"])
-        self.assertEqual("v0.1.1", body["meta"]["planner_version"])
+        self.assertEqual("v0.1.2", body["meta"]["planner_version"])
 
     def test_ai_specific_rate_limit_uses_existing_limiter(self):
         import server
