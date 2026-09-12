@@ -75,6 +75,11 @@ from ai_search_planner import (
     get_planner_settings,
     serialize_plan,
 )
+from ai_search_query_compiler import (
+    AIQueryCompilationError,
+    compile_ai_search_plan,
+    safe_broaden_ai_query,
+)
 
 logger = logging.getLogger("bidfinder.api")
 logger.setLevel(os.getenv("BIDFINDER_LOG_LEVEL", "INFO").upper())
@@ -230,6 +235,11 @@ FILTER_CONFIG_RATE_LIMIT_PER_MINUTE = get_env_int("FILTER_CONFIG_RATE_LIMIT_PER_
 AUTH_RATE_LIMIT_PER_MINUTE = get_env_int("AUTH_RATE_LIMIT_PER_MINUTE", 20, minimum=1)
 AUTH_CONFIG_RATE_LIMIT_PER_MINUTE = get_env_int("AUTH_CONFIG_RATE_LIMIT_PER_MINUTE", 60, minimum=1)
 AI_SEARCH_PLAN_RATE_LIMIT_PER_MINUTE = get_env_int("BIDFINDER_AI_RATE_LIMIT_PER_MINUTE", 10, minimum=1)
+AI_SEARCH_PREVIEW_RATE_LIMIT_PER_MINUTE = get_env_int(
+    "BIDFINDER_AI_PREVIEW_RATE_LIMIT_PER_MINUTE",
+    10,
+    minimum=1,
+)
 FEEDBACK_RATE_LIMIT_PER_MINUTE = get_env_int("FEEDBACK_RATE_LIMIT_PER_MINUTE", 10, minimum=1)
 FEEDBACK_READ_RATE_LIMIT_PER_MINUTE = get_env_int(
     "FEEDBACK_READ_RATE_LIMIT_PER_MINUTE",
@@ -3736,6 +3746,121 @@ async def create_ai_search_plan(request: Request, payload: AIPlanRequest):
     })
 
 
+def _preview_response_payload(response: JSONResponse) -> dict[str, Any]:
+    try:
+        payload = json.loads(response.body.decode("utf-8"))
+    except (AttributeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("preview returned an invalid response payload") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("preview returned a non-object response payload")
+    return payload
+
+
+@app.post("/api/ai/search-preview")
+async def create_ai_search_preview(request: Request, payload: AIPlanRequest):
+    started = time.perf_counter()
+    settings = get_planner_settings()
+    limited = await enforce_rate_limit(
+        request,
+        "ai-search-preview",
+        AI_SEARCH_PREVIEW_RATE_LIMIT_PER_MINUTE,
+    )
+    if limited:
+        return limited
+
+    try:
+        if not procurement_backend_config().typesense_primary:
+            return validation_error_response(
+                "AI search preview hiện yêu cầu Typesense backend.",
+                status_code=503,
+            )
+        plan = await create_search_plan(payload.group, payload.message)
+        compiled = compile_ai_search_plan(plan)
+        strict_request = QueryPreviewRequest(**compiled.to_payload())
+        strict_preview = await execute_query_preview(request, strict_request)
+        if getattr(strict_preview, "status_code", 200) >= 400:
+            return strict_preview
+        strict_payload = _preview_response_payload(strict_preview)
+        strict_count = int(strict_payload.get("total", 0) or 0)
+        rounds: list[dict[str, Any]] = [{
+            "round": 0,
+            "kind": "strict",
+            "preview_count": strict_count,
+        }]
+        selected_round = 0 if strict_count > 0 else None
+        selected_query = compiled
+        selected_preview = strict_payload
+        optimization_outcome = "matched" if strict_count > 0 else "no_match"
+
+        if strict_count == 0:
+            broadened = safe_broaden_ai_query(compiled)
+            if broadened is not None:
+                broadened_query, changes = broadened
+                broadened_request = QueryPreviewRequest(**broadened_query.to_payload())
+                broadened_preview = await execute_query_preview(request, broadened_request)
+                if getattr(broadened_preview, "status_code", 200) >= 400:
+                    return broadened_preview
+                broadened_payload = _preview_response_payload(broadened_preview)
+                broadened_count = int(broadened_payload.get("total", 0) or 0)
+                rounds.append({
+                    "round": 1,
+                    "kind": "safe_broadening",
+                    "preview_count": broadened_count,
+                    "changes": changes,
+                })
+                if broadened_count > 0:
+                    selected_round = 1
+                    selected_query = broadened_query
+                    selected_preview = broadened_payload
+                    optimization_outcome = "matched_after_safe_broadening"
+
+        result = {
+            "success": True,
+            "status": "no_match" if selected_round is None else "ok",
+            "plan": serialize_plan(plan),
+            "compiled_request": selected_query.to_payload(),
+            "preview": selected_preview,
+            "optimization": {
+                "selected_round": selected_round,
+                "outcome": optimization_outcome,
+                "rounds": rounds,
+            },
+            "meta": {
+                "model": settings.model,
+                "planner_version": PLANNER_VERSION,
+            },
+        }
+        logger.info(
+            "ai_search_preview group=%s model=%s latency_ms=%.1f success=true selected_round=%s",
+            payload.group,
+            settings.model,
+            (time.perf_counter() - started) * 1000,
+            selected_round,
+        )
+        return JSONResponse(content=result)
+    except AIPlannerInputError as exc:
+        logger.warning("ai_search_preview group=%s category=%s", payload.group, exc.category)
+        return validation_error_response("Yêu cầu lập kế hoạch tìm kiếm không hợp lệ.")
+    except AIPlannerConfigurationError as exc:
+        logger.warning("ai_search_preview group=%s category=%s", payload.group, exc.category)
+        return validation_error_response("AI search planner hiện không khả dụng.", status_code=503)
+    except AIPlannerValidationError as exc:
+        logger.warning("ai_search_preview group=%s category=%s", payload.group, exc.category)
+        return validation_error_response("AI search planner trả về kế hoạch không hợp lệ.", status_code=502)
+    except AIPlannerProviderError as exc:
+        logger.warning("ai_search_preview group=%s category=%s", payload.group, exc.category)
+        status_code = 504 if exc.category == "provider_transport" else 502
+        return validation_error_response("Không thể hoàn tất AI search planner lúc này.", status_code=status_code)
+    except AIQueryCompilationError as exc:
+        logger.warning("ai_search_preview group=%s compilation_category=%s", payload.group, exc.category)
+        return validation_error_response("AI search plan không thể chuyển thành truy vấn hỗ trợ.", status_code=422)
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        log_server_exception("create_ai_search_preview failed", exc)
+        return internal_error_response()
+
+
 @app.post("/api/query")
 async def query_data(request: Request, payload: QueryRequest):
     limited = await enforce_rate_limit(request, "query", QUERY_RATE_LIMIT_PER_MINUTE)
@@ -4100,6 +4225,60 @@ async def bulk_query_data(request: Request, payload: BulkQueryRequest):
         return internal_error_response()
 
 
+async def execute_query_preview(request: Request, payload: QueryPreviewRequest) -> JSONResponse:
+    """Run the authoritative preview path for both public preview endpoints."""
+
+    if procurement_backend_config().typesense_primary:
+        return await preview_typesense_primary(request, payload)
+    if payload.group in {"traditional", "traditional_medicine"} or payload.scope == "traditional":
+        raise HTTPException(status_code=503, detail="traditional preview requires Typesense backend")
+    pool = await ensure_db_pool()
+    filters = payload.filters or FilterRequest()
+    result = {"success": True}
+
+    async with pool.acquire() as conn:
+        await enforce_data_access_policy(conn, request, "preview")
+
+        if payload.scope == "medicine":
+            total_meta = await fetch_preview_bucket_cached(conn, "medicine", filters, PREVIEW_BUCKET_LIMIT)
+            result["df1"] = total_meta
+            result["medicine_estimate"] = total_meta
+        elif payload.scope == "goods":
+            total_meta = await fetch_preview_bucket_cached(conn, "goods", filters, PREVIEW_BUCKET_LIMIT)
+            result["df2"] = total_meta
+            result["goods_estimate"] = total_meta
+        else:
+            total_meta = await fetch_combined_preview_meta(conn, filters, PREVIEW_BUCKET_LIMIT)
+
+    result["total"] = int(total_meta["count"])
+    result["exact"] = bool(total_meta["exact"])
+    result["display"] = total_meta["label"]
+    result["summary"] = total_meta["summary"]
+    result["total_estimate"] = total_meta
+    result["is_estimated"] = not bool(total_meta["exact"])
+    result["bucket_limit"] = PREVIEW_BUCKET_LIMIT
+
+    preview_queries = [
+        build_canonical_query(
+            group,
+            filters,
+            limit=PREVIEW_BUCKET_LIMIT,
+            endpoint="/api/query-preview",
+        )
+        for group, api_scope in (("medicines", "medicine"), ("goods", "goods"))
+        if payload.scope in {"all", api_scope}
+    ]
+    if preview_queries:
+        preview_primary = {}
+        if payload.scope == "medicine":
+            preview_primary["medicines"] = {"count": total_meta["count"], "count_exact": total_meta["exact"], "data": []}
+        elif payload.scope == "goods":
+            preview_primary["goods"] = {"count": total_meta["count"], "count_exact": total_meta["exact"], "data": []}
+        schedule_shadow_comparison(preview_queries, preview_primary)
+
+    return JSONResponse(content=result)
+
+
 @app.post("/api/query-preview")
 async def preview_query(request: Request, payload: QueryPreviewRequest):
     limited = await enforce_rate_limit(request, "query-preview", PREVIEW_RATE_LIMIT_PER_MINUTE)
@@ -4107,55 +4286,7 @@ async def preview_query(request: Request, payload: QueryPreviewRequest):
         return limited
 
     try:
-        if procurement_backend_config().typesense_primary:
-            return await preview_typesense_primary(request, payload)
-        if payload.group in {"traditional", "traditional_medicine"} or payload.scope == "traditional":
-            raise HTTPException(status_code=503, detail="traditional preview requires Typesense backend")
-        pool = await ensure_db_pool()
-        filters = payload.filters or FilterRequest()
-        result = {"success": True}
-
-        async with pool.acquire() as conn:
-            await enforce_data_access_policy(conn, request, "preview")
-
-            if payload.scope == "medicine":
-                total_meta = await fetch_preview_bucket_cached(conn, "medicine", filters, PREVIEW_BUCKET_LIMIT)
-                result["df1"] = total_meta
-                result["medicine_estimate"] = total_meta
-            elif payload.scope == "goods":
-                total_meta = await fetch_preview_bucket_cached(conn, "goods", filters, PREVIEW_BUCKET_LIMIT)
-                result["df2"] = total_meta
-                result["goods_estimate"] = total_meta
-            else:
-                total_meta = await fetch_combined_preview_meta(conn, filters, PREVIEW_BUCKET_LIMIT)
-
-        result["total"] = int(total_meta["count"])
-        result["exact"] = bool(total_meta["exact"])
-        result["display"] = total_meta["label"]
-        result["summary"] = total_meta["summary"]
-        result["total_estimate"] = total_meta
-        result["is_estimated"] = not bool(total_meta["exact"])
-        result["bucket_limit"] = PREVIEW_BUCKET_LIMIT
-
-        preview_queries = [
-            build_canonical_query(
-                group,
-                filters,
-                limit=PREVIEW_BUCKET_LIMIT,
-                endpoint="/api/query-preview",
-            )
-            for group, api_scope in (("medicines", "medicine"), ("goods", "goods"))
-            if payload.scope in {"all", api_scope}
-        ]
-        if preview_queries:
-            preview_primary = {}
-            if payload.scope == "medicine":
-                preview_primary["medicines"] = {"count": total_meta["count"], "count_exact": total_meta["exact"], "data": []}
-            elif payload.scope == "goods":
-                preview_primary["goods"] = {"count": total_meta["count"], "count_exact": total_meta["exact"], "data": []}
-            schedule_shadow_comparison(preview_queries, preview_primary)
-
-        return JSONResponse(content=result)
+        return await execute_query_preview(request, payload)
     except HTTPException as exc:
         return auth_error_response(exc)
     except Exception as exc:

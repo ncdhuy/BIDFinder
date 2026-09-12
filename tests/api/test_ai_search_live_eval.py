@@ -49,7 +49,11 @@ class LiveSemanticEvaluatorTest(unittest.TestCase):
         case = next(case for case in CASES if case["id"] == "goods_core_iol_recent")
         returned = plan(
             "goods",
-            [text_clause("item_name", "Thủy tinh thể nhân tạo", "vàng", "4 càng"), text_clause("procuring_entity_name", "Nguyễn Trãi")],
+            [
+                text_clause("item_name", "Thủy tinh thể nhân tạo"),
+                text_clause("technical_specification", "màu vàng", "4 càng"),
+                text_clause("procuring_entity_name", "Nguyễn Trãi"),
+            ],
             [{
                 "field": "decision_issued_at",
                 "period": {"kind": "relative", "amount": 6, "unit": "months", "direction": "previous"},
@@ -57,6 +61,16 @@ class LiveSemanticEvaluatorTest(unittest.TestCase):
             }],
         )
         self.assertEqual([], evaluate_semantics(returned, {**case["expectations"], "group": "goods"}))
+
+    def test_evaluator_accepts_ambiguous_bosch_brand_or_manufacturer_mapping(self):
+        case = next(case for case in CASES if case["id"] == "goods_technical_model_manufacturer")
+        returned = plan("goods", [
+            text_clause("item_name", "Máy siêu âm"),
+            text_clause("model_mark", "ACME-900"),
+            text_clause("technical_specification", "IP65", "220V"),
+            text_clause("brand", "Bosch"),
+        ])
+        self.assertEqual([], evaluate_semantics(returned, case["expectations"]))
 
     def test_evaluator_requires_or_alternatives_and_independent_and_concepts(self):
         case = next(case for case in CASES if case["id"] == "medicine_salts_strength_bidder_location")

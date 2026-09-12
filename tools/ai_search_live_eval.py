@@ -37,7 +37,8 @@ CASES: tuple[dict[str, Any], ...] = (
         "Thủy tinh thể nhân tạo mềm, đơn tiêu, kéo dài tiêu điểm, màu vàng, 4 càng; Bệnh viện Nguyễn Trãi; 6 tháng gần nhất",
         {
             "required": [
-                {"field": "item_name", "all": ["Thủy tinh thể nhân tạo", "vàng", "4 càng"]},
+                {"field": "item_name", "all": ["Thủy tinh thể nhân tạo"]},
+                {"fields": ["item_name", "technical_specification"], "all": ["vàng", "4 càng"]},
                 {"field": "procuring_entity_name", "all": ["Nguyễn Trãi"]},
             ],
             "dates": [{"field": "decision_issued_at", "amount": 6, "unit": "months", "direction": "previous"}],
@@ -87,7 +88,7 @@ CASES: tuple[dict[str, Any], ...] = (
                 {"field": "item_name", "all": ["Máy siêu âm"]},
                 {"fields": ["model_mark", "model"], "all": ["ACME-900"]},
                 {"field": "technical_specification", "all": ["IP65", "220V"]},
-                {"field": "manufacturer", "all": ["Bosch"]},
+                {"fields": ["brand", "manufacturer"], "all": ["Bosch"]},
             ]
         },
     ),
