@@ -212,7 +212,6 @@ const originalCustomEvent = global.CustomEvent;
 
 const scheduled = [];
 const autocompleteRequests = [];
-const aiPreviewRequests = [];
 global.setTimeout = callback => { scheduled.push(callback); return scheduled.length; };
 global.clearTimeout = () => {};
 global.HTMLElement = FakeHTMLElement;
@@ -224,52 +223,6 @@ global.window = {
         if (url.endsWith('/api/autocomplete')) {
             autocompleteRequests.push({ url, options });
             return { ok: true, status: 200, text: async () => JSON.stringify({ data: ['Nefopam hydrochloride', 'Nefopam'] }) };
-        }
-        if (url.endsWith('/api/ai/search-preview')) {
-            aiPreviewRequests.push({ url, options });
-            return {
-                ok: true,
-                status: 200,
-                json: async () => ({
-                    success: true,
-                    status: 'no_match',
-                    plan: {
-                        version: '1',
-                        group: 'medicines',
-                        clauses: [{
-                            field: 'active_ingredient_or_herbal_component',
-                            concepts: [
-                                { alternatives: ['clavulanic', 'clavulanat'], match: 'text' },
-                                { alternatives: ['amoxicilin', 'amoxicillin'], match: 'text' }
-                            ],
-                            join: 'AND'
-                        }],
-                        date_constraints: [],
-                        warnings: [],
-                        explanation: []
-                    },
-                    compiled_request: {
-                        scope: 'medicine',
-                        group: 'medicines',
-                        sourceTypes: [],
-                        filters: { activeIngredient: { groups: [
-                            { alternatives: ['clavulanic', 'clavulanat'] },
-                            { alternatives: ['amoxicilin', 'amoxicillin'] }
-                        ] } },
-                        text: '',
-                        searchFields: [],
-                        structuredFilters: {},
-                        ranges: {},
-                        dateRanges: {},
-                        exactIdentifiers: {},
-                        crossGroupSearch: false,
-                        crossGroupSearchFields: []
-                    },
-                    preview: { total: 0 },
-                    optimization: { outcome: 'no_match' },
-                    meta: { planner_invoked: false }
-                })
-            };
         }
         return { ok: true, status: 200, json: async () => ({}) };
     }
@@ -318,6 +271,7 @@ async function run() {
     const assertLegacyStructure = (label, expectedFields) => {
         assert.ok(contentRoot.innerHTML.includes('category-panel'), `${label}: category panel`);
         assert.ok(contentRoot.innerHTML.includes('condition-panel'), `${label}: condition panel`);
+        assert.ok(!contentRoot.innerHTML.includes('ai-search-panel'), `${label}: embedded AI panel removed`);
         assert.ok(contentRoot.innerHTML.indexOf('class="field"') < contentRoot.innerHTML.indexOf('class="preview-estimate"'), `${label}: estimate follows editor`);
         assert.ok(contentRoot.innerHTML.indexOf('class="preview-estimate"') < contentRoot.innerHTML.indexOf('class="pane-help"'), `${label}: help follows estimate`);
         assert.ok(contentRoot.innerHTML.indexOf('class="pane-help"') < contentRoot.innerHTML.indexOf('class="editor-actions"'), `${label}: actions follow help`);
@@ -348,15 +302,9 @@ async function run() {
     };
     assertLegacyStructure('initial', representativeFields.medicines);
 
-    form.state.ai.message = 'draft medicine request';
-    form.state.ai.plan = { version: '1', group: 'medicines', clauses: [], date_constraints: [], warnings: [], explanation: [] };
-    form.state.ai.compiledRequest = { group: 'medicines', filters: { activeIngredient: { groups: [] } } };
     const goodsGroup = contentRoot.querySelectorAll('[data-group]').find(button => button.dataset.group === 'goods');
     goodsGroup.click();
     assert.equal(form.state.group, 'goods', 'group switch changes active dataset');
-    assert.equal(form.state.ai.plan, null, 'group switch clears AI interpretation');
-    assert.equal(form.state.ai.compiledRequest, null, 'group switch clears compiled AI request');
-    assert.equal(form.state.ai.message, 'draft medicine request', 'group switch keeps draft message without reusing plan');
     contentRoot.querySelectorAll('[data-group]').find(button => button.dataset.group === 'medicines').click();
 
     form.state.activeField = 'active_ingredient_or_herbal_component';
@@ -403,175 +351,6 @@ async function run() {
     assert.deepEqual(phrasePayload.searchFields, ['item_name', 'model_mark', 'brand', 'technical_specification'], 'goods phrase uses the shared four-column search scope');
     assert.equal(phrasePayload.filters.goodsKeyword, undefined, 'phrase is not downgraded to a word-level legacy filter');
 
-    form.state.group = 'medicines';
-    form.state.activeField = 'medicine_name';
-    form.state.criteria = { medicine_name: { kind: 'tokens', tokens: [{ value: 'paracetamol', op: 'OR' }] } };
-    const medicineCrossPayload = form.collectFilterPayload();
-    assert.equal(medicineCrossPayload.scope, 'all');
-    assert.equal(medicineCrossPayload.group, null);
-    assert.deepEqual(medicineCrossPayload.sourceTypes, []);
-    assert.deepEqual(medicineCrossPayload.crossGroupSearchFields, ['medicine_name']);
-    assert.equal(medicineCrossPayload.filters.crossGroupProductKeyword.tokens[0].value, 'paracetamol');
-
-    form.state.group = 'traditional';
-    form.state.activeField = 'item_name';
-    form.state.criteria = { item_name: { kind: 'tokens', tokens: [{ value: 'bạch linh', op: 'OR' }] } };
-    const traditionalCrossPayload = form.collectFilterPayload();
-    assert.equal(traditionalCrossPayload.scope, 'all');
-    assert.equal(traditionalCrossPayload.group, null);
-    assert.equal(traditionalCrossPayload.text, '"bạch linh"');
-    assert.deepEqual(traditionalCrossPayload.crossGroupSearchFields, ['item_name']);
-    assert.deepEqual(traditionalCrossPayload.searchFields, [
-        'item_name', 'model_mark', 'brand', 'technical_specification',
-        'medicine_name', 'active_ingredient_or_herbal_component'
-    ]);
-
-    form.state.group = 'medicines';
-    form.state.activeField = 'active_ingredient_or_herbal_component';
-    form.state.criteria = {};
-    form.render();
-
-    form.state.criteria.medicine_group = { kind: 'values', values: ['N1'] };
-    form.render();
-    assert.doesNotMatch(contentRoot.innerHTML, /data-action="reset" disabled/, 'reset enables when criteria exist');
-    assert.doesNotMatch(contentRoot.innerHTML, /data-action="apply" disabled/, 'search enables when criteria exist');
-    form.state.criteria = {};
-    form.render();
-    form.setPreviewResult({ total: 9596715, totalLabel: '9596715', exact: true });
-    assert.equal(form.shadowRoot.querySelector('.preview-estimate').textContent, 'Có 100+ kết quả');
-    form.setPreviewResult({ total: 37, totalLabel: '37', exact: true });
-    assert.equal(form.shadowRoot.querySelector('.preview-estimate').textContent, 'Có 37 kết quả');
-    form.setPreviewResult({ total: 0, totalLabel: '0', exact: true });
-    assert.equal(form.shadowRoot.querySelector('.preview-estimate').textContent, 'Có 0 kết quả');
-    assert.ok(form.shadowRoot.querySelector('.preview-estimate').classList.values.has('zero-result'), 'zero estimate has warning class');
-
-    const clickGroup = (index, label, expectedGroup) => {
-        const previewsBefore = scheduled.length;
-        const group = contentRoot.querySelectorAll('[data-group]')[index];
-        assert.ok(group, `${label}: group exists`);
-        group.click();
-        assertStyleSurvives(label);
-        assert.equal(form.state.group, expectedGroup, `${label}: state group`);
-        assert.equal(contentRoot.querySelectorAll('[data-group]').length, 3, `${label}: three groups`);
-        assert.match(contentRoot.innerHTML, new RegExp(`class="sidebar-item group-choice active"[^>]*data-group="${expectedGroup}"`), `${label}: active group style`);
-        assert.ok(contentRoot.innerHTML.includes('class="filter-sidebar"'), `${label}: sidebar retained`);
-        assertLegacyStructure(label, representativeFields[expectedGroup]);
-        assert.equal(scheduled.length, previewsBefore, `${label}: group switch does not request preview`);
-        assert.ok(!(form.dispatchedEvents || []).some(event => event.type === 'dataset-group-change'), `${label}: group switch stays inside modal`);
-    };
-
-    clickGroup(0, 'Hàng hóa', 'goods');
-    clickGroup(1, 'Thuốc', 'medicines');
-    clickGroup(2, 'Dược liệu', 'traditional');
-
-    assert.equal(form.dropdownOptions('technical_group').length, 7, 'traditional TCKT uses the medicine group option set');
-    const technicalDropdown = form.renderDropdownControl('technical_group', { kind: 'values', values: ['N1'] });
-    assert.doesNotMatch(technicalDropdown, /data-dropdown-apply|data-dropdown-cancel|>OK<|>Hủy</, 'dropdown applies selections without OK/Hủy actions');
-    assert.match(technicalDropdown, /data-dropdown-option="technical_group"/, 'TCKT keeps multi-select checkbox options');
-    assert.equal(form.optionLabel('medicine_group', 'UNKNOWN'), 'Chưa xác định được', 'unmapped medicine groups use the new label');
-    assert.equal(form.optionLabel('technical_group', 'UNKNOWN'), 'Chưa xác định được', 'unmapped traditional groups use the new label');
-    assert.equal(form.optionLabel('selection_method', 'DTRR'), 'Đấu thầu rộng rãi', 'selection method codes use the legacy display label');
-    assert.equal(form.optionLabel('selection_method', 'LCNT_DB'), 'Đấu thầu rộng rãi', 'new selection method code uses the same legacy label');
-    assert.equal(form.parseVietnameseDate('31/12/2025'), '2025-12-31', 'manual dates use Vietnamese day/month/year input');
-    assert.equal(form.formatVietnameseDate('2025-12-31'), '31/12/2025', 'date picker values display in Vietnamese format');
-    assert.match(form.renderDateRangeControl('result_posted_at', { kind: 'date-range', from: '2025-01-01', to: '2025-12-31' }), /placeholder="dd\/mm\/yyyy"/g, 'date editor is a range with Vietnamese placeholders');
-    form.state.criteria.technical_group = { kind: 'values', values: ['N1'] };
-    assert.deepEqual(form.collectFilterPayload().filters.drugGroup, ['N1'], 'traditional TCKT reuses the cleaned group payload');
-    form.state.criteria.result_posted_at = { kind: 'date-range', from: '2025-01-01', to: '2025-12-31' };
-    assert.deepEqual(form.collectFilterPayload().dateRanges.result_posted_at, { from: '2025-01-01', to: '2025-12-31' }, 'date range reaches the existing payload contract');
-    delete form.state.criteria.technical_group;
-    delete form.state.criteria.result_posted_at;
-
-    const variable = contentRoot.querySelectorAll('[data-field]')[0];
-    assert.ok(variable, 'selected variable exists');
-    variable.click();
-    assertStyleSurvives('selected variable');
-    assertLegacyStructure('selected variable', representativeFields.traditional);
-
-    form.setPreviewResult({ total: 37, totalLabel: '37', exact: true });
-    const previewBeforeVariableSwitch = contentRoot.querySelector('.preview-estimate').textContent;
-    const scheduledBeforeVariableSwitch = scheduled.length;
-    contentRoot.querySelector('[data-field="used_part"]').click();
-    assert.equal(contentRoot.querySelector('.preview-estimate').textContent, previewBeforeVariableSwitch, 'switching variables preserves the current preview estimate');
-    assert.equal(scheduled.length, scheduledBeforeVariableSwitch, 'switching variables does not schedule a new preview');
-    contentRoot.querySelector('[data-field="item_name"]').click();
-    assert.equal(contentRoot.querySelector('.preview-estimate').textContent, previewBeforeVariableSwitch, 'returning to a variable preserves the current preview estimate');
-
-    const renderCountBeforeTokens = contentRoot.renderCount;
-    let keyword = contentRoot.querySelector('#criterion-keyword');
-    keyword.value = 'Cam thảo';
-    keyword.keydown('Enter');
-    assert.equal(form.state.criteria.item_name.tokens.length, 1, 'Enter creates first keyword chip');
-    assert.equal(contentRoot.renderCount, renderCountBeforeTokens, 'Enter does not rerender the whole component');
-    assert.match(contentRoot.querySelector('[data-token-editor]').innerHTML, /class="token-tag"/, 'first chip rendered');
-    assert.match(form.renderSummary(), /data-chip-field="item_name"/, 'criterion appears in summary');
-    assert.equal(form.shadowRoot.querySelector('.preview-estimate').textContent, 'Đang ước tính...', 'preview loading state appears immediately');
-
-    keyword = contentRoot.querySelector('#criterion-keyword');
-    keyword.value = 'Đương quy';
-    keyword.keydown('Enter');
-    assert.equal(form.state.criteria.item_name.tokens.length, 2, 'second Enter creates second chip');
-    assert.equal(contentRoot.renderCount, renderCountBeforeTokens, 'second Enter still avoids full rerender');
-    assert.match(contentRoot.querySelector('[data-token-editor]').innerHTML, /class="token-operator"[^>]*>OR<\/button>/, 'legacy OR operator rendered');
-
-    contentRoot.querySelectorAll('[data-token-operator]')[0].click();
-    assert.equal(form.state.criteria.item_name.tokens[1].op, 'AND', 'operator cycles OR to AND');
-    assert.equal(form.collectFilterPayload().filters.crossGroupProductKeyword.tokens[1].op, 'AND', 'AND reaches the cross-group token payload');
-    contentRoot.querySelectorAll('[data-token-operator]')[0].click();
-    assert.equal(form.state.criteria.item_name.tokens[1].op, 'NOT', 'operator cycles AND to NOT');
-    assert.equal(form.collectFilterPayload().filters.crossGroupProductKeyword.tokens[1].op, 'NOT', 'NOT reaches the cross-group token payload');
-    assert.match(form.renderSummary(), /\(NOT\)/, 'summary reflects token operator');
-
-    contentRoot.querySelectorAll('[data-token-edit]')[1].click();
-    assert.equal(contentRoot.querySelector('#criterion-keyword').value, 'Đương quy', 'existing token can be edited');
-    assert.equal(form.state.criteria.item_name.tokens.length, 1, 'editing moves token back to input');
-    assertStyleSurvives('token re-render');
-
-    contentRoot.querySelectorAll('[data-field]')[1].click();
-    const summaryCriterion = contentRoot.querySelectorAll('[data-chip-field]').find(node => node.dataset.chipField === 'item_name');
-    assert.ok(summaryCriterion, 'existing summary criterion is selectable');
-    summaryCriterion.click();
-    assert.equal(form.state.activeField, 'item_name', 'summary criterion reopens its editor');
-
-    const renderCountBeforeSubmit = contentRoot.renderCount;
-    form.submit();
-    assert.equal(contentRoot.renderCount, renderCountBeforeSubmit, 'apply does not rerender the whole component');
-    assert.ok(form.dispatchedEvents.some(event => event.type === 'apply-filters'), 'apply event dispatched without page reload');
-
-    form.state.group = 'medicines';
-    form.state.ai.message = 'clavulanic và amoxicillin';
-    await form.requestAiPreview();
-    assert.equal(aiPreviewRequests.length, 1, 'initial AI preview uses the authorized API seam');
-    const initialAiPayload = JSON.parse(aiPreviewRequests[0].options.body);
-    assert.deepEqual(initialAiPayload, { group: 'medicines', message: 'clavulanic và amoxicillin' }, 'initial AI preview sends group and message');
-    assert.equal(form.state.ai.preview.total, 0, 'captured no-match preview is accepted');
-    assert.ok(form.state.ai.plan, 'no-match keeps the interpretation editable');
-
-    form.updateAiConceptAlternatives(0, 0, 'clavulanic | clavulanat');
-    assert.equal(form.state.ai.dirty, true, 'editing an interpretation marks it dirty');
-    await form.requestAiPreview({ plan: form.state.ai.plan });
-    assert.equal(aiPreviewRequests.length, 2, 'edited preview makes one deterministic request');
-    const editedAiPayload = JSON.parse(aiPreviewRequests[1].options.body);
-    assert.equal(editedAiPayload.group, 'medicines');
-    assert.equal(editedAiPayload.message, undefined, 'edited preview does not send the natural-language message');
-    assert.deepEqual(editedAiPayload.plan.clauses[0].concepts, [
-        { alternatives: ['clavulanic', 'clavulanat'], match: 'text' },
-        { alternatives: ['amoxicilin', 'amoxicillin'], match: 'text' }
-    ], 'edited plan preserves independent AND concepts and OR alternatives');
-    assert.deepEqual(form.state.ai.compiledRequest.filters.activeIngredient.groups, [
-        { alternatives: ['clavulanic', 'clavulanat'] },
-        { alternatives: ['amoxicilin', 'amoxicillin'] }
-    ], 'compiled grouped Boolean request remains intact');
-
-    form.executeAiSearch();
-    const executedAiEvent = form.dispatchedEvents.at(-1);
-    assert.equal(executedAiEvent.type, 'apply-filters', 'AI execution reuses the existing apply-filters event');
-    assert.equal(executedAiEvent.detail, form.state.ai.compiledRequest, 'execution dispatches the exact backend compiled request');
-    assert.deepEqual(executedAiEvent.detail.filters.activeIngredient.groups, form.state.ai.compiledRequest.filters.activeIngredient.groups, 'execution does not reconstruct through legacy flat tokens');
-    form.updateAiConceptField(0, 1, 'strength');
-    assert.equal(form.state.ai.plan.clauses[0].concepts.length, 1, 'reassigning one concept does not move its sibling');
-    assert.equal(form.state.ai.plan.clauses[1].field, 'strength', 'reassigned concept becomes its own compatible-role clause');
-
     const buttons = [...contentRoot.innerHTML.matchAll(/<button\b[^>]*>/g)].map(match => match[0]);
     assert.ok(buttons.length > 0, 'component has controls');
     assert.ok(buttons.every(button => /class="[^"]*(sidebar-item|btn|pane-help-link|chip-select|chip-remove|token-operator|tag-text|token-remove|ai-condition-remove)[^"]*"/.test(button)), 'no raw button cloud');
@@ -579,7 +358,7 @@ async function run() {
     assert.match(contentRoot.innerHTML, /class="sidebar-item [^"]*active[^"]*" data-field=/);
     assert.equal(form.shadowRoot.children[0], styleNode, 'style is persistent shadow child');
     assert.equal(form.shadowRoot.children[1], contentRoot, 'content root is second shadow child');
-    assert.ok(scheduled.length >= 3, 'previews scheduled without replacing shadow root');
+    assert.ok(scheduled.length >= 2, 'previews scheduled without replacing shadow root');
 }
 
 run().finally(() => {

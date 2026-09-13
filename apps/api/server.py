@@ -6,13 +6,16 @@ import time
 import copy
 import hashlib
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import secrets
+import tempfile
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import asyncio
 import asyncpg
 import ipaddress
 import json
+import math
 import os
 import ssl
 from urllib.error import HTTPError, URLError
@@ -74,9 +77,11 @@ from ai_search_planner import (
     PLANNER_VERSION,
     create_search_plan,
     get_planner_settings,
+    normalize_usage_units,
     serialize_plan,
     validate_serialized_ai_search_plan,
 )
+from ai_usage import AIUsageStore, snapshot_payload
 from ai_search_query_compiler import (
     AIQueryCompilationError,
     compile_ai_search_plan,
@@ -124,6 +129,21 @@ def get_env_int(name: str, default: int, minimum: int | None = None, maximum: in
         value = max(minimum, value)
     if maximum is not None:
         value = min(maximum, value)
+    return value
+
+
+def get_env_float(name: str, default: float, minimum: float | None = None) -> float:
+    raw = os.getenv(name)
+    try:
+        value = float(raw.strip()) if raw is not None else float(default)
+    except (TypeError, ValueError):
+        logger.warning("Invalid float env %s=%r; using default %s", name, raw, default)
+        value = float(default)
+    if not math.isfinite(value):
+        logger.warning("Invalid non-finite float env %s=%r; using default %s", name, raw, default)
+        value = float(default)
+    if minimum is not None:
+        value = max(minimum, value)
     return value
 
 
@@ -246,6 +266,29 @@ AI_SEARCH_PREVIEW_RATE_LIMIT_PER_MINUTE = get_env_int(
     10,
     minimum=1,
 )
+AI_DAILY_USAGE_BUDGET_ANON = get_env_float(
+    "BIDFINDER_AI_DAILY_USAGE_BUDGET_ANON",
+    30000,
+    minimum=0,
+)
+AI_DAILY_USAGE_BUDGET_AUTH = get_env_float(
+    "BIDFINDER_AI_DAILY_USAGE_BUDGET_AUTH",
+    120000,
+    minimum=0,
+)
+AI_USAGE_INPUT_WEIGHT = get_env_float("BIDFINDER_AI_USAGE_INPUT_WEIGHT", 1.0, minimum=0)
+AI_USAGE_CACHED_INPUT_WEIGHT = get_env_float("BIDFINDER_AI_USAGE_CACHED_INPUT_WEIGHT", 0.25, minimum=0)
+AI_USAGE_OUTPUT_WEIGHT = get_env_float("BIDFINDER_AI_USAGE_OUTPUT_WEIGHT", 2.0, minimum=0)
+AI_ANONYMOUS_COOKIE_NAME = "bidfinder_ai_anon"
+_ai_usage_path_value = os.getenv("BIDFINDER_AI_USAGE_DB_PATH", "").strip()
+AI_USAGE_DB_PATH = (
+    Path(_ai_usage_path_value)
+    if _ai_usage_path_value
+    else Path(tempfile.gettempdir()) / "bidfinder" / "state" / "ai_usage.sqlite3"
+)
+if not AI_USAGE_DB_PATH.is_absolute():
+    AI_USAGE_DB_PATH = Path(tempfile.gettempdir()) / AI_USAGE_DB_PATH
+ai_usage_store = AIUsageStore(AI_USAGE_DB_PATH)
 FEEDBACK_RATE_LIMIT_PER_MINUTE = get_env_int("FEEDBACK_RATE_LIMIT_PER_MINUTE", 10, minimum=1)
 FEEDBACK_READ_RATE_LIMIT_PER_MINUTE = get_env_int(
     "FEEDBACK_READ_RATE_LIMIT_PER_MINUTE",
@@ -314,6 +357,10 @@ try:
     APP_TIMEZONE = ZoneInfo(APP_TIMEZONE_NAME)
 except ZoneInfoNotFoundError:
     APP_TIMEZONE = ZoneInfo("UTC")
+try:
+    AI_USAGE_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
+except ZoneInfoNotFoundError:
+    AI_USAGE_TIMEZONE = timezone(timedelta(hours=7), "Asia/Ho_Chi_Minh")
 ANONYMOUS_FULL_QUERY_DAILY_LIMIT = max(
     0,
     get_env_int("ANONYMOUS_FULL_QUERY_DAILY_LIMIT", 3),
@@ -1177,6 +1224,156 @@ def get_rate_limit_client_key(request: Request, *, include_user_agent: bool = Tr
 
 def get_usage_day_key() -> str:
     return datetime.now(APP_TIMEZONE).date().isoformat()
+
+
+def _ai_usage_day_key() -> str:
+    return datetime.now(AI_USAGE_TIMEZONE).date().isoformat()
+
+
+def _ai_reset_at() -> str:
+    now = datetime.now(AI_USAGE_TIMEZONE)
+    return (now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).isoformat()
+
+
+def _ai_request_cookie(request: Request, name: str) -> str:
+    try:
+        return str((getattr(request, "cookies", {}) or {}).get(name) or "").strip()
+    except (AttributeError, TypeError):
+        return ""
+
+
+def _ai_session_token(request: Request) -> str:
+    try:
+        return extract_session_token(request) or ""
+    except (AttributeError, TypeError):
+        return ""
+
+
+def _is_valid_ai_anonymous_cookie(value: str) -> bool:
+    return 32 <= len(value) <= 128 and all(char.isalnum() or char in "-_" for char in value)
+
+
+async def resolve_ai_usage_identity(request: Request) -> tuple[str, bool, str | None]:
+    session_token = _ai_session_token(request)
+    if session_token:
+        try:
+            pool = await ensure_db_pool()
+            async with pool.acquire() as conn:
+                user = await get_authenticated_user(conn, session_token)
+            if user and user.get("id") is not None:
+                return f"user:{int(user['id'])}", True, None
+        except Exception:
+            logger.warning("ai_usage_identity category=auth_lookup_failed")
+
+    cookie_value = _ai_request_cookie(request, AI_ANONYMOUS_COOKIE_NAME)
+    new_cookie = None
+    if not _is_valid_ai_anonymous_cookie(cookie_value):
+        cookie_value = secrets.token_urlsafe(32)
+        new_cookie = cookie_value
+    identity_hash = hashlib.sha256(cookie_value.encode("utf-8")).hexdigest()
+    return f"anon:{identity_hash}", False, new_cookie
+
+
+def _ai_usage_budget(authenticated: bool) -> float:
+    return AI_DAILY_USAGE_BUDGET_AUTH if authenticated else AI_DAILY_USAGE_BUDGET_ANON
+
+
+def _ai_usage_snapshot(identity_key: str, authenticated: bool):
+    return ai_usage_store.snapshot(
+        identity_key,
+        _ai_usage_day_key(),
+        _ai_usage_budget(authenticated),
+        _ai_reset_at(),
+    )
+
+
+async def get_ai_usage_payload(identity_key: str, authenticated: bool, *, counted: bool = False) -> dict[str, Any]:
+    return snapshot_payload(_ai_usage_snapshot(identity_key, authenticated), counted=counted)
+
+
+async def record_ai_provider_usage(
+    identity_key: str,
+    authenticated: bool,
+    provider_usage: Mapping[str, Any] | None,
+    *,
+    provider_invoked: bool,
+) -> dict[str, Any]:
+    usage_units = normalize_usage_units(
+        provider_usage,
+        input_weight=AI_USAGE_INPUT_WEIGHT,
+        cached_input_weight=AI_USAGE_CACHED_INPUT_WEIGHT,
+        output_weight=AI_USAGE_OUTPUT_WEIGHT,
+    )
+    if usage_units is None:
+        if provider_invoked:
+            logger.warning(
+                "ai_usage_accounting authenticated=%s category=missing_provider_usage",
+                authenticated,
+            )
+        return await get_ai_usage_payload(identity_key, authenticated)
+
+    ai_usage_store.add_units(identity_key, _ai_usage_day_key(), usage_units)
+    snapshot = _ai_usage_snapshot(identity_key, authenticated)
+    logger.info(
+        "ai_usage_accounting authenticated=%s category=charged usage_units=%.3f used_percent=%s",
+        authenticated,
+        usage_units,
+        snapshot.used_percent,
+    )
+    return snapshot_payload(snapshot, counted=True)
+
+
+def _provider_usage_from(value: Any) -> Mapping[str, Any] | None:
+    usage = getattr(value, "_provider_usage", None)
+    if isinstance(usage, Mapping):
+        return usage
+    usage = getattr(value, "provider_usage", None)
+    return usage if isinstance(usage, Mapping) else None
+
+
+def _set_ai_anonymous_cookie(response: JSONResponse, request: Request, cookie_value: str | None) -> None:
+    if not cookie_value:
+        return
+    try:
+        scheme = str(getattr(getattr(request, "url", None), "scheme", "")).lower()
+        forwarded_scheme = str(request.headers.get("x-forwarded-proto", "")).lower()
+    except AttributeError:
+        scheme = forwarded_scheme = ""
+    response.set_cookie(
+        AI_ANONYMOUS_COOKIE_NAME,
+        cookie_value,
+        max_age=60 * 60 * 24 * 365,
+        httponly=True,
+        secure=scheme == "https" or forwarded_scheme == "https",
+        samesite="lax",
+        path="/",
+    )
+
+
+async def build_ai_error_response(
+    request: Request,
+    identity_key: str,
+    authenticated: bool,
+    cookie_value: str | None,
+    *,
+    category: str,
+    message: str,
+    status_code: int,
+    provider_usage: Mapping[str, Any] | None = None,
+    provider_invoked: bool = False,
+) -> JSONResponse:
+    usage = await record_ai_provider_usage(
+        identity_key,
+        authenticated,
+        provider_usage,
+        provider_invoked=provider_invoked,
+    )
+    response = JSONResponse(
+        status_code=status_code,
+        content={"success": False, "error": category, "message": message, "ai_usage": usage},
+    )
+    _set_ai_anonymous_cookie(response, request, cookie_value)
+    return response
 
 
 def prune_anonymous_full_query_usage(current_day: str) -> None:
@@ -3718,6 +3915,19 @@ async def create_ai_search_plan(request: Request, payload: AIPlanRequest):
         )
         return limited
 
+    identity_key, authenticated, cookie_value = await resolve_ai_usage_identity(request)
+    usage_snapshot = _ai_usage_snapshot(identity_key, authenticated)
+    if usage_snapshot.used_units >= usage_snapshot.budget_units:
+        return await build_ai_error_response(
+            request,
+            identity_key,
+            authenticated,
+            cookie_value,
+            category="ai_daily_usage_exhausted",
+            message="\u0042\u1ea1n \u0111\u00e3 s\u1eed d\u1ee5ng h\u1ebft AI h\u00f4m nay. H\u1ea1n m\u1ee9c s\u1ebd \u0111\u01b0\u1ee3c \u0111\u1eb7t l\u1ea1i v\u00e0o ng\u00e0y mai.",
+            status_code=429,
+        )
+
     try:
         plan = await create_search_plan(payload.group, payload.message)
     except AIPlannerInputError as exc:
@@ -3746,6 +3956,12 @@ async def create_ai_search_plan(request: Request, payload: AIPlanRequest):
             (time.perf_counter() - started) * 1000,
             exc.category,
         )
+        await record_ai_provider_usage(
+            identity_key,
+            authenticated,
+            getattr(exc, "provider_usage", None),
+            provider_invoked=True,
+        )
         return validation_error_response("AI search planner trả về kế hoạch không hợp lệ.", status_code=502)
     except AIPlannerProviderError as exc:
         logger.warning(
@@ -3755,26 +3971,55 @@ async def create_ai_search_plan(request: Request, payload: AIPlanRequest):
             (time.perf_counter() - started) * 1000,
             exc.category,
         )
+        await record_ai_provider_usage(
+            identity_key,
+            authenticated,
+            getattr(exc, "provider_usage", None),
+            provider_invoked=True,
+        )
         status_code = 504 if exc.category == "provider_transport" else 502
         return validation_error_response("Không thể hoàn tất AI search planner lúc này.", status_code=status_code)
     except Exception as exc:
         log_server_exception("create_ai_search_plan failed", exc)
         return internal_error_response("AI search planner hiện không khả dụng.")
 
+    ai_usage = await record_ai_provider_usage(
+        identity_key,
+        authenticated,
+        _provider_usage_from(plan),
+        provider_invoked=True,
+    )
     logger.info(
         "ai_search_plan group=%s model=%s latency_ms=%.1f success=true",
         payload.group,
         settings.model,
         (time.perf_counter() - started) * 1000,
     )
-    return JSONResponse(content={
+    response = JSONResponse(content={
         "success": True,
         "plan": serialize_plan(plan),
+        "ai_usage": ai_usage,
         "meta": {
             "model": settings.model,
             "planner_version": PLANNER_VERSION,
         },
     })
+    _set_ai_anonymous_cookie(response, request, cookie_value)
+    return response
+
+
+@app.get("/api/ai/usage")
+async def get_ai_usage(request: Request):
+    limited = await enforce_rate_limit(request, "ai-usage", AUTH_CONFIG_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+    identity_key, authenticated, cookie_value = await resolve_ai_usage_identity(request)
+    response = JSONResponse(content={
+        "success": True,
+        "ai_usage": await get_ai_usage_payload(identity_key, authenticated),
+    })
+    _set_ai_anonymous_cookie(response, request, cookie_value)
+    return response
 
 
 def _preview_response_payload(response: JSONResponse) -> dict[str, Any]:
@@ -3785,6 +4030,12 @@ def _preview_response_payload(response: JSONResponse) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("preview returned a non-object response payload")
     return payload
+
+
+def _response_with_ai_usage(response: JSONResponse, ai_usage: dict[str, Any]) -> JSONResponse:
+    payload = _preview_response_payload(response)
+    payload["ai_usage"] = ai_usage
+    return JSONResponse(status_code=response.status_code, content=payload)
 
 
 async def _execute_ai_search_preview(
@@ -3865,6 +4116,8 @@ async def create_ai_search_preview(request: Request, payload: AISearchPreviewReq
     settings = get_planner_settings()
     planner_invoked = False
     message_mode = payload.message is not None
+    if (payload.message is None) == (payload.plan is None):
+        return validation_error_response("preview request must contain exactly one of message or plan")
     limited = await enforce_rate_limit(
         request,
         "ai-search-luna" if message_mode else "ai-search-edited-plan",
@@ -3874,6 +4127,21 @@ async def create_ai_search_preview(request: Request, payload: AISearchPreviewReq
     if limited:
         return limited
 
+    identity_key, authenticated, cookie_value = await resolve_ai_usage_identity(request)
+    if message_mode:
+        usage_snapshot = _ai_usage_snapshot(identity_key, authenticated)
+        if usage_snapshot.used_units >= usage_snapshot.budget_units:
+            return await build_ai_error_response(
+                request,
+                identity_key,
+                authenticated,
+                cookie_value,
+                category="ai_daily_usage_exhausted",
+            message="\u0042\u1ea1n \u0111\u00e3 s\u1eed d\u1ee5ng h\u1ebft AI h\u00f4m nay. H\u1ea1n m\u1ee9c s\u1ebd \u0111\u01b0\u1ee3c \u0111\u1eb7t l\u1ea1i v\u00e0o ng\u00e0y mai.",
+                status_code=429,
+            )
+
+    plan = None
     try:
         if (payload.message is None) == (payload.plan is None):
             raise AIPlannerInputError(
@@ -3891,7 +4159,15 @@ async def create_ai_search_preview(request: Request, payload: AISearchPreviewReq
             settings,
             planner_invoked=planner_invoked,
         )
+        ai_usage = await record_ai_provider_usage(
+            identity_key,
+            authenticated,
+            _provider_usage_from(plan),
+            provider_invoked=planner_invoked,
+        )
         if getattr(response, "status_code", 200) >= 400:
+            response = _response_with_ai_usage(response, ai_usage)
+            _set_ai_anonymous_cookie(response, request, cookie_value)
             return response
         logger.info(
             "ai_search_preview group=%s model=%s latency_ms=%.1f success=true planner_invoked=%s",
@@ -3900,6 +4176,8 @@ async def create_ai_search_preview(request: Request, payload: AISearchPreviewReq
             (time.perf_counter() - started) * 1000,
             planner_invoked,
         )
+        response = _response_with_ai_usage(response, ai_usage)
+        _set_ai_anonymous_cookie(response, request, cookie_value)
         return response
     except AIPlannerInputError as exc:
         logger.warning("ai_search_preview group=%s category=%s", payload.group, exc.category)
@@ -3909,21 +4187,51 @@ async def create_ai_search_preview(request: Request, payload: AISearchPreviewReq
         return validation_error_response("AI search planner hiện không khả dụng.", status_code=503)
     except AIPlannerValidationError as exc:
         logger.warning("ai_search_preview group=%s category=%s", payload.group, exc.category)
+        await record_ai_provider_usage(
+            identity_key,
+            authenticated,
+            getattr(exc, "provider_usage", None),
+            provider_invoked=planner_invoked,
+        )
         return validation_error_response(
             "AI search planner trả về kế hoạch không hợp lệ." if planner_invoked else "Bản diễn giải AI không hợp lệ.",
             status_code=502 if planner_invoked else 422,
         )
     except AIPlannerProviderError as exc:
         logger.warning("ai_search_preview group=%s category=%s", payload.group, exc.category)
+        await record_ai_provider_usage(
+            identity_key,
+            authenticated,
+            getattr(exc, "provider_usage", None),
+            provider_invoked=planner_invoked,
+        )
         status_code = 504 if exc.category == "provider_transport" else 502
         return validation_error_response("Không thể hoàn tất AI search planner lúc này.", status_code=status_code)
     except AIQueryCompilationError as exc:
         logger.warning("ai_search_preview group=%s compilation_category=%s", payload.group, exc.category)
+        await record_ai_provider_usage(
+            identity_key,
+            authenticated,
+            _provider_usage_from(plan),
+            provider_invoked=planner_invoked,
+        )
         return validation_error_response("AI search plan không thể chuyển thành truy vấn hỗ trợ.", status_code=422)
     except HTTPException as exc:
+        await record_ai_provider_usage(
+            identity_key,
+            authenticated,
+            _provider_usage_from(plan),
+            provider_invoked=planner_invoked,
+        )
         return auth_error_response(exc)
     except Exception as exc:
         log_server_exception("create_ai_search_preview failed", exc)
+        await record_ai_provider_usage(
+            identity_key,
+            authenticated,
+            _provider_usage_from(plan),
+            provider_invoked=planner_invoked,
+        )
         return internal_error_response()
 
 

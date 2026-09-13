@@ -7,13 +7,14 @@ import calendar
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import json
+import math
 import os
 from typing import Any, Mapping, Protocol, Literal
 from urllib.error import HTTPError, URLError
 from urllib.request import Request as URLRequest, urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, PrivateAttr, ValidationError
 
 try:
     from .typesense_contract import PUBLIC_GROUPS, get_search_contract
@@ -93,6 +94,81 @@ class AISearchPlan(_StrictModel):
     date_constraints: list[AIDateConstraint] = Field(..., max_length=MAX_DATE_CONSTRAINTS)
     warnings: list[str] = Field(..., max_length=12)
     explanation: list[str] = Field(..., max_length=24)
+    _provider_usage: dict[str, Any] | None = PrivateAttr(default=None)
+
+
+def _safe_usage_number(value: Any) -> int | float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(float(value)) or value < 0:
+        return None
+    return value
+
+
+def _usage_number(usage: Mapping[str, Any], *names: str) -> int | float | None:
+    for name in names:
+        value = _safe_usage_number(usage.get(name))
+        if value is not None:
+            return value
+    return None
+
+
+def extract_provider_usage(response: Mapping[str, Any]) -> dict[str, int | float] | None:
+    """Extract trustworthy token metadata without retaining provider response content."""
+    usage = response.get("usage") if isinstance(response, Mapping) else None
+    if not isinstance(usage, Mapping):
+        return None
+
+    input_tokens = _usage_number(usage, "input_tokens", "prompt_tokens")
+    output_tokens = _usage_number(usage, "output_tokens", "completion_tokens")
+    total_tokens = _usage_number(usage, "total_tokens")
+    input_details = usage.get("input_tokens_details") or usage.get("prompt_tokens_details")
+    cached_tokens = (
+        _usage_number(input_details, "cached_tokens", "cache_read_input_tokens")
+        if isinstance(input_details, Mapping)
+        else None
+    )
+
+    extracted = {
+        key: value
+        for key, value in {
+            "input_tokens": input_tokens,
+            "cached_input_tokens": cached_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+        }.items()
+        if value is not None
+    }
+    if not extracted:
+        return None
+    if input_tokens is not None and output_tokens is not None:
+        return extracted
+    if total_tokens is not None:
+        return {"total_tokens": total_tokens}
+    return None
+
+
+def normalize_usage_units(
+    usage: Mapping[str, Any] | None,
+    *,
+    input_weight: float = 1.0,
+    cached_input_weight: float = 0.25,
+    output_weight: float = 2.0,
+) -> float | None:
+    """Convert provider token metadata to model-independent weighted usage units."""
+    if not isinstance(usage, Mapping):
+        return None
+    input_tokens = _safe_usage_number(usage.get("input_tokens"))
+    cached_tokens = _safe_usage_number(usage.get("cached_input_tokens")) or 0
+    output_tokens = _safe_usage_number(usage.get("output_tokens"))
+    if input_tokens is not None and output_tokens is not None:
+        return (
+            float(input_tokens) * float(input_weight)
+            + float(cached_tokens) * float(cached_input_weight)
+            + float(output_tokens) * float(output_weight)
+        )
+    total_tokens = _safe_usage_number(usage.get("total_tokens"))
+    return float(total_tokens) if total_tokens is not None else None
 
 
 class PlannerProvider(Protocol):
@@ -537,6 +613,7 @@ class OpenAIResponsesPlanner:
 
     def __init__(self, settings: PlannerSettings):
         self.settings = settings
+        self.last_usage: dict[str, int | float] | None = None
 
     async def create_plan(self, *, group: str, message: str) -> Mapping[str, Any]:
         return await asyncio.to_thread(self._create_plan_sync, group=group, message=message)
@@ -578,6 +655,7 @@ class OpenAIResponsesPlanner:
 
         try:
             response_payload = json.loads(response_body.decode("utf-8"))
+            self.last_usage = extract_provider_usage(response_payload)
             structured_text = _structured_output_text(response_payload)
             parsed = json.loads(structured_text)
         except AIPlannerProviderError:
@@ -611,8 +689,18 @@ async def create_search_plan(group: str, message: str, *, provider: PlannerProvi
         if not settings.api_key:
             raise AIPlannerConfigurationError("OpenAI API key is not configured", category="missing_api_key")
         provider = OpenAIResponsesPlanner(settings)
-    raw_plan = await provider.create_plan(group=group, message=cleaned_message)
-    return validate_ai_search_plan(raw_plan, requested_group=group)
+    try:
+        raw_plan = await provider.create_plan(group=group, message=cleaned_message)
+    except AIPlannerProviderError as exc:
+        exc.provider_usage = getattr(provider, "last_usage", None)
+        raise
+    try:
+        plan = validate_ai_search_plan(raw_plan, requested_group=group)
+    except AIPlannerValidationError as exc:
+        exc.provider_usage = getattr(provider, "last_usage", None)
+        raise
+    plan._provider_usage = getattr(provider, "last_usage", None)
+    return plan
 
 
 def serialize_plan(plan: AISearchPlan) -> dict[str, Any]:

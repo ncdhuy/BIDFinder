@@ -1098,6 +1098,36 @@
         </div>
     </div>
 
+    <button id="ai-search-launcher" class="ai-search-launcher" type="button" aria-label="Mở trợ lý tìm kiếm AI" aria-controls="ai-search-chat" aria-expanded="false">
+        <span class="ai-search-launcher-mark" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M12 2l1.7 6.3L20 10l-6.3 1.7L12 18l-1.7-6.3L4 10l6.3-1.7L12 2zm7 13l.7 2.3L22 18l-2.3.7L19 21l-.7-2.3L16 18l2.3-.7L19 15z" fill="currentColor"/></svg></span>
+        <span>AI</span>
+    </button>
+    <aside id="ai-search-chat" class="ai-search-chat" hidden role="dialog" aria-modal="false" aria-labelledby="ai-search-chat-title">
+        <header class="ai-chat-header">
+            <div>
+                <h2 id="ai-search-chat-title">Trợ lý tìm kiếm AI</h2>
+                <div id="ai-chat-usage" class="ai-chat-usage" aria-live="polite">AI hôm nay · đang tải hạn mức</div>
+            </div>
+            <div class="ai-chat-header-actions">
+                <button type="button" class="ai-chat-icon-button" data-ai-chat-clear aria-label="Xóa lịch sử trò chuyện" title="Xóa lịch sử">Xóa</button>
+                <button type="button" class="ai-chat-icon-button" data-ai-chat-close aria-label="Đóng trợ lý">Đóng</button>
+            </div>
+        </header>
+        <div id="ai-chat-messages" class="ai-chat-messages" aria-live="polite"></div>
+        <form id="ai-chat-composer" class="ai-chat-composer">
+            <div id="ai-chat-groups" class="ai-chat-groups" role="group" aria-label="Nhóm tìm kiếm">
+                <button type="button" data-ai-chat-group="goods" aria-pressed="false">Hàng hóa</button>
+                <button type="button" data-ai-chat-group="medicines" class="active" aria-pressed="true">Thuốc</button>
+                <button type="button" data-ai-chat-group="traditional" aria-pressed="false">Dược liệu</button>
+            </div>
+            <div class="ai-chat-input-row">
+                <label class="sr-only" for="ai-chat-input">Mô tả yêu cầu tìm kiếm</label>
+                <textarea id="ai-chat-input" rows="2" maxlength="4000" placeholder="Mô tả điều bạn muốn tìm…" autocomplete="off"></textarea>
+                <button type="submit" class="ai-chat-send" aria-label="Gửi yêu cầu">Gửi</button>
+            </div>
+            <p class="ai-chat-composer-help">Enter để gửi · Shift+Enter để xuống dòng · Mỗi tin nhắn là một yêu cầu mới</p>
+        </form>
+    </aside>
 
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
@@ -1109,6 +1139,7 @@
     <script src="auth.js"></script>
     <script src="typesense-search-form.js"></script>
     <script src="script.js"></script>
+    <script src="ai-search-chat.js"></script>
     <script>
         feather.replace();
     </script>

@@ -1,8 +1,6 @@
 (function () {
     const GROUP_SCOPE = { goods: 'goods', medicines: 'medicine', traditional: 'traditional' };
     const GROUP_LABELS = { goods: 'Hàng hóa', medicines: 'Thuốc', traditional: 'Dược liệu' };
-    const AI_PREVIEW_TIMEOUT_MS = 35000;
-    const AI_COMPILED_REQUEST_MARKER = '__bidfinderPreserveCompiledRequest';
     const FIELD_ORDER = {
         goods: ['item_name', 'model_mark', 'brand', 'technical_specification', 'unit', 'quantity', 'winning_unit_price', 'winning_bidder_name', 'bid_invitation_code', 'procuring_entity_name', 'decision_number', 'decision_issued_at', 'selection_method', 'manufacturer', 'production_year', 'country_of_origin', 'model', 'registration_or_import_permit_number', 'hs_code', 'winning_bidder_id', 'procuring_entity_id', 'result_posted_at', 'bidder_count', 'location'],
         medicines: ['medicine_name', 'active_ingredient_or_herbal_component', 'strength', 'marketing_authorization_or_import_permit', 'unit', 'quantity', 'winning_unit_price', 'medicine_group', 'winning_bidder_name', 'bid_invitation_code', 'procuring_entity_name', 'decision_number', 'decision_issued_at', 'selection_method', 'route_of_administration', 'dosage_form', 'packaging', 'shelf_life', 'manufacturer', 'production_country', 'winning_bidder_id', 'procuring_entity_id', 'result_posted_at', 'bidder_count', 'location'],
@@ -188,9 +186,6 @@
             this._autocompleteCache = new Map();
             this._autocompleteIndex = -1;
             this._previewState = { idle: true };
-            this._aiRequestId = 0;
-            this._aiAbortController = null;
-            this._aiTimeoutId = null;
             this._handleDropdownRootClick = event => {
                 const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
                 const insideDropdown = path.some(node => node?.classList?.contains?.('filter-dropdown'));
@@ -206,17 +201,6 @@
                     this.closeDropdowns();
                     this.closeAutocompleteDropdown();
                 }
-            };
-            this._handleAiQueryResult = () => {
-                if (!this.state?.ai?.executing) return;
-                this.state.ai.executing = false;
-                this.render();
-            };
-            this._handleAiQueryError = event => {
-                if (!this.state?.ai?.executing) return;
-                this.state.ai.executing = false;
-                this.state.ai.error = event.detail?.message || 'Không tải được kết quả tìm kiếm.';
-                this.render();
             };
         }
         connectedCallback() {
@@ -236,22 +220,7 @@
                 loading: false,
                 contract: null,
                 pendingPayload: null,
-                ai: {
-                    message: '',
-                    plan: null,
-                    compiledRequest: null,
-                    preview: null,
-                    optimization: null,
-                    loading: false,
-                    executing: false,
-                    dirty: false,
-                    error: ''
-                }
             };
-            if (typeof document.addEventListener === 'function') {
-                document.addEventListener('bidfinder:query-result', this._handleAiQueryResult);
-                document.addEventListener('bidfinder:query-error', this._handleAiQueryError);
-            }
             this.renderShell('Đang tải danh mục tìm kiếm…');
             contractPromise().then(contract => {
                 this.state.contract = contract;
@@ -261,11 +230,6 @@
             }).catch(error => this.showError(error?.message || 'Không tải được danh mục tìm kiếm.'));
         }
         disconnectedCallback() {
-            this.cancelAiPreview();
-            if (typeof document.removeEventListener === 'function') {
-                document.removeEventListener('bidfinder:query-result', this._handleAiQueryResult);
-                document.removeEventListener('bidfinder:query-error', this._handleAiQueryError);
-            }
             this.cancelAutocomplete();
             if (typeof document.removeEventListener === 'function' && this._outsideDropdownBound) {
                 document.removeEventListener('click', this._handleOutsideDropdownClick);
@@ -307,37 +271,6 @@
                 .ts-error { color: #a63d3d; background: #fff7f7; border-color: #f0caca; }
 
                 .search-form { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; overflow-x: hidden; color: var(--c-text); }
-
-                .ai-search-panel { margin-bottom: 8px; padding: 11px 12px; border: 1px solid #cfe2eb; border-radius: var(--radius-sm); background: var(--c-surface-2); }
-                .ai-search-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 5px; }
-                .ai-search-heading h3 { margin: 0; color: var(--c-text); font-size: 16px; font-weight: 800; }
-                .ai-search-group { color: var(--c-sub); font-size: 12px; font-weight: 700; white-space: nowrap; }
-                .ai-search-input-row { display: flex; align-items: flex-start; gap: 8px; }
-                .ai-search-input { width: 100%; min-height: 64px; resize: vertical; padding: 9px 10px; border: 1px solid var(--c-border-strong); border-radius: var(--radius-sm); background: var(--c-surface); color: var(--c-text); font: inherit; line-height: 1.45; }
-                .ai-search-input:focus { outline: none; border-color: var(--c-primary-hover); box-shadow: 0 0 0 3px rgba(18, 116, 149, 0.10); }
-                .ai-search-input::placeholder { color: var(--c-muted); }
-                .ai-search-submit { min-width: 128px; flex: 0 0 auto; }
-                .ai-search-helper { margin: 4px 0 0; color: var(--c-sub); font-size: 12px; line-height: 1.35; }
-                .ai-search-error, .ai-search-warning { margin-top: 7px; padding: 7px 9px; border-radius: 6px; font-size: 12px; line-height: 1.4; }
-                .ai-search-error { border: 1px solid #f0caca; background: #fff7f7; color: #a63d3d; }
-                .ai-search-warning { border: 1px solid #ead8a8; background: #fffaf0; color: #795b18; }
-                .ai-interpretation { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--c-border); }
-                .ai-interpretation-title { margin: 0 0 6px; color: var(--c-text); font-size: 13px; font-weight: 800; }
-                .ai-interpretation-help { margin: 0 0 7px; color: var(--c-sub); font-size: 11.5px; line-height: 1.35; }
-                .ai-conditions { display: flex; flex-direction: column; gap: 5px; }
-                .ai-condition { display: grid; grid-template-columns: minmax(145px, 0.8fr) minmax(180px, 1fr) auto; align-items: center; gap: 6px; }
-                .ai-condition select, .ai-condition input { width: 100%; min-height: 32px; padding: 5px 7px; border: 1px solid var(--c-border); border-radius: 6px; background: var(--c-surface); color: var(--c-text); font: inherit; font-size: 12px; }
-                .ai-condition select:focus, .ai-condition input:focus { outline: 2px solid rgba(18, 116, 149, 0.20); outline-offset: 1px; }
-                .ai-condition-remove { min-width: 28px; min-height: 30px; padding: 3px 7px; border: 1px solid var(--c-border); border-radius: 6px; background: var(--c-surface); color: var(--c-muted); cursor: pointer; }
-                .ai-condition-remove:hover, .ai-condition-remove:focus-visible { color: #a63d3d; border-color: #e6baba; }
-                .ai-condition-join { margin: 1px 0 1px 8px; color: var(--c-primary-hover); font-size: 11px; font-weight: 800; }
-                .ai-date-condition { grid-template-columns: minmax(145px, 0.8fr) minmax(120px, 1fr) 76px 96px auto; }
-                .ai-preview-status { margin-top: 8px; color: var(--c-text); font-size: 12.5px; font-weight: 800; line-height: 1.4; }
-                .ai-preview-status.zero { color: #a63d3d; }
-                .ai-preview-status.dirty { color: #795b18; }
-                .ai-broadening-note { margin-top: 4px; color: var(--c-sub); font-size: 11.5px; line-height: 1.35; }
-                .ai-interpretation-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; margin-top: 8px; }
-                .ai-interpretation-actions .btn { min-width: 120px; min-height: 34px; padding: 7px 11px; font-size: 12px; }
 
                 .active-filters-topbar {
                     display: flex;
@@ -632,279 +565,7 @@
                     .filter-content { min-height: 250px; padding: 12px 16px 16px 14px; }
                     .editor-actions .btn { flex: 1; }
                 }
-                @media (max-width: 520px) {
-                    .ai-search-input-row { flex-direction: column; }
-                    .ai-search-submit { width: 100%; }
-                    .ai-condition, .ai-date-condition { grid-template-columns: 1fr auto; }
-                    .ai-condition select, .ai-condition input { grid-column: 1 / -1; }
-                    .ai-condition-remove { grid-column: 2; grid-row: 1; }
-                    .condition-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-                    .category-panel + .condition-panel { padding-left: 5px; border-top: 0; border-left: 0; padding-top: 5px; }
-                    .range-row { flex-direction: column; gap: 0; }
-                }
             `;
-        }
-        aiPlannerFields() { return this.fields().filter(field => field.ai_planning === true); }
-        aiPlannerFieldsForRole(role, currentName = '') {
-            return this.aiPlannerFields().filter(field => field.ai_planner_role === role || field.name === currentName);
-        }
-        aiResultCountBucket(total) {
-            const count = Number(total);
-            if (!Number.isFinite(count) || count <= 0) return '0';
-            if (count <= 10) return '1-10';
-            if (count <= 50) return '11-50';
-            if (count <= 100) return '51-100';
-            return '101+';
-        }
-        aiLatencyBucket(milliseconds) {
-            if (milliseconds < 1000) return '<1s';
-            if (milliseconds < 3000) return '1-3s';
-            if (milliseconds < 10000) return '3-10s';
-            return '10s+';
-        }
-        renderAiSearch() {
-            const ai = this.state.ai;
-            const canRequest = Boolean(String(ai.message || '').trim()) && !ai.loading;
-            return `<section class="ai-search-panel" aria-labelledby="ai-search-title"><div class="ai-search-heading"><h3 id="ai-search-title">Tìm kiếm bằng AI</h3><span class="ai-search-group">Nhóm hiện tại: ${html(GROUP_LABELS[this.state.group])}</span></div><div class="ai-search-input-row"><textarea class="ai-search-input" data-ai-message rows="2" maxlength="4000" placeholder="VD: Thủy tinh thể nhân tạo mềm, màu vàng, 4 càng; Bệnh viện Nguyễn Trãi; 6 tháng gần nhất" aria-describedby="ai-search-helper">${html(ai.message)}</textarea><button type="button" class="btn btn-primary ai-search-submit" data-ai-action="request" ${canRequest ? '' : 'disabled'} aria-busy="${ai.loading}">${ai.loading ? 'Đang phân tích…' : 'Phân tích yêu cầu'}</button></div><p class="ai-search-helper" id="ai-search-helper">Mô tả tự nhiên điều bạn muốn tìm. Dấu ; chỉ giúp tách ý, không bắt buộc.</p>${ai.error ? `<div class="ai-search-error" role="alert">${html(ai.error)}</div>` : ''}${ai.plan ? this.renderAiInterpretation() : ''}</section>`;
-        }
-        renderAiStatus(ai) {
-            const total = Number(ai.preview?.total);
-            const hasTotal = Number.isFinite(total);
-            const status = ai.dirty
-                ? '<div class="ai-preview-status dirty" role="status">Đã thay đổi diễn giải. Hãy cập nhật kết quả.</div>'
-                : ai.preview
-                    ? `<div class="ai-preview-status${hasTotal && total <= 0 ? ' zero' : ''}" role="status" aria-live="polite">${hasTotal && total > 0 ? `Tìm thấy ${total.toLocaleString('vi-VN')} kết quả` : 'Không tìm thấy kết quả phù hợp'}</div>`
-                    : '';
-            const broadening = !ai.dirty && ai.optimization?.outcome === 'matched_after_safe_broadening'
-                ? '<div class="ai-broadening-note">BIDFinder đã mở rộng phạm vi trường sản phẩm để tìm kết quả phù hợp.</div>'
-                : '';
-            return `${status}${broadening}`;
-        }
-        renderAiInterpretation() {
-            const ai = this.state.ai;
-            const plan = ai.plan || {};
-            const conditions = [];
-            (plan.clauses || []).forEach((clause, clauseIndex) => {
-                const currentField = this.fieldMeta(clause.field);
-                const role = currentField?.ai_planner_role;
-                const options = this.aiPlannerFieldsForRole(role, clause.field);
-                (clause.concepts || []).forEach((concept, conceptIndex) => {
-                    const alternatives = Array.isArray(concept.alternatives) ? concept.alternatives : [];
-                    const optionMarkup = options.map(field => `<option value="${html(field.name)}" ${field.name === clause.field ? 'selected' : ''}>${html(this.fieldLabel(field.name))}</option>`).join('');
-                    if (conditions.length) conditions.push('<div class="ai-condition-join">VÀ</div>');
-                    conditions.push(`<div class="ai-condition" data-ai-clause="${clauseIndex}" data-ai-concept="${conceptIndex}"><select data-ai-field data-ai-clause="${clauseIndex}" data-ai-concept="${conceptIndex}" aria-label="Trường điều kiện ${conceptIndex + 1}">${optionMarkup}</select><input type="text" data-ai-alt data-ai-clause="${clauseIndex}" data-ai-concept="${conceptIndex}" value="${html(alternatives.join(' | '))}" aria-label="Lựa chọn cho ${html(this.fieldLabel(clause.field))}" title="Dùng | để tách lựa chọn OR"><button type="button" class="ai-condition-remove" data-ai-remove-concept data-ai-clause="${clauseIndex}" data-ai-concept="${conceptIndex}" aria-label="Bỏ điều kiện">×</button></div>`);
-                });
-            });
-            (plan.date_constraints || []).forEach((constraint, dateIndex) => {
-                if (conditions.length) conditions.push('<div class="ai-condition-join">VÀ</div>');
-                const dateFields = this.aiPlannerFieldsForRole('date', constraint.field);
-                const dateOptions = dateFields.map(field => `<option value="${html(field.name)}" ${field.name === constraint.field ? 'selected' : ''}>${html(this.fieldLabel(field.name))}</option>`).join('');
-                const period = constraint.period || {};
-                conditions.push(`<div class="ai-condition ai-date-condition" data-ai-date="${dateIndex}"><select data-ai-date-field data-ai-date-index="${dateIndex}" aria-label="Trường ngày">${dateOptions}</select><input type="number" min="1" max="120" data-ai-date-amount data-ai-date-index="${dateIndex}" value="${html(period.amount)}" aria-label="Số lượng thời gian"><select data-ai-date-unit data-ai-date-index="${dateIndex}" aria-label="Đơn vị thời gian">${[['days', 'ngày'], ['months', 'tháng'], ['years', 'năm']].map(([value, label]) => `<option value="${value}" ${period.unit === value ? 'selected' : ''}>${label}</option>`).join('')}</select><select data-ai-date-direction data-ai-date-index="${dateIndex}" aria-label="Khoảng thời gian"><option value="previous" ${period.direction === 'previous' ? 'selected' : ''}>gần nhất</option><option value="current" ${period.direction === 'current' ? 'selected' : ''}>hiện tại</option></select><button type="button" class="ai-condition-remove" data-ai-remove-date data-ai-date-index="${dateIndex}" aria-label="Bỏ điều kiện ngày">×</button></div>`);
-            });
-            const warnings = (plan.warnings || []).length ? `<div class="ai-search-warning" role="note">${plan.warnings.map(warning => html(warning)).join('<br>')}</div>` : '';
-            const updateDisabled = ai.loading || !ai.dirty;
-            const executeDisabled = ai.loading || ai.executing || ai.dirty || !ai.compiledRequest;
-            return `<div class="ai-interpretation"><p class="ai-interpretation-title">AI hiểu yêu cầu của bạn như sau</p><p class="ai-interpretation-help">Mỗi dòng là một điều kiện. Dùng <strong>|</strong> trong ô để tách lựa chọn OR; các dòng nối bằng VÀ.</p><div class="ai-conditions">${conditions.length ? conditions.join('') : '<span class="empty-filters">Chưa có điều kiện văn bản hoặc thời gian.</span>'}</div>${warnings}${this.renderAiStatus(this.state.ai)}<div class="ai-interpretation-actions"><button type="button" class="btn btn-secondary" data-ai-action="update" ${updateDisabled ? 'disabled' : ''}>Cập nhật kết quả</button><button type="button" class="btn btn-primary" data-ai-action="execute" ${executeDisabled ? 'disabled' : ''}>${ai.executing ? 'Đang tải kết quả…' : 'Hiển thị kết quả'}</button></div></div>`;
-        }
-        markAiInterpretationDirty() {
-            const ai = this.state.ai;
-            ai.dirty = true;
-            ai.preview = null;
-            ai.optimization = null;
-            ai.error = '';
-            window.BIDFinderAnalytics?.track?.('ai_interpretation_edited', { group: this.state.group });
-            this.render();
-        }
-        parseAiAlternatives(value) { return String(value || '').split('|').map(item => item.trim()).filter(Boolean); }
-        updateAiConceptAlternatives(clauseIndex, conceptIndex, value) {
-            const alternatives = this.parseAiAlternatives(value);
-            if (!alternatives.length) {
-                this.state.ai.error = 'Mỗi điều kiện cần ít nhất một lựa chọn.';
-                this.render();
-                return;
-            }
-            const concept = this.state.ai.plan?.clauses?.[clauseIndex]?.concepts?.[conceptIndex];
-            if (!concept) return;
-            if (this.fieldMeta(this.state.ai.plan?.clauses?.[clauseIndex]?.field)?.ai_planner_role === 'identifier' && alternatives.length !== 1) {
-                this.state.ai.error = 'Mã định danh chỉ được có một giá trị.';
-                this.render();
-                return;
-            }
-            concept.alternatives = alternatives;
-            this.markAiInterpretationDirty();
-        }
-        updateAiConceptField(clauseIndex, conceptIndex, fieldName) {
-            const clause = this.state.ai.plan?.clauses?.[clauseIndex];
-            const nextField = this.fieldMeta(fieldName);
-            const currentField = this.fieldMeta(clause?.field);
-            if (!clause || !nextField || !currentField || nextField.ai_planner_role !== currentField.ai_planner_role) return;
-            if (Number.isInteger(conceptIndex) && clause.concepts?.length > 1 && clause.concepts[conceptIndex]) {
-                const [concept] = clause.concepts.splice(conceptIndex, 1);
-                this.state.ai.plan.clauses.splice(clauseIndex + 1, 0, { field: nextField.name, concepts: [concept], join: 'AND' });
-            } else {
-                clause.field = nextField.name;
-            }
-            this.markAiInterpretationDirty();
-        }
-        updateAiDateConstraint(index) {
-            const constraint = this.state.ai.plan?.date_constraints?.[index];
-            if (!constraint) return;
-            const root = this.shadowRoot;
-            const amount = Number(root.querySelector(`[data-ai-date-amount][data-ai-date-index="${index}"]`)?.value);
-            const unit = root.querySelector(`[data-ai-date-unit][data-ai-date-index="${index}"]`)?.value;
-            const direction = root.querySelector(`[data-ai-date-direction][data-ai-date-index="${index}"]`)?.value;
-            if (!Number.isInteger(amount) || amount < 1 || amount > 120 || !['days', 'months', 'years'].includes(unit) || !['previous', 'current'].includes(direction)) {
-                this.state.ai.error = 'Khoảng thời gian không hợp lệ.';
-                this.render();
-                return;
-            }
-            constraint.period = { kind: 'relative', amount, unit, direction };
-            this.markAiInterpretationDirty();
-        }
-        updateAiDateField(index, fieldName) {
-            const constraint = this.state.ai.plan?.date_constraints?.[index];
-            const field = this.fieldMeta(fieldName);
-            if (!constraint || !field || field.ai_planner_role !== 'date') return;
-            constraint.field = field.name;
-            this.markAiInterpretationDirty();
-        }
-        removeAiConcept(clauseIndex, conceptIndex) {
-            const clauses = this.state.ai.plan?.clauses;
-            const clause = clauses?.[clauseIndex];
-            if (!clause?.concepts?.[conceptIndex]) return;
-            clause.concepts.splice(conceptIndex, 1);
-            if (!clause.concepts.length) clauses.splice(clauseIndex, 1);
-            this.markAiInterpretationDirty();
-        }
-        removeAiDateConstraint(index) {
-            const dates = this.state.ai.plan?.date_constraints;
-            if (!dates?.[index]) return;
-            dates.splice(index, 1);
-            this.markAiInterpretationDirty();
-        }
-        cancelAiPreview() {
-            this._aiRequestId += 1;
-            if (this._aiAbortController) this._aiAbortController.abort();
-            this._aiAbortController = null;
-            if (this._aiTimeoutId) clearTimeout(this._aiTimeoutId);
-            this._aiTimeoutId = null;
-        }
-        resetAiInterpretation({ keepMessage = true } = {}) {
-            const message = keepMessage ? String(this.state.ai?.message || '') : '';
-            this.state.ai = { message, plan: null, compiledRequest: null, preview: null, optimization: null, loading: false, executing: false, dirty: false, error: '' };
-        }
-        async requestAiPreview({ plan = null } = {}) {
-            const ai = this.state.ai;
-            const editedPlan = Boolean(plan);
-            if (ai.loading) return;
-            const message = String(ai.message || '').trim();
-            if (!editedPlan && !message) {
-                ai.error = 'Vui lòng mô tả điều bạn muốn tìm.';
-                this.render();
-                return;
-            }
-            if (editedPlan && !ai.plan) return;
-            this.cancelAiPreview();
-            const requestId = ++this._aiRequestId;
-            const group = this.state.group;
-            const started = performance.now();
-            const controller = typeof AbortController === 'function' ? new AbortController() : null;
-            let timedOut = false;
-            this._aiAbortController = controller;
-            if (!editedPlan) {
-                ai.plan = null;
-                ai.compiledRequest = null;
-                ai.preview = null;
-                ai.optimization = null;
-                ai.dirty = false;
-            }
-            ai.loading = true;
-            ai.error = '';
-            this.render();
-            window.BIDFinderAnalytics?.track?.('ai_search_requested', { group, mode: editedPlan ? 'edited_plan' : 'message' });
-            this._aiTimeoutId = setTimeout(() => {
-                timedOut = true;
-                controller?.abort();
-            }, AI_PREVIEW_TIMEOUT_MS);
-            try {
-                const fetcher = window.bidfinderAuthorizedFetch || fetch;
-                const body = editedPlan ? { group, plan: JSON.parse(JSON.stringify(plan)) } : { group, message };
-                const response = await fetcher(`${apiBaseUrl()}/api/ai/search-preview`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body),
-                    ...(controller ? { signal: controller.signal } : {})
-                });
-                let payload = {};
-                try { payload = await response.json(); } catch (_) { payload = {}; }
-                if (!response.ok || payload?.success === false) {
-                    const error = new Error('AI search request failed');
-                    error.status = Number(response.status || 0);
-                    error.publicMessage = typeof payload?.message === 'string' ? payload.message : '';
-                    throw error;
-                }
-                if (requestId !== this._aiRequestId || group !== this.state.group) return;
-                if (!payload?.plan || !payload?.compiled_request) {
-                    const error = new Error('AI search response invalid');
-                    error.publicMessage = 'AI search hiện không khả dụng.';
-                    throw error;
-                }
-                const compiledRequest = payload.compiled_request;
-                Object.defineProperty(compiledRequest, AI_COMPILED_REQUEST_MARKER, { value: true, enumerable: false, configurable: true });
-                ai.plan = payload.plan;
-                ai.compiledRequest = compiledRequest;
-                ai.preview = payload.preview && typeof payload.preview === 'object' ? payload.preview : { total: 0 };
-                ai.optimization = payload.optimization && typeof payload.optimization === 'object' ? payload.optimization : null;
-                ai.dirty = false;
-                ai.error = '';
-                window.BIDFinderAnalytics?.track?.('ai_preview_success', { group, result_count_bucket: this.aiResultCountBucket(ai.preview.total), optimization_outcome: ai.optimization?.outcome || 'unknown', latency_bucket: this.aiLatencyBucket(performance.now() - started) });
-            } catch (error) {
-                const aborted = Boolean(controller?.signal?.aborted) || error?.name === 'AbortError';
-                if (aborted && !timedOut) return;
-                if (requestId !== this._aiRequestId || group !== this.state.group) return;
-                const status = Number(error?.status || 0);
-                ai.error = timedOut
-                    ? 'AI search mất quá nhiều thời gian. Vui lòng thử lại.'
-                    : error?.publicMessage || (status === 429 ? 'AI search đang quá tải. Vui lòng thử lại sau.' : status >= 500 ? 'AI search hiện không khả dụng.' : 'Không thể xử lý yêu cầu AI lúc này.');
-                window.BIDFinderAnalytics?.track?.('ai_preview_failure', { group, status: status || 'network', failure_kind: timedOut ? 'timeout' : 'request' });
-            } finally {
-                if (requestId !== this._aiRequestId) return;
-                clearTimeout(this._aiTimeoutId);
-                this._aiTimeoutId = null;
-                this._aiAbortController = null;
-                ai.loading = false;
-                this.render();
-            }
-        }
-        executeAiSearch() {
-            const ai = this.state.ai;
-            if (!ai.compiledRequest || ai.dirty || ai.loading || ai.executing) return;
-            const request = ai.compiledRequest;
-            Object.defineProperty(request, AI_COMPILED_REQUEST_MARKER, { value: true, enumerable: false, configurable: true });
-            ai.executing = true;
-            ai.error = '';
-            this.render();
-            window.BIDFinderAnalytics?.track?.('ai_search_executed', { group: this.state.group, result_count_bucket: this.aiResultCountBucket(ai.preview?.total) });
-            this.dispatchEvent(new CustomEvent('apply-filters', { detail: request, bubbles: true, composed: true }));
-        }
-        bindAiEvents() {
-            const root = this.shadowRoot;
-            root.querySelector('[data-ai-message]')?.addEventListener('input', event => {
-                this.state.ai.message = event.target.value;
-                if (this.state.ai.error && !this.state.ai.loading) this.state.ai.error = '';
-                const button = root.querySelector('[data-ai-action="request"]');
-                if (button) button.disabled = !String(this.state.ai.message || '').trim() || this.state.ai.loading;
-            });
-            root.querySelector('[data-ai-action="request"]')?.addEventListener('click', () => this.requestAiPreview());
-            root.querySelector('[data-ai-action="update"]')?.addEventListener('click', () => this.requestAiPreview({ plan: this.state.ai.plan }));
-            root.querySelector('[data-ai-action="execute"]')?.addEventListener('click', () => this.executeAiSearch());
-            root.querySelectorAll('[data-ai-alt]').forEach(input => input.addEventListener('change', () => this.updateAiConceptAlternatives(Number(input.dataset.aiClause), Number(input.dataset.aiConcept), input.value)));
-            root.querySelectorAll('[data-ai-field]').forEach(input => input.addEventListener('change', () => this.updateAiConceptField(Number(input.dataset.aiClause), Number(input.dataset.aiConcept), input.value)));
-            root.querySelectorAll('[data-ai-remove-concept]').forEach(button => button.addEventListener('click', () => this.removeAiConcept(Number(button.dataset.aiClause), Number(button.dataset.aiConcept))));
-            root.querySelectorAll('[data-ai-remove-date]').forEach(button => button.addEventListener('click', () => this.removeAiDateConstraint(Number(button.dataset.aiDateIndex))));
-            root.querySelectorAll('[data-ai-date-field]').forEach(input => input.addEventListener('change', () => this.updateAiDateField(Number(input.dataset.aiDateIndex), input.value)));
-            root.querySelectorAll('[data-ai-date-amount],[data-ai-date-unit],[data-ai-date-direction]').forEach(input => input.addEventListener('change', () => this.updateAiDateConstraint(Number(input.dataset.aiDateIndex))));
         }
         groupContract() { return this.state.contract?.groups?.[this.state.group] || null; }
         fields() {
@@ -935,7 +596,7 @@
             this.ensureActiveField();
             this.cancelAutocomplete();
             const groupButtons = Object.keys(GROUP_LABELS).map(key => `<button type="button" class="sidebar-item group-choice ${key === this.state.group ? 'active' : ''}" data-group="${key}" aria-pressed="${key === this.state.group}">${icon(key === 'goods' ? 'package' : key === 'medicines' ? 'pill' : 'leaf')}<span class="group-choice-label">${GROUP_LABELS[key]}</span></button>`).join('');
-            this._contentRoot.innerHTML = `<section class="search-form" aria-label="Tìm kiếm nâng cao">${this.renderAiSearch()}${this.renderSummary()}<div class="filter-layout"><aside class="filter-sidebar"><div class="sidebar-column category-panel" aria-label="Danh mục"><div class="sidebar-panel-title">Danh mục</div>${groupButtons}</div><div class="sidebar-column condition-panel" aria-label="Điều kiện"><div class="sidebar-panel-title">Điều kiện</div>${this.renderVariableSections()}</div></aside><div class="filter-content">${this.renderEditor()}</div></div></section>`;
+            this._contentRoot.innerHTML = `<section class="search-form" aria-label="Tìm kiếm nâng cao">${this.renderSummary()}<div class="filter-layout"><aside class="filter-sidebar"><div class="sidebar-column category-panel" aria-label="Danh mục"><div class="sidebar-panel-title">Danh mục</div>${groupButtons}</div><div class="sidebar-column condition-panel" aria-label="Điều kiện"><div class="sidebar-panel-title">Điều kiện</div>${this.renderVariableSections()}</div></aside><div class="filter-content">${this.renderEditor()}</div></div></section>`;
             this.setPreviewResult(this._previewState);
             this.bindEvents();
         }
@@ -1111,8 +772,7 @@
         bindEvents() {
             const root = this.shadowRoot;
             root.querySelectorAll('[data-group]').forEach(button => button.addEventListener('click', () => {
-                this.cancelAiPreview();
-                this.state.group = button.dataset.group; this.state.sourceTypes = []; this.state.criteria = {}; this.state.activeField = ''; this.state.page = 1; this._previewState = { idle: true }; this.resetAiInterpretation({ keepMessage: true }); this.render();
+                this.state.group = button.dataset.group; this.state.sourceTypes = []; this.state.criteria = {}; this.state.activeField = ''; this.state.page = 1; this._previewState = { idle: true }; this.render();
             }));
             root.querySelectorAll('[data-field]').forEach(button => button.addEventListener('click', () => { this.state.activeField = button.dataset.field; this.render(); this.focusActiveField(); }));
             root.querySelectorAll('[data-open-filter-help]').forEach(link => link.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); this.dispatchEvent(new CustomEvent('bidfinder:open-filter-help', { bubbles: true, composed: true })); }));
@@ -1133,7 +793,6 @@
             root.querySelectorAll('#criterion-min,#criterion-max').forEach(input => input.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); this.saveActiveCriterion(); } }));
             this.bindSummaryEvents();
             this.bindTokenEditorEvents();
-            this.bindAiEvents();
         }
         bindSummaryEvents() {
             const root = this.shadowRoot;
