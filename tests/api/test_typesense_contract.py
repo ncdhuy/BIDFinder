@@ -122,6 +122,27 @@ class TypesenseContractTest(unittest.TestCase):
         self.assertEqual(0, global_search.params["num_typos"])
         self.assertNotIn("infix", global_search.params)
 
+    def test_long_iso_date_range_uses_compact_prefix_list(self):
+        plan = translate_typesense_query(
+            build_canonical_query(
+                "goods",
+                date_ranges={
+                    "decision_issued_at": {
+                        "from": "2026-03-13",
+                        "to": "2026-09-13",
+                    }
+                },
+                limit=50,
+            ),
+            serving_generation="serving_v1_20260910_raw_v2",
+        )
+
+        filter_by = plan.params["filter_by"]
+        self.assertIn("decision_issued_at:=[", filter_by)
+        self.assertIn("2026-03-13*", filter_by)
+        self.assertIn("2026-09-13*", filter_by)
+        self.assertNotIn(" || decision_issued_at:", filter_by)
+
     def test_quoted_advanced_phrase_does_not_degrade_to_independent_words(self):
         phrase = translate_typesense_query(
             build_canonical_query(

@@ -450,6 +450,29 @@ def _iso_date_range_clauses(start_value: Any, end_value: Any, field_name: str = 
     return tuple(clauses)
 
 
+def _iso_date_range_filter(field_name: str, range_clauses: Sequence[str]) -> str:
+    """Compact long ISO prefix ranges before Typesense's filter-op limit."""
+
+    # Typesense counts every OR operand in ``filter_by``.  A list equality
+    # filter accepts the same wildcard prefixes while counting as one field
+    # operation, which keeps realistic date windows below the default limit.
+    if len(range_clauses) <= 8:
+        return "(" + " || ".join(range_clauses) + ")"
+
+    prefixes: list[str] = []
+    prefix = f"{field_name}:"
+    for clause in range_clauses:
+        if not clause.startswith(prefix):
+            return "(" + " || ".join(range_clauses) + ")"
+        value = clause[len(prefix):]
+        if value.startswith("="):
+            value = value[1:]
+        if not value:
+            return "(" + " || ".join(range_clauses) + ")"
+        prefixes.append(value)
+    return f"{field_name}:=[{','.join(prefixes)}]"
+
+
 def _prefix_clause(field_name: str, value: Any, *, negate: bool = False) -> str:
     escaped = _escape_filter_value(value)
     operator = ":!" if negate else ":"
@@ -890,7 +913,7 @@ def translate_typesense_query(query: ProcurementQuery, *, serving_generation: st
             continue
         range_clauses = _iso_date_range_clauses(raw_value.get("from"), raw_value.get("to"), name)
         if range_clauses:
-            clauses.append("(" + " || ".join(range_clauses) + ")")
+            clauses.append(_iso_date_range_filter(name, range_clauses))
         else:
             if name == "partition_date":
                 for operator, value in ((">=", raw_value.get("from")), ("<=", raw_value.get("to"))):
