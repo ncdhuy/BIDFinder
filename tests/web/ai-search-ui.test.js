@@ -58,6 +58,7 @@ assert.doesNotMatch(execution, /collectFilterPayload/);
 assert.match(scriptSource, /const AI_COMPILED_REQUEST_MARKER/);
 assert.match(scriptSource, /currentQueryRequest = payload\?\.\[AI_COMPILED_REQUEST_MARKER\]/);
 assert.match(scriptSource, /\?\s*payload\s*:\s*enrichLegacyQueryRequest\(payload\);/);
+assert.doesNotMatch(scriptSource, /console\.log\('Applying filters with query request:/);
 assert.match(scriptSource, /filters: queryRequest\?\.filters \|\| \{\}/);
 
 console.log('AI search UI contract passed');

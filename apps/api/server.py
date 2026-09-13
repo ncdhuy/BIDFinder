@@ -242,6 +242,10 @@ AI_SEARCH_PREVIEW_RATE_LIMIT_PER_MINUTE = get_env_int(
     10,
     minimum=1,
 )
+AI_SEARCH_MESSAGE_RATE_LIMIT_PER_MINUTE = max(
+    1,
+    min(5, AI_SEARCH_PREVIEW_RATE_LIMIT_PER_MINUTE // 2),
+)
 FEEDBACK_RATE_LIMIT_PER_MINUTE = get_env_int("FEEDBACK_RATE_LIMIT_PER_MINUTE", 10, minimum=1)
 FEEDBACK_READ_RATE_LIMIT_PER_MINUTE = get_env_int(
     "FEEDBACK_READ_RATE_LIMIT_PER_MINUTE",
@@ -1162,8 +1166,10 @@ def get_client_ip(request: Request) -> str:
     return getattr(request.client, "host", "") or "unknown"
 
 
-def get_rate_limit_client_key(request: Request) -> str:
+def get_rate_limit_client_key(request: Request, *, include_user_agent: bool = True) -> str:
     client_ip = get_client_ip(request)
+    if not include_user_agent:
+        return client_ip
     user_agent = request.headers.get("user-agent", "").strip().lower()
     user_agent_hash = hashlib.sha256(user_agent.encode("utf-8")).hexdigest()[:16] if user_agent else "no-ua"
     return f"{client_ip}:{user_agent_hash}"
@@ -1341,8 +1347,14 @@ def internal_error_response(message: str = SERVER_ERROR_MESSAGE) -> JSONResponse
     return validation_error_response(message, status_code=500)
 
 
-async def enforce_rate_limit(request: Request, bucket_name: str, limit: int) -> Optional[JSONResponse]:
-    cache_key = f"{bucket_name}:{get_rate_limit_client_key(request)}"
+async def enforce_rate_limit(
+    request: Request,
+    bucket_name: str,
+    limit: int,
+    *,
+    include_user_agent: bool = True,
+) -> Optional[JSONResponse]:
+    cache_key = f"{bucket_name}:{get_rate_limit_client_key(request, include_user_agent=include_user_agent)}"
     now = time.time()
     cutoff = now - RATE_LIMIT_WINDOW_SECONDS
 
@@ -3851,10 +3863,12 @@ async def create_ai_search_preview(request: Request, payload: AISearchPreviewReq
     started = time.perf_counter()
     settings = get_planner_settings()
     planner_invoked = False
+    message_mode = payload.message is not None
     limited = await enforce_rate_limit(
         request,
-        "ai-search-preview",
-        AI_SEARCH_PREVIEW_RATE_LIMIT_PER_MINUTE,
+        "ai-search-message" if message_mode else "ai-search-edited-plan",
+        AI_SEARCH_MESSAGE_RATE_LIMIT_PER_MINUTE if message_mode else AI_SEARCH_PREVIEW_RATE_LIMIT_PER_MINUTE,
+        include_user_agent=not message_mode,
     )
     if limited:
         return limited

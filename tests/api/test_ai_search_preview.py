@@ -56,6 +56,68 @@ class AISearchPreviewEndpointTest(unittest.TestCase):
             response = asyncio.run(server_module.create_ai_search_preview(request, payload))
         return response, preview
 
+    def test_message_mode_uses_ip_scoped_stricter_rate_limit(self):
+        plan = normalized_plan("goods", [clause("item_name", "máy thở")])
+        request = object()
+        payload = server_module.AISearchPreviewRequest(group="goods", message="máy thở")
+        limiter = AsyncMock(return_value=None)
+        with patch.object(server_module, "enforce_rate_limit", new=limiter), \
+             patch.object(server_module, "create_search_plan", new=AsyncMock(return_value=plan)), \
+             patch.object(server_module, "execute_query_preview", new=AsyncMock(return_value=preview_payload(1))):
+            asyncio.run(server_module.create_ai_search_preview(request, payload))
+
+        limiter.assert_awaited_once_with(
+            request,
+            "ai-search-message",
+            server_module.AI_SEARCH_MESSAGE_RATE_LIMIT_PER_MINUTE,
+            include_user_agent=False,
+        )
+
+    def test_edited_plan_mode_keeps_existing_preview_rate_limit_bucket(self):
+        plan = normalized_plan("goods", [clause("item_name", "máy thở")])
+        request = object()
+        payload = server_module.AISearchPreviewRequest(group="goods", plan=server_module.serialize_plan(plan))
+        limiter = AsyncMock(return_value=None)
+        with patch.object(server_module, "enforce_rate_limit", new=limiter), \
+             patch.object(server_module, "execute_query_preview", new=AsyncMock(return_value=preview_payload(1))):
+            asyncio.run(server_module.create_ai_search_preview(request, payload))
+
+        limiter.assert_awaited_once_with(
+            request,
+            "ai-search-edited-plan",
+            server_module.AI_SEARCH_PREVIEW_RATE_LIMIT_PER_MINUTE,
+            include_user_agent=True,
+        )
+
+    def test_ip_scoped_message_limit_cannot_split_by_user_agent(self):
+        from starlette.requests import Request
+
+        def make_request(user_agent):
+            return Request({
+                "type": "http",
+                "method": "POST",
+                "path": "/api/ai/search-preview",
+                "headers": [(b"user-agent", user_agent.encode("ascii"))],
+                "client": ("198.51.100.10", 1234),
+                "server": ("127.0.0.1", 8001),
+                "scheme": "http",
+            })
+
+        async def exercise():
+            async with server_module.rate_limit_lock:
+                server_module.rate_limit_buckets.clear()
+            first = await server_module.enforce_rate_limit(
+                make_request("ua-one"), "ai-search-message", 1, include_user_agent=False
+            )
+            second = await server_module.enforce_rate_limit(
+                make_request("ua-two"), "ai-search-message", 1, include_user_agent=False
+            )
+            return first, second
+
+        first, second = asyncio.run(exercise())
+        self.assertIsNone(first)
+        self.assertEqual(429, second.status_code)
+
     def test_initial_message_mode_invokes_planner(self):
         plan = normalized_plan("goods", [clause("item_name", "máy thở")])
         planner = AsyncMock(return_value=plan)

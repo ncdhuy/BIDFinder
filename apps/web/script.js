@@ -2611,8 +2611,6 @@ async function applyFilters(payload, options = {}) {
         : enrichLegacyQueryRequest(payload);
     closeFloatingTableUi();
 
-    console.log('Applying filters with query request:', currentQueryRequest);
-
     try {
         const result = await fetchQueryResults(
             currentQueryRequest,
