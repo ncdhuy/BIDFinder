@@ -48,13 +48,109 @@ def preview_payload(total: int):
 class AISearchPreviewEndpointTest(unittest.TestCase):
     def _run_endpoint(self, plan, responses):
         request = object()
-        payload = server_module.AIPlanRequest(group=plan.group, message="test")
+        payload = server_module.AISearchPreviewRequest(group=plan.group, message="test")
         preview = AsyncMock(side_effect=responses)
         with patch.object(server_module, "enforce_rate_limit", new=AsyncMock(return_value=None)), \
              patch.object(server_module, "create_search_plan", new=AsyncMock(return_value=plan)), \
              patch.object(server_module, "execute_query_preview", new=preview):
             response = asyncio.run(server_module.create_ai_search_preview(request, payload))
         return response, preview
+
+    def test_initial_message_mode_invokes_planner(self):
+        plan = normalized_plan("goods", [clause("item_name", "máy thở")])
+        planner = AsyncMock(return_value=plan)
+        preview = AsyncMock(return_value=preview_payload(3))
+        request = object()
+        payload = server_module.AISearchPreviewRequest(group="goods", message="máy thở")
+        with patch.object(server_module, "enforce_rate_limit", new=AsyncMock(return_value=None)), \
+             patch.object(server_module, "create_search_plan", new=planner), \
+             patch.object(server_module, "execute_query_preview", new=preview):
+            response = asyncio.run(server_module.create_ai_search_preview(request, payload))
+
+        planner.assert_awaited_once_with("goods", "máy thở")
+        self.assertTrue(json.loads(response.body)["meta"]["planner_invoked"])
+
+    def test_edited_plan_mode_skips_planner_and_preserves_grouped_concepts(self):
+        plan = normalized_plan(
+            "medicines",
+            [{
+                "field": "active_ingredient_or_herbal_component",
+                "concepts": [
+                    {"alternatives": ["clavulanic", "clavulanat"]},
+                    {"alternatives": ["amoxicilin", "amoxicillin"]},
+                ],
+                "join": "AND",
+            }],
+        )
+        planner = AsyncMock(side_effect=AssertionError("planner must not run in edited mode"))
+        preview = AsyncMock(return_value=preview_payload(5))
+        request = object()
+        payload = server_module.AISearchPreviewRequest(group="medicines", plan=server_module.serialize_plan(plan))
+        with patch.object(server_module, "enforce_rate_limit", new=AsyncMock(return_value=None)), \
+             patch.object(server_module, "create_search_plan", new=planner), \
+             patch.object(server_module, "execute_query_preview", new=preview):
+            response = asyncio.run(server_module.create_ai_search_preview(request, payload))
+
+        planner.assert_not_awaited()
+        body = json.loads(response.body)
+        self.assertFalse(body["meta"]["planner_invoked"])
+        self.assertEqual([
+            {"alternatives": ["clavulanic", "clavulanat"], "match": "text"},
+            {"alternatives": ["amoxicilin", "amoxicillin"], "match": "text"},
+        ], body["plan"]["clauses"][0]["concepts"])
+        self.assertEqual([
+            ["clavulanic", "clavulanat"],
+            ["amoxicilin", "amoxicillin"],
+        ], [group.alternatives for group in preview.await_args.args[1].filters.activeIngredient.groups])
+
+    def test_preview_requires_exactly_one_mode(self):
+        plan = normalized_plan("goods")
+        request = object()
+        with patch.object(server_module, "enforce_rate_limit", new=AsyncMock(return_value=None)):
+            both = asyncio.run(server_module.create_ai_search_preview(
+                request,
+                server_module.AISearchPreviewRequest(group="goods", message="máy thở", plan=server_module.serialize_plan(plan)),
+            ))
+            neither = asyncio.run(server_module.create_ai_search_preview(
+                request,
+                server_module.AISearchPreviewRequest(group="goods"),
+            ))
+
+        self.assertEqual(400, both.status_code)
+        self.assertEqual(400, neither.status_code)
+
+    def test_edited_plan_group_mismatch_fails_closed(self):
+        plan = normalized_plan("goods", [clause("item_name", "máy thở")])
+        preview = AsyncMock(return_value=preview_payload(5))
+        with patch.object(server_module, "enforce_rate_limit", new=AsyncMock(return_value=None)), \
+             patch.object(server_module, "execute_query_preview", new=preview):
+            response = asyncio.run(server_module.create_ai_search_preview(
+                object(),
+                server_module.AISearchPreviewRequest(group="medicines", plan=server_module.serialize_plan(plan)),
+            ))
+
+        self.assertEqual(422, response.status_code)
+        preview.assert_not_awaited()
+
+    def test_invalid_edited_plan_fails_closed(self):
+        preview = AsyncMock(return_value=preview_payload(5))
+        invalid = {
+            "version": "1",
+            "group": "goods",
+            "clauses": [{"field": "not_a_contract_field", "concepts": [{"alternatives": ["x"]}], "join": "AND"}],
+            "date_constraints": [],
+            "warnings": [],
+            "explanation": [],
+        }
+        with patch.object(server_module, "enforce_rate_limit", new=AsyncMock(return_value=None)), \
+             patch.object(server_module, "execute_query_preview", new=preview):
+            response = asyncio.run(server_module.create_ai_search_preview(
+                object(),
+                server_module.AISearchPreviewRequest(group="goods", plan=invalid),
+            ))
+
+        self.assertEqual(422, response.status_code)
+        preview.assert_not_awaited()
 
     def test_existing_preview_endpoint_uses_shared_preview_execution(self):
         request = object()

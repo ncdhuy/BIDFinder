@@ -50,6 +50,12 @@ class AIPlanRequest(_StrictModel):
     message: str = Field(..., min_length=1, max_length=MAX_MESSAGE_LENGTH)
 
 
+class AISearchPreviewRequest(_StrictModel):
+    group: Literal["goods", "medicines", "traditional"]
+    message: str | None = Field(default=None, min_length=1, max_length=MAX_MESSAGE_LENGTH)
+    plan: dict[str, Any] | None = None
+
+
 class AIConcept(_StrictModel):
     alternatives: list[str] = Field(..., min_length=1, max_length=MAX_ALTERNATIVES_PER_CONCEPT)
 
@@ -454,6 +460,20 @@ def validate_ai_search_plan(payload: Mapping[str, Any] | AISearchPlan, *, reques
     if plan.group != (requested_group or group):
         _raise_plan_error("group_mismatch")
     return plan
+
+
+def validate_serialized_ai_search_plan(
+    payload: Mapping[str, Any],
+    *,
+    requested_group: str | None = None,
+) -> AISearchPlan:
+    """Validate a serialized normalized plan supplied by the browser."""
+
+    try:
+        normalized = _model_validate(AISearchPlan, payload)
+    except (TypeError, ValidationError) as exc:
+        raise AIPlannerValidationError("invalid serialized AI search plan", category="schema") from exc
+    return validate_ai_search_plan(normalized, requested_group=requested_group)
 
 
 def _subtract_months(value: date, months: int) -> date:

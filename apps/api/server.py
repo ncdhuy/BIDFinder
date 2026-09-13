@@ -66,6 +66,7 @@ from typesense_contract import (
 )
 from ai_search_planner import (
     AIPlanRequest,
+    AISearchPreviewRequest,
     AIPlannerConfigurationError,
     AIPlannerInputError,
     AIPlannerProviderError,
@@ -74,6 +75,7 @@ from ai_search_planner import (
     create_search_plan,
     get_planner_settings,
     serialize_plan,
+    validate_serialized_ai_search_plan,
 )
 from ai_search_query_compiler import (
     AIQueryCompilationError,
@@ -3772,10 +3774,83 @@ def _preview_response_payload(response: JSONResponse) -> dict[str, Any]:
     return payload
 
 
+async def _execute_ai_search_preview(
+    request: Request,
+    plan,
+    settings,
+    *,
+    planner_invoked: bool,
+) -> JSONResponse:
+    if not procurement_backend_config().typesense_primary:
+        return validation_error_response(
+            "AI search preview hiện yêu cầu Typesense backend.",
+            status_code=503,
+        )
+
+    compiled = compile_ai_search_plan(plan)
+    strict_request = QueryPreviewRequest(**compiled.to_payload())
+    strict_preview = await execute_query_preview(request, strict_request)
+    if getattr(strict_preview, "status_code", 200) >= 400:
+        return strict_preview
+    strict_payload = _preview_response_payload(strict_preview)
+    strict_count = int(strict_payload.get("total", 0) or 0)
+    rounds: list[dict[str, Any]] = [{
+        "round": 0,
+        "kind": "strict",
+        "preview_count": strict_count,
+    }]
+    selected_round = 0 if strict_count > 0 else None
+    selected_query = compiled
+    selected_preview = strict_payload
+    optimization_outcome = "matched" if strict_count > 0 else "no_match"
+
+    if strict_count == 0:
+        broadened = safe_broaden_ai_query(compiled)
+        if broadened is not None:
+            broadened_query, changes = broadened
+            broadened_request = QueryPreviewRequest(**broadened_query.to_payload())
+            broadened_preview = await execute_query_preview(request, broadened_request)
+            if getattr(broadened_preview, "status_code", 200) >= 400:
+                return broadened_preview
+            broadened_payload = _preview_response_payload(broadened_preview)
+            broadened_count = int(broadened_payload.get("total", 0) or 0)
+            rounds.append({
+                "round": 1,
+                "kind": "safe_broadening",
+                "preview_count": broadened_count,
+                "changes": changes,
+            })
+            if broadened_count > 0:
+                selected_round = 1
+                selected_query = broadened_query
+                selected_preview = broadened_payload
+                optimization_outcome = "matched_after_safe_broadening"
+
+    result = {
+        "success": True,
+        "status": "no_match" if selected_round is None else "ok",
+        "plan": serialize_plan(plan),
+        "compiled_request": selected_query.to_payload(),
+        "preview": selected_preview,
+        "optimization": {
+            "selected_round": selected_round,
+            "outcome": optimization_outcome,
+            "rounds": rounds,
+        },
+        "meta": {
+            "model": settings.model,
+            "planner_version": PLANNER_VERSION,
+            "planner_invoked": planner_invoked,
+        },
+    }
+    return JSONResponse(content=result)
+
+
 @app.post("/api/ai/search-preview")
-async def create_ai_search_preview(request: Request, payload: AIPlanRequest):
+async def create_ai_search_preview(request: Request, payload: AISearchPreviewRequest):
     started = time.perf_counter()
     settings = get_planner_settings()
+    planner_invoked = False
     limited = await enforce_rate_limit(
         request,
         "ai-search-preview",
@@ -3785,75 +3860,32 @@ async def create_ai_search_preview(request: Request, payload: AIPlanRequest):
         return limited
 
     try:
-        if not procurement_backend_config().typesense_primary:
-            return validation_error_response(
-                "AI search preview hiện yêu cầu Typesense backend.",
-                status_code=503,
+        if (payload.message is None) == (payload.plan is None):
+            raise AIPlannerInputError(
+                "preview request must contain exactly one of message or plan",
+                category="preview_mode",
             )
-        plan = await create_search_plan(payload.group, payload.message)
-        compiled = compile_ai_search_plan(plan)
-        strict_request = QueryPreviewRequest(**compiled.to_payload())
-        strict_preview = await execute_query_preview(request, strict_request)
-        if getattr(strict_preview, "status_code", 200) >= 400:
-            return strict_preview
-        strict_payload = _preview_response_payload(strict_preview)
-        strict_count = int(strict_payload.get("total", 0) or 0)
-        rounds: list[dict[str, Any]] = [{
-            "round": 0,
-            "kind": "strict",
-            "preview_count": strict_count,
-        }]
-        selected_round = 0 if strict_count > 0 else None
-        selected_query = compiled
-        selected_preview = strict_payload
-        optimization_outcome = "matched" if strict_count > 0 else "no_match"
-
-        if strict_count == 0:
-            broadened = safe_broaden_ai_query(compiled)
-            if broadened is not None:
-                broadened_query, changes = broadened
-                broadened_request = QueryPreviewRequest(**broadened_query.to_payload())
-                broadened_preview = await execute_query_preview(request, broadened_request)
-                if getattr(broadened_preview, "status_code", 200) >= 400:
-                    return broadened_preview
-                broadened_payload = _preview_response_payload(broadened_preview)
-                broadened_count = int(broadened_payload.get("total", 0) or 0)
-                rounds.append({
-                    "round": 1,
-                    "kind": "safe_broadening",
-                    "preview_count": broadened_count,
-                    "changes": changes,
-                })
-                if broadened_count > 0:
-                    selected_round = 1
-                    selected_query = broadened_query
-                    selected_preview = broadened_payload
-                    optimization_outcome = "matched_after_safe_broadening"
-
-        result = {
-            "success": True,
-            "status": "no_match" if selected_round is None else "ok",
-            "plan": serialize_plan(plan),
-            "compiled_request": selected_query.to_payload(),
-            "preview": selected_preview,
-            "optimization": {
-                "selected_round": selected_round,
-                "outcome": optimization_outcome,
-                "rounds": rounds,
-            },
-            "meta": {
-                "model": settings.model,
-                "planner_version": PLANNER_VERSION,
-            },
-        }
+        if payload.message is not None:
+            planner_invoked = True
+            plan = await create_search_plan(payload.group, payload.message)
+        else:
+            plan = validate_serialized_ai_search_plan(payload.plan or {}, requested_group=payload.group)
+        response = await _execute_ai_search_preview(
+            request,
+            plan,
+            settings,
+            planner_invoked=planner_invoked,
+        )
+        if getattr(response, "status_code", 200) >= 400:
+            return response
         logger.info(
-            "ai_search_preview group=%s model=%s latency_ms=%.1f success=true selected_round=%s",
+            "ai_search_preview group=%s model=%s latency_ms=%.1f success=true planner_invoked=%s",
             payload.group,
             settings.model,
             (time.perf_counter() - started) * 1000,
-            selected_round,
+            planner_invoked,
         )
-        return JSONResponse(content=result)
+        return response
     except AIPlannerInputError as exc:
         logger.warning("ai_search_preview group=%s category=%s", payload.group, exc.category)
         return validation_error_response("Yêu cầu lập kế hoạch tìm kiếm không hợp lệ.")
@@ -3862,7 +3894,10 @@ async def create_ai_search_preview(request: Request, payload: AIPlanRequest):
         return validation_error_response("AI search planner hiện không khả dụng.", status_code=503)
     except AIPlannerValidationError as exc:
         logger.warning("ai_search_preview group=%s category=%s", payload.group, exc.category)
-        return validation_error_response("AI search planner trả về kế hoạch không hợp lệ.", status_code=502)
+        return validation_error_response(
+            "AI search planner trả về kế hoạch không hợp lệ." if planner_invoked else "Bản diễn giải AI không hợp lệ.",
+            status_code=502 if planner_invoked else 422,
+        )
     except AIPlannerProviderError as exc:
         logger.warning("ai_search_preview group=%s category=%s", payload.group, exc.category)
         status_code = 504 if exc.category == "provider_transport" else 502

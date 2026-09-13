@@ -8,6 +8,7 @@ const API_BASE_URL =
     : 'https://api.bidfinder.vn');
 
 window.API_BASE_URL = API_BASE_URL;
+const AI_COMPILED_REQUEST_MARKER = '__bidfinderPreserveCompiledRequest';
 
 function getAuthorizedFetch() {
     return window.bidfinderAuthorizedFetch || fetch;
@@ -2603,7 +2604,11 @@ function handleQuerySuccess(result, options = {}) {
 
 
 async function applyFilters(payload, options = {}) {
-    currentQueryRequest = enrichLegacyQueryRequest(payload);
+    // AI preview returns an already compiled QueryRequest. Keep its nested
+    // grouped filters intact; manual form payloads still use legacy enrichment.
+    currentQueryRequest = payload?.[AI_COMPILED_REQUEST_MARKER]
+        ? payload
+        : enrichLegacyQueryRequest(payload);
     closeFloatingTableUi();
 
     console.log('Applying filters with query request:', currentQueryRequest);

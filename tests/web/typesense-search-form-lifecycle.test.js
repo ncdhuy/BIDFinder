@@ -181,7 +181,18 @@ const AUTOCOMPLETE_FIELDS = new Set([
     'manufacturer', 'scientific_name', 'winning_bidder_name',
     'bid_invitation_code', 'procuring_entity_name'
 ]);
-const field = name => ({ name, type: 'string', filterable: true, autocomplete: AUTOCOMPLETE_FIELDS.has(name) });
+const AI_PLANNER_ROLES = new Map([
+    ['medicine_name', 'text'],
+    ['active_ingredient_or_herbal_component', 'text'],
+    ['strength', 'text'],
+    ['manufacturer', 'text'],
+    ['winning_bidder_name', 'text'],
+    ['procuring_entity_name', 'text'],
+    ['location', 'text'],
+    ['result_posted_at', 'date'],
+    ['decision_issued_at', 'date']
+]);
+const field = name => ({ name, type: 'string', filterable: true, autocomplete: AUTOCOMPLETE_FIELDS.has(name), ai_planning: AI_PLANNER_ROLES.has(name), ai_planner_role: AI_PLANNER_ROLES.get(name) });
 const contract = {
     groups: {
         goods: { fields: ['item_name', 'unit', 'quantity', 'country_of_origin', 'hs_code', 'model_mark', 'brand', 'production_year', 'manufacturer', 'technical_specification', 'model', 'registration_or_import_permit_number', 'winning_unit_price', 'winning_bidder_id', 'procuring_entity_id', 'bidder_count', 'selection_method'].map(field) },
@@ -201,6 +212,7 @@ const originalCustomEvent = global.CustomEvent;
 
 const scheduled = [];
 const autocompleteRequests = [];
+const aiPreviewRequests = [];
 global.setTimeout = callback => { scheduled.push(callback); return scheduled.length; };
 global.clearTimeout = () => {};
 global.HTMLElement = FakeHTMLElement;
@@ -212,6 +224,52 @@ global.window = {
         if (url.endsWith('/api/autocomplete')) {
             autocompleteRequests.push({ url, options });
             return { ok: true, status: 200, text: async () => JSON.stringify({ data: ['Nefopam hydrochloride', 'Nefopam'] }) };
+        }
+        if (url.endsWith('/api/ai/search-preview')) {
+            aiPreviewRequests.push({ url, options });
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    success: true,
+                    status: 'no_match',
+                    plan: {
+                        version: '1',
+                        group: 'medicines',
+                        clauses: [{
+                            field: 'active_ingredient_or_herbal_component',
+                            concepts: [
+                                { alternatives: ['clavulanic', 'clavulanat'], match: 'text' },
+                                { alternatives: ['amoxicilin', 'amoxicillin'], match: 'text' }
+                            ],
+                            join: 'AND'
+                        }],
+                        date_constraints: [],
+                        warnings: [],
+                        explanation: []
+                    },
+                    compiled_request: {
+                        scope: 'medicine',
+                        group: 'medicines',
+                        sourceTypes: [],
+                        filters: { activeIngredient: { groups: [
+                            { alternatives: ['clavulanic', 'clavulanat'] },
+                            { alternatives: ['amoxicilin', 'amoxicillin'] }
+                        ] } },
+                        text: '',
+                        searchFields: [],
+                        structuredFilters: {},
+                        ranges: {},
+                        dateRanges: {},
+                        exactIdentifiers: {},
+                        crossGroupSearch: false,
+                        crossGroupSearchFields: []
+                    },
+                    preview: { total: 0 },
+                    optimization: { outcome: 'no_match' },
+                    meta: { planner_invoked: false }
+                })
+            };
         }
         return { ok: true, status: 200, json: async () => ({}) };
     }
@@ -289,6 +347,17 @@ async function run() {
         traditional: ['item_name', 'technical_group']
     };
     assertLegacyStructure('initial', representativeFields.medicines);
+
+    form.state.ai.message = 'draft medicine request';
+    form.state.ai.plan = { version: '1', group: 'medicines', clauses: [], date_constraints: [], warnings: [], explanation: [] };
+    form.state.ai.compiledRequest = { group: 'medicines', filters: { activeIngredient: { groups: [] } } };
+    const goodsGroup = contentRoot.querySelectorAll('[data-group]').find(button => button.dataset.group === 'goods');
+    goodsGroup.click();
+    assert.equal(form.state.group, 'goods', 'group switch changes active dataset');
+    assert.equal(form.state.ai.plan, null, 'group switch clears AI interpretation');
+    assert.equal(form.state.ai.compiledRequest, null, 'group switch clears compiled AI request');
+    assert.equal(form.state.ai.message, 'draft medicine request', 'group switch keeps draft message without reusing plan');
+    contentRoot.querySelectorAll('[data-group]').find(button => button.dataset.group === 'medicines').click();
 
     form.state.activeField = 'active_ingredient_or_herbal_component';
     form.state.criteria = {};
@@ -469,9 +538,43 @@ async function run() {
     assert.equal(contentRoot.renderCount, renderCountBeforeSubmit, 'apply does not rerender the whole component');
     assert.ok(form.dispatchedEvents.some(event => event.type === 'apply-filters'), 'apply event dispatched without page reload');
 
+    form.state.group = 'medicines';
+    form.state.ai.message = 'clavulanic và amoxicillin';
+    await form.requestAiPreview();
+    assert.equal(aiPreviewRequests.length, 1, 'initial AI preview uses the authorized API seam');
+    const initialAiPayload = JSON.parse(aiPreviewRequests[0].options.body);
+    assert.deepEqual(initialAiPayload, { group: 'medicines', message: 'clavulanic và amoxicillin' }, 'initial AI preview sends group and message');
+    assert.equal(form.state.ai.preview.total, 0, 'captured no-match preview is accepted');
+    assert.ok(form.state.ai.plan, 'no-match keeps the interpretation editable');
+
+    form.updateAiConceptAlternatives(0, 0, 'clavulanic | clavulanat');
+    assert.equal(form.state.ai.dirty, true, 'editing an interpretation marks it dirty');
+    await form.requestAiPreview({ plan: form.state.ai.plan });
+    assert.equal(aiPreviewRequests.length, 2, 'edited preview makes one deterministic request');
+    const editedAiPayload = JSON.parse(aiPreviewRequests[1].options.body);
+    assert.equal(editedAiPayload.group, 'medicines');
+    assert.equal(editedAiPayload.message, undefined, 'edited preview does not send the natural-language message');
+    assert.deepEqual(editedAiPayload.plan.clauses[0].concepts, [
+        { alternatives: ['clavulanic', 'clavulanat'], match: 'text' },
+        { alternatives: ['amoxicilin', 'amoxicillin'], match: 'text' }
+    ], 'edited plan preserves independent AND concepts and OR alternatives');
+    assert.deepEqual(form.state.ai.compiledRequest.filters.activeIngredient.groups, [
+        { alternatives: ['clavulanic', 'clavulanat'] },
+        { alternatives: ['amoxicilin', 'amoxicillin'] }
+    ], 'compiled grouped Boolean request remains intact');
+
+    form.executeAiSearch();
+    const executedAiEvent = form.dispatchedEvents.at(-1);
+    assert.equal(executedAiEvent.type, 'apply-filters', 'AI execution reuses the existing apply-filters event');
+    assert.equal(executedAiEvent.detail, form.state.ai.compiledRequest, 'execution dispatches the exact backend compiled request');
+    assert.deepEqual(executedAiEvent.detail.filters.activeIngredient.groups, form.state.ai.compiledRequest.filters.activeIngredient.groups, 'execution does not reconstruct through legacy flat tokens');
+    form.updateAiConceptField(0, 1, 'strength');
+    assert.equal(form.state.ai.plan.clauses[0].concepts.length, 1, 'reassigning one concept does not move its sibling');
+    assert.equal(form.state.ai.plan.clauses[1].field, 'strength', 'reassigned concept becomes its own compatible-role clause');
+
     const buttons = [...contentRoot.innerHTML.matchAll(/<button\b[^>]*>/g)].map(match => match[0]);
     assert.ok(buttons.length > 0, 'component has controls');
-    assert.ok(buttons.every(button => /class="[^"]*(sidebar-item|btn|pane-help-link|chip-select|chip-remove|token-operator|tag-text|token-remove)[^"]*"/.test(button)), 'no raw button cloud');
+    assert.ok(buttons.every(button => /class="[^"]*(sidebar-item|btn|pane-help-link|chip-select|chip-remove|token-operator|tag-text|token-remove|ai-condition-remove)[^"]*"/.test(button)), 'no raw button cloud');
     assert.match(contentRoot.innerHTML, /class="sidebar-item group-choice active"/);
     assert.match(contentRoot.innerHTML, /class="sidebar-item [^"]*active[^"]*" data-field=/);
     assert.equal(form.shadowRoot.children[0], styleNode, 'style is persistent shadow child');
