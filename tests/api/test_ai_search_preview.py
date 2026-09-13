@@ -56,7 +56,7 @@ class AISearchPreviewEndpointTest(unittest.TestCase):
             response = asyncio.run(server_module.create_ai_search_preview(request, payload))
         return response, preview
 
-    def test_message_mode_uses_ip_scoped_stricter_rate_limit(self):
+    def test_message_mode_uses_shared_luna_rate_limit(self):
         plan = normalized_plan("goods", [clause("item_name", "máy thở")])
         request = object()
         payload = server_module.AISearchPreviewRequest(group="goods", message="máy thở")
@@ -68,8 +68,8 @@ class AISearchPreviewEndpointTest(unittest.TestCase):
 
         limiter.assert_awaited_once_with(
             request,
-            "ai-search-message",
-            server_module.AI_SEARCH_MESSAGE_RATE_LIMIT_PER_MINUTE,
+            "ai-search-luna",
+            server_module.AI_SEARCH_LUNA_RATE_LIMIT_PER_MINUTE,
             include_user_agent=False,
         )
 
@@ -89,7 +89,7 @@ class AISearchPreviewEndpointTest(unittest.TestCase):
             include_user_agent=True,
         )
 
-    def test_ip_scoped_message_limit_cannot_split_by_user_agent(self):
+    def test_luna_limit_ignores_user_agent_rotation(self):
         from starlette.requests import Request
 
         def make_request(user_agent):
@@ -107,16 +107,194 @@ class AISearchPreviewEndpointTest(unittest.TestCase):
             async with server_module.rate_limit_lock:
                 server_module.rate_limit_buckets.clear()
             first = await server_module.enforce_rate_limit(
-                make_request("ua-one"), "ai-search-message", 1, include_user_agent=False
+                make_request("ua-one"), "ai-search-luna", 2, include_user_agent=False
             )
             second = await server_module.enforce_rate_limit(
-                make_request("ua-two"), "ai-search-message", 1, include_user_agent=False
+                make_request("ua-two"), "ai-search-luna", 2, include_user_agent=False
             )
-            return first, second
+            third = await server_module.enforce_rate_limit(
+                make_request("ua-three"), "ai-search-luna", 2, include_user_agent=False
+            )
+            return first, second, third
 
-        first, second = asyncio.run(exercise())
+        first, second, third = asyncio.run(exercise())
         self.assertIsNone(first)
-        self.assertEqual(429, second.status_code)
+        self.assertIsNone(second)
+        self.assertEqual(429, third.status_code)
+
+    def test_luna_quota_is_shared_across_planner_and_message_preview(self):
+        plan = normalized_plan("goods", [clause("item_name", "mÃ¡y thá»Ÿ")])
+        planner = AsyncMock(return_value=plan)
+        preview = AsyncMock(return_value=preview_payload(1))
+
+        def make_request(path, user_agent):
+            from starlette.requests import Request
+
+            return Request({
+                "type": "http",
+                "method": "POST",
+                "path": path,
+                "headers": [(b"user-agent", user_agent.encode("ascii"))],
+                "client": ("198.51.100.10", 1234),
+                "server": ("127.0.0.1", 8001),
+                "scheme": "http",
+            })
+
+        async def exercise():
+            async with server_module.rate_limit_lock:
+                server_module.rate_limit_buckets.clear()
+            with patch.object(server_module, "AI_SEARCH_LUNA_RATE_LIMIT_PER_MINUTE", 2), \
+                 patch.object(server_module, "create_search_plan", new=planner), \
+                 patch.object(server_module, "_execute_ai_search_preview", new=preview):
+                first = await server_module.create_ai_search_plan(
+                    make_request("/api/ai/search-plan", "ua-a"),
+                    server_module.AIPlanRequest(group="goods", message="mÃ¡y thá»Ÿ"),
+                )
+                second = await server_module.create_ai_search_preview(
+                    make_request("/api/ai/search-preview", "ua-b"),
+                    server_module.AISearchPreviewRequest(group="goods", message="mÃ¡y thá»Ÿ"),
+                )
+                third = await server_module.create_ai_search_preview(
+                    make_request("/api/ai/search-preview", "ua-c"),
+                    server_module.AISearchPreviewRequest(group="goods", message="mÃ¡y thá»Ÿ"),
+                )
+            return first, second, third
+
+        first, second, third = asyncio.run(exercise())
+        self.assertEqual(200, first.status_code)
+        self.assertEqual(200, second.status_code)
+        self.assertEqual(429, third.status_code)
+        self.assertEqual(2, planner.await_count)
+
+    def test_luna_quota_is_independent_per_client_ip(self):
+        from starlette.requests import Request
+
+        def make_request(client_ip):
+            return Request({
+                "type": "http",
+                "method": "POST",
+                "path": "/api/ai/search-plan",
+                "headers": [(b"user-agent", b"same-ua")],
+                "client": (client_ip, 1234),
+                "server": ("127.0.0.1", 8001),
+                "scheme": "http",
+            })
+
+        async def exercise():
+            async with server_module.rate_limit_lock:
+                server_module.rate_limit_buckets.clear()
+            first = await server_module.enforce_rate_limit(
+                make_request("198.51.100.10"), "ai-search-luna", 1, include_user_agent=False
+            )
+            second = await server_module.enforce_rate_limit(
+                make_request("198.51.100.11"), "ai-search-luna", 1, include_user_agent=False
+            )
+            third = await server_module.enforce_rate_limit(
+                make_request("198.51.100.10"), "ai-search-luna", 1, include_user_agent=False
+            )
+            return first, second, third
+
+        first, second, third = asyncio.run(exercise())
+        self.assertIsNone(first)
+        self.assertIsNone(second)
+        self.assertEqual(429, third.status_code)
+
+    def test_edited_plan_does_not_consume_luna_quota(self):
+        plan = normalized_plan("goods", [clause("item_name", "mÃ¡y thá»Ÿ")])
+        planner = AsyncMock(return_value=plan)
+        preview = AsyncMock(return_value=preview_payload(1))
+
+        def make_request(path, user_agent="test-ua"):
+            from starlette.requests import Request
+
+            return Request({
+                "type": "http",
+                "method": "POST",
+                "path": path,
+                "headers": [(b"user-agent", user_agent.encode("ascii"))],
+                "client": ("198.51.100.10", 1234),
+                "server": ("127.0.0.1", 8001),
+                "scheme": "http",
+            })
+
+        async def exercise():
+            async with server_module.rate_limit_lock:
+                server_module.rate_limit_buckets.clear()
+            with patch.object(server_module, "AI_SEARCH_LUNA_RATE_LIMIT_PER_MINUTE", 1), \
+                 patch.object(server_module, "AI_SEARCH_PREVIEW_RATE_LIMIT_PER_MINUTE", 1), \
+                 patch.object(server_module, "create_search_plan", new=planner), \
+                 patch.object(server_module, "execute_query_preview", new=preview):
+                edited_payload = server_module.AISearchPreviewRequest(
+                    group="goods",
+                    plan=server_module.serialize_plan(plan),
+                )
+                edited = await server_module.create_ai_search_preview(
+                    make_request("/api/ai/search-preview"), edited_payload
+                )
+                edited_limited = await server_module.create_ai_search_preview(
+                    make_request("/api/ai/search-preview"), edited_payload
+                )
+                planner_response = await server_module.create_ai_search_plan(
+                    make_request("/api/ai/search-plan", "rotated-ua"),
+                    server_module.AIPlanRequest(group="goods", message="mÃ¡y thá»Ÿ"),
+                )
+            return edited, edited_limited, planner_response
+
+        edited, edited_limited, planner_response = asyncio.run(exercise())
+        self.assertEqual(200, edited.status_code)
+        self.assertFalse(json.loads(edited.body)["meta"]["planner_invoked"])
+        self.assertEqual(429, edited_limited.status_code)
+        self.assertEqual(200, planner_response.status_code)
+        planner.assert_awaited_once_with("goods", "mÃ¡y thá»Ÿ")
+        preview.assert_awaited_once()
+
+    def test_trusted_proxy_rate_limit_uses_forwarded_client_ip(self):
+        from starlette.requests import Request
+
+        def make_request(peer_ip, forwarded_ip):
+            return Request({
+                "type": "http",
+                "method": "POST",
+                "path": "/api/ai/search-plan",
+                "headers": [
+                    (b"user-agent", b"proxy-test"),
+                    (b"x-forwarded-for", forwarded_ip.encode("ascii")),
+                ],
+                "client": (peer_ip, 1234),
+                "server": ("127.0.0.1", 8001),
+                "scheme": "http",
+            })
+
+        trusted_a = make_request("127.0.0.1", "203.0.113.20")
+        trusted_b = make_request("127.0.0.1", "203.0.113.21")
+        untrusted = make_request("198.51.100.10", "203.0.113.20")
+
+        async def exercise():
+            async with server_module.rate_limit_lock:
+                server_module.rate_limit_buckets.clear()
+            first = await server_module.enforce_rate_limit(
+                trusted_a, "ai-search-luna", 1, include_user_agent=False
+            )
+            second = await server_module.enforce_rate_limit(
+                trusted_b, "ai-search-luna", 1, include_user_agent=False
+            )
+            third = await server_module.enforce_rate_limit(
+                trusted_a, "ai-search-luna", 1, include_user_agent=False
+            )
+            return first, second, third
+
+        with patch.object(server_module, "TRUST_PROXY_HEADERS", True), patch.object(
+            server_module,
+            "TRUSTED_PROXY_IPS",
+            {server_module.ipaddress.ip_address("127.0.0.1")},
+        ):
+            self.assertEqual("203.0.113.20", server_module.get_client_ip(trusted_a))
+            self.assertEqual("198.51.100.10", server_module.get_client_ip(untrusted))
+            first, second, third = asyncio.run(exercise())
+
+        self.assertIsNone(first)
+        self.assertIsNone(second)
+        self.assertEqual(429, third.status_code)
 
     def test_initial_message_mode_invokes_planner(self):
         plan = normalized_plan("goods", [clause("item_name", "máy thở")])

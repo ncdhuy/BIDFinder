@@ -236,15 +236,15 @@ METADATA_RATE_LIMIT_PER_MINUTE = get_env_int("METADATA_RATE_LIMIT_PER_MINUTE", 2
 FILTER_CONFIG_RATE_LIMIT_PER_MINUTE = get_env_int("FILTER_CONFIG_RATE_LIMIT_PER_MINUTE", 30, minimum=1)
 AUTH_RATE_LIMIT_PER_MINUTE = get_env_int("AUTH_RATE_LIMIT_PER_MINUTE", 20, minimum=1)
 AUTH_CONFIG_RATE_LIMIT_PER_MINUTE = get_env_int("AUTH_CONFIG_RATE_LIMIT_PER_MINUTE", 60, minimum=1)
-AI_SEARCH_PLAN_RATE_LIMIT_PER_MINUTE = get_env_int("BIDFINDER_AI_RATE_LIMIT_PER_MINUTE", 10, minimum=1)
+AI_SEARCH_LUNA_RATE_LIMIT_PER_MINUTE = get_env_int(
+    "BIDFINDER_AI_LUNA_RATE_LIMIT_PER_MINUTE",
+    5,
+    minimum=1,
+)
 AI_SEARCH_PREVIEW_RATE_LIMIT_PER_MINUTE = get_env_int(
     "BIDFINDER_AI_PREVIEW_RATE_LIMIT_PER_MINUTE",
     10,
     minimum=1,
-)
-AI_SEARCH_MESSAGE_RATE_LIMIT_PER_MINUTE = max(
-    1,
-    min(5, AI_SEARCH_PREVIEW_RATE_LIMIT_PER_MINUTE // 2),
 )
 FEEDBACK_RATE_LIMIT_PER_MINUTE = get_env_int("FEEDBACK_RATE_LIMIT_PER_MINUTE", 10, minimum=1)
 FEEDBACK_READ_RATE_LIMIT_PER_MINUTE = get_env_int(
@@ -3705,8 +3705,9 @@ async def create_ai_search_plan(request: Request, payload: AIPlanRequest):
     settings = get_planner_settings()
     limited = await enforce_rate_limit(
         request,
-        "ai-search-plan",
-        AI_SEARCH_PLAN_RATE_LIMIT_PER_MINUTE,
+        "ai-search-luna",
+        AI_SEARCH_LUNA_RATE_LIMIT_PER_MINUTE,
+        include_user_agent=False,
     )
     if limited:
         logger.warning(
@@ -3866,8 +3867,8 @@ async def create_ai_search_preview(request: Request, payload: AISearchPreviewReq
     message_mode = payload.message is not None
     limited = await enforce_rate_limit(
         request,
-        "ai-search-message" if message_mode else "ai-search-edited-plan",
-        AI_SEARCH_MESSAGE_RATE_LIMIT_PER_MINUTE if message_mode else AI_SEARCH_PREVIEW_RATE_LIMIT_PER_MINUTE,
+        "ai-search-luna" if message_mode else "ai-search-edited-plan",
+        AI_SEARCH_LUNA_RATE_LIMIT_PER_MINUTE if message_mode else AI_SEARCH_PREVIEW_RATE_LIMIT_PER_MINUTE,
         include_user_agent=not message_mode,
     )
     if limited:

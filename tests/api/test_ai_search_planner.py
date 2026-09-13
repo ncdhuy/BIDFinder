@@ -488,7 +488,7 @@ class PlannerRateLimitTest(unittest.TestCase):
         self.assertEqual("goods", body["plan"]["group"])
         self.assertEqual("v0.1.3", body["meta"]["planner_version"])
 
-    def test_ai_specific_rate_limit_uses_existing_limiter(self):
+    def test_luna_rate_limit_uses_ip_scoped_limiter(self):
         import server
         from starlette.requests import Request
 
@@ -506,8 +506,8 @@ class PlannerRateLimitTest(unittest.TestCase):
         async def exercise():
             async with server.rate_limit_lock:
                 server.rate_limit_buckets.clear()
-            first = await server.enforce_rate_limit(request, "ai-search-plan", 1)
-            second = await server.enforce_rate_limit(request, "ai-search-plan", 1)
+            first = await server.enforce_rate_limit(request, "ai-search-luna", 1, include_user_agent=False)
+            second = await server.enforce_rate_limit(request, "ai-search-luna", 1, include_user_agent=False)
             return first, second
 
         first, second = asyncio.run(exercise())
