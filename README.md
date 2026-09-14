@@ -13,3 +13,15 @@ BIDFinder currently runs with Cloud Run as the main backend and Render as a back
 Primary: Cloud Run -> Neon Postgres
 Backup: Render -> Neon Postgres
 ```
+
+## Local frontend verification
+
+Serve the current checkout's `apps/web` directory with:
+
+```powershell
+rtk python tools/serve_web.py
+```
+
+Open `http://127.0.0.1:4173/`. The helper resolves `apps/web` from its own
+location and sends no-cache headers, so local verification cannot silently
+serve a different repository directory or an immutable release copy.

@@ -187,6 +187,17 @@ class DatabaseMigrator:
             """)
 
             self.cursor.execute("""
+                CREATE TABLE IF NOT EXISTS app_ai_daily_usage (
+                    identity_key TEXT NOT NULL,
+                    usage_date DATE NOT NULL,
+                    usage_units DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (identity_key, usage_date),
+                    CHECK (usage_units >= 0)
+                )
+            """)
+
+            self.cursor.execute("""
                 CREATE TABLE IF NOT EXISTS app_user_sessions (
                     id BIGSERIAL PRIMARY KEY,
                     user_id BIGINT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,

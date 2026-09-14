@@ -279,15 +279,6 @@ AI_USAGE_INPUT_WEIGHT = get_env_float("BIDFINDER_AI_USAGE_INPUT_WEIGHT", 1.0, mi
 AI_USAGE_CACHED_INPUT_WEIGHT = get_env_float("BIDFINDER_AI_USAGE_CACHED_INPUT_WEIGHT", 0.25, minimum=0)
 AI_USAGE_OUTPUT_WEIGHT = get_env_float("BIDFINDER_AI_USAGE_OUTPUT_WEIGHT", 2.0, minimum=0)
 AI_ANONYMOUS_COOKIE_NAME = "bidfinder_ai_anon"
-_ai_usage_path_value = os.getenv("BIDFINDER_AI_USAGE_DB_PATH", "").strip()
-AI_USAGE_DB_PATH = (
-    Path(_ai_usage_path_value).expanduser()
-    if _ai_usage_path_value
-    else Path.home() / ".local" / "share" / "bidfinder" / "runtime" / "ai" / "ai_usage.sqlite3"
-)
-if not AI_USAGE_DB_PATH.is_absolute():
-    AI_USAGE_DB_PATH = Path.home() / AI_USAGE_DB_PATH
-ai_usage_store = AIUsageStore(AI_USAGE_DB_PATH)
 FEEDBACK_RATE_LIMIT_PER_MINUTE = get_env_int("FEEDBACK_RATE_LIMIT_PER_MINUTE", 10, minimum=1)
 FEEDBACK_READ_RATE_LIMIT_PER_MINUTE = get_env_int(
     "FEEDBACK_READ_RATE_LIMIT_PER_MINUTE",
@@ -1147,6 +1138,13 @@ async def ensure_db_pool() -> asyncpg.Pool:
     return db_pool
 
 
+async def _ai_usage_pool():
+    return await ensure_db_pool()
+
+
+ai_usage_store = AIUsageStore(_ai_usage_pool)
+
+
 def anonymous_access_allows(requirement: Literal["preview", "full_query", "autocomplete", "metadata"]) -> bool:
     if requirement == "full_query":
         return ANONYMOUS_ACCESS_LEVEL == "full"
@@ -1277,17 +1275,28 @@ def _ai_usage_budget(authenticated: bool) -> float:
     return AI_DAILY_USAGE_BUDGET_AUTH if authenticated else AI_DAILY_USAGE_BUDGET_ANON
 
 
-def _ai_usage_snapshot(identity_key: str, authenticated: bool):
-    return ai_usage_store.snapshot(
-        identity_key,
-        _ai_usage_day_key(),
-        _ai_usage_budget(authenticated),
-        _ai_reset_at(),
-    )
+class AIUsageStorageError(RuntimeError):
+    pass
+
+
+AI_USAGE_UNAVAILABLE_MESSAGE = "Hạn mức AI hiện không khả dụng. Vui lòng thử lại sau."
+
+
+async def _ai_usage_snapshot(identity_key: str, authenticated: bool):
+    try:
+        return await ai_usage_store.snapshot(
+            identity_key,
+            _ai_usage_day_key(),
+            _ai_usage_budget(authenticated),
+            _ai_reset_at(),
+        )
+    except Exception as exc:
+        log_server_exception("AI usage storage read failed", exc)
+        raise AIUsageStorageError from exc
 
 
 async def get_ai_usage_payload(identity_key: str, authenticated: bool, *, counted: bool = False) -> dict[str, Any]:
-    return snapshot_payload(_ai_usage_snapshot(identity_key, authenticated), counted=counted)
+    return snapshot_payload(await _ai_usage_snapshot(identity_key, authenticated), counted=counted)
 
 
 async def record_ai_provider_usage(
@@ -1311,8 +1320,14 @@ async def record_ai_provider_usage(
             )
         return await get_ai_usage_payload(identity_key, authenticated)
 
-    ai_usage_store.add_units(identity_key, _ai_usage_day_key(), usage_units)
-    snapshot = _ai_usage_snapshot(identity_key, authenticated)
+    try:
+        await ai_usage_store.add_units(identity_key, _ai_usage_day_key(), usage_units)
+        snapshot = await _ai_usage_snapshot(identity_key, authenticated)
+    except AIUsageStorageError:
+        raise
+    except Exception as exc:
+        log_server_exception("AI usage storage write failed", exc)
+        raise AIUsageStorageError from exc
     logger.info(
         "ai_usage_accounting authenticated=%s category=charged usage_units=%.3f used_percent=%s",
         authenticated,
@@ -3027,6 +3042,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+
+@app.exception_handler(AIUsageStorageError)
+async def ai_usage_storage_error_handler(_request: Request, _exc: AIUsageStorageError):
+    return JSONResponse(
+        status_code=503,
+        content={
+            "success": False,
+            "error": "ai_usage_unavailable",
+            "message": AI_USAGE_UNAVAILABLE_MESSAGE,
+        },
+    )
+
+
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 app.add_middleware(
     CORSMiddleware,
@@ -3915,7 +3943,7 @@ async def create_ai_search_plan(request: Request, payload: AIPlanRequest):
         return limited
 
     identity_key, authenticated, cookie_value = await resolve_ai_usage_identity(request)
-    usage_snapshot = _ai_usage_snapshot(identity_key, authenticated)
+    usage_snapshot = await _ai_usage_snapshot(identity_key, authenticated)
     if usage_snapshot.used_units >= usage_snapshot.budget_units:
         return await build_ai_error_response(
             request,
@@ -4128,7 +4156,7 @@ async def create_ai_search_preview(request: Request, payload: AISearchPreviewReq
 
     identity_key, authenticated, cookie_value = await resolve_ai_usage_identity(request)
     if message_mode:
-        usage_snapshot = _ai_usage_snapshot(identity_key, authenticated)
+        usage_snapshot = await _ai_usage_snapshot(identity_key, authenticated)
         if usage_snapshot.used_units >= usage_snapshot.budget_units:
             return await build_ai_error_response(
                 request,

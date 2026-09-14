@@ -13,6 +13,15 @@ sys.path.insert(0, str(ROOT / "apps" / "api"))
 
 import server as server_module  # noqa: E402
 from ai_search_planner import validate_ai_search_plan  # noqa: E402
+from ai_usage import AIUsageSnapshot  # noqa: E402
+
+
+class StubAIUsageStore:
+    async def snapshot(self, identity_key, usage_date, budget_units, reset_at):
+        return AIUsageSnapshot(0.0, float(budget_units), 0, 100, reset_at)
+
+    async def add_units(self, identity_key, usage_date, usage_units):
+        return float(usage_units)
 
 
 def normalized_plan(group: str, clauses=None, dates=None):
@@ -46,6 +55,13 @@ def preview_payload(total: int):
 
 
 class AISearchPreviewEndpointTest(unittest.TestCase):
+    def setUp(self):
+        self._ai_usage_store = server_module.ai_usage_store
+        server_module.ai_usage_store = StubAIUsageStore()
+
+    def tearDown(self):
+        server_module.ai_usage_store = self._ai_usage_store
+
     def _run_endpoint(self, plan, responses):
         request = object()
         payload = server_module.AISearchPreviewRequest(group=plan.group, message="test")

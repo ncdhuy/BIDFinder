@@ -30,6 +30,7 @@ from ai_search_planner import (  # noqa: E402
     validate_ai_search_plan,
 )
 from typesense_contract import get_search_contract  # noqa: E402
+from ai_usage import AIUsageSnapshot  # noqa: E402
 
 
 def make_plan(group: str, clauses=None, dates=None, warnings=None, explanation=None):
@@ -475,6 +476,9 @@ class PlannerRateLimitTest(unittest.TestCase):
             with patch("server.create_search_plan", new=AsyncMock(return_value=plan)), patch(
                 "server.get_planner_settings",
                 return_value=PlannerSettings(True, "test-key", "gpt-5.6-luna", 3.0),
+            ), patch(
+                "server._ai_usage_snapshot",
+                new=AsyncMock(return_value=AIUsageSnapshot(0.0, 30000.0, 0, 100, "2026-09-14T00:00:00+07:00")),
             ):
                 return await server.create_ai_search_plan(
                     self.request(),

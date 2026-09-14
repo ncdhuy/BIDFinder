@@ -1,12 +1,11 @@
-"""Durable daily AI usage accounting for the single-process API runtime."""
+"""Durable daily AI usage accounting backed by the application PostgreSQL pool."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
-import sqlite3
-from pathlib import Path
-import threading
+from datetime import date
+import inspect
+import math
 from typing import Any
 
 
@@ -27,84 +26,69 @@ def percentage_pair(used_units: float, budget_units: float) -> tuple[int, int]:
 
 
 class AIUsageStore:
-    """SQLite ledger keyed by opaque identity and local Vietnam usage date."""
+    """PostgreSQL ledger keyed by opaque identity and local Vietnam usage date."""
 
-    # The API currently runs as one process. Multi-instance deployments should move
-    # this ledger (and the Luna limiter) to a shared authority before scaling out.
+    def __init__(self, pool_or_provider: Any):
+        self._pool_or_provider = pool_or_provider
 
-    def __init__(self, path: str | Path):
-        self.path = Path(path)
-        self._lock = threading.Lock()
+    async def _pool(self) -> Any:
+        pool = self._pool_or_provider
+        if callable(pool):
+            pool = pool()
+            if inspect.isawaitable(pool):
+                pool = await pool
+        return pool
 
-    def _connect(self) -> sqlite3.Connection:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(self.path, timeout=5)
-        connection.execute("PRAGMA busy_timeout = 5000")
-        return connection
-
-    def _ensure_schema(self, connection: sqlite3.Connection) -> None:
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS ai_daily_usage (
-                identity_key TEXT NOT NULL,
-                usage_date TEXT NOT NULL,
-                usage_units REAL NOT NULL DEFAULT 0,
-                updated_at TEXT NOT NULL,
-                UNIQUE(identity_key, usage_date)
+    async def get_units(self, identity_key: str, usage_date: str) -> float:
+        usage_day = date.fromisoformat(usage_date)
+        pool = await self._pool()
+        async with pool.acquire() as connection:
+            value = await connection.fetchval(
+                """
+                SELECT usage_units
+                FROM app_ai_daily_usage
+                WHERE identity_key = $1 AND usage_date = $2
+                """,
+                identity_key,
+                usage_day,
             )
-            """
-        )
-        connection.commit()
+        return float(value) if value is not None else 0.0
 
-    def get_units(self, identity_key: str, usage_date: str) -> float:
-        with self._lock:
-            connection = self._connect()
-            try:
-                self._ensure_schema(connection)
-                row = connection.execute(
-                    "SELECT usage_units FROM ai_daily_usage WHERE identity_key = ? AND usage_date = ?",
-                    (identity_key, usage_date),
-                ).fetchone()
-            finally:
-                connection.close()
-        return float(row[0]) if row else 0.0
-
-    def add_units(self, identity_key: str, usage_date: str, usage_units: float) -> float:
-        increment = max(0.0, float(usage_units))
+    async def add_units(self, identity_key: str, usage_date: str, usage_units: float) -> float:
+        increment = float(usage_units)
+        if not math.isfinite(increment):
+            increment = 0.0
+        increment = max(0.0, increment)
         if increment <= 0:
-            return self.get_units(identity_key, usage_date)
-        updated_at = datetime.now(timezone.utc).isoformat()
-        with self._lock:
-            connection = self._connect()
-            try:
-                self._ensure_schema(connection)
-                connection.execute(
-                    """
-                    INSERT INTO ai_daily_usage(identity_key, usage_date, usage_units, updated_at)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT(identity_key, usage_date) DO UPDATE SET
-                        usage_units = ai_daily_usage.usage_units + excluded.usage_units,
-                        updated_at = excluded.updated_at
-                    """,
-                    (identity_key, usage_date, increment, updated_at),
-                )
-                connection.commit()
-                row = connection.execute(
-                    "SELECT usage_units FROM ai_daily_usage WHERE identity_key = ? AND usage_date = ?",
-                    (identity_key, usage_date),
-                ).fetchone()
-            finally:
-                connection.close()
-        return float(row[0]) if row else increment
+            return await self.get_units(identity_key, usage_date)
 
-    def snapshot(
+        usage_day = date.fromisoformat(usage_date)
+        pool = await self._pool()
+        async with pool.acquire() as connection:
+            value = await connection.fetchval(
+                """
+                INSERT INTO app_ai_daily_usage (identity_key, usage_date, usage_units)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (identity_key, usage_date)
+                DO UPDATE SET
+                    usage_units = app_ai_daily_usage.usage_units + EXCLUDED.usage_units,
+                    updated_at = NOW()
+                RETURNING usage_units
+                """,
+                identity_key,
+                usage_day,
+                increment,
+            )
+        return float(value)
+
+    async def snapshot(
         self,
         identity_key: str,
         usage_date: str,
         budget_units: float,
         reset_at: str,
     ) -> AIUsageSnapshot:
-        used_units = self.get_units(identity_key, usage_date)
+        used_units = await self.get_units(identity_key, usage_date)
         used_percent, remaining_percent = percentage_pair(used_units, float(budget_units))
         return AIUsageSnapshot(
             used_units=used_units,

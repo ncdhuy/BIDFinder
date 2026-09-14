@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from contextlib import contextmanager
-import os
-from pathlib import Path
+from datetime import date
 import sys
+import threading
 import unittest
 from unittest.mock import AsyncMock, patch
 
+
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "apps" / "api"))
@@ -18,24 +21,56 @@ from ai_search_planner import extract_provider_usage, normalize_usage_units, val
 from ai_usage import AIUsageStore  # noqa: E402
 
 
+class FakeConnection:
+    def __init__(self, pool):
+        self.pool = pool
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+    async def fetchval(self, query: str, *args):
+        self.pool.queries.append((query, args))
+        if query.lstrip().startswith("SELECT"):
+            identity_key, usage_date = args
+            return self.pool.rows.get((identity_key, usage_date))
+
+        identity_key, usage_date, increment = args
+        with self.pool.lock:
+            value = self.pool.rows.get((identity_key, usage_date), 0.0) + float(increment)
+            self.pool.rows[(identity_key, usage_date)] = value
+            return value
+
+
+class FakePool:
+    def __init__(self):
+        self.rows: dict[tuple[str, date], float] = {}
+        self.queries: list[tuple[str, tuple[object, ...]]] = []
+        self.lock = threading.Lock()
+
+    def acquire(self):
+        return FakeConnection(self)
+
+
 @contextmanager
 def test_store():
-    path = ROOT / f".tmp-ai-usage-{os.getpid()}.sqlite3"
-    path.unlink(missing_ok=True)
-    try:
-        yield AIUsageStore(path)
-    finally:
-        path.unlink(missing_ok=True)
+    pool = FakePool()
+    yield AIUsageStore(pool), pool
 
 
-def make_request(path: str, cookie: str = "a" * 32):
+def make_request(path: str, cookie: str = "a" * 32, session_token: str | None = None):
     from starlette.requests import Request
 
+    cookie_parts = [f"bidfinder_ai_anon={cookie}"]
+    if session_token:
+        cookie_parts.append(f"bidfinder_session={session_token}")
     return Request({
         "type": "http",
         "method": "GET" if path.endswith("/usage") else "POST",
         "path": path,
-        "headers": [(b"cookie", f"bidfinder_ai_anon={cookie}".encode("ascii"))],
+        "headers": [(b"cookie", "; ".join(cookie_parts).encode("ascii"))],
         "client": ("198.51.100.10", 1234),
         "server": ("127.0.0.1", 8001),
         "scheme": "http",
@@ -93,12 +128,64 @@ class AIUsageTest(unittest.TestCase):
         self.assertEqual(17.0, normalize_usage_units({"total_tokens": 17}))
         self.assertIsNone(normalize_usage_units({"input_tokens": 4}))
 
-    def test_sqlite_ledger_is_transactional_and_keyed_by_day(self):
-        with test_store() as store:
-            self.assertEqual(1.5, store.add_units("anon:hash", "2026-09-13", 1.5))
-            self.assertEqual(4.0, store.add_units("anon:hash", "2026-09-13", 2.5))
-            self.assertEqual(4.0, store.get_units("anon:hash", "2026-09-13"))
-            self.assertEqual(0.0, store.get_units("anon:hash", "2026-09-14"))
+    def test_postgres_ledger_starts_empty_and_is_keyed_by_identity_and_day(self):
+        with test_store() as (store, pool):
+            self.assertEqual(0.0, asyncio.run(store.get_units("anon:hash", "2026-09-13")))
+            self.assertEqual(1.5, asyncio.run(store.add_units("anon:hash", "2026-09-13", 1.5)))
+            self.assertEqual(4.0, asyncio.run(store.add_units("anon:hash", "2026-09-13", 2.5)))
+            self.assertEqual(4.0, asyncio.run(store.get_units("anon:hash", "2026-09-13")))
+            self.assertEqual(0.0, asyncio.run(store.get_units("anon:hash", "2026-09-14")))
+            sql = "\n".join(query for query, _ in pool.queries)
+            self.assertIn("ON CONFLICT (identity_key, usage_date)", sql)
+            self.assertIn("RETURNING usage_units", sql)
+
+    def test_postgres_ledger_atomic_increments_accumulate(self):
+        with test_store() as (store, _):
+            async def increment_many():
+                await asyncio.gather(*(
+                    store.add_units("anon:hash", "2026-09-13", 1.0)
+                    for _ in range(100)
+                ))
+
+            asyncio.run(increment_many())
+            self.assertEqual(100.0, asyncio.run(store.get_units("anon:hash", "2026-09-13")))
+
+    def test_authenticated_and_anonymous_identities_are_independent(self):
+        with test_store() as (store, _):
+            self.assertEqual(2.0, asyncio.run(store.add_units("user:42", "2026-09-13", 2.0)))
+            self.assertEqual(3.0, asyncio.run(store.add_units("anon:hash", "2026-09-13", 3.0)))
+            self.assertEqual(2.0, asyncio.run(store.get_units("user:42", "2026-09-13")))
+            self.assertEqual(3.0, asyncio.run(store.get_units("anon:hash", "2026-09-13")))
+
+    def test_usage_survives_store_recreation_and_new_vietnam_day_starts_empty(self):
+        with test_store() as (store, pool):
+            self.assertEqual(4.0, asyncio.run(store.add_units("user:42", "2026-09-13", 4.0)))
+            restarted_store = AIUsageStore(pool)
+            self.assertEqual(4.0, asyncio.run(restarted_store.get_units("user:42", "2026-09-13")))
+            self.assertEqual(0.0, asyncio.run(restarted_store.get_units("user:42", "2026-09-14")))
+
+    def test_anonymous_identity_is_cookie_hash_without_user_agent(self):
+        cookie = "b" * 32
+        identity, authenticated, new_cookie = asyncio.run(
+            server_module.resolve_ai_usage_identity(make_request("/api/ai/usage", cookie=cookie))
+        )
+        self.assertEqual(f"anon:{hashlib.sha256(cookie.encode()).hexdigest()}", identity)
+        self.assertFalse(authenticated)
+        self.assertIsNone(new_cookie)
+        self.assertNotIn("198.51.100.10", identity)
+
+    def test_authenticated_identity_uses_stable_user_id(self):
+        pool = FakePool()
+        with patch.object(server_module, "ensure_db_pool", new=AsyncMock(return_value=pool)), \
+             patch.object(server_module, "get_authenticated_user", new=AsyncMock(return_value={"id": 42})):
+            identity, authenticated, new_cookie = asyncio.run(
+                server_module.resolve_ai_usage_identity(
+                    make_request("/api/ai/usage", session_token="session-token")
+                )
+            )
+        self.assertEqual("user:42", identity)
+        self.assertTrue(authenticated)
+        self.assertIsNone(new_cookie)
 
     def test_message_preview_counts_provider_usage_and_usage_endpoint_reads_same_identity(self):
         plan = validate_ai_search_plan({
@@ -110,7 +197,7 @@ class AIUsageTest(unittest.TestCase):
             "explanation": [],
         }, requested_group="goods")
         plan._provider_usage = {"input_tokens": 10, "output_tokens": 10}
-        with test_store() as store:
+        with test_store() as (store, _):
             with patch.object(server_module, "ai_usage_store", store), \
                  patch.object(server_module, "AI_DAILY_USAGE_BUDGET_ANON", 100.0), \
                  patch.object(server_module, "enforce_rate_limit", new=AsyncMock(return_value=None)), \
@@ -129,8 +216,83 @@ class AIUsageTest(unittest.TestCase):
         self.assertEqual(30, usage_body["ai_usage"]["used_percent"])
         self.assertFalse(usage_body["ai_usage"]["counted"])
 
+    def test_planner_and_message_preview_share_usage_ledger(self):
+        plan = validate_ai_search_plan({
+            "version": "1",
+            "group": "goods",
+            "clauses": [],
+            "date_constraints": [],
+            "warnings": [],
+            "explanation": [],
+        }, requested_group="goods")
+        plan._provider_usage = {"input_tokens": 10, "output_tokens": 10}
+        with test_store() as (store, _):
+            with patch.object(server_module, "ai_usage_store", store), \
+                 patch.object(server_module, "AI_DAILY_USAGE_BUDGET_ANON", 100.0), \
+                 patch.object(server_module, "enforce_rate_limit", new=AsyncMock(return_value=None)), \
+                 patch.object(server_module, "create_search_plan", new=AsyncMock(return_value=plan)), \
+                 patch.object(server_module, "_execute_ai_search_preview", new=AsyncMock(return_value=server_module.JSONResponse(content={"success": True}))):
+                planner_response = asyncio.run(server_module.create_ai_search_plan(
+                    make_request("/api/ai/search-plan"),
+                    server_module.AIPlanRequest(group="goods", message="test"),
+                ))
+                preview_response = asyncio.run(server_module.create_ai_search_preview(
+                    make_request("/api/ai/search-preview"),
+                    server_module.AISearchPreviewRequest(group="goods", message="test"),
+                ))
+
+        self.assertEqual(30, json.loads(planner_response.body)["ai_usage"]["used_percent"])
+        self.assertEqual(60, json.loads(preview_response.body)["ai_usage"]["used_percent"])
+
+    def test_edited_plan_mode_consumes_zero_usage(self):
+        plan = validate_ai_search_plan({
+            "version": "1",
+            "group": "goods",
+            "clauses": [],
+            "date_constraints": [],
+            "warnings": [],
+            "explanation": [],
+        }, requested_group="goods")
+        with test_store() as (store, _):
+            with patch.object(server_module, "ai_usage_store", store), \
+                 patch.object(server_module, "enforce_rate_limit", new=AsyncMock(return_value=None)), \
+                 patch.object(server_module, "create_search_plan", new=AsyncMock()) , \
+                 patch.object(server_module, "_execute_ai_search_preview", new=AsyncMock(return_value=server_module.JSONResponse(content={"success": True}))):
+                response = asyncio.run(server_module.create_ai_search_preview(
+                    make_request("/api/ai/search-preview"),
+                    server_module.AISearchPreviewRequest(group="goods", plan=server_module.serialize_plan(plan)),
+                ))
+                usage = asyncio.run(store.get_units("anon:" + hashlib.sha256(("a" * 32).encode()).hexdigest(), server_module._ai_usage_day_key()))
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(0.0, usage)
+
+    def test_usage_endpoint_reads_only_and_invokes_no_luna_call(self):
+        with test_store() as (store, _):
+            planner = AsyncMock()
+            with patch.object(server_module, "ai_usage_store", store), \
+                 patch.object(server_module, "enforce_rate_limit", new=AsyncMock(return_value=None)), \
+                 patch.object(server_module, "create_search_plan", new=planner):
+                response = asyncio.run(server_module.get_ai_usage(make_request("/api/ai/usage")))
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(0, json.loads(response.body)["ai_usage"]["used_percent"])
+        planner.assert_not_awaited()
+
+    def test_usage_storage_failure_returns_generic_unavailable_response(self):
+        response = asyncio.run(
+            server_module.ai_usage_storage_error_handler(
+                make_request("/api/ai/usage"),
+                server_module.AIUsageStorageError("database detail must stay private"),
+            )
+        )
+        body = json.loads(response.body)
+        self.assertEqual(503, response.status_code)
+        self.assertEqual("ai_usage_unavailable", body["error"])
+        self.assertNotIn("database detail", response.body.decode("utf-8"))
+
     def test_exhausted_budget_rejects_before_provider(self):
-        with test_store() as store:
+        with test_store() as (store, _):
             planner = AsyncMock()
             with patch.object(server_module, "ai_usage_store", store), \
                  patch.object(server_module, "AI_DAILY_USAGE_BUDGET_ANON", 0.0), \

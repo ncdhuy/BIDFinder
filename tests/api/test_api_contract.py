@@ -50,7 +50,11 @@ def app_routes():
             if not isinstance(decorator, ast.Call) or not isinstance(decorator.func, ast.Attribute):
                 continue
             owner = decorator.func.value
-            if not isinstance(owner, ast.Name) or owner.id != "app" or decorator.func.attr == "middleware":
+            if (
+                not isinstance(owner, ast.Name)
+                or owner.id != "app"
+                or decorator.func.attr not in {"api_route", "get", "post", "patch", "put", "delete"}
+            ):
                 continue
             routes.append((decorator.func.attr.upper(), ast.literal_eval(decorator.args[0])))
     return routes
