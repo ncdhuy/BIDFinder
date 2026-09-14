@@ -147,6 +147,7 @@ assert.match(styleSource, /\.ai-chat-message\.user \{[^}]*border-radius: 10px;/)
 assert.match(styleSource, /\.ai-chat-message\.assistant \{[^}]*background: #f2f7f9/);
 assert.match(styleSource, /\.ai-chat-usage-fill \{[^}]*width: var\(--ai-chat-usage-value/);
 assert.match(styleSource, /\.ai-chat-exchange \{[^}]*gap: 12px[^}]*margin: 0 0 12px/);
+assert.match(styleSource, /\.ai-chat-conditions li \{[^}]*align-items: baseline/);
 
 assert.match(scriptSource, /const AI_COMPILED_REQUEST_MARKER/);
 assert.match(scriptSource, /currentQueryRequest = payload\?\.\[AI_COMPILED_REQUEST_MARKER\]/);
