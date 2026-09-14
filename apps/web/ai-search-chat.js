@@ -284,7 +284,10 @@
             positionPanel();
             loadUsage();
             loadContract();
-            window.setTimeout(() => input.focus(), 0);
+            window.setTimeout(() => {
+                messagesRoot.scrollTop = messagesRoot.scrollHeight;
+                input.focus();
+            }, 0);
         } else if (wasOpen) {
             openButton.focus();
         }
