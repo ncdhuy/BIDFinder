@@ -244,10 +244,11 @@ class PlannerSchemaTest(unittest.TestCase):
         prompt = build_planner_system_prompt("medicines")
         self.assertIn("medicine_name (Tên thuốc or product name)", prompt)
         self.assertIn("active_ingredient_or_herbal_component (Hoạt chất or thành phần dược liệu)", prompt)
-        self.assertIn("A standalone medicine-like name without that cue belongs to medicine_name", prompt)
-        self.assertIn('"paracetamol 150mg thuốc đặt" maps paracetamol to medicine_name', prompt)
-        self.assertIn('"hoạt chất paracetamol" maps paracetamol to active_ingredient_or_herbal_component', prompt)
-        self.assertIn("Never put the same standalone value in both fields", prompt)
+        self.assertIn("a recognized generic or INN substance name such as paracetamol, amoxicillin, metformin, or meropenem belongs to active_ingredient_or_herbal_component", prompt)
+        self.assertIn('"paracetamol 150mg thuốc đặt" maps paracetamol to active_ingredient_or_herbal_component', prompt)
+        self.assertIn('"tên thuốc Panadol 500mg" maps Panadol to medicine_name', prompt)
+        self.assertIn("Never put the same value in both fields", prompt)
+        self.assertIn("If the value is genuinely ambiguous", prompt)
         self.assertIn("Write warnings and explanation entries in Vietnamese", prompt)
 
     def test_bounds_and_extra_keys_are_rejected(self):
