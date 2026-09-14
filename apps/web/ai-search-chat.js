@@ -271,7 +271,7 @@
         }
         const buttonRect = openButton.getBoundingClientRect();
         if (!buttonRect.width || !buttonRect.height) return;
-        const panelWidth = Math.min(420, Math.max(0, window.innerWidth - 32));
+        const panelWidth = Math.min(390, Math.max(0, window.innerWidth - 32));
         const panelHeight = Math.min(560, Math.max(0, window.innerHeight - 112));
         const maxRight = Math.max(16, window.innerWidth - panelWidth - 16);
         const right = Math.min(maxRight, Math.max(16, window.innerWidth - buttonRect.right));
