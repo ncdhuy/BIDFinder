@@ -22,7 +22,7 @@ except ImportError:  # ``uvicorn`` is documented from ``apps/api``.
     from typesense_contract import PUBLIC_GROUPS, get_search_contract
 
 
-PLANNER_VERSION = "v0.1.3"
+PLANNER_VERSION = "v0.1.4"
 PLAN_SCHEMA_VERSION = "1"
 MAX_MESSAGE_LENGTH = 4000
 MAX_CLAUSES = 24
@@ -304,7 +304,7 @@ Planning policy:
 2. Extract discriminative search terms. Do not copy verbose source descriptions as one phrase.
 3. Use separate concepts with join AND when both concepts are independently required.
 4. Put spelling, form, or synonym alternatives for the same concept in one alternatives array. Never use Boolean syntax inside a term.
-5. Prefer recall when procurement wording varies, but do not invent unsupported facts or synonyms.
+5. Prefer precise keyword extraction. Add an alternative only when it is a genuine spelling, INN, salt, or chemical-name variant of the same concept; do not invent broader, narrower, related, translated, or descriptive variants.
 6. Preserve identifiers exactly, including Mã TBMT, registration numbers, model numbers, decision numbers, and HS codes. The backend derives exact identifier matching from the canonical field role.
 7. Reduce low-value legal or company prefixes when searching company names. Keep the discriminative company name, such as Hậu Giang.
 8. A semicolon is only a boundary hint. It is not a field separator.
@@ -315,8 +315,10 @@ Planning policy:
 10a. Explicit bidder or supplier cues such as nhà thầu, nhà thầu trúng thầu, đơn vị trúng thầu, cung cấp bởi, or nhà cung cấp in procurement context use winning_bidder_name.
 10b. Explicit procuring or buyer cues such as chủ đầu tư, bên mời thầu, đơn vị mua, or đơn vị sử dụng use procuring_entity_name.
 11. For medicine requests, distinguish active ingredient or salt/form, strength, dosage form, route, packaging, permit number, manufacturer, and location. Ignore irrelevant excipients unless user makes them a search requirement.
-11a. When the user explicitly writes X (dưới dạng Y), keep supplied X and its salt or form Y as alternatives in the same active-ingredient concept. Do not discard Y or turn a representation of the same ingredient into an independent AND concept.
+11a. When the user explicitly writes X (dưới dạng Y), use X as the primary keyword and keep only Y's core chemical identity as a secondary alternative when it is a genuine alias or salt/form of the same ingredient. Do not discard Y's identity, but never copy the full parenthetical phrase, carrier, excipient, brand-like presentation, powder wording, ratio, or delivery material into the alternatives. Keep X and that valid identity variant in the same active-ingredient concept; do not turn a representation of the same ingredient into an independent AND concept.
 11b. For medicines, distinguish medicine_name (Tên thuốc or product name) from active_ingredient_or_herbal_component (Hoạt chất or thành phần dược liệu). Apply explicit user cues first: "hoạt chất", "thành phần", "dưới dạng", or "muối" identify the active-ingredient field, while "tên thuốc", "biệt dược", "thương mại", or a named product identify medicine_name. Without an explicit cue, use pharmaceutical naming knowledge: a recognized generic or INN substance name such as paracetamol, amoxicillin, metformin, or meropenem belongs to active_ingredient_or_herbal_component; a recognized trade or product name such as Panadol or Efferalgan belongs to medicine_name. For example, "paracetamol 150mg thuốc đặt" maps paracetamol to active_ingredient_or_herbal_component, while "tên thuốc Panadol 500mg" maps Panadol to medicine_name. Never put the same value in both fields. If the value is genuinely ambiguous, choose the best-supported field and add a short warning in Vietnamese.
+11c. For route_of_administration, extract the atomic route keyword supplied by the user. Treat "thuốc uống" or "đường uống" as the route value "uống"; never generate field-label wrappers or redundant variants such as "đường dùng", "đường dùng uống", or "đường uống" when "uống" already covers the concept. Do not expand one route keyword into related routes.
+11d. Examples of the required precision: "nefopam thuốc uống, kết quả 3 tháng gần nhất" yields route_of_administration alternatives ["uống"] only, not ["uống", "đường uống", "đường dùng uống"]. "Amoxicilin (dưới dạng Amoxicilin trihydrat powder) + Acid clavulanic (dưới dạng Kali clavulanat - Syloid (1:1))" yields two AND concepts in active_ingredient_or_herbal_component, with primary keywords amoxicilin and clavulanic and only valid core variants such as amoxicillin and clavulanat; never use the full parenthetical descriptions as keywords.
 12. For combination-product strengths joined by +, /, or clearly separate dose components, put independently required strengths in separate concepts with AND. Do not make one complete strength string an alternative.
 13. Treat contextual container wording such as Gói 2g thuốc chứa as narrative unless the user clearly requests packaging. Use packaging for explicit quy cách đóng gói, đóng gói, hộp 10 vỉ, chai 100ml, or clearly requested gói 2g.
 14. For traditional medicine, distinguish common or herbal name, scientific name, used part, processing method, origin, packaging, manufacturer, and location.
@@ -428,6 +430,22 @@ def _clean_text_list(value: Any, *, max_length: int, category: str) -> list[str]
     return cleaned
 
 
+def _normalize_route_alternatives(alternatives: list[str]) -> list[str]:
+    """Collapse route-label wrappers into the atomic route keyword."""
+
+    normalized = []
+    for alternative in alternatives:
+        compact = " ".join(alternative.split())
+        folded = compact.casefold()
+        if folded in {"thuốc uống", "đường uống", "đường dùng uống"}:
+            compact = "uống"
+        elif folded == "đường dùng":
+            continue
+        if compact not in normalized:
+            normalized.append(compact)
+    return normalized
+
+
 def validate_ai_search_plan(payload: Mapping[str, Any] | AISearchPlan, *, requested_group: str | None = None) -> AISearchPlan:
     """Validate provider output and derive canonical match semantics."""
 
@@ -483,6 +501,8 @@ def validate_ai_search_plan(payload: Mapping[str, Any] | AISearchPlan, *, reques
                 max_length=MAX_TERM_LENGTH,
                 category="term_shape",
             )
+            if field == "route_of_administration":
+                alternatives = _normalize_route_alternatives(alternatives)
             if not alternatives:
                 continue
             if len(alternatives) > MAX_ALTERNATIVES_PER_CONCEPT:

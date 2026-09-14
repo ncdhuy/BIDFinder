@@ -152,6 +152,21 @@ class PlannerSchemaTest(unittest.TestCase):
             validate_ai_search_plan(empty, requested_group="goods")
         self.assertEqual("empty_concepts", context.exception.category)
 
+    def test_redundant_route_wrappers_collapse_to_atomic_keyword(self):
+        plan = validate_ai_search_plan(
+            make_plan(
+                "medicines",
+                [clause("route_of_administration", "uống", "đường uống", "đường dùng uống", "thuốc uống")],
+            ),
+            requested_group="medicines",
+        )
+        self.assertEqual(["uống"], plan.clauses[0].concepts[0].alternatives)
+
+        empty_route = make_plan("medicines", [clause("route_of_administration", "đường dùng")])
+        with self.assertRaises(AIPlannerValidationError) as context:
+            validate_ai_search_plan(empty_route, requested_group="medicines")
+        self.assertEqual("empty_concepts", context.exception.category)
+
     def test_match_is_derived_from_contract_roles(self):
         identifier = validate_ai_search_plan(
             make_plan("goods", [clause("bid_invitation_code", "IB2600498667")]),
@@ -238,7 +253,9 @@ class PlannerSchemaTest(unittest.TestCase):
         prompt = build_planner_system_prompt("medicines")
         self.assertIn("X (dưới dạng Y)", prompt)
         self.assertIn("same active-ingredient concept", prompt)
-        self.assertIn("Do not discard Y", prompt)
+        self.assertIn("use X as the primary keyword", prompt)
+        self.assertIn("Do not discard Y's identity", prompt)
+        self.assertIn("never copy the full parenthetical phrase", prompt)
 
     def test_prompt_distinguishes_medicine_name_from_active_ingredient(self):
         prompt = build_planner_system_prompt("medicines")
@@ -250,6 +267,15 @@ class PlannerSchemaTest(unittest.TestCase):
         self.assertIn("Never put the same value in both fields", prompt)
         self.assertIn("If the value is genuinely ambiguous", prompt)
         self.assertIn("Write warnings and explanation entries in Vietnamese", prompt)
+
+    def test_prompt_requires_precise_keywords_and_non_redundant_synonyms(self):
+        prompt = build_planner_system_prompt("medicines")
+        self.assertIn("Prefer precise keyword extraction", prompt)
+        self.assertIn("genuine spelling, INN, salt, or chemical-name variant", prompt)
+        self.assertIn("For route_of_administration, extract the atomic route keyword", prompt)
+        self.assertIn('"nefopam thuốc uống, kết quả 3 tháng gần nhất" yields route_of_administration alternatives ["uống"] only', prompt)
+        self.assertIn("two AND concepts in active_ingredient_or_herbal_component", prompt)
+        self.assertIn("primary keywords amoxicilin and clavulanic", prompt)
 
     def test_bounds_and_extra_keys_are_rejected(self):
         too_many = make_plan("goods", [clause("item_name", *[str(i) for i in range(25)])])
@@ -501,7 +527,7 @@ class PlannerRateLimitTest(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         self.assertTrue(body["success"])
         self.assertEqual("goods", body["plan"]["group"])
-        self.assertEqual("v0.1.3", body["meta"]["planner_version"])
+        self.assertEqual("v0.1.4", body["meta"]["planner_version"])
 
     def test_luna_rate_limit_uses_ip_scoped_limiter(self):
         import server
