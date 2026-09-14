@@ -31,6 +31,7 @@ assert.match(styleSource, /\.result-table-tabs \.toolbar-actions > #open-ai-sear
 assert.match(styleSource, /\.result-table-tabs \.toolbar-actions > :is\([\s\S]*?#open-filter-panel,[\s\S]*?#open-ai-search,[\s\S]*?#open-insight-drawer[\s\S]*?\) \{[\s\S]*?width: 34px[\s\S]*?height: 34px/);
 assert.doesNotMatch(styleSource, /\.workspace-actions \.ai-search-toolbar-btn/);
 assert.doesNotMatch(styleSource, /\.ai-search-toolbar-btn\s*\{/);
+assert.match(styleSource, /\.ai-search-toolbar-mark\s*\{[\s\S]*?display:\s*block;[\s\S]*?transform:\s*translateY\(1px\)/);
 assert.match(assistantMarkup, /<h2 id="ai-search-chat-title">(?:Trợ lý AI|Tìm kiếm bằng AI)<\/h2>/);
 assert.doesNotMatch(assistantMarkup, /data-ai-chat-menu|data-ai-chat-menu-content|data-ai-chat-clear|Xóa cuộc trò chuyện/);
 assert.match(chatSource, /const openButton = document\.getElementById\('open-ai-search'\)/);

@@ -7989,7 +7989,12 @@ body.product-journey-active #panel-overlay.show {
 }
 
 /* Standalone AI search assistant */
-.ai-search-toolbar-mark { width: 18px; height: 18px; }
+.ai-search-toolbar-mark {
+  display: block;
+  width: 18px;
+  height: 18px;
+  transform: translateY(1px);
+}
 .ai-search-toolbar-btn:focus-visible,
 .ai-chat-icon-button:focus-visible,
 .ai-chat-groups button:focus-visible,
