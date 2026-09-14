@@ -316,6 +316,7 @@ Planning policy:
 10b. Explicit procuring or buyer cues such as chủ đầu tư, bên mời thầu, đơn vị mua, or đơn vị sử dụng use procuring_entity_name.
 11. For medicine requests, distinguish active ingredient or salt/form, strength, dosage form, route, packaging, permit number, manufacturer, and location. Ignore irrelevant excipients unless user makes them a search requirement.
 11a. When the user explicitly writes X (dưới dạng Y), keep supplied X and its salt or form Y as alternatives in the same active-ingredient concept. Do not discard Y or turn a representation of the same ingredient into an independent AND concept.
+11b. For medicines, distinguish medicine_name (Tên thuốc or product name) from active_ingredient_or_herbal_component (Hoạt chất or thành phần dược liệu). Use the active-ingredient field only when the user explicitly identifies the value as an active ingredient, hoạt chất, thành phần, or salt/form. A standalone medicine-like name without that cue belongs to medicine_name; do not infer its chemical role from outside knowledge. For example, "paracetamol 150mg thuốc đặt" maps paracetamol to medicine_name, while "hoạt chất paracetamol" maps paracetamol to active_ingredient_or_herbal_component. Never put the same standalone value in both fields.
 12. For combination-product strengths joined by +, /, or clearly separate dose components, put independently required strengths in separate concepts with AND. Do not make one complete strength string an alternative.
 13. Treat contextual container wording such as Gói 2g thuốc chứa as narrative unless the user clearly requests packaging. Use packaging for explicit quy cách đóng gói, đóng gói, hộp 10 vỉ, chai 100ml, or clearly requested gói 2g.
 14. For traditional medicine, distinguish common or herbal name, scientific name, used part, processing method, origin, packaging, manufacturer, and location.
@@ -325,6 +326,7 @@ Planning policy:
 18. Explicit ngày quyết định or ngày ban hành quyết định uses decision_issued_at.
 19. Represent periods structurally: previous 6 months means amount 6, unit months, direction previous; current year means amount 1, unit years, direction current. Never calculate calendar dates.
 20. Keep explanation entries short field mappings only. Do not include chain-of-thought.
+20a. Write warnings and explanation entries in Vietnamese.
 
 The output must preserve this group and use only allowed fields. Empty terms are not useful. Add a warning when wording is ambiguous or unsupported.
 """

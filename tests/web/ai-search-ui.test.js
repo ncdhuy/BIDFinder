@@ -31,6 +31,7 @@ assert.match(styleSource, /\.result-table-tabs \.toolbar-actions > #open-ai-sear
 assert.match(styleSource, /\.result-table-tabs \.toolbar-actions > :is\([\s\S]*?#open-filter-panel,[\s\S]*?#open-ai-search,[\s\S]*?#open-insight-drawer[\s\S]*?\) \{[\s\S]*?width: 34px[\s\S]*?height: 34px/);
 assert.doesNotMatch(styleSource, /\.workspace-actions \.ai-search-toolbar-btn/);
 assert.doesNotMatch(styleSource, /\.ai-search-toolbar-btn\s*\{/);
+assert.doesNotMatch(indexSource, /ai-search-toolbar-btn/);
 assert.match(styleSource, /\.ai-search-toolbar-mark\s*\{[\s\S]*?display:\s*block;[\s\S]*?transform:\s*translateY\(1px\)/);
 assert.match(assistantMarkup, /<h2 id="ai-search-chat-title">(?:Trợ lý AI|Tìm kiếm bằng AI)<\/h2>/);
 assert.doesNotMatch(assistantMarkup, /data-ai-chat-menu|data-ai-chat-menu-content|data-ai-chat-clear|Xóa cuộc trò chuyện/);
@@ -105,9 +106,8 @@ assert.match(assistantMarkup, /<button[^>]+data-ai-chat-group="traditional"/);
 
 assert.match(chatSource, /\/api\/ai\/search-preview/);
 assert.match(chatSource, /body: JSON\.stringify\(\{ group: item\.group, message: item\.message \}\)/);
-assert.match(chatSource, /body: JSON\.stringify\(\{ group: item\.group, plan \}\)/);
 assert.doesNotMatch(chatSource, /history.*body|body: JSON\.stringify\(state\.history/);
-assert.match(chatSource, /data-ai-chat-action="edit"/);
+assert.doesNotMatch(chatSource, /editingId|editPlan|editPlanMarkup|collectEditedPlan|saveEditedPlan|startEdit|data-ai-chat-action|Chỉnh sửa/);
 assert.match(chatSource, /COMPILED_REQUEST_MARKER/);
 assert.match(chatSource, /new CustomEvent\('apply-filters'/);
 assert.match(chatSource, /executeSearch\(item\.id\)/);
@@ -117,7 +117,7 @@ assert.match(chatSource, /localStorage/);
 assert.match(chatSource, /usageStatus: 'loading'/);
 assert.match(chatSource, /state\.usageStatus = 'unavailable'/);
 assert.match(chatSource, /usageRoot\.replaceChildren\(\)/);
-assert.match(chatSource, /usageRoot\.textContent = '—'/);
+assert.doesNotMatch(chatSource, /usageRoot\.textContent = '—'/);
 assert.match(chatSource, /Hạn mức AI hiện không khả dụng/);
 assert.match(chatSource, /setTimeout\([\s\S]*?1200/);
 assert.match(chatSource, /if \(response\.ok && payload\?\.success && updateUsage\(payload\)\)/);
@@ -130,10 +130,8 @@ assert.doesNotMatch(chatSource, /formatCount|resultLine|Xem kết quả|Không c
 assert.doesNotMatch(chatSource, /assistant\.plan\.explanation/);
 assert.match(chatSource, /warningMessages/);
 assert.match(chatSource, /Yêu cầu chưa rõ: có thể là tên thuốc, hoạt chất hoặc từ viết tắt/);
-assert.match(chatSource, /aria-label="Chỉnh sửa"/);
 assert.match(chatSource, /resizeInput/);
 assert.doesNotMatch(chatSource, /clearHistory|data-ai-chat-clear|data-ai-chat-menu/);
-assert.match(chatSource, /data-ai-chat-action="edit"/);
 assert.match(chatSource, /new CustomEvent\('apply-filters'/);
 assert.match(scriptSource, /const PANEL_CONFIG/);
 assert.match(scriptSource, /open-filter-panel/);

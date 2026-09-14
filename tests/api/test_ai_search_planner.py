@@ -240,6 +240,16 @@ class PlannerSchemaTest(unittest.TestCase):
         self.assertIn("same active-ingredient concept", prompt)
         self.assertIn("Do not discard Y", prompt)
 
+    def test_prompt_distinguishes_medicine_name_from_active_ingredient(self):
+        prompt = build_planner_system_prompt("medicines")
+        self.assertIn("medicine_name (Tên thuốc or product name)", prompt)
+        self.assertIn("active_ingredient_or_herbal_component (Hoạt chất or thành phần dược liệu)", prompt)
+        self.assertIn("A standalone medicine-like name without that cue belongs to medicine_name", prompt)
+        self.assertIn('"paracetamol 150mg thuốc đặt" maps paracetamol to medicine_name', prompt)
+        self.assertIn('"hoạt chất paracetamol" maps paracetamol to active_ingredient_or_herbal_component', prompt)
+        self.assertIn("Never put the same standalone value in both fields", prompt)
+        self.assertIn("Write warnings and explanation entries in Vietnamese", prompt)
+
     def test_bounds_and_extra_keys_are_rejected(self):
         too_many = make_plan("goods", [clause("item_name", *[str(i) for i in range(25)])])
         with self.assertRaises(AIPlannerValidationError) as context:

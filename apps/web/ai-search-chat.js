@@ -23,8 +23,6 @@
         usageStatus: 'loading',
         usageRequestId: 0,
         contract: null,
-        editingId: null,
-        editPlan: null,
         controller: null,
         notice: ''
     };
@@ -131,7 +129,6 @@
         }
         usageRoot.replaceChildren();
         if (state.usageStatus !== 'available' || !state.usage) {
-            usageRoot.textContent = '—';
             usageRoot.title = 'Hạn mức AI hiện không khả dụng';
             usageRoot.setAttribute('aria-label', 'Hạn mức AI hiện không khả dụng');
             return;
@@ -215,21 +212,6 @@
         return rows.length ? `<ul class="ai-chat-conditions">${rows.join('')}</ul>` : '';
     }
 
-    function editPlanMarkup(item) {
-        const plan = state.editPlan || item.assistant?.plan || {};
-        const rows = [];
-        (plan.clauses || []).forEach((clause, clauseIndex) => {
-            (clause.concepts || []).forEach((concept, conceptIndex) => {
-                rows.push(`<label class="ai-chat-edit-row"><span>${escapeHtml(fieldLabel(item.group, clause.field))}</span><input type="text" data-ai-chat-edit-alternatives data-clause="${clauseIndex}" data-concept="${conceptIndex}" value="${escapeHtml((concept.alternatives || []).join(' | '))}" title="Dùng | để tách lựa chọn OR"></label>`);
-            });
-        });
-        (plan.date_constraints || []).forEach((constraint, index) => {
-            const period = constraint.period || {};
-            rows.push(`<div class="ai-chat-edit-row ai-chat-edit-date"><span>${escapeHtml(fieldLabel(item.group, constraint.field))}</span><div><input type="number" min="1" max="120" data-ai-chat-edit-date-amount="${index}" value="${escapeHtml(period.amount)}" aria-label="Số lượng thời gian"><select data-ai-chat-edit-date-unit="${index}" aria-label="Đơn vị thời gian">${[['days', 'ngày'], ['months', 'tháng'], ['years', 'năm']].map(([value, label]) => `<option value="${value}" ${period.unit === value ? 'selected' : ''}>${label}</option>`).join('')}</select><select data-ai-chat-edit-date-direction="${index}" aria-label="Khoảng thời gian"><option value="previous" ${period.direction === 'previous' ? 'selected' : ''}>gần nhất</option><option value="current" ${period.direction === 'current' ? 'selected' : ''}>hiện tại</option></select></div></div>`);
-        });
-        return `<div class="ai-chat-edit-box" data-ai-chat-edit-box="${escapeHtml(item.id)}">${rows.join('') || '<p class="ai-chat-muted">Không có điều kiện để chỉnh sửa.</p>'}<div class="ai-chat-actions"><button type="button" class="ai-chat-button secondary" data-ai-chat-action="cancel-edit">Hủy</button><button type="button" class="ai-chat-button primary" data-ai-chat-action="save-edit" data-id="${escapeHtml(item.id)}">Lưu</button></div></div>`;
-    }
-
     function assistantMarkup(item) {
         const assistant = item.assistant || {};
         if (assistant.loading) return '<div class="ai-chat-loading" role="status" aria-live="polite"><span class="ai-chat-dots" aria-hidden="true"></span><span class="sr-only">Đang phân tích yêu cầu…</span></div>';
@@ -238,11 +220,10 @@
         const warningMarkup = warningMessages.length
             ? `<div class="ai-chat-warning">${warningMessages.map(warning => escapeHtml(warning)).join('<br>')}</div>`
             : '';
-        const isEditing = state.editingId === item.id;
-        const actions = isEditing
-            ? editPlanMarkup(item)
-            : `<div class="ai-chat-actions">${assistant.executing ? '<span class="ai-chat-executing" role="status" aria-live="polite"><span class="ai-chat-dots" aria-hidden="true"></span><span class="sr-only">Đang tải kết quả</span></span>' : ''}<button type="button" class="ai-chat-icon-button ai-chat-edit-button" data-ai-chat-action="edit" data-id="${escapeHtml(item.id)}" aria-label="Chỉnh sửa" title="Chỉnh sửa" ${assistant.executing ? 'disabled' : ''}><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 17.5V20h2.5L18.9 7.6l-2.5-2.5L4 17.5zM15 6l2.5 2.5M13.5 20H20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>`;
-        return `<div class="ai-chat-plan">${planConditions(item.group, assistant.plan)}${warningMarkup}${actions}</div>`;
+        const executingMarkup = assistant.executing
+            ? '<div class="ai-chat-executing" role="status" aria-live="polite"><span class="ai-chat-dots" aria-hidden="true"></span><span class="sr-only">Đang tải kết quả</span></div>'
+            : '';
+        return `<div class="ai-chat-plan">${planConditions(item.group, assistant.plan)}${warningMarkup}${executingMarkup}</div>`;
     }
 
     function renderMessages() {
@@ -377,68 +358,6 @@
         }
     }
 
-    function collectEditedPlan(item) {
-        const plan = clone(state.editPlan || item.assistant?.plan);
-        if (!plan) return null;
-        let invalid = false;
-        document.querySelectorAll('[data-ai-chat-edit-alternatives]').forEach(inputElement => {
-            const alternatives = String(inputElement.value || '').split('|').map(value => value.trim()).filter(Boolean);
-            if (!alternatives.length) invalid = true;
-            const clause = plan.clauses?.[Number(inputElement.dataset.clause)];
-            const concept = clause?.concepts?.[Number(inputElement.dataset.concept)];
-            if (concept) concept.alternatives = alternatives;
-        });
-        document.querySelectorAll('[data-ai-chat-edit-date-amount]').forEach(inputElement => {
-            const index = Number(inputElement.dataset.aiChatEditDateAmount);
-            const constraint = plan.date_constraints?.[index];
-            if (!constraint) return;
-            const amount = Number(inputElement.value);
-            const unit = document.querySelector(`[data-ai-chat-edit-date-unit="${index}"]`)?.value;
-            const direction = document.querySelector(`[data-ai-chat-edit-date-direction="${index}"]`)?.value;
-            if (!Number.isInteger(amount) || amount < 1 || amount > 120) invalid = true;
-            constraint.period = { kind: 'relative', amount, unit, direction };
-        });
-        if (invalid) throw new Error('Mỗi điều kiện cần ít nhất một giá trị hợp lệ.');
-        return plan;
-    }
-
-    async function saveEditedPlan(id) {
-        const item = findItem(id);
-        if (!item || !state.editPlan) return;
-        let plan;
-        try {
-            plan = collectEditedPlan(item);
-        } catch (error) {
-            item.assistant.error = error.message;
-            renderMessages();
-            return;
-        }
-        item.assistant = { ...item.assistant, loading: true, error: '' };
-        renderMessages();
-        try {
-            const { response, payload } = await fetchJson('/api/ai/search-preview', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ group: item.group, plan })
-            });
-            if (!response.ok || payload?.success === false) {
-                item.assistant = { ...item.assistant, loading: false, error: publicError(payload, response.status, false) };
-                updateUsage(payload);
-            } else {
-                item.assistant = { loading: false, executing: false, error: '', plan: payload.plan, compiled_request: payload.compiled_request };
-                updateUsage(payload);
-                state.editingId = null;
-                state.editPlan = null;
-                saveHistory();
-            }
-            renderMessages();
-            if (response.ok && payload?.success !== false) executeSearch(item.id);
-        } catch (error) {
-            item.assistant = { ...item.assistant, loading: false, error: publicError({}, 0, error?.name === 'AbortError') };
-            renderMessages();
-        }
-    }
-
     function executeSearch(id) {
         const item = findItem(id);
         const compiled = item?.assistant?.compiled_request;
@@ -460,14 +379,6 @@
         document.addEventListener('bidfinder:query-result', finish, { once: true });
         document.addEventListener('bidfinder:query-error', finish, { once: true });
         form.dispatchEvent(new CustomEvent('apply-filters', { detail: request, bubbles: true, composed: true }));
-    }
-
-    function startEdit(id) {
-        const item = findItem(id);
-        if (!item?.assistant?.plan || item.assistant.loading) return;
-        state.editingId = id;
-        state.editPlan = clone(item.assistant.plan);
-        renderMessages();
     }
 
     composer.addEventListener('submit', event => {
@@ -493,19 +404,7 @@
         const button = event.target.closest('[data-ai-chat-group]');
         if (!button) return;
         state.group = button.dataset.aiChatGroup;
-        state.editingId = null;
-        state.editPlan = null;
         renderMessages();
-    });
-    messagesRoot.addEventListener('click', event => {
-        const action = event.target.closest('[data-ai-chat-action]');
-        if (!action) return;
-        const name = action.dataset.aiChatAction;
-        if (name === 'edit') startEdit(action.dataset.id);
-        if (name === 'save-edit') saveEditedPlan(action.dataset.id);
-        if (name === 'cancel-edit') { state.editingId = null; state.editPlan = null; renderMessages(); }
-        if (name === 'execute') executeSearch(action.dataset.id);
-        if (name === 'new') { input.focus(); input.value = ''; }
     });
     document.addEventListener('keydown', event => {
         if (event.key === 'Escape' && state.open) setOpen(false);
