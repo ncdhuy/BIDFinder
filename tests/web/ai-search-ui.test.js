@@ -28,6 +28,7 @@ assert.match(indexSource, /id="open-ai-search"[^>]+aria-label="Tìm kiếm AI"[^
 assert.match(assistantMarkup, /id="open-filter-panel"[\s\S]*?<\/button>\s*<button[^>]+id="open-ai-search"[\s\S]*?<\/button>\s*<button[^>]+id="open-insight-drawer"/);
 assert.match(styleSource, /\.ai-search-toolbar-btn \{[\s\S]*?background: var\(--color-primary-dark\)/);
 assert.match(styleSource, /\.ai-search-toolbar-btn \{[\s\S]*?color: var\(--color-primary-heavy-light\)/);
+assert.match(styleSource, /\.workspace-actions \.ai-search-toolbar-btn \{[\s\S]*?width: 50px[\s\S]*?min-width: 50px[\s\S]*?max-width: 50px[\s\S]*?flex: 0 0 50px[\s\S]*?height: 40px[\s\S]*?padding: 0/);
 assert.match(assistantMarkup, /<h2 id="ai-search-chat-title">(?:Trợ lý AI|Tìm kiếm bằng AI)<\/h2>/);
 assert.doesNotMatch(assistantMarkup, /data-ai-chat-menu|data-ai-chat-menu-content|data-ai-chat-clear|Xóa cuộc trò chuyện/);
 assert.match(chatSource, /const openButton = document\.getElementById\('open-ai-search'\)/);
@@ -35,6 +36,9 @@ assert.match(chatSource, /openButton\.addEventListener\('click', \(\) => setOpen
 assert.match(chatSource, /openButton\.setAttribute\('aria-expanded', String\(state\.open\)\)/);
 assert.match(chatSource, /data-ai-chat-close[\s\S]*?setOpen\(false\)/);
 assert.match(chatSource, /event\.key === 'Escape' && state\.open/);
+assert.match(chatSource, /document\.addEventListener\('pointerdown', event => \{[\s\S]*?panel\.contains\(event\.target\)[\s\S]*?openButton\.contains\(event\.target\)[\s\S]*?setOpen\(false\)/);
+assert.match(styleSource, /\.ai-chat-icon-button\[data-ai-chat-close\] \{[^}]*color: #b42318/);
+assert.match(styleSource, /\.ai-chat-icon-button\[data-ai-chat-close\]:hover \{[^}]*color: #8f1d1d/);
 assert.match(assistantMarkup, /placeholder="Nhập yêu cầu tìm kiếm…"/);
 assert.match(assistantMarkup, /rows="1"/);
 assert.equal((assistantMarkup.match(/<textarea id="ai-chat-input"/g) || []).length, 1);
@@ -66,7 +70,7 @@ assert.match(indexSource, /Hàng hóa/);
 assert.match(indexSource, /Thuốc/);
 assert.match(indexSource, /Dược liệu/);
 assert.match(styleSource, /\.ai-chat-groups \{[^}]*gap: 8px/);
-assert.match(styleSource, /\.ai-chat-groups button \{[^}]*border: 1px solid/);
+assert.match(styleSource, /\.ai-chat-groups button \{[^}]*border: 1(?:\.5)?px solid/);
 assert.match(styleSource, /\.ai-chat-groups \{[^}]*width: 100%/);
 assert.match(styleSource, /\.ai-chat-groups button \{[^}]*flex: 1 1 0/);
 assert.match(styleSource, /\.ai-chat-groups button \{[^}]*min-height: 36px/);

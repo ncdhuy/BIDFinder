@@ -481,6 +481,10 @@
     });
     openButton.addEventListener('click', () => setOpen(!state.open));
     panel.querySelector('[data-ai-chat-close]')?.addEventListener('click', () => setOpen(false));
+    document.addEventListener('pointerdown', event => {
+        if (!state.open || panel.contains(event.target) || openButton.contains(event.target)) return;
+        setOpen(false);
+    });
     window.addEventListener('resize', () => { if (state.open) positionPanel(); });
     window.addEventListener('scroll', () => { if (state.open) positionPanel(); }, true);
     groupsRoot.addEventListener('click', event => {

@@ -8041,6 +8041,12 @@ body.product-journey-active #panel-overlay.show {
 
 /* Standalone AI search assistant */
 .ai-search-toolbar-btn {
+  width: 50px;
+  min-width: 50px;
+  max-width: 50px;
+  flex: 0 0 50px;
+  height: 40px;
+  padding: 0;
   background: var(--color-primary-dark);
   border-color: var(--color-primary-dark);
   color: var(--color-primary-heavy-light);
@@ -8050,6 +8056,15 @@ body.product-journey-active #panel-overlay.show {
   background: var(--color-primary);
   border-color: var(--color-primary);
   color: #f2fbfd;
+}
+.workspace-actions .ai-search-toolbar-btn {
+  width: 50px;
+  min-width: 50px;
+  max-width: 50px;
+  flex: 0 0 50px;
+  height: 40px;
+  padding: 0;
+  gap: 0;
 }
 .ai-search-toolbar-mark { width: 18px; height: 18px; }
 .ai-search-toolbar-btn:focus-visible,
@@ -8118,6 +8133,8 @@ body.product-journey-active #panel-overlay.show {
   cursor: pointer;
 }
 .ai-chat-icon-button:hover { background: #e8f1f4; color: #127495; }
+.ai-chat-icon-button[data-ai-chat-close] { color: #b42318; }
+.ai-chat-icon-button[data-ai-chat-close]:hover { background: #fbeaea; color: #8f1d1d; }
 .ai-chat-icon-button svg { width: 17px; height: 17px; }
 .ai-chat-usage { color: #65808b; font-size: 11px; line-height: 1.2; }
 .ai-chat-usage-skeleton { display: inline-block; width: 34px; height: 6px; border-radius: 2px; background: #deeaee; }
@@ -8175,7 +8192,7 @@ body.product-journey-active #panel-overlay.show {
 .ai-chat-edit-date > div { display: grid; grid-template-columns: 64px 1fr 1fr; gap: 5px; }
 .ai-chat-composer { padding: 8px 10px 10px; border-top: 1px solid #e3ebee; background: #fff; }
 .ai-chat-groups { display: flex; width: 100%; max-width: 100%; gap: 8px; margin: 0 0 7px; }
-.ai-chat-groups button { flex: 1 1 0; min-width: 0; min-height: 36px; padding: 5px 8px; border: 1px solid #d3e0e5; border-radius: 20px; background: #fff; color: #52707b; font: inherit; font-size: 13px; font-weight: 750; cursor: pointer; }
+.ai-chat-groups button { flex: 1 1 0; min-width: 0; min-height: 36px; padding: 5px 8px; border: 1.5px solid #d3e0e5; border-radius: 20px; background: #fff; color: #52707b; font: inherit; font-size: 13px; font-weight: 750; cursor: pointer; }
 .ai-chat-groups button.active { border-color: #127495; background: #127495; color: #fff; }
 .ai-chat-input-row { display: flex; align-items: stretch; gap: 7px; }
 .ai-chat-input-row textarea { flex: 1; min-width: 0; min-height: 44px; max-height: 112px; height: 44px; overflow-y: hidden; resize: none; padding: 10px 11px; border: 1px solid #cbd9de; border-radius: 20px; background: #f7fafb; color: #203f4b; font: inherit; font-size: 14px; line-height: 1.45; }
