@@ -20,6 +20,8 @@
         group: 'medicines',
         history: loadHistory(),
         usage: null,
+        usageStatus: 'loading',
+        usageRequestId: 0,
         contract: null,
         editingId: null,
         editPlan: null,
@@ -27,17 +29,15 @@
         notice: ''
     };
 
-    const launcher = document.getElementById('ai-search-launcher');
+    const openButton = document.getElementById('open-ai-search');
     const panel = document.getElementById('ai-search-chat');
     const messagesRoot = document.getElementById('ai-chat-messages');
     const composer = document.getElementById('ai-chat-composer');
     const input = document.getElementById('ai-chat-input');
     const usageRoot = document.getElementById('ai-chat-usage');
     const groupsRoot = document.getElementById('ai-chat-groups');
-    const menuButton = panel.querySelector('[data-ai-chat-menu]');
-    const menuContent = panel.querySelector('[data-ai-chat-menu-content]');
 
-    if (!launcher || !panel || !messagesRoot || !composer || !input) return;
+    if (!openButton || !panel || !messagesRoot || !composer || !input) return;
 
     function escapeHtml(value) {
         return String(value ?? '')
@@ -115,34 +115,63 @@
 
     function usageFromPayload(payload) {
         const usage = payload?.ai_usage;
-        if (!usage || usage.period !== 'daily') return null;
+        if (!usage || usage.period !== 'daily' || !Number.isFinite(Number(usage.remaining_percent))) return null;
         return usage;
     }
 
     function renderUsage() {
-        const usage = state.usage;
-        if (!usage) {
+        if (state.usageStatus === 'loading') {
             usageRoot.innerHTML = '<span class="ai-chat-usage-skeleton" aria-hidden="true"></span><span class="sr-only">Đang tải hạn mức AI</span>';
             return;
         }
+        if (state.usageStatus !== 'available' || !state.usage) {
+            usageRoot.replaceChildren();
+            return;
+        }
+        const usage = state.usage;
         const remaining = Number.isFinite(Number(usage.remaining_percent))
             ? Math.max(0, Math.min(100, Number(usage.remaining_percent)))
             : 0;
-        const used = Number.isFinite(Number(usage.used_percent))
-            ? Math.max(0, Math.min(100, Number(usage.used_percent)))
-            : 100 - remaining;
-        usageRoot.innerHTML = `<span class="ai-chat-usage-label">${remaining}% còn lại</span><span class="ai-chat-usage-track" role="progressbar" aria-label="Mức sử dụng AI hôm nay" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${used}"><span style="width:${used}%"></span></span>`;
+        usageRoot.textContent = `${remaining}% còn lại`;
+    }
+
+    function updateUsage(payload) {
+        const usage = usageFromPayload(payload);
+        if (!usage) return false;
+        state.usage = usage;
+        state.usageStatus = 'available';
+        return true;
     }
 
     async function loadUsage() {
+        const requestId = ++state.usageRequestId;
+        state.usage = null;
+        state.usageStatus = 'loading';
+        renderUsage();
+        const loadingTimer = window.setTimeout(() => {
+            if (state.usageRequestId !== requestId || state.usageStatus !== 'loading') return;
+            state.usage = null;
+            state.usageStatus = 'unavailable';
+            renderUsage();
+        }, 1200);
         try {
             const { response, payload } = await fetchJson('/api/ai/usage');
-            if (response.ok && payload?.success) {
-                state.usage = usageFromPayload(payload);
+            if (state.usageRequestId !== requestId) return;
+            if (response.ok && payload?.success && updateUsage(payload)) {
                 renderUsage();
+                return;
             }
+            if (state.usageStatus !== 'loading') return;
+            state.usage = null;
+            state.usageStatus = 'unavailable';
+            renderUsage();
         } catch (_) {
-            // The assistant remains usable; the next response refreshes the authoritative value.
+            if (state.usageRequestId !== requestId || state.usageStatus !== 'loading') return;
+            state.usage = null;
+            state.usageStatus = 'unavailable';
+            renderUsage();
+        } finally {
+            window.clearTimeout(loadingTimer);
         }
     }
 
@@ -226,7 +255,7 @@
         const latestChanged = items.at(-1)?.id !== previousLastId;
         if (latestChanged || wasAtBottom) messagesRoot.scrollTop = messagesRoot.scrollHeight;
         renderUsage();
-        launcher.setAttribute('aria-expanded', String(state.open));
+        openButton.setAttribute('aria-expanded', String(state.open));
         groupsRoot.querySelectorAll('[data-ai-chat-group]').forEach(button => {
             const active = button.dataset.aiChatGroup === state.group;
             button.setAttribute('aria-pressed', String(active));
@@ -239,23 +268,15 @@
         state.open = Boolean(open);
         panel.hidden = !state.open;
         panel.classList.toggle('open', state.open);
-        launcher.classList.toggle('is-open', state.open);
-        if (!state.open) setMenuOpen(false);
-        launcher.setAttribute('aria-expanded', String(state.open));
+        openButton.setAttribute('aria-expanded', String(state.open));
+        openButton.classList.toggle('is-open', state.open);
         if (state.open) {
             loadUsage();
             loadContract();
             window.setTimeout(() => input.focus(), 0);
         } else if (wasOpen) {
-            launcher.focus();
+            openButton.focus();
         }
-    }
-
-    function setMenuOpen(open) {
-        if (!menuButton || !menuContent) return;
-        const isOpen = Boolean(open);
-        menuContent.hidden = !isOpen;
-        menuButton.setAttribute('aria-expanded', String(isOpen));
     }
 
     function resizeInput() {
@@ -311,7 +332,7 @@
                 body: JSON.stringify({ group: item.group, message: item.message })
             });
             if (!response.ok || payload?.success === false) {
-                state.usage = usageFromPayload(payload) || state.usage;
+                updateUsage(payload);
                 setError(item, publicError(payload, response.status, false));
                 return;
             }
@@ -328,7 +349,7 @@
                 preview: payload.preview || { total: 0 },
                 optimization: payload.optimization || null
             };
-            state.usage = usageFromPayload(payload) || state.usage;
+            updateUsage(payload);
             saveHistory();
             renderMessages();
         } catch (error) {
@@ -382,10 +403,10 @@
             });
             if (!response.ok || payload?.success === false) {
                 item.assistant = { ...item.assistant, loading: false, error: publicError(payload, response.status, false) };
-                state.usage = usageFromPayload(payload) || state.usage;
+                updateUsage(payload);
             } else {
                 item.assistant = { loading: false, executing: false, error: '', plan: payload.plan, compiled_request: payload.compiled_request, preview: payload.preview || { total: 0 }, optimization: payload.optimization || null };
-                state.usage = usageFromPayload(payload) || state.usage;
+                updateUsage(payload);
                 state.editingId = null;
                 state.editPlan = null;
                 saveHistory();
@@ -428,14 +449,6 @@
         renderMessages();
     }
 
-    function clearHistory() {
-        state.history = [];
-        state.editingId = null;
-        state.editPlan = null;
-        saveHistory();
-        renderMessages();
-    }
-
     composer.addEventListener('submit', event => {
         event.preventDefault();
         sendMessage();
@@ -447,20 +460,8 @@
             composer.requestSubmit();
         }
     });
-    launcher.addEventListener('click', () => setOpen(!state.open));
+    openButton.addEventListener('click', () => setOpen(!state.open));
     panel.querySelector('[data-ai-chat-close]')?.addEventListener('click', () => setOpen(false));
-    menuButton?.addEventListener('click', event => {
-        event.stopPropagation();
-        setMenuOpen(menuContent?.hidden);
-    });
-    menuContent?.addEventListener('click', event => event.stopPropagation());
-    panel.querySelector('[data-ai-chat-clear]')?.addEventListener('click', () => {
-        setMenuOpen(false);
-        clearHistory();
-    });
-    document.addEventListener('click', event => {
-        if (state.open && menuContent && !menuContent.hidden && !event.target.closest('.ai-chat-menu')) setMenuOpen(false);
-    });
     groupsRoot.addEventListener('click', event => {
         const button = event.target.closest('[data-ai-chat-group]');
         if (!button) return;
@@ -489,7 +490,6 @@
         open: () => setOpen(true),
         close: () => setOpen(false),
         sendMessage,
-        clearHistory,
         refreshUsage: loadUsage,
         getState: () => ({ open: state.open, group: state.group, history: clone(state.history), usage: state.usage })
     };

@@ -185,6 +185,9 @@
                             <button class="action-btn" id="open-filter-panel" type="button" aria-label="Tìm kiếm nâng cao" title="Tìm kiếm nâng cao">
                                 <i data-feather="search" aria-hidden="true"></i>
                             </button>
+                            <button class="action-btn ai-search-toolbar-btn" id="open-ai-search" type="button" aria-label="Tìm kiếm AI" title="Tìm kiếm AI" aria-controls="ai-search-chat" aria-expanded="false">
+                                <svg class="ai-search-toolbar-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 2l1.7 6.3L20 10l-6.3 1.7L12 18l-1.7-6.3L4 10l6.3-1.7L12 2zm7 13l.7 2.3L22 18l-2.3.7L19 21l-.7-2.3L16 18l2.3-.7L19 15z" fill="currentColor"/></svg>
+                            </button>
                             <button id="open-insight-drawer" class="btn-meta-simple" type="button" aria-label="Phân tích trực quan" title="Phân tích trực quan" aria-controls="insight-drawer" aria-expanded="false">
                                 <i data-feather="bar-chart-2" aria-hidden="true"></i>
                             </button>
@@ -1098,25 +1101,16 @@
         </div>
     </div>
 
-    <button id="ai-search-launcher" class="ai-search-launcher" type="button" aria-label="Mở trợ lý tìm kiếm AI" aria-controls="ai-search-chat" aria-expanded="false">
-        <span class="ai-search-launcher-mark" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M12 2l1.7 6.3L20 10l-6.3 1.7L12 18l-1.7-6.3L4 10l6.3-1.7L12 2zm7 13l.7 2.3L22 18l-2.3.7L19 21l-.7-2.3L16 18l2.3-.7L19 15z" fill="currentColor"/></svg></span>
-    </button>
     <aside id="ai-search-chat" class="ai-search-chat" hidden role="dialog" aria-modal="false" aria-labelledby="ai-search-chat-title">
         <header class="ai-chat-header">
             <div class="ai-chat-identity">
                 <span class="ai-chat-avatar" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M12 2l1.7 6.3L20 10l-6.3 1.7L12 18l-1.7-6.3L4 10l6.3-1.7L12 2zm7 13l.7 2.3L22 18l-2.3.7L19 21l-.7-2.3L16 18l2.3-.7L19 15z" fill="currentColor"/></svg></span>
                 <div class="ai-chat-title-wrap">
                     <h2 id="ai-search-chat-title">Trợ lý AI</h2>
-                    <div id="ai-chat-usage" class="ai-chat-usage" aria-live="polite"><span class="ai-chat-usage-skeleton" aria-hidden="true"></span><span class="sr-only">Đang tải hạn mức AI</span></div>
+                    <div id="ai-chat-usage" class="ai-chat-usage" aria-live="polite"></div>
                 </div>
             </div>
             <div class="ai-chat-header-actions">
-                <div class="ai-chat-menu">
-                    <button type="button" class="ai-chat-icon-button" data-ai-chat-menu aria-controls="ai-chat-menu-content" aria-expanded="false" aria-label="Mở tùy chọn trò chuyện" title="Tùy chọn trò chuyện"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="5" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="19" cy="12" r="1.5" fill="currentColor"/></svg></button>
-                    <div id="ai-chat-menu-content" class="ai-chat-menu-content" data-ai-chat-menu-content hidden>
-                        <button type="button" class="ai-chat-menu-item" data-ai-chat-clear aria-label="Xóa lịch sử trò chuyện">Xóa cuộc trò chuyện</button>
-                    </div>
-                </div>
                 <button type="button" class="ai-chat-icon-button" data-ai-chat-close aria-label="Đóng trợ lý" title="Đóng trợ lý"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
             </div>
         </header>
