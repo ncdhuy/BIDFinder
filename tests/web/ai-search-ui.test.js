@@ -117,6 +117,8 @@ assert.match(chatSource, /localStorage/);
 assert.match(chatSource, /usageStatus: 'loading'/);
 assert.match(chatSource, /state\.usageStatus = 'unavailable'/);
 assert.match(chatSource, /usageRoot\.replaceChildren\(\)/);
+assert.match(chatSource, /usageRoot\.textContent = '—'/);
+assert.match(chatSource, /Hạn mức AI hiện không khả dụng/);
 assert.match(chatSource, /setTimeout\([\s\S]*?1200/);
 assert.match(chatSource, /if \(response\.ok && payload\?\.success && updateUsage\(payload\)\)/);
 assert.match(chatSource, /if \(state\.usageStatus !== 'loading'\) return;/);

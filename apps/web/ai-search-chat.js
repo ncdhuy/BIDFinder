@@ -120,12 +120,17 @@
     }
 
     function renderUsage() {
+        usageRoot.removeAttribute('title');
+        usageRoot.removeAttribute('aria-label');
         if (state.usageStatus === 'loading') {
             usageRoot.innerHTML = '<span class="ai-chat-usage-skeleton" aria-hidden="true"></span><span class="sr-only">Đang tải hạn mức AI</span>';
             return;
         }
+        usageRoot.replaceChildren();
         if (state.usageStatus !== 'available' || !state.usage) {
-            usageRoot.replaceChildren();
+            usageRoot.textContent = '—';
+            usageRoot.title = 'Hạn mức AI hiện không khả dụng';
+            usageRoot.setAttribute('aria-label', 'Hạn mức AI hiện không khả dụng');
             return;
         }
         const usage = state.usage;
