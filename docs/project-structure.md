@@ -51,13 +51,13 @@ Run backend locally:
 
 ```powershell
 cd apps\api
-uvicorn server:app --reload --host 127.0.0.1 --port 8001
+uvicorn server:app --reload --host 127.0.0.1 --port 8002
 ```
 
 Open frontend locally:
 
 ```text
-apps/web/index.html
+http://127.0.0.1:4173/
 ```
 
 Run k6:

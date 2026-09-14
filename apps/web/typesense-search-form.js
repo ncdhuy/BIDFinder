@@ -106,7 +106,7 @@
     function apiBaseUrl() {
         if (window.API_BASE_URL) return window.API_BASE_URL;
         const local = window.location.protocol === 'file:' || ['localhost', '127.0.0.1'].includes(window.location.hostname);
-        return local ? 'http://127.0.0.1:8001' : 'https://api.bidfinder.vn';
+        return local ? 'http://127.0.0.1:8002' : 'https://api.bidfinder.vn';
     }
     function contractPromise() {
         if (!window.BIDFinderSearchContractPromise) {

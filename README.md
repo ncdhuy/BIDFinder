@@ -16,6 +16,13 @@ Backup: Render -> Neon Postgres
 
 ## Local frontend verification
 
+Run the current-checkout backend in a separate terminal first:
+
+```powershell
+cd apps\api
+rtk python -m uvicorn server:app --reload --host 127.0.0.1 --port 8002
+```
+
 Serve the current checkout's `apps/web` directory with:
 
 ```powershell

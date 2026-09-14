@@ -1,5 +1,8 @@
 (function () {
-  const LOCAL_API_BASE_URL = 'http://127.0.0.1:8001';
+  // Port 8001 is reserved by the local WSL release service. Keep checkout
+  // verification on its own backend port so it cannot call an immutable
+  // release instead of this source tree.
+  const LOCAL_API_BASE_URL = 'http://127.0.0.1:8002';
   const PRODUCTION_API_BASE_URL = 'https://api.bidfinder.vn';
 
   const isLocal =

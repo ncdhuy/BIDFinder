@@ -3166,7 +3166,7 @@ class AdvancedFilterManager {
             window.location.hostname === '127.0.0.1';
 
         return isLocal
-            ? 'http://127.0.0.1:8001'
+            ? 'http://127.0.0.1:8002'
             : 'https://api.bidfinder.vn';
     }
 
