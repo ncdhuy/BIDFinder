@@ -37,8 +37,8 @@ assert.match(chatSource, /openButton\.setAttribute\('aria-expanded', String\(sta
 assert.match(chatSource, /data-ai-chat-close[\s\S]*?setOpen\(false\)/);
 assert.match(chatSource, /event\.key === 'Escape' && state\.open/);
 assert.match(chatSource, /document\.addEventListener\('pointerdown', event => \{[\s\S]*?panel\.contains\(event\.target\)[\s\S]*?openButton\.contains\(event\.target\)[\s\S]*?setOpen\(false\)/);
-assert.match(styleSource, /\.ai-chat-icon-button\[data-ai-chat-close\] \{[^}]*color: #b42318/);
-assert.match(styleSource, /\.ai-chat-icon-button\[data-ai-chat-close\]:hover \{[^}]*color: #8f1d1d/);
+assert.match(styleSource, /#filter-panel \.btn-close,\s*\.window-close-button,\s*\.ai-chat-icon-button\[data-ai-chat-close\] \{[\s\S]*?color: #647b8a/);
+assert.match(styleSource, /#filter-panel \.btn-close:hover,\s*\.window-close-button:hover,\s*\.ai-chat-icon-button\[data-ai-chat-close\]:hover \{[\s\S]*?border-color: #c43d3d[\s\S]*?color: #c43d3d/);
 assert.match(assistantMarkup, /placeholder="Nhập yêu cầu tìm kiếm…"/);
 assert.match(assistantMarkup, /rows="1"/);
 assert.equal((assistantMarkup.match(/<textarea id="ai-chat-input"/g) || []).length, 1);

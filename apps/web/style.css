@@ -8133,8 +8133,8 @@ body.product-journey-active #panel-overlay.show {
   cursor: pointer;
 }
 .ai-chat-icon-button:hover { background: #e8f1f4; color: #127495; }
-.ai-chat-icon-button[data-ai-chat-close] { color: #b42318; }
-.ai-chat-icon-button[data-ai-chat-close]:hover { background: #fbeaea; color: #8f1d1d; }
+.ai-chat-icon-button[data-ai-chat-close] { color: #647b8a; }
+.ai-chat-icon-button[data-ai-chat-close]:hover { background: #fef2f2; border-color: #c43d3d; color: #c43d3d; }
 .ai-chat-icon-button svg { width: 17px; height: 17px; }
 .ai-chat-usage { color: #65808b; font-size: 11px; line-height: 1.2; }
 .ai-chat-usage-skeleton { display: inline-block; width: 34px; height: 6px; border-radius: 2px; background: #deeaee; }
@@ -8202,6 +8202,37 @@ body.product-journey-active #panel-overlay.show {
 .ai-chat-send svg { width: 24px; height: 24px; }
 .ai-chat-send:hover:not(:disabled) { border-color: transparent; background: transparent; color: var(--color-primary-dark); filter: none; }
 .ai-chat-send:disabled { background: transparent; color: #9bb0b8; }
+#filter-panel .btn-close,
+.window-close-button,
+.ai-chat-icon-button[data-ai-chat-close] {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #647b8a;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: color .2s ease, border-color .2s ease, background-color .2s ease;
+}
+#filter-panel .btn-close:hover,
+.window-close-button:hover,
+.ai-chat-icon-button[data-ai-chat-close]:hover {
+  background: #fef2f2;
+  border-color: #c43d3d;
+  color: #c43d3d;
+}
+#filter-panel .btn-close:hover svg,
+.window-close-button:hover svg,
+.ai-chat-icon-button[data-ai-chat-close]:hover svg {
+  color: inherit;
+  stroke: currentColor;
+}
 @keyframes ai-chat-pulse { from { opacity: .55; } to { opacity: 1; } }
 @media (max-width: 640px) {
   .ai-search-chat { top: 8px; right: 8px; bottom: 8px; width: calc(100vw - 16px); height: calc(100dvh - 16px); border-radius: 10px; }
