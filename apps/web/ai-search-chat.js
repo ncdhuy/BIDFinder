@@ -34,6 +34,8 @@
     const input = document.getElementById('ai-chat-input');
     const usageRoot = document.getElementById('ai-chat-usage');
     const groupsRoot = document.getElementById('ai-chat-groups');
+    const menuButton = panel.querySelector('[data-ai-chat-menu]');
+    const menuContent = panel.querySelector('[data-ai-chat-menu-content]');
 
     if (!launcher || !panel || !messagesRoot || !composer || !input) return;
 
@@ -120,7 +122,7 @@
     function renderUsage() {
         const usage = state.usage;
         if (!usage) {
-            usageRoot.innerHTML = '<span>AI hôm nay · đang tải hạn mức</span>';
+            usageRoot.innerHTML = '<span class="ai-chat-usage-skeleton" aria-hidden="true"></span><span class="sr-only">Đang tải hạn mức AI</span>';
             return;
         }
         const remaining = Number.isFinite(Number(usage.remaining_percent))
@@ -128,8 +130,8 @@
             : 0;
         const used = Number.isFinite(Number(usage.used_percent))
             ? Math.max(0, Math.min(100, Number(usage.used_percent)))
-            : 0;
-        usageRoot.innerHTML = `<div class="ai-chat-usage-line"><span>AI hôm nay</span><strong>${remaining}% còn lại</strong></div><div class="ai-chat-usage-track" role="progressbar" aria-label="Mức sử dụng AI hôm nay" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${used}"><span style="width:${used}%"></span></div>`;
+            : 100 - remaining;
+        usageRoot.innerHTML = `<span class="ai-chat-usage-label">${remaining}% còn lại</span><span class="ai-chat-usage-track" role="progressbar" aria-label="Mức sử dụng AI hôm nay" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${used}"><span style="width:${used}%"></span></span>`;
     }
 
     async function loadUsage() {
@@ -163,9 +165,9 @@
         const rows = [];
         (plan?.clauses || []).forEach(clause => {
             const values = (clause.concepts || []).map(concept =>
-                (concept.alternatives || []).map(value => escapeHtml(value)).join(' hoặc ')
+                (concept.alternatives || []).map(value => escapeHtml(value)).join(' / ')
             ).filter(Boolean);
-            if (values.length) rows.push(`<li><strong>${escapeHtml(fieldLabel(group, clause.field))}</strong><span>${values.join(' và ')}</span></li>`);
+            if (values.length) rows.push(`<li><strong>${escapeHtml(fieldLabel(group, clause.field))}</strong><span>${values.join('<br>')}</span></li>`);
         });
         (plan?.date_constraints || []).forEach(constraint => {
             const period = constraint.period || {};
@@ -188,17 +190,17 @@
             const period = constraint.period || {};
             rows.push(`<div class="ai-chat-edit-row ai-chat-edit-date"><span>${escapeHtml(fieldLabel(item.group, constraint.field))}</span><div><input type="number" min="1" max="120" data-ai-chat-edit-date-amount="${index}" value="${escapeHtml(period.amount)}" aria-label="Số lượng thời gian"><select data-ai-chat-edit-date-unit="${index}" aria-label="Đơn vị thời gian">${[['days', 'ngày'], ['months', 'tháng'], ['years', 'năm']].map(([value, label]) => `<option value="${value}" ${period.unit === value ? 'selected' : ''}>${label}</option>`).join('')}</select><select data-ai-chat-edit-date-direction="${index}" aria-label="Khoảng thời gian"><option value="previous" ${period.direction === 'previous' ? 'selected' : ''}>gần nhất</option><option value="current" ${period.direction === 'current' ? 'selected' : ''}>hiện tại</option></select></div></div>`);
         });
-        return `<div class="ai-chat-edit-box" data-ai-chat-edit-box="${escapeHtml(item.id)}"><p class="ai-chat-edit-help">Điều chỉnh giá trị, dùng <strong>|</strong> cho OR. Logic nhóm ban đầu được giữ nguyên.</p>${rows.join('') || '<p class="ai-chat-muted">Không có điều kiện để chỉnh sửa.</p>'}<div class="ai-chat-actions"><button type="button" class="ai-chat-button secondary" data-ai-chat-action="cancel-edit">Hủy</button><button type="button" class="ai-chat-button primary" data-ai-chat-action="save-edit" data-id="${escapeHtml(item.id)}">Cập nhật kết quả</button></div></div>`;
+        return `<div class="ai-chat-edit-box" data-ai-chat-edit-box="${escapeHtml(item.id)}">${rows.join('') || '<p class="ai-chat-muted">Không có điều kiện để chỉnh sửa.</p>'}<div class="ai-chat-actions"><button type="button" class="ai-chat-button secondary" data-ai-chat-action="cancel-edit">Hủy</button><button type="button" class="ai-chat-button primary" data-ai-chat-action="save-edit" data-id="${escapeHtml(item.id)}">Lưu</button></div></div>`;
     }
 
     function assistantMarkup(item) {
         const assistant = item.assistant || {};
-        if (assistant.loading) return '<div class="ai-chat-loading" role="status" aria-live="polite"><span class="ai-chat-dots" aria-hidden="true"></span>Đang phân tích yêu cầu…</div>';
-        if (assistant.error) return `<div class="ai-chat-error" role="alert">${escapeHtml(assistant.error)}<div class="ai-chat-actions"><button type="button" class="ai-chat-button secondary" data-ai-chat-action="new">Yêu cầu mới</button></div></div>`;
+        if (assistant.loading) return '<div class="ai-chat-loading" role="status" aria-live="polite"><span class="ai-chat-dots" aria-hidden="true"></span><span class="sr-only">Đang phân tích yêu cầu…</span></div>';
+        if (assistant.error) return `<div class="ai-chat-error" role="alert">${escapeHtml(assistant.error)}</div>`;
         const total = Number(assistant.preview?.total);
         const resultLine = Number.isFinite(total) && total > 0
-            ? `Xem trước: tìm thấy ${formatCount(total)} kết quả.`
-            : 'Xem trước: chưa tìm thấy kết quả phù hợp.';
+            ? `${formatCount(total)} kết quả`
+            : 'Không có kết quả';
         const warningMarkup = (assistant.plan?.warnings || []).length
             ? `<div class="ai-chat-warning">${assistant.plan.warnings.map(warning => escapeHtml(warning)).join('<br>')}</div>`
             : '';
@@ -208,18 +210,21 @@
         const isEditing = state.editingId === item.id;
         const actions = isEditing
             ? editPlanMarkup(item)
-            : `<div class="ai-chat-actions"><button type="button" class="ai-chat-button secondary" data-ai-chat-action="edit" data-id="${escapeHtml(item.id)}">Chỉnh sửa điều kiện</button><button type="button" class="ai-chat-button primary" data-ai-chat-action="execute" data-id="${escapeHtml(item.id)}" ${assistant.executing ? 'disabled' : ''}>${assistant.executing ? 'Đang tải kết quả…' : 'Hiển thị kết quả'}</button></div>`;
-        return `<div class="ai-chat-plan"><p class="ai-chat-plan-title">BIDFinder hiểu yêu cầu như sau</p>${planConditions(item.group, assistant.plan)}${warningMarkup}${broadening}<p class="ai-chat-result" role="status">${escapeHtml(resultLine)}</p>${actions}</div>`;
+            : `<div class="ai-chat-actions"><button type="button" class="ai-chat-button primary" data-ai-chat-action="execute" data-id="${escapeHtml(item.id)}" ${assistant.executing ? 'disabled' : ''}>${assistant.executing ? 'Đang tải…' : 'Xem kết quả'}</button><button type="button" class="ai-chat-icon-button ai-chat-edit-button" data-ai-chat-action="edit" data-id="${escapeHtml(item.id)}" aria-label="Chỉnh sửa" title="Chỉnh sửa"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 17.5V20h2.5L18.9 7.6l-2.5-2.5L4 17.5zM15 6l2.5 2.5M13.5 20H20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>`;
+        return `<div class="ai-chat-plan"><p class="ai-chat-result" role="status">${escapeHtml(resultLine)}</p>${planConditions(item.group, assistant.plan)}${warningMarkup}${broadening}${actions}</div>`;
     }
 
     function renderMessages() {
         const items = state.history;
+        const wasAtBottom = messagesRoot.scrollHeight - messagesRoot.scrollTop - messagesRoot.clientHeight < 48;
+        const previousLastId = messagesRoot.lastElementChild?.dataset.id;
         if (!items.length) {
-            messagesRoot.innerHTML = '<div class="ai-chat-welcome"><strong>Tôi có thể giúp tìm kiếm nhanh hơn.</strong><p>Mô tả điều bạn cần tìm; mỗi tin nhắn là một yêu cầu độc lập.</p></div>';
+            messagesRoot.innerHTML = '<div class="ai-chat-welcome"><span class="ai-chat-welcome-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M12 2l1.7 6.3L20 10l-6.3 1.7L12 18l-1.7-6.3L4 10l6.3-1.7L12 2zm7 13l.7 2.3L22 18l-2.3.7L19 21l-.7-2.3L16 18l2.3-.7L19 15z" fill="currentColor"/></svg></span><p>Bạn muốn tìm gì?</p></div>';
         } else {
-            messagesRoot.innerHTML = items.map(item => `<article class="ai-chat-exchange" data-id="${escapeHtml(item.id)}"><div class="ai-chat-message user">${escapeHtml(item.message)}</div><div class="ai-chat-message assistant">${assistantMarkup(item)}</div></article>`).join('');
+            messagesRoot.innerHTML = items.map(item => `<article class="ai-chat-exchange" data-id="${escapeHtml(item.id)}"><div class="ai-chat-message user">${escapeHtml(item.message)}</div><div class="ai-chat-assistant-row"><span class="ai-chat-avatar ai-chat-avatar-small" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M12 2l1.7 6.3L20 10l-6.3 1.7L12 18l-1.7-6.3L4 10l6.3-1.7L12 2zm7 13l.7 2.3L22 18l-2.3.7L19 21l-.7-2.3L16 18l2.3-.7L19 15z" fill="currentColor"/></svg></span><div class="ai-chat-message assistant">${assistantMarkup(item)}</div></div></article>`).join('');
         }
-        messagesRoot.scrollTop = messagesRoot.scrollHeight;
+        const latestChanged = items.at(-1)?.id !== previousLastId;
+        if (latestChanged || wasAtBottom) messagesRoot.scrollTop = messagesRoot.scrollHeight;
         renderUsage();
         launcher.setAttribute('aria-expanded', String(state.open));
         groupsRoot.querySelectorAll('[data-ai-chat-group]').forEach(button => {
@@ -234,6 +239,8 @@
         state.open = Boolean(open);
         panel.hidden = !state.open;
         panel.classList.toggle('open', state.open);
+        launcher.classList.toggle('is-open', state.open);
+        if (!state.open) setMenuOpen(false);
         launcher.setAttribute('aria-expanded', String(state.open));
         if (state.open) {
             loadUsage();
@@ -242,6 +249,21 @@
         } else if (wasOpen) {
             launcher.focus();
         }
+    }
+
+    function setMenuOpen(open) {
+        if (!menuButton || !menuContent) return;
+        const isOpen = Boolean(open);
+        menuContent.hidden = !isOpen;
+        menuButton.setAttribute('aria-expanded', String(isOpen));
+    }
+
+    function resizeInput() {
+        input.style.height = 'auto';
+        const maxHeight = 112;
+        const height = Math.min(input.scrollHeight, maxHeight);
+        input.style.height = `${height}px`;
+        input.style.overflowY = input.scrollHeight > maxHeight ? 'auto' : 'hidden';
     }
 
     function findItem(id) {
@@ -256,21 +278,22 @@
     }
 
     function publicError(payload, status, timedOut) {
-        if (payload?.error === 'ai_daily_usage_exhausted') return 'Bạn đã sử dụng hết AI hôm nay. Hạn mức sẽ được đặt lại vào ngày mai.';
-        if (timedOut) return 'AI mất quá nhiều thời gian. Vui lòng thử lại.';
-        if (status === 429) return 'AI đang quá tải. Vui lòng thử lại sau.';
-        if (status >= 500) return 'AI hiện không khả dụng. Vui lòng thử lại sau.';
-        return payload?.message || 'Không thể xử lý yêu cầu AI lúc này.';
+        if (payload?.error === 'ai_daily_usage_exhausted') return 'Bạn đã dùng hết AI hôm nay.';
+        if (timedOut) return 'AI phản hồi quá lâu. Thử lại.';
+        if (status === 429) return 'AI đang quá tải. Thử lại sau.';
+        if (status >= 500) return 'AI đang tạm thời không khả dụng.';
+        return payload?.message || 'Không thể xử lý yêu cầu AI.';
     }
 
     async function sendMessage() {
         const message = String(input.value || '').trim();
         if (!message) return;
         if (state.usage && Number(state.usage.remaining_percent) <= 0) {
-            const item = { id: `ai-${Date.now()}-${Math.random().toString(36).slice(2)}`, group: state.group, message, assistant: { error: 'Bạn đã sử dụng hết AI hôm nay. Hạn mức sẽ được đặt lại vào ngày mai.' } };
+            const item = { id: `ai-${Date.now()}-${Math.random().toString(36).slice(2)}`, group: state.group, message, assistant: { error: 'Bạn đã dùng hết AI hôm nay.' } };
             state.history.push(item);
             state.history = state.history.slice(-HISTORY_LIMIT);
             input.value = '';
+            resizeInput();
             saveHistory();
             renderMessages();
             return;
@@ -279,6 +302,7 @@
         state.history.push(item);
         state.history = state.history.slice(-HISTORY_LIMIT);
         input.value = '';
+        resizeInput();
         renderMessages();
         try {
             const { response, payload } = await fetchJson('/api/ai/search-preview', {
@@ -292,7 +316,7 @@
                 return;
             }
             if (!payload?.plan || !payload?.compiled_request) {
-                setError(item, 'AI trả về kết quả không hợp lệ. Vui lòng thử lại.');
+                setError(item, 'AI trả về dữ liệu không hợp lệ. Thử lại.');
                 return;
             }
             item.assistant = {
@@ -384,7 +408,7 @@
         renderMessages();
         const form = document.querySelector('typesense-search-form');
         if (!form) {
-            setError(item, 'Không tìm thấy biểu mẫu tìm kiếm để hiển thị kết quả.');
+            setError(item, 'Không thể mở kết quả tìm kiếm.');
             return;
         }
         const finish = () => {
@@ -416,6 +440,7 @@
         event.preventDefault();
         sendMessage();
     });
+    input.addEventListener('input', resizeInput);
     input.addEventListener('keydown', event => {
         if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault();
@@ -424,7 +449,18 @@
     });
     launcher.addEventListener('click', () => setOpen(!state.open));
     panel.querySelector('[data-ai-chat-close]')?.addEventListener('click', () => setOpen(false));
-    panel.querySelector('[data-ai-chat-clear]')?.addEventListener('click', clearHistory);
+    menuButton?.addEventListener('click', event => {
+        event.stopPropagation();
+        setMenuOpen(menuContent?.hidden);
+    });
+    menuContent?.addEventListener('click', event => event.stopPropagation());
+    panel.querySelector('[data-ai-chat-clear]')?.addEventListener('click', () => {
+        setMenuOpen(false);
+        clearHistory();
+    });
+    document.addEventListener('click', event => {
+        if (state.open && menuContent && !menuContent.hidden && !event.target.closest('.ai-chat-menu')) setMenuOpen(false);
+    });
     groupsRoot.addEventListener('click', event => {
         const button = event.target.closest('[data-ai-chat-group]');
         if (!button) return;
@@ -448,6 +484,7 @@
     });
 
     renderMessages();
+    resizeInput();
     window.BIDFinderAIChat = {
         open: () => setOpen(true),
         close: () => setOpen(false),
