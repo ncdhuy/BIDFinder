@@ -38,6 +38,20 @@ To switch back to Cloud Run:
 CLOUD_RUN_API_BASE_URL = 'https://bidfinder-api-staging-774667987564.asia-southeast1.run.app'
 ```
 
+## Release boundary and frontend caching
+
+At the 2026-09-14 AI assistant checkpoint, Netlify frontend production is
+expected to serve commit `ef4c9a3e2e21bd8bf6e2f3572cce2778afa1e309`.
+The expected current backend production commit remains
+`18c4d4df6da37c3b642ebf2509cf6f5b61a70d57`, so the frontend may temporarily
+receive `404` for `GET /api/ai/usage` until backend cutover.
+
+Netlify branch auto-deploy is enabled for `refactor-msc-typesense-v1`.
+Pushing that branch may automatically publish frontend changes; “do not
+deploy” means do not run another explicit Netlify deployment command. The
+frontend uses revalidating headers for `index.html` and mutable static assets,
+so a normal reload picks up a new release without requiring `Ctrl+F5`.
+
 ## k6
 
 Override `BASE_URL` when comparing backends.

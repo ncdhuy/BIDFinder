@@ -1,3 +1,9 @@
 [build]
   base = "."
   publish = "apps/web"
+
+# Revalidate the shell and mutable static assets on normal browser reloads.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"

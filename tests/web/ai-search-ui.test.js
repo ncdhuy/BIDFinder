@@ -9,11 +9,20 @@ const formSource = fs.readFileSync(path.join(root, 'apps/web/typesense-search-fo
 const chatSource = fs.readFileSync(path.join(root, 'apps/web/ai-search-chat.js'), 'utf8');
 const indexSource = fs.readFileSync(path.join(root, 'apps/web/index.html'), 'utf8');
 const scriptSource = fs.readFileSync(path.join(root, 'apps/web/script.js'), 'utf8');
+const netlifySource = fs.readFileSync(path.join(root, 'netlify.toml'), 'utf8');
+const legacyEmbeddedAiPattern = /data-ai-message|renderAiSearch|bindAiEvents|state\.ai|ai-search-panel/;
 
-assert.doesNotMatch(formSource, /data-ai-message|renderAiSearch|bindAiEvents|state\.ai|ai-search-panel/);
+assert.doesNotMatch(formSource, legacyEmbeddedAiPattern);
+assert.doesNotMatch(indexSource, legacyEmbeddedAiPattern);
+assert.doesNotMatch(scriptSource, legacyEmbeddedAiPattern);
 assert.match(indexSource, /id="ai-search-launcher"/);
 assert.match(indexSource, /id="ai-search-chat"/);
 assert.match(indexSource, /src="ai-search-chat\.js"/);
+assert.match(indexSource, /src="typesense-search-form\.js"/);
+assert.match(indexSource, /src="script\.js"/);
+assert.match(indexSource, /href="style\.css(?:\?[^\"]*)?"/);
+assert.match(netlifySource, /for = "\/\*"/);
+assert.match(netlifySource, /Cache-Control = "public, max-age=0, must-revalidate"/);
 assert.equal((indexSource.match(/data-ai-chat-group=/g) || []).length, 3);
 assert.match(indexSource, /Hàng hóa/);
 assert.match(indexSource, /Thuốc/);

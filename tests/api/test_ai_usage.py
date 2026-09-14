@@ -58,9 +58,40 @@ class AIUsageTest(unittest.TestCase):
             "output_tokens": 30,
             "total_tokens": 130,
         }, usage)
-        self.assertEqual(165.0, normalize_usage_units(usage))
+        self.assertEqual(145.0, normalize_usage_units(usage))
         self.assertEqual({"total_tokens": 17}, extract_provider_usage({"usage": {"total_tokens": 17}}))
         self.assertIsNone(extract_provider_usage({"usage": {"input_tokens": 4}}))
+
+    def test_uncached_input_and_output_are_weighted(self):
+        self.assertEqual(
+            1200.0,
+            normalize_usage_units({"input_tokens": 1000, "cached_input_tokens": 0, "output_tokens": 100}),
+        )
+
+    def test_cached_input_is_counted_once_as_part_of_input(self):
+        usage_units = normalize_usage_units({
+            "input_tokens": 1000,
+            "cached_input_tokens": 400,
+            "output_tokens": 100,
+        })
+        self.assertEqual(900.0, usage_units)
+        self.assertEqual(600 + 400 * 0.25 + 100 * 2, usage_units)
+        self.assertNotEqual(1000 + 400 * 0.25 + 100 * 2, usage_units)
+
+    def test_cached_input_is_clamped_to_total_input(self):
+        self.assertEqual(
+            45.0,
+            normalize_usage_units({"input_tokens": 100, "cached_input_tokens": 250, "output_tokens": 10}),
+        )
+
+    def test_cached_input_weight_reduces_usage(self):
+        uncached = normalize_usage_units({"input_tokens": 1000, "cached_input_tokens": 0, "output_tokens": 100})
+        cached = normalize_usage_units({"input_tokens": 1000, "cached_input_tokens": 400, "output_tokens": 100})
+        self.assertLess(cached, uncached)
+
+    def test_total_tokens_fallback_is_preserved(self):
+        self.assertEqual(17.0, normalize_usage_units({"total_tokens": 17}))
+        self.assertIsNone(normalize_usage_units({"input_tokens": 4}))
 
     def test_sqlite_ledger_is_transactional_and_keyed_by_day(self):
         with test_store() as store:

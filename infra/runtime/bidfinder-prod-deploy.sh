@@ -62,6 +62,7 @@ prepare_api_env() {
 upsert_runtime_env() {
   local target="$config_dir/runtime.env" state="$1" tmp
   local generation checkpoint provenance report markdown
+  mkdir -p "$runtime_root/ai"
   generation="$(printf '%s' "$state" | json_value generation)"
   checkpoint="$(printf '%s' "$state" | json_value checkpoint)"
   provenance="$(printf '%s' "$state" | json_value provenance)"
@@ -72,6 +73,7 @@ upsert_runtime_env() {
   python3 - "$tmp" \
     "BIDFINDER_REPO_ROOT=$current_link" \
     "BIDFINDER_RUNTIME_ROOT=$runtime_root" \
+    "BIDFINDER_AI_USAGE_DB_PATH=$runtime_root/ai/ai_usage.sqlite3" \
     "BIDFINDER_TYPESENSE_ROOT=$typesense_root" \
     "BIDFINDER_TYPESENSE_DATA_DIR=$typesense_root/data" \
     "BIDFINDER_TYPESENSE_CHECKPOINT=$checkpoint" \

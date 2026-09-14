@@ -8,7 +8,6 @@ import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
 import secrets
-import tempfile
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import asyncio
@@ -282,12 +281,12 @@ AI_USAGE_OUTPUT_WEIGHT = get_env_float("BIDFINDER_AI_USAGE_OUTPUT_WEIGHT", 2.0, 
 AI_ANONYMOUS_COOKIE_NAME = "bidfinder_ai_anon"
 _ai_usage_path_value = os.getenv("BIDFINDER_AI_USAGE_DB_PATH", "").strip()
 AI_USAGE_DB_PATH = (
-    Path(_ai_usage_path_value)
+    Path(_ai_usage_path_value).expanduser()
     if _ai_usage_path_value
-    else Path(tempfile.gettempdir()) / "bidfinder" / "state" / "ai_usage.sqlite3"
+    else Path.home() / ".local" / "share" / "bidfinder" / "runtime" / "ai" / "ai_usage.sqlite3"
 )
 if not AI_USAGE_DB_PATH.is_absolute():
-    AI_USAGE_DB_PATH = Path(tempfile.gettempdir()) / AI_USAGE_DB_PATH
+    AI_USAGE_DB_PATH = Path.home() / AI_USAGE_DB_PATH
 ai_usage_store = AIUsageStore(AI_USAGE_DB_PATH)
 FEEDBACK_RATE_LIMIT_PER_MINUTE = get_env_int("FEEDBACK_RATE_LIMIT_PER_MINUTE", 10, minimum=1)
 FEEDBACK_READ_RATE_LIMIT_PER_MINUTE = get_env_int(

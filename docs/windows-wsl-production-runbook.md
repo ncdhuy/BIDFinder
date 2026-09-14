@@ -22,6 +22,17 @@ The validated state remains in its existing location:
 ~/.local/share/bidfinder/typesense/reports
 ```
 
+The AI usage ledger must remain in persistent runtime state, outside immutable
+release directories:
+
+```text
+~/.local/share/bidfinder/runtime/ai/ai_usage.sqlite3
+```
+
+`bidfinder-api.service` receives this path through generated `runtime.env`.
+The directory persists across API restart, release switch, reboot, and WSL
+recovery. Do not use `/tmp` for production AI usage accounting.
+
 Secrets remain in `~/.config/bidfinder/*.env` with mode `600`. Nothing in the
 production release tree contains API keys, Neon credentials, or tunnel tokens.
 

@@ -162,9 +162,11 @@ def normalize_usage_units(
     cached_tokens = _safe_usage_number(usage.get("cached_input_tokens")) or 0
     output_tokens = _safe_usage_number(usage.get("output_tokens"))
     if input_tokens is not None and output_tokens is not None:
+        cached = min(cached_tokens, input_tokens)
+        non_cached_input = max(0, input_tokens - cached)
         return (
-            float(input_tokens) * float(input_weight)
-            + float(cached_tokens) * float(cached_input_weight)
+            float(non_cached_input) * float(input_weight)
+            + float(cached) * float(cached_input_weight)
             + float(output_tokens) * float(output_weight)
         )
     total_tokens = _safe_usage_number(usage.get("total_tokens"))
