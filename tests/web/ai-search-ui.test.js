@@ -27,6 +27,7 @@ assert.match(indexSource, /src="ai-search-chat\.js"/);
 assert.match(indexSource, /id="open-ai-search"[^>]+aria-label="Tìm kiếm AI"[^>]+title="Tìm kiếm AI"/);
 assert.match(assistantMarkup, /id="open-filter-panel"[\s\S]*?<\/button>\s*<button[^>]+id="open-ai-search"[\s\S]*?<\/button>\s*<button[^>]+id="open-insight-drawer"/);
 assert.match(styleSource, /\.result-table-tabs \.toolbar-actions > #open-ai-search\s*\{[\s\S]*?background: var\(--color-primary-dark\)[\s\S]*?color: var\(--color-primary-heavy-light\)/);
+assert.match(styleSource, /\.result-table-tabs \.toolbar-actions > #open-ai-search\s*\{[\s\S]*?border-radius: 10px/);
 assert.match(styleSource, /\.result-table-tabs \.toolbar-actions > #open-ai-search:hover,[\s\S]*?\.result-table-tabs \.toolbar-actions > #open-ai-search\.is-open\s*\{[\s\S]*?background: var\(--color-primary\)/);
 assert.match(styleSource, /\.result-table-tabs \.toolbar-actions > :is\([\s\S]*?#open-filter-panel,[\s\S]*?#open-ai-search,[\s\S]*?#open-insight-drawer[\s\S]*?\) \{[\s\S]*?width: 34px[\s\S]*?height: 34px/);
 assert.doesNotMatch(styleSource, /\.workspace-actions \.ai-search-toolbar-btn/);

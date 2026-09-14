@@ -7875,6 +7875,7 @@ body.product-journey-active #panel-overlay.show {
 .result-table-tabs .toolbar-actions > #open-ai-search {
   background: var(--color-primary-dark);
   border-color: var(--color-primary-dark);
+  border-radius: 10px;
   color: var(--color-primary-heavy-light);
 }
 
