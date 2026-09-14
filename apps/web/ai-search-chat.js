@@ -263,6 +263,24 @@
         });
     }
 
+    function positionPanel() {
+        if (window.innerWidth <= 640) {
+            panel.style.removeProperty('--ai-chat-top');
+            panel.style.removeProperty('--ai-chat-right');
+            return;
+        }
+        const buttonRect = openButton.getBoundingClientRect();
+        if (!buttonRect.width || !buttonRect.height) return;
+        const panelWidth = Math.min(420, Math.max(0, window.innerWidth - 32));
+        const panelHeight = Math.min(560, Math.max(0, window.innerHeight - 112));
+        const maxRight = Math.max(16, window.innerWidth - panelWidth - 16);
+        const right = Math.min(maxRight, Math.max(16, window.innerWidth - buttonRect.right));
+        const maxTop = Math.max(16, window.innerHeight - panelHeight - 16);
+        const top = Math.min(maxTop, Math.max(16, buttonRect.bottom + 8));
+        panel.style.setProperty('--ai-chat-top', `${Math.round(top)}px`);
+        panel.style.setProperty('--ai-chat-right', `${Math.round(right)}px`);
+    }
+
     function setOpen(open) {
         const wasOpen = state.open;
         state.open = Boolean(open);
@@ -271,6 +289,7 @@
         openButton.setAttribute('aria-expanded', String(state.open));
         openButton.classList.toggle('is-open', state.open);
         if (state.open) {
+            positionPanel();
             loadUsage();
             loadContract();
             window.setTimeout(() => input.focus(), 0);
@@ -462,6 +481,8 @@
     });
     openButton.addEventListener('click', () => setOpen(!state.open));
     panel.querySelector('[data-ai-chat-close]')?.addEventListener('click', () => setOpen(false));
+    window.addEventListener('resize', () => { if (state.open) positionPanel(); });
+    window.addEventListener('scroll', () => { if (state.open) positionPanel(); }, true);
     groupsRoot.addEventListener('click', event => {
         const button = event.target.closest('[data-ai-chat-group]');
         if (!button) return;
