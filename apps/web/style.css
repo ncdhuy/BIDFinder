@@ -7801,6 +7801,7 @@ body.product-journey-active #panel-overlay.show {
   #open-run-history,
   #open-bulk-search-modal,
   #open-filter-panel,
+  #open-ai-search,
   #open-insight-drawer
 ) {
   display: inline-flex;
@@ -7824,6 +7825,7 @@ body.product-journey-active #panel-overlay.show {
   #open-run-history,
   #open-bulk-search-modal,
   #open-filter-panel,
+  #open-ai-search,
   #open-insight-drawer
 ):hover {
   border-color: var(--toolbar-command-border-hover);
@@ -7836,6 +7838,7 @@ body.product-journey-active #panel-overlay.show {
   #open-run-history,
   #open-bulk-search-modal,
   #open-filter-panel,
+  #open-ai-search,
   #open-insight-drawer
 ):active,
 .result-table-tabs .toolbar-actions > #open-insight-drawer.is-open {
@@ -7849,6 +7852,7 @@ body.product-journey-active #panel-overlay.show {
   #open-run-history,
   #open-bulk-search-modal,
   #open-filter-panel,
+  #open-ai-search,
   #open-insight-drawer
 ):focus-visible {
   outline: 2px solid var(--color-primary);
@@ -7859,12 +7863,26 @@ body.product-journey-active #panel-overlay.show {
   #open-run-history,
   #open-bulk-search-modal,
   #open-filter-panel,
+  #open-ai-search,
   #open-insight-drawer
 ) svg {
   width: 17px !important;
   height: 17px !important;
   flex: 0 0 auto;
   stroke-width: 2;
+}
+
+.result-table-tabs .toolbar-actions > #open-ai-search {
+  background: var(--color-primary-dark);
+  border-color: var(--color-primary-dark);
+  color: var(--color-primary-heavy-light);
+}
+
+.result-table-tabs .toolbar-actions > #open-ai-search:hover,
+.result-table-tabs .toolbar-actions > #open-ai-search.is-open {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #f2fbfd;
 }
 
 .result-table-tabs .workspace-status {
@@ -7971,32 +7989,6 @@ body.product-journey-active #panel-overlay.show {
 }
 
 /* Standalone AI search assistant */
-.ai-search-toolbar-btn {
-  width: 50px;
-  min-width: 50px;
-  max-width: 50px;
-  flex: 0 0 50px;
-  height: 40px;
-  padding: 0;
-  background: var(--color-primary-dark);
-  border-color: var(--color-primary-dark);
-  color: var(--color-primary-heavy-light);
-}
-.ai-search-toolbar-btn:hover,
-.ai-search-toolbar-btn.is-open {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: #f2fbfd;
-}
-.workspace-actions .ai-search-toolbar-btn {
-  width: 50px;
-  min-width: 50px;
-  max-width: 50px;
-  flex: 0 0 50px;
-  height: 40px;
-  padding: 0;
-  gap: 0;
-}
 .ai-search-toolbar-mark { width: 18px; height: 18px; }
 .ai-search-toolbar-btn:focus-visible,
 .ai-chat-icon-button:focus-visible,
