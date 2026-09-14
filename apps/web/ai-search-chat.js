@@ -108,9 +108,12 @@
         return fieldLabels(group)[field] || field || 'Điều kiện';
     }
 
-    function formatCount(value) {
-        const total = Number(value);
-        return Number.isFinite(total) ? total.toLocaleString('vi-VN') : '0';
+    function translateWarning(value) {
+        const warning = String(value ?? '').trim();
+        if (/^the query is ambiguous and may refer to a medicine name, active ingredient, or abbreviation\.?$/i.test(warning)) {
+            return 'Yêu cầu chưa rõ: có thể là tên thuốc, hoạt chất hoặc từ viết tắt.';
+        }
+        return warning;
     }
 
     function usageFromPayload(payload) {
@@ -209,7 +212,7 @@
             const direction = period.direction === 'current' ? 'hiện tại' : 'gần nhất';
             rows.push(`<li><strong>${escapeHtml(fieldLabel(group, constraint.field))}</strong><span>${escapeHtml(`${period.amount || ''} ${unit} ${direction}`.trim())}</span></li>`);
         });
-        return rows.length ? `<ul class="ai-chat-conditions">${rows.join('')}</ul>` : '<p class="ai-chat-muted">Chưa có điều kiện cụ thể.</p>';
+        return rows.length ? `<ul class="ai-chat-conditions">${rows.join('')}</ul>` : '';
     }
 
     function editPlanMarkup(item) {
@@ -231,21 +234,15 @@
         const assistant = item.assistant || {};
         if (assistant.loading) return '<div class="ai-chat-loading" role="status" aria-live="polite"><span class="ai-chat-dots" aria-hidden="true"></span><span class="sr-only">Đang phân tích yêu cầu…</span></div>';
         if (assistant.error) return `<div class="ai-chat-error" role="alert">${escapeHtml(assistant.error)}</div>`;
-        const total = Number(assistant.preview?.total);
-        const resultLine = Number.isFinite(total) && total > 0
-            ? `${formatCount(total)} kết quả`
-            : 'Không có kết quả';
-        const warningMarkup = (assistant.plan?.warnings || []).length
-            ? `<div class="ai-chat-warning">${assistant.plan.warnings.map(warning => escapeHtml(warning)).join('<br>')}</div>`
-            : '';
-        const broadening = assistant.optimization?.outcome === 'matched_after_safe_broadening'
-            ? '<p class="ai-chat-muted">Đã mở rộng an toàn phạm vi sản phẩm để tìm kết quả.</p>'
+        const warningMessages = (assistant.plan?.warnings || []).map(translateWarning).filter(Boolean);
+        const warningMarkup = warningMessages.length
+            ? `<div class="ai-chat-warning">${warningMessages.map(warning => escapeHtml(warning)).join('<br>')}</div>`
             : '';
         const isEditing = state.editingId === item.id;
         const actions = isEditing
             ? editPlanMarkup(item)
-            : `<div class="ai-chat-actions"><button type="button" class="ai-chat-button primary" data-ai-chat-action="execute" data-id="${escapeHtml(item.id)}" ${assistant.executing ? 'disabled' : ''}>${assistant.executing ? 'Đang tải…' : 'Xem kết quả'}</button><button type="button" class="ai-chat-icon-button ai-chat-edit-button" data-ai-chat-action="edit" data-id="${escapeHtml(item.id)}" aria-label="Chỉnh sửa" title="Chỉnh sửa"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 17.5V20h2.5L18.9 7.6l-2.5-2.5L4 17.5zM15 6l2.5 2.5M13.5 20H20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>`;
-        return `<div class="ai-chat-plan"><p class="ai-chat-result" role="status">${escapeHtml(resultLine)}</p>${planConditions(item.group, assistant.plan)}${warningMarkup}${broadening}${actions}</div>`;
+            : `<div class="ai-chat-actions">${assistant.executing ? '<span class="ai-chat-executing" role="status" aria-live="polite"><span class="ai-chat-dots" aria-hidden="true"></span><span class="sr-only">Đang tải kết quả</span></span>' : ''}<button type="button" class="ai-chat-icon-button ai-chat-edit-button" data-ai-chat-action="edit" data-id="${escapeHtml(item.id)}" aria-label="Chỉnh sửa" title="Chỉnh sửa" ${assistant.executing ? 'disabled' : ''}><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 17.5V20h2.5L18.9 7.6l-2.5-2.5L4 17.5zM15 6l2.5 2.5M13.5 20H20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>`;
+        return `<div class="ai-chat-plan">${planConditions(item.group, assistant.plan)}${warningMarkup}${actions}</div>`;
     }
 
     function renderMessages() {
@@ -369,13 +366,12 @@
                 executing: false,
                 error: '',
                 plan: payload.plan,
-                compiled_request: payload.compiled_request,
-                preview: payload.preview || { total: 0 },
-                optimization: payload.optimization || null
+                compiled_request: payload.compiled_request
             };
             updateUsage(payload);
             saveHistory();
             renderMessages();
+            executeSearch(item.id);
         } catch (error) {
             setError(item, publicError({}, 0, error?.name === 'AbortError'));
         }
@@ -429,13 +425,14 @@
                 item.assistant = { ...item.assistant, loading: false, error: publicError(payload, response.status, false) };
                 updateUsage(payload);
             } else {
-                item.assistant = { loading: false, executing: false, error: '', plan: payload.plan, compiled_request: payload.compiled_request, preview: payload.preview || { total: 0 }, optimization: payload.optimization || null };
+                item.assistant = { loading: false, executing: false, error: '', plan: payload.plan, compiled_request: payload.compiled_request };
                 updateUsage(payload);
                 state.editingId = null;
                 state.editPlan = null;
                 saveHistory();
             }
             renderMessages();
+            if (response.ok && payload?.success !== false) executeSearch(item.id);
         } catch (error) {
             item.assistant = { ...item.assistant, loading: false, error: publicError({}, 0, error?.name === 'AbortError') };
             renderMessages();
