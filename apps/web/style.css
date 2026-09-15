@@ -7812,7 +7812,7 @@ body.product-journey-active #panel-overlay.show {
   margin: 0;
   padding: 0;
   border: 1px solid var(--toolbar-command-border);
-  border-radius: 20px;
+  border-radius: 13px;
   background: var(--toolbar-command-bg);
   color: var(--toolbar-command-ink);
   box-shadow: none;

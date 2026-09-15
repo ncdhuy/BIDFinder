@@ -1,0 +1,12 @@
+{
+  "status": "SKIP",
+  "reason": "missing_api_key",
+  "total_cases": 0,
+  "passed": 0,
+  "failed": 0,
+  "pass_rate": null,
+  "model": "gpt-5.6-luna",
+  "aggregate_latency_ms": 0.0,
+  "average_latency_ms": 0.0,
+  "cases": []
+}
