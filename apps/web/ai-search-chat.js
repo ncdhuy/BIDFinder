@@ -127,6 +127,7 @@
         usageRoot.removeAttribute('aria-valuemin');
         usageRoot.removeAttribute('aria-valuemax');
         usageRoot.removeAttribute('aria-valuenow');
+        usageRoot.removeAttribute('data-usage-level');
         if (state.usageStatus === 'loading') {
             usageRoot.innerHTML = '<span class="ai-chat-usage-skeleton" aria-hidden="true"></span><span class="sr-only">Đang tải hạn mức AI</span>';
             return;
@@ -141,11 +142,13 @@
         const remaining = Number.isFinite(Number(usage.remaining_percent))
             ? Math.max(0, Math.min(100, Number(usage.remaining_percent)))
             : 0;
+        const usageLevel = remaining >= 70 ? 'healthy' : remaining >= 30 ? 'warning' : 'critical';
         usageRoot.setAttribute('role', 'progressbar');
         usageRoot.setAttribute('aria-valuemin', '0');
         usageRoot.setAttribute('aria-valuemax', '100');
         usageRoot.setAttribute('aria-valuenow', String(remaining));
         usageRoot.setAttribute('aria-label', `Hạn mức AI còn ${remaining}%`);
+        usageRoot.dataset.usageLevel = usageLevel;
         usageRoot.innerHTML = `<span class="ai-chat-usage-text">${remaining}% còn lại</span><span class="ai-chat-usage-track" aria-hidden="true"><span class="ai-chat-usage-fill" style="--ai-chat-usage-value: ${remaining}%"></span></span>`;
     }
 
