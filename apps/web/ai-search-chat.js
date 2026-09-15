@@ -157,7 +157,8 @@
         return true;
     }
 
-    async function loadUsage() {
+    async function loadUsage(force = false) {
+        if (!force && state.usageRequestId > 0) return;
         const requestId = ++state.usageRequestId;
         state.usage = null;
         state.usageStatus = 'loading';
@@ -428,7 +429,7 @@
         open: () => setOpen(true),
         close: () => setOpen(false),
         sendMessage,
-        refreshUsage: loadUsage,
+        refreshUsage: () => loadUsage(true),
         getState: () => ({ open: state.open, group: state.group, history: clone(state.history), usage: state.usage })
     };
 })();
