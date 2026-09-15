@@ -1290,8 +1290,6 @@ body:not(.landing-active) .contact-item {
 }
 
 body:not(.landing-active) .app-auth-btn,
-body:not(.landing-active) .action-btn,
-body:not(.landing-active) .btn-meta-simple,
 body:not(.landing-active) .btn-export {
     border-radius: 10px !important;
 }
@@ -7771,7 +7769,7 @@ body.product-journey-active #panel-overlay.show {
   height: 34px;
   margin: 0;
   padding: 0 8px;
-  border-radius: 7px;
+  border-radius: 20px;
   transform: none;
 }
 
@@ -7814,7 +7812,7 @@ body.product-journey-active #panel-overlay.show {
   margin: 0;
   padding: 0;
   border: 1px solid var(--toolbar-command-border);
-  border-radius: 7px;
+  border-radius: 20px;
   background: var(--toolbar-command-bg);
   color: var(--toolbar-command-ink);
   box-shadow: none;
@@ -7875,7 +7873,6 @@ body.product-journey-active #panel-overlay.show {
 .result-table-tabs .toolbar-actions > #open-ai-search {
   background: var(--color-primary-dark);
   border-color: var(--color-primary-dark);
-  border-radius: 14px;
   color: var(--color-primary-heavy-light);
 }
 
