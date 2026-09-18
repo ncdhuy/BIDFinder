@@ -395,6 +395,33 @@ class EngineTest(unittest.TestCase):
                 self.assertEqual(IngestionStatus.VALIDATED, result.status)
                 self.assertNotEqual(IngestionStatus.COMPLETED, store.get("goods_general", "2026-08-25").status)
 
+    def test_failed_open_day_checkpoint_can_replace_after_count_mismatch(self):
+        class ReplaceableInMemorySink(InMemorySink):
+            def __init__(self):
+                super().__init__()
+                self.provenance = self
+
+            def partition_uuids(self, source_key, partition_date):
+                return set(self.partitions.get((source_key, partition_date), ()))
+
+            def replace_partition(self, context, records, stale_uuids):
+                for record_id in stale_uuids:
+                    self.records.pop(record_id, None)
+                return self.write_partition(context, records)
+
+        records = [sample("goods_general")]
+        with patch("crawler_engine.msc.engine.operational_today", return_value=date(2026, 8, 25)):
+            with CheckpointStore(":memory:") as store:
+                store.start("goods_general", "2026-08-25")
+                store.fail("goods_general", "2026-08-25", "COUNT_MISMATCH", "source changed")
+                result = MSCIngestionEngine(
+                    FakeEngineClient(records, [1, 1]), store, ReplaceableInMemorySink()
+                ).ingest_partition(
+                    "goods_general", "2026-08-25", force=True,
+                    allow_open_day=True, replace_existing=True,
+                )
+                self.assertEqual(IngestionStatus.VALIDATED, result.status)
+
 
 if __name__ == "__main__":
     unittest.main()

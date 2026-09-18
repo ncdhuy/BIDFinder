@@ -6,10 +6,11 @@ normalization, and Typesense import remain owned by the Phase 2/3A code.
 
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, is_dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -49,6 +50,8 @@ from .typesense_schema import SEARCH_CONFIGS, canonical_to_typesense_document, p
 from .partitioning import official_day_interval
 from .local_target import FULL_RUN_AUTHORIZATION_PHRASE
 
+LOGGER = logging.getLogger(__name__)
+OPEN_DAY_COUNT_MISMATCH_RETRIES = 2
 BACKFILL_MANIFEST_VERSION = "msc-backfill-plan-v1"
 BACKFILL_REPORT_VERSION = "msc-backfill-report-v1"
 HISTORICAL_START = date(2023, 2, 1)
@@ -1008,6 +1011,7 @@ class BackfillRunner:
                     and (
                         checkpoint.status == IngestionStatus.COMPLETED
                         or checkpoint.status == IngestionStatus.VALIDATED
+                        or (is_open_partition and checkpoint.status == IngestionStatus.FAILED)
                     )
                 )
                 should_replace = (
@@ -1033,13 +1037,44 @@ class BackfillRunner:
                         )
                     result = _checkpoint_skip_result(checkpoint)
                 else:
-                    result = self.engine.ingest_partition(
-                        source_key,
-                        partition_date,
-                        force=self.force or should_replace,
-                        allow_open_day=is_open_partition,
-                        replace_existing=should_replace,
-                    )
+                    attempts: list[PartitionResult] = []
+                    for attempt in range(OPEN_DAY_COUNT_MISMATCH_RETRIES + 1):
+                        if attempt:
+                            LOGGER.warning(
+                                "msc_open_day_retry source_key=%s partition_date=%s retry=%s code=COUNT_MISMATCH",
+                                source_key, partition_date, attempt,
+                            )
+                            time.sleep(1)
+                            checkpoint = self.checkpoint_store.get(
+                                source_key, partition_date, getattr(self.engine.sink, "sink_target", "")
+                            )
+                            should_replace = bool(
+                                is_open_partition
+                                and checkpoint is not None
+                                and checkpoint.status == IngestionStatus.FAILED
+                            )
+                        result = self.engine.ingest_partition(
+                            source_key,
+                            partition_date,
+                            force=self.force or should_replace or attempt > 0,
+                            allow_open_day=is_open_partition,
+                            replace_existing=should_replace,
+                        )
+                        attempts.append(result)
+                        if not (
+                            is_open_partition
+                            and result.status == IngestionStatus.FAILED
+                            and result.error_code == "COUNT_MISMATCH"
+                            and attempt < OPEN_DAY_COUNT_MISMATCH_RETRIES
+                        ):
+                            break
+                    if len(attempts) > 1:
+                        result = replace(
+                            result,
+                            request_count=sum(item.request_count for item in attempts),
+                            retry_count=sum(item.retry_count for item in attempts) + len(attempts) - 1,
+                            elapsed_seconds=sum(item.elapsed_seconds for item in attempts),
+                        )
                 results.append(result)
                 self.report.update(result)
                 self.report.data["exception_ledger"]["rows"] = self.checkpoint_store.exception_count()

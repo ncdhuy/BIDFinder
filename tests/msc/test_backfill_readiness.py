@@ -83,6 +83,40 @@ class FakeEngine:
         return PartitionResult(source_key, partition_date, IngestionStatus.COMPLETED, parent_pre_count=1, parent_post_count=1, normalized_count=1, sink_accepted_count=1, sink_target=self.sink.sink_target)
 
 
+class FlakyOpenDayEngine(FakeEngine):
+    def __init__(self, checkpoints, count_mismatch_attempts):
+        super().__init__(checkpoints)
+        self.count_mismatch_attempts = count_mismatch_attempts
+
+    def ingest_partition(
+        self,
+        source_key,
+        partition_date,
+        *,
+        force=False,
+        allow_open_day=False,
+        replace_existing=False,
+    ):
+        if self.count_mismatch_attempts:
+            self.calls.append((source_key, partition_date, force, allow_open_day))
+            self.replace_calls.append((source_key, partition_date, replace_existing))
+            self.checkpoints.start(source_key, partition_date, force=force, sink_target=self.sink.sink_target)
+            self.checkpoints.fail(
+                source_key, partition_date, "COUNT_MISMATCH", "source count changed", sink_target=self.sink.sink_target
+            )
+            self.count_mismatch_attempts -= 1
+            return PartitionResult(
+                source_key, partition_date, IngestionStatus.FAILED,
+                error_code="COUNT_MISMATCH", error_message="source count changed",
+                request_count=4, retry_count=1, elapsed_seconds=2.0,
+                sink_target=self.sink.sink_target,
+            )
+        return super().ingest_partition(
+            source_key, partition_date, force=force,
+            allow_open_day=allow_open_day, replace_existing=replace_existing,
+        )
+
+
 class InterruptEngine(FakeEngine):
     def ingest_partition(
         self,
@@ -223,6 +257,40 @@ class ReadinessTest(unittest.TestCase):
             self.assertEqual(len(SOURCE_CONTRACTS), len(results))
             self.assertTrue(all(call[2:] == (True, True) for call in engine.calls))
             self.assertTrue(all(call[2] for call in engine.replace_calls))
+
+    def test_runner_retries_current_day_count_mismatch_with_a_bound(self):
+        today = date(2026, 9, 18)
+        with patch("crawler_engine.msc.backfill.operational_today", return_value=today):
+            manifest = build_manifest(
+                today, today, "test-generation",
+                {key: 1 for key in SOURCE_CONTRACTS},
+                allow_open_day=True,
+            )
+
+        for mismatches, expected_attempts, expected_status in (
+            (1, 2, IngestionStatus.COMPLETED),
+            (9, 3, IngestionStatus.FAILED),
+        ):
+            with self.subTest(mismatches=mismatches), CheckpointStore(":memory:") as store:
+                engine = FlakyOpenDayEngine(store, mismatches)
+                with (
+                    patch("crawler_engine.msc.backfill.operational_today", return_value=today),
+                    patch("crawler_engine.msc.backfill.time.sleep"),
+                    patch("crawler_engine.msc.backfill.BackfillReport.write"),
+                ):
+                    results = BackfillRunner(
+                        engine, store, manifest, report_path=Path("unused-open-day-retry.json"),
+                        resume=True, max_partitions=len(SOURCE_CONTRACTS), allow_open_day=True,
+                    ).run()
+
+                first_source = engine.calls[0][0]
+                first_source_calls = [call for call in engine.calls if call[0] == first_source]
+                self.assertEqual(expected_attempts, len(first_source_calls))
+                self.assertEqual(expected_status, results[0].status)
+                if mismatches == 1:
+                    self.assertEqual((first_source, today.isoformat(), True), engine.replace_calls[1])
+                    self.assertEqual(4, results[0].request_count)
+                    self.assertEqual(2, results[0].retry_count)
 
     def test_incremental_cli_includes_today_when_requested(self):
         today = date(2026, 9, 18)

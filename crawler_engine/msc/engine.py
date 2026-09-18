@@ -80,8 +80,11 @@ class MSCIngestionEngine:
         current = self.checkpoint_store.get(source_key, day.isoformat(), sink_target)
         previous_uuids: set[str] = set()
         if replace_existing:
-            if not current or current.status not in {IngestionStatus.COMPLETED, IngestionStatus.VALIDATED}:
-                raise EngineError("MSC_CONTRACT_ERROR", "partition replacement requires a completed or validated checkpoint")
+            replaceable_statuses = {IngestionStatus.COMPLETED, IngestionStatus.VALIDATED}
+            if open_day:
+                replaceable_statuses.add(IngestionStatus.FAILED)
+            if not current or current.status not in replaceable_statuses:
+                raise EngineError("MSC_CONTRACT_ERROR", "partition replacement requires an eligible checkpoint")
             provenance = getattr(self.sink, "provenance", None)
             partition_uuids = getattr(provenance, "partition_uuids", None)
             if not callable(partition_uuids):
