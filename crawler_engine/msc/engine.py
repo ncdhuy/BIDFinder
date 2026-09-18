@@ -80,8 +80,8 @@ class MSCIngestionEngine:
         current = self.checkpoint_store.get(source_key, day.isoformat(), sink_target)
         previous_uuids: set[str] = set()
         if replace_existing:
-            if not current or current.status != IngestionStatus.COMPLETED:
-                raise EngineError("MSC_CONTRACT_ERROR", "partition replacement requires a completed checkpoint")
+            if not current or current.status not in {IngestionStatus.COMPLETED, IngestionStatus.VALIDATED}:
+                raise EngineError("MSC_CONTRACT_ERROR", "partition replacement requires a completed or validated checkpoint")
             provenance = getattr(self.sink, "provenance", None)
             partition_uuids = getattr(provenance, "partition_uuids", None)
             if not callable(partition_uuids):
@@ -153,7 +153,12 @@ class MSCIngestionEngine:
             if drift.additive_fields:
                 LOGGER.warning("msc_schema_drift source_key=%s partition_date=%s additive_fields=%s", source_key, day, ",".join(drift.additive_fields))
             post_count = self.client.count_interval(contract, parent)
-            validate_parent_completeness(pre_count, union.unique_uuid_count, post_count)
+            if open_day:
+                # Today's source partition can grow while pages are being read. The
+                # final count is the completeness target for this open-day snapshot.
+                validate_parent_completeness(post_count, union.unique_uuid_count)
+            else:
+                validate_parent_completeness(pre_count, union.unique_uuid_count, post_count)
             canonical = normalize_records(contract, union.records, day.isoformat())
             normalized_count = len(canonical)
             exception_ids.update(str(record["id"]) for record in canonical if record.get("id"))

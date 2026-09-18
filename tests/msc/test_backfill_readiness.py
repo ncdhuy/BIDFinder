@@ -3,6 +3,8 @@ from pathlib import Path
 import tempfile
 import unittest
 from types import SimpleNamespace
+from datetime import date
+from unittest.mock import patch
 
 from crawler_engine.msc.backfill import (
     AuditedSink,
@@ -55,6 +57,7 @@ class FakeEngine:
         self.checkpoints = checkpoints
         self.sink = FakeSink()
         self.calls = []
+        self.replace_calls = []
         self.fail_key = fail_key
 
     def ingest_partition(
@@ -67,6 +70,7 @@ class FakeEngine:
         replace_existing=False,
     ):
         self.calls.append((source_key, partition_date, force, allow_open_day))
+        self.replace_calls.append((source_key, partition_date, replace_existing))
         self.checkpoints.start(source_key, partition_date, force=force, sink_target=self.sink.sink_target)
         if self.fail_key == (source_key, partition_date):
             self.checkpoints.fail(source_key, partition_date, "MSC_CONTRACT_ERROR", "fixture failure", sink_target=self.sink.sink_target)
@@ -188,6 +192,62 @@ class ReadinessTest(unittest.TestCase):
                 engine.calls.clear()
                 BackfillRunner(engine, store, manifest, report_path=report_path, resume=True, force=True, max_partitions=14).run()
                 self.assertTrue(engine.calls)
+
+    def test_runner_refreshes_validated_current_day_on_every_run(self):
+        today = date(2026, 9, 18)
+        target = "typesense:test-generation"
+        with patch("crawler_engine.msc.backfill.operational_today", return_value=today):
+            manifest = build_manifest(
+                today, today, "test-generation",
+                {key: 1 for key in SOURCE_CONTRACTS},
+                allow_open_day=True,
+            )
+        with CheckpointStore(":memory:") as store:
+            for source_key in SOURCE_CONTRACTS:
+                store.start(source_key, today.isoformat(), sink_target=target)
+                store.finish(
+                    source_key, today.isoformat(), IngestionStatus.VALIDATED,
+                    sink_target=target, parent_pre_count=1, parent_post_count=1,
+                    normalized_count=1, sink_accepted_count=1,
+                )
+            engine = FakeEngine(store)
+            with (
+                patch("crawler_engine.msc.backfill.operational_today", return_value=today),
+                patch("crawler_engine.msc.backfill.BackfillReport.write"),
+            ):
+                results = BackfillRunner(
+                    engine, store, manifest, report_path=Path("unused-current-day.json"),
+                    resume=True, max_partitions=len(SOURCE_CONTRACTS),
+                    allow_open_day=True,
+                ).run()
+            self.assertEqual(len(SOURCE_CONTRACTS), len(results))
+            self.assertTrue(all(call[2:] == (True, True) for call in engine.calls))
+            self.assertTrue(all(call[2] for call in engine.replace_calls))
+
+    def test_incremental_cli_includes_today_when_requested(self):
+        today = date(2026, 9, 18)
+        captured = {}
+
+        def fake_run_incremental(**kwargs):
+            captured.update(kwargs)
+            return {"overall_status": "PASS"}
+
+        argv = [
+            "incremental", "--generation", "serving_v1_20260901",
+            "--checkpoint", ":memory:", "--provenance", ":memory:",
+            "--base-manifest-fingerprint", "test-fingerprint",
+            "--include-current-day", "--max-partitions", "500",
+        ]
+        with (
+            patch("crawler_engine.msc.cli.operational_today", return_value=today),
+            patch("crawler_engine.msc.cli.next_incremental_start", return_value=date(2026, 9, 19)),
+            patch("crawler_engine.msc.cli.TypesenseConfig.from_env", return_value=SimpleNamespace(batch_size=1000)),
+            patch("crawler_engine.msc.cli.run_incremental", side_effect=fake_run_incremental),
+        ):
+            self.assertEqual(0, main(argv))
+        self.assertEqual(today.isoformat(), str(captured["from_date"]))
+        self.assertEqual(today.isoformat(), str(captured["to_date"]))
+        self.assertTrue(captured["include_current_day"])
 
     def test_resumed_skipped_partition_does_not_fire_recovery_callback(self):
         manifest = self._manifest({key: 1 for key in SOURCE_CONTRACTS})

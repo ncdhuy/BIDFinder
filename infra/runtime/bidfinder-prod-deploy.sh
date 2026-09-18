@@ -135,6 +135,7 @@ switch_release() {
 deploy() {
   local requested_commit="${1:-}" commit release state
   commit="${requested_commit:-$(git -C "$repo_root" rev-parse HEAD)}"
+  commit="$(git -C "$repo_root" rev-parse --verify "${commit}^{commit}")"
   git -C "$repo_root" cat-file -e "$commit^{commit}"
   [[ -n "$requested_commit" || -z "$(git -C "$repo_root" status --porcelain --untracked-files=all)" ]] || {
     echo "refusing deploy from a dirty checkout; commit or stash first" >&2

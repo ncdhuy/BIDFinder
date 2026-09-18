@@ -58,7 +58,7 @@ is already enabled for the WSL user.
 bidfinder-typesense.service
 bidfinder-api.service
 bidfinder-incremental.service (oneshot)
-bidfinder-incremental.timer  04:00 Asia/Ho_Chi_Minh
+bidfinder-incremental.timer  daily 08:00, 11:00, 17:00 Asia/Ho_Chi_Minh
 bidfinder-snapshot.service (oneshot)
 bidfinder-snapshot.timer     Sunday 05:30 Asia/Ho_Chi_Minh
 bidfinder-log-prune.timer    daily 03:30

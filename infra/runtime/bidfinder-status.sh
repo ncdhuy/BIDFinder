@@ -59,7 +59,7 @@ import json
 import sys
 from pathlib import Path
 payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-print(f"INFO {'incremental':18} result={payload.get('result')} coverage_through={payload.get('coverage_through')} last_run={payload.get('last_run_end')}")
+print(f"INFO {'incremental':18} result={payload.get('result')} coverage_through={payload.get('coverage_through')} current_day_included={payload.get('current_day_included', False)} last_run={payload.get('last_run_end')}")
 PY
 else
   warn incremental "status file missing"

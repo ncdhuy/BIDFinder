@@ -93,6 +93,7 @@ def incremental_window(
     to_date: str | date,
     *,
     lookback_days: int = DEFAULT_LOOKBACK_DAYS,
+    allow_open_day: bool = False,
 ) -> tuple[date, date, date]:
     requested_start = parse_partition_date(from_date)
     end = parse_partition_date(to_date)
@@ -100,8 +101,9 @@ def incremental_window(
         raise ValueError(f"incremental start must be on or after {INCREMENTAL_START.isoformat()}")
     if end < requested_start:
         raise ValueError("incremental from date cannot be after to date")
-    if end >= operational_today():
-        raise ValueError("incremental range cannot include the current/open Vietnam calendar day")
+    today = operational_today()
+    if end > today or (end == today and not allow_open_day):
+        raise ValueError("incremental range cannot include the current/open Vietnam calendar day without explicit opt-in")
     if lookback_days < 0:
         raise ValueError("lookback_days cannot be negative")
     effective_start = max(INCREMENTAL_START, requested_start - timedelta(days=lookback_days))
@@ -596,6 +598,7 @@ def run_incremental(
     report_path: str | Path,
     base_manifest_fingerprint: str,
     lookback_days: int = DEFAULT_LOOKBACK_DAYS,
+    include_current_day: bool = False,
     force: bool = False,
     resume: bool = True,
     max_partitions: int | None = None,
@@ -604,8 +607,10 @@ def run_incremental(
 ) -> dict[str, Any]:
     generation = require_serving_generation(generation)
     requested_start, effective_start, end = incremental_window(
-        from_date, to_date, lookback_days=lookback_days
+        from_date, to_date, lookback_days=lookback_days,
+        allow_open_day=include_current_day,
     )
+    open_day_included = include_current_day and end == operational_today()
     if max_partitions is None:
         raise ValueError("incremental run requires explicit max_partitions")
     config = msc_config or MSCConfig()
@@ -620,7 +625,9 @@ def run_incremental(
         require_continuity=True,
     )
     msc_client = MSCClient(config)
-    source_preflight = source_population_preflight(msc_client, effective_start, end)
+    source_preflight = source_population_preflight(
+        msc_client, effective_start, end, allow_open_day=open_day_included
+    )
     manifest = build_manifest(
         effective_start,
         end,
@@ -628,6 +635,7 @@ def run_incremental(
         source_preflight["source_totals"],
         page_size=config.page_size,
         typesense_batch_size=ts_config.batch_size,
+        allow_open_day=open_day_included,
     )
     run_report_path = Path(checkpoint_path).with_name(f".{generation}.backfill.json")
     sink_target = f"typesense:{generation}"
@@ -662,8 +670,12 @@ def run_incremental(
             max_partitions=max_partitions,
             replace_existing=bool(changed_partitions),
             replace_existing_dates=changed_partitions,
+            allow_open_day=open_day_included,
         ).run()
-        state = checkpoint_audit(checkpoints, effective_start, end, manifest["sources"], sink.sink_target)
+        state = checkpoint_audit(
+            checkpoints, effective_start, end, manifest["sources"], sink.sink_target,
+            allow_open_day=open_day_included,
+        )
         provenance_counts = {
             "unique_total": provenance.total_count(),
             "group_counts": provenance.group_counts(),
@@ -689,8 +701,8 @@ def run_incremental(
     report = build_serving_report(
         serving_generation=generation,
         base_manifest_fingerprint=base_manifest_fingerprint,
-        requested_range={"from": requested_start.isoformat(), "to": end.isoformat(), "closed": True},
-        effective_range={"from": effective_start.isoformat(), "to": end.isoformat(), "closed": True},
+        requested_range={"from": requested_start.isoformat(), "to": end.isoformat(), "closed": not open_day_included},
+        effective_range={"from": effective_start.isoformat(), "to": end.isoformat(), "closed": not open_day_included},
         source_counts=source_preflight["source_totals"],
         checkpoint_state=state,
         provenance_counts=provenance_counts,
@@ -706,7 +718,8 @@ def run_incremental(
         records_accepted=sum(records_added.values()),
         coverage_through=end.isoformat(),
         latest_closed_day=latest_closed_day().isoformat(),
-        next_expected_date=(end + timedelta(days=1)).isoformat(),
+        current_day_included=open_day_included,
+        next_expected_date=(min(end, latest_closed_day()) + timedelta(days=1)).isoformat(),
         force=force,
     )
     atomic_write_json(report_path, report)

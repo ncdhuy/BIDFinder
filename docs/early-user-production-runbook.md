@@ -39,10 +39,11 @@ and bounded graceful waits; no SIGKILL fallback is configured.
 
 ## Daily ingestion and freshness
 
-The installed timer runs at **04:00 Asia/Ho_Chi_Minh** every day, outside
-normal Vietnam business hours. It processes only fully closed Vietnam days,
-uses the active `serving_v1_20260901` generation, applies the three-day
-lookback/revalidation policy, and holds:
+The installed timer runs daily at **08:00, 11:00, and 17:00 Asia/Ho_Chi_Minh**.
+It re-crawls the current Vietnam day at each run and revalidates the previous
+three fully closed days. The open-day checkpoint stays `VALIDATED` until a run
+after midnight closes it. The timer uses the active `serving_v1_20260901`
+generation and holds:
 
 ```text
 ~/.local/share/bidfinder/runtime/locks/serving-maintenance.lock
@@ -61,10 +62,11 @@ The compact report is:
 ~/.local/share/bidfinder/typesense/reports/incremental-status.json
 ```
 
-It includes run start/end/result, closed-day window, changed partitions,
-accepted records, unresolved errors, coverage-through, and next expected
-date. A failed source partition is not checkpointed as complete; the next run
-resumes from the checkpoint rather than restarting history.
+It includes run start/end/result, `latest_closed_day`, whether the current day
+was included, changed partitions, accepted records, unresolved errors,
+coverage-through, and next expected date. A failed source partition is not
+checkpointed as complete; the next run resumes from the checkpoint rather than
+restarting history.
 
 ## Recovery snapshots
 

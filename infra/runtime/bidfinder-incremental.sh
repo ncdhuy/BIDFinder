@@ -30,9 +30,9 @@ payload = {
     "serving_generation": generation,
 }
 try:
-    payload["latest_closed_day"] = (
-        datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date() - timedelta(days=1)
-    ).isoformat()
+    vietnam_today = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date()
+    payload["latest_closed_day"] = (vietnam_today - timedelta(days=1)).isoformat()
+    payload["vietnam_today"] = vietnam_today.isoformat()
 except Exception:
     payload["latest_closed_day"] = None
 try:
@@ -46,6 +46,7 @@ try:
     })
     payload.update({
         "coverage_through": report.get("coverage_through"),
+        "current_day_included": report.get("current_day_included", False),
         "records_accepted": report.get("records_accepted", 0),
         "records_added_by_source": report.get("records_added_by_source", {}),
         "changed_partitions": report.get("changed_partitions", []),
@@ -70,6 +71,7 @@ if cli_output:
                 "partitions_processed": 0,
                 "records_accepted": 0,
                 "records_added_by_source": {},
+                "current_day_included": False,
                 "changed_partitions": [],
                 "retries": 0,
                 "rejected": 0,
@@ -109,7 +111,7 @@ set +e
   --checkpoint "$BIDFINDER_TYPESENSE_CHECKPOINT" \
   --provenance "$BIDFINDER_TYPESENSE_PROVENANCE" \
   --base-manifest-fingerprint "$base_fingerprint" \
-  --latest-closed \
+  --include-current-day \
   --lookback "$BIDFINDER_LOOKBACK_DAYS" \
   --resume \
   --max-partitions "$BIDFINDER_MAX_PARTITIONS" \

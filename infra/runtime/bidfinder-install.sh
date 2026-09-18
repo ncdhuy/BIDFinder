@@ -207,7 +207,8 @@ from pathlib import Path
 
 payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 keys = (
-    "result", "last_run_start", "last_run_end", "latest_closed_day",
+    "result", "last_run_start", "last_run_end", "latest_closed_day", "vietnam_today",
+    "current_day_included",
     "coverage_through", "dates_processed", "partitions_processed",
     "records_accepted", "retries", "rejected", "conflicts", "next_expected_date",
 )

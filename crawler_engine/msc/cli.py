@@ -32,7 +32,7 @@ from .backfill import (
 from .client import MSCClient
 from .config import DEFAULT_CHECKPOINT_PATH, MSCConfig, TypesenseConfig
 from .contracts import SOURCE_CONTRACTS
-from .engine import EngineError, MSCIngestionEngine
+from .engine import EngineError, MSCIngestionEngine, operational_today
 from .models import IngestionStatus
 from .sink import InMemorySink, JsonlValidationSink, TypesenseSink
 from .typesense_client import TypesenseClient, TypesenseCollectionManager, TypesenseError
@@ -151,13 +151,14 @@ def build_parser() -> argparse.ArgumentParser:
     backfill.add_argument("--sample-dir", type=Path, default=None)
     backfill.add_argument("--acknowledge-readiness", action="store_true", help="required for any actual run")
     backfill.add_argument("--authorize-full-run", metavar="PHRASE", help="exact historical-write authorization phrase")
-    incremental = sub.add_parser("incremental", help="sync a serving generation through closed MSC days")
+    incremental = sub.add_parser("incremental", help="sync a serving generation through closed days, optionally including today")
     incremental.add_argument("--generation", required=True, help="serving physical generation; historical generation is rejected")
     incremental.add_argument("--checkpoint", required=True, type=Path)
     incremental.add_argument("--provenance", required=True, type=Path)
     incremental.add_argument("--from", dest="from_date", type=_day)
     incremental.add_argument("--to", dest="to_date", type=_day)
-    incremental.add_argument("--latest-closed", action="store_true", help="use latest fully closed Vietnam day as --to")
+    incremental.add_argument("--latest-closed", action="store_true", help="use the latest fully closed Vietnam day as --to (the default)")
+    incremental.add_argument("--include-current-day", action="store_true", help="crawl and refresh the current Vietnam day on each run")
     incremental.add_argument("--lookback", type=int, default=3, help="bounded recent closed-day revalidation window")
     incremental.add_argument("--resume", action="store_true", default=True)
     incremental.add_argument("--no-resume", dest="resume", action="store_false")
@@ -319,18 +320,29 @@ def _run_backfill(args: argparse.Namespace) -> int:
 
 
 def _run_incremental(args: argparse.Namespace) -> int:
+    if args.latest_closed and args.include_current_day:
+        raise BackfillControlError("--latest-closed cannot be combined with --include-current-day")
     if args.latest_closed and args.to_date is not None:
         raise BackfillControlError("--latest-closed cannot be combined with --to")
     with CheckpointStore(args.checkpoint) as checkpoints:
-        from_date = args.from_date or next_incremental_start(checkpoints, args.generation).isoformat()
-    to_date = args.to_date or latest_closed_day().isoformat()
+        next_start = next_incremental_start(checkpoints, args.generation)
+    today = operational_today()
+    if args.from_date is not None:
+        from_date = args.from_date
+    else:
+        if args.include_current_day and next_start > today:
+            next_start = today
+        from_date = next_start.isoformat()
+    to_date = args.to_date or (
+        today.isoformat() if args.include_current_day else latest_closed_day().isoformat()
+    )
     from_day = from_date if isinstance(from_date, date) else date.fromisoformat(from_date)
     to_day = to_date if isinstance(to_date, date) else date.fromisoformat(to_date)
     if from_day > to_day:
         print(json.dumps({
             "overall_status": "PASS",
             "status": "SKIPPED",
-            "reason": "no fully closed dates are missing",
+            "reason": "no dates are selected for incremental processing",
             "from_date": from_day.isoformat(),
             "to_date": to_day.isoformat(),
         }, ensure_ascii=False, sort_keys=True))
@@ -348,6 +360,7 @@ def _run_incremental(args: argparse.Namespace) -> int:
         report_path=args.report,
         base_manifest_fingerprint=args.base_manifest_fingerprint,
         lookback_days=args.lookback,
+        include_current_day=args.include_current_day,
         force=args.force,
         resume=args.resume,
         max_partitions=args.max_partitions,

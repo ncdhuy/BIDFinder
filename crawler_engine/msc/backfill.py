@@ -102,12 +102,18 @@ def ordered_source_keys(source_keys: Iterable[str] | None = None) -> tuple[str, 
     return tuple(key for key in SOURCE_CONTRACTS if key in requested)
 
 
-def validate_closed_range(from_date: str | date, to_date: str | date) -> tuple[date, date]:
+def validate_closed_range(
+    from_date: str | date,
+    to_date: str | date,
+    *,
+    allow_open_day: bool = False,
+) -> tuple[date, date]:
     start = parse_partition_date(from_date)
     end = parse_partition_date(to_date)
     if start > end:
         raise BackfillControlError("from date cannot be after to date")
-    if end >= operational_today():
+    today = operational_today()
+    if end > today or (end == today and not allow_open_day):
         raise BackfillControlError("backfill range must end before the current Vietnam calendar day")
     return start, end
 
@@ -116,8 +122,10 @@ def iter_parent_partitions(
     from_date: str | date,
     to_date: str | date,
     source_keys: Iterable[str],
+    *,
+    allow_open_day: bool = False,
 ) -> Iterable[tuple[str, str]]:
-    start, end = validate_closed_range(from_date, to_date)
+    start, end = validate_closed_range(from_date, to_date, allow_open_day=allow_open_day)
     sources = ordered_source_keys(source_keys)
     day = start
     while day <= end:
@@ -126,8 +134,13 @@ def iter_parent_partitions(
         day += timedelta(days=1)
 
 
-def closed_range_interval(from_date: str | date, to_date: str | date) -> SearchInterval:
-    start, end = validate_closed_range(from_date, to_date)
+def closed_range_interval(
+    from_date: str | date,
+    to_date: str | date,
+    *,
+    allow_open_day: bool = False,
+) -> SearchInterval:
+    start, end = validate_closed_range(from_date, to_date, allow_open_day=allow_open_day)
     first = official_day_interval(start)
     last = official_day_interval(end)
     return SearchInterval(first.from_value, last.to_value, depth=0)
@@ -196,8 +209,9 @@ def build_manifest(
     safe_search_threshold: int = 9500,
     created_at: str | None = None,
     source_keys: Iterable[str] | None = None,
+    allow_open_day: bool = False,
 ) -> dict[str, Any]:
-    start, end = validate_closed_range(from_date, to_date)
+    start, end = validate_closed_range(from_date, to_date, allow_open_day=allow_open_day)
     validate_generation_id(generation)
     if page_size <= 0 or typesense_batch_size <= 0 or safe_search_threshold <= 0:
         raise BackfillControlError("page_size, typesense_batch_size, and safe_search_threshold must be positive")
@@ -218,6 +232,7 @@ def build_manifest(
             "from": start.isoformat(),
             "to": end.isoformat(),
             "closed_upper_boundary": True,
+            **({"includes_open_day": True} if allow_open_day and end == operational_today() else {}),
             "calendar": "Asia/Ho_Chi_Minh",
         },
         "created_at": created_at or datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -257,12 +272,14 @@ def source_population_preflight(
     from_date: str | date,
     to_date: str | date,
     source_keys: Iterable[str] | None = None,
+    *,
+    allow_open_day: bool = False,
 ) -> dict[str, Any]:
     """Read exactly one aggregation count per selected source contract."""
 
-    start, end = validate_closed_range(from_date, to_date)
+    start, end = validate_closed_range(from_date, to_date, allow_open_day=allow_open_day)
     sources = ordered_source_keys(source_keys)
-    interval = closed_range_interval(start, end)
+    interval = closed_range_interval(start, end, allow_open_day=allow_open_day)
     request_before = getattr(getattr(client, "stats", None), "request_count", 0)
     totals: dict[str, int] = {}
     for source_key in sources:
@@ -270,7 +287,7 @@ def source_population_preflight(
     request_after = getattr(getattr(client, "stats", None), "request_count", request_before)
     groups = group_totals(totals)
     return {
-        "range": {"from": start.isoformat(), "to": end.isoformat(), "closed": True},
+        "range": {"from": start.isoformat(), "to": end.isoformat(), "closed": end < operational_today()},
         "source_totals": totals,
         "group_totals": groups,
         "overall_total": sum(totals.values()),
@@ -769,7 +786,8 @@ class BackfillReport:
         sources = self.manifest["sources"]
         source_totals = self.manifest["source_totals"]
         total = len(list(iter_parent_partitions(
-            self.manifest["source_range"]["from"], self.manifest["source_range"]["to"], sources
+            self.manifest["source_range"]["from"], self.manifest["source_range"]["to"], sources,
+            allow_open_day=bool(self.manifest["source_range"].get("includes_open_day")),
         )))
         self.data: dict[str, Any] = {
             "report_version": BACKFILL_REPORT_VERSION,
@@ -941,6 +959,7 @@ class BackfillRunner:
         replace_existing: bool = False,
         replace_existing_before: date | None = None,
         replace_existing_dates: set[tuple[str, date]] | None = None,
+        allow_open_day: bool = False,
         on_before_partition: Callable[[str, str, "BackfillReport"], None] | None = None,
         on_partition_boundary: Callable[[PartitionResult, "BackfillReport"], None] | None = None,
     ) -> None:
@@ -956,6 +975,7 @@ class BackfillRunner:
         self.replace_existing = replace_existing
         self.replace_existing_before = replace_existing_before
         self.replace_existing_dates = replace_existing_dates or set()
+        self.allow_open_day = allow_open_day
         self.on_before_partition = on_before_partition
         self.on_partition_boundary = on_partition_boundary
 
@@ -964,6 +984,7 @@ class BackfillRunner:
             self.manifest["source_range"]["from"],
             self.manifest["source_range"]["to"],
             self.manifest["sources"],
+            allow_open_day=self.allow_open_day,
         ))
         if self.max_partitions is None:
             raise BackfillControlError("actual backfill requires explicit --max-partitions")
@@ -978,11 +999,23 @@ class BackfillRunner:
                 if self.on_before_partition is not None:
                     self.on_before_partition(source_key, partition_date, self.report)
                 checkpoint = self.checkpoint_store.get(source_key, partition_date, getattr(self.engine.sink, "sink_target", ""))
-                should_replace = (
+                is_open_partition = (
+                    self.allow_open_day
+                    and parse_partition_date(partition_date) == operational_today()
+                )
+                replaceable_status = (
                     checkpoint is not None
-                    and checkpoint.status == IngestionStatus.COMPLETED
+                    and (
+                        checkpoint.status == IngestionStatus.COMPLETED
+                        or checkpoint.status == IngestionStatus.VALIDATED
+                    )
+                )
+                should_replace = (
+                    replaceable_status
                     and (
                         self.force
+                        or is_open_partition
+                        or (checkpoint is not None and checkpoint.status == IngestionStatus.VALIDATED)
                         or (
                             self.replace_existing
                             and (
@@ -1004,7 +1037,7 @@ class BackfillRunner:
                         source_key,
                         partition_date,
                         force=self.force or should_replace,
-                        allow_open_day=False,
+                        allow_open_day=is_open_partition,
                         replace_existing=should_replace,
                     )
                 results.append(result)
@@ -1038,8 +1071,10 @@ def checkpoint_audit(
     to_date: str | date,
     source_keys: Iterable[str],
     sink_target: str,
+    *,
+    allow_open_day: bool = False,
 ) -> dict[str, Any]:
-    start, end = validate_closed_range(from_date, to_date)
+    start, end = validate_closed_range(from_date, to_date, allow_open_day=allow_open_day)
     sources = ordered_source_keys(source_keys)
     per_source: dict[str, Any] = {}
     for source_key in sources:
@@ -1066,6 +1101,7 @@ def checkpoint_audit(
             "data_group": get_contract(source_key).data_group,
             "expected_date_partitions": expected,
             "completed": status_counts["completed"],
+            "validated": status_counts["validated"],
             "failed": status_counts["failed"],
             "quarantined": status_counts["quarantined"],
             "pending": expected - len(rows),
@@ -1079,6 +1115,7 @@ def checkpoint_audit(
         "sources": per_source,
         "expected_parent_partitions": sum(item["expected_date_partitions"] for item in per_source.values()),
         "completed_parent_partitions": sum(item["completed"] for item in per_source.values()),
+        "validated_parent_partitions": sum(item["validated"] for item in per_source.values()),
     }
 
 

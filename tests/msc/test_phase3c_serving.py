@@ -26,6 +26,7 @@ from crawler_engine.msc.serving import (
     retire_historical_generation,
     incremental_window,
     live_generations,
+    latest_closed_day,
     require_serving_generation,
     safe_retire_generation,
     validate_prefix_range,
@@ -129,10 +130,17 @@ class TestPhase3CServing(unittest.TestCase):
 
     def test_closed_day_boundary_and_bounded_lookback(self):
         with patch("crawler_engine.msc.serving.operational_today", return_value=date(2026, 9, 1)):
+            self.assertEqual(date(2026, 8, 31), latest_closed_day())
             requested, effective, end = incremental_window("2026-08-31", "2026-08-31", lookback_days=3)
             self.assertEqual((date(2026, 8, 31), date(2026, 8, 30), date(2026, 8, 31)), (requested, effective, end))
+            requested, effective, end = incremental_window(
+                "2026-09-01", "2026-09-01", lookback_days=3, allow_open_day=True,
+            )
+            self.assertEqual((date(2026, 9, 1), date(2026, 8, 30), date(2026, 9, 1)), (requested, effective, end))
             with self.assertRaises(ValueError):
                 incremental_window("2026-08-30", "2026-09-01")
+            with self.assertRaises(ValueError):
+                incremental_window("2026-09-01", "2026-09-02", allow_open_day=True)
             with self.assertRaises(ValueError):
                 incremental_window("2026-08-29", "2026-08-30")
 

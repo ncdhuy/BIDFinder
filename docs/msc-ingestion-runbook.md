@@ -284,8 +284,10 @@ phase never supplies that authorization.
 2026-08-29 records to it. Create one `serving_v1_<creation-date>` generation
 from the historical Typesense collections, bootstrap serving-specific copies
 of the checkpoint and UUID-provenance databases, and ingest from 2026-08-30
-through the latest fully closed Vietnam day. The current calendar day is never
-marked permanently complete.
+through the latest fully closed Vietnam day by default. Scheduled serving runs
+may also include the current Vietnam day as a validated, replaceable snapshot;
+that partition is crawled again on every run and is not marked permanently
+complete until a run after midnight.
 
 For the guarded local bootstrap and recovery proof, run
 `python3 tools/phase3c_serving.py` with the local Typesense environment
@@ -297,13 +299,14 @@ python -m crawler_engine.msc.cli incremental \
   --checkpoint ~/.local/share/bidfinder/typesense/checkpoints/serving_v1_20260901.sqlite3 \
   --provenance ~/.local/share/bidfinder/typesense/checkpoints/serving_v1_20260901.uuid.sqlite3 \
   --base-manifest-fingerprint <Phase-3B-fingerprint> \
-  --latest-closed --lookback 3 --resume
+  --include-current-day --lookback 3 --resume
 ```
 
-The bounded lookback revalidates recent closed dates. Changed partitions use
-exact replacement semantics: upsert current UUIDs and delete only UUIDs no
-longer returned by MSC. Inspect the JSON/Markdown report after each run;
-stable aliases stay inactive until a later FastAPI shadow-read phase.
+The bounded lookback revalidates recent closed dates. The current day is
+re-crawled on each run; Typesense upserts current UUIDs and removes only UUIDs
+no longer returned by MSC. The report distinguishes `latest_closed_day` from
+`current_day_included`. Inspect the JSON/Markdown report after each run; stable
+aliases stay inactive until a later FastAPI shadow-read phase.
 
 ## Phase 3C.1 source-specific prefix extension
 

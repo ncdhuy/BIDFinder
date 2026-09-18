@@ -345,9 +345,10 @@ set -a; source ~/.config/bidfinder/typesense.env; set +a
 python3 tools/phase3c_serving.py
 ```
 
-The wrapper uses a bounded three-day closed-day lookback for future correction
-checks. A changed recent partition is replaced using upsert plus exact stale
-UUID deletion; upsert alone is insufficient for source deletions. The lighter
-serving snapshot policy is one validated snapshot after each successful
-catch-up batch. Only after shadow-read validation in Phase 4 may an operator
-consider stable alias activation.
+The wrapper uses a bounded three-day closed-day lookback for correction checks
+and re-crawls the current Vietnam day at each scheduled run. Current-day
+partitions stay validated and are refreshed with upsert plus exact stale UUID
+deletion until they close after midnight. The lighter serving snapshot policy
+is one validated snapshot after each successful catch-up batch. Only after
+shadow-read validation in Phase 4 may an operator consider stable alias
+activation.
