@@ -10,6 +10,8 @@ command_name="${1:-}"
 [[ -n "$command_name" ]] || usage
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
+# shellcheck source=infra/runtime/bidfinder-common.sh
+source "$script_dir/bidfinder-common.sh"
 prod_root="${BIDFINDER_PRODUCTION_ROOT:-$HOME/.local/share/bidfinder/production}"
 release_root="$prod_root/releases"
 current_link="$prod_root/current"
