@@ -167,6 +167,10 @@
                                     <span class="scope-text">Dược liệu</span>
                                     <span class="scope-count" id="df3-count-switcher">0</span>
                                 </button>
+                                <button class="scope-btn result-table-tab dashboard-tab" type="button" data-view="dashboard-panel" aria-selected="false" role="tab" title="Dashboard phân tích">
+                                    <span class="scope-icon" aria-hidden="true">📊</span>
+                                    <span class="scope-text">Dashboard</span>
+                                </button>
                             </div>
                         </div>
                         <div class="toolbar-divider" aria-hidden="true"></div>
@@ -350,6 +354,92 @@
                                         </tbody>
                                     </table>
                                 </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="data-section-vertical result-panel dashboard-panel" id="dashboard-panel" aria-labelledby="dashboard-title">
+                        <div class="dashboard-shell-card">
+                            <header class="dashboard-header">
+                                <div>
+                                    <p class="dashboard-kicker">Phân tích kết quả tìm kiếm</p>
+                                    <h2 id="dashboard-title">Dashboard phân tích kết quả tìm kiếm</h2>
+                                    <p class="dashboard-subtitle">Tổng quan dữ liệu từ bộ lọc hiện tại</p>
+                                </div>
+                                <div class="dashboard-header-status" id="dashboard-status" role="status" aria-live="polite"></div>
+                            </header>
+                            <div class="dashboard-context" id="dashboard-base-context" aria-label="Bộ lọc hiện tại"></div>
+                            <div class="dashboard-selection-bar" id="dashboard-selection-bar" hidden>
+                                <span class="dashboard-selection-label">Đang khám phá:</span>
+                                <div class="dashboard-selection-chips" id="dashboard-selection-chips"></div>
+                                <button class="dashboard-clear-btn" id="dashboard-clear-selections" type="button">Xóa lựa chọn</button>
+                            </div>
+
+                            <div class="dashboard-grid dashboard-kpi-grid">
+                                <article class="dashboard-kpi-card" data-dashboard-widget="summary">
+                                    <span class="dashboard-kpi-label">Tổng giá trị trúng thầu</span>
+                                    <strong data-dashboard-kpi="total_awarded_value">—</strong>
+                                    <span class="dashboard-kpi-unit">VND</span>
+                                </article>
+                                <article class="dashboard-kpi-card" data-dashboard-widget="summary">
+                                    <span class="dashboard-kpi-label">Số gói thầu</span>
+                                    <strong data-dashboard-kpi="package_count">—</strong>
+                                    <span class="dashboard-kpi-unit">gói</span>
+                                </article>
+                                <article class="dashboard-kpi-card" data-dashboard-widget="summary">
+                                    <span class="dashboard-kpi-label">Số nhà thầu</span>
+                                    <strong data-dashboard-kpi="bidder_count">—</strong>
+                                    <span class="dashboard-kpi-unit">nhà thầu</span>
+                                </article>
+                                <article class="dashboard-kpi-card" data-dashboard-widget="summary">
+                                    <span class="dashboard-kpi-label">Số chủ đầu tư</span>
+                                    <strong data-dashboard-kpi="investor_count">—</strong>
+                                    <span class="dashboard-kpi-unit">chủ đầu tư</span>
+                                </article>
+                            </div>
+
+                            <div class="dashboard-grid dashboard-main-grid">
+                                <article class="dashboard-widget dashboard-map-widget" data-dashboard-widget="geography">
+                                    <div class="dashboard-widget-head">
+                                        <div>
+                                            <h3>Tổng giá trị trúng thầu theo tỉnh/thành</h3>
+                                            <p>Phân bổ theo địa điểm trong toàn bộ kết quả phù hợp.</p>
+                                        </div>
+                                    </div>
+                                    <div class="dashboard-widget-body dashboard-map-body" id="dashboard-province-map" role="img" aria-label="Bản đồ tổng giá trị trúng thầu theo tỉnh/thành"></div>
+                                </article>
+                                <article class="dashboard-widget dashboard-products-widget" data-dashboard-widget="top_products">
+                                    <div class="dashboard-widget-head">
+                                        <div>
+                                            <h3>Top 10 sản phẩm xuất hiện nhiều nhất</h3>
+                                            <p>Số gói thầu có chứa sản phẩm.</p>
+                                        </div>
+                                    </div>
+                                    <div class="dashboard-widget-body dashboard-products" id="dashboard-top-products"></div>
+                                </article>
+                            </div>
+
+                            <div class="dashboard-grid dashboard-secondary-grid">
+                                <article class="dashboard-widget dashboard-trend-widget" data-dashboard-widget="timeline">
+                                    <div class="dashboard-widget-head"><h3>Xu hướng giá trị trúng thầu theo thời gian</h3></div>
+                                    <div class="dashboard-widget-body dashboard-chart-body"><canvas id="dashboard-timeline-chart"></canvas></div>
+                                </article>
+                                <article class="dashboard-widget dashboard-price-widget" data-dashboard-widget="unit_price_distribution">
+                                    <div class="dashboard-widget-head"><h3>Phân bố đơn giá trúng thầu</h3></div>
+                                    <div class="dashboard-widget-body dashboard-chart-body"><canvas id="dashboard-price-chart"></canvas></div>
+                                </article>
+                                <article class="dashboard-widget dashboard-investors-widget" data-dashboard-widget="top_investors">
+                                    <div class="dashboard-widget-head">
+                                        <div><h3>Top chủ đầu tư</h3><p>Xếp theo tổng giá trị trúng thầu.</p></div>
+                                        <button class="dashboard-link-btn" id="dashboard-show-all-investors" type="button" hidden>Xem tất cả</button>
+                                    </div>
+                                    <div class="dashboard-widget-body dashboard-investors-wrap">
+                                        <table class="dashboard-investors-table">
+                                            <thead><tr><th>Tên chủ đầu tư</th><th>Số gói thầu</th><th>Tổng giá trị</th></tr></thead>
+                                            <tbody id="dashboard-top-investors"></tbody>
+                                        </table>
+                                    </div>
+                                </article>
                             </div>
                         </div>
                     </section>

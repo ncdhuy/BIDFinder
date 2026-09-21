@@ -16,12 +16,14 @@ from decimal import Decimal
 import hashlib
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import random
 import re
 import threading
 import time
+import unicodedata
 from typing import Any, Awaitable, Callable, Iterable, Mapping, Protocol, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
@@ -872,7 +874,12 @@ SORT_FIELD_MAP: dict[str, dict[str, str]] = {
 }
 
 
-def translate_typesense_query(query: ProcurementQuery, *, serving_generation: str | None = None) -> TypesenseRequestPlan:
+def translate_typesense_query(
+    query: ProcurementQuery,
+    *,
+    serving_generation: str | None = None,
+    additional_filter_clauses: Sequence[str] = (),
+) -> TypesenseRequestPlan:
     schema_group = normalize_group(query.group)
     query_group = public_group(schema_group)
     clauses: list[str] = []
@@ -1062,6 +1069,7 @@ def translate_typesense_query(query: ProcurementQuery, *, serving_generation: st
             # Accent preservation still depends on the collection schema's
             # locale; an existing schema without locale="vi" needs reindexing.
             params.update({"prefix": "true", "num_typos": 0})
+    clauses.extend(str(clause) for clause in additional_filter_clauses if str(clause).strip())
     if clauses:
         params["filter_by"] = " && ".join(clauses)
     return TypesenseRequestPlan(
@@ -1240,6 +1248,341 @@ class TypesenseShadowError(RuntimeError):
         super().__init__(message)
 
 
+def _analytics_decimal(value: Any, *, positive_only: bool = False) -> Decimal | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        parsed = Decimal(str(value).strip().replace(",", ""))
+    except (ArithmeticError, TypeError, ValueError):
+        return None
+    if not parsed.is_finite() or (positive_only and parsed <= 0):
+        return None
+    return parsed
+
+
+def _analytics_text(value: Any) -> str | None:
+    if isinstance(value, (list, tuple, set)):
+        value = next((item for item in value if str(item or "").strip()), None)
+    if value is None:
+        return None
+    text = " ".join(str(value).split()).strip()
+    return text or None
+
+
+def _analytics_values(value: Any) -> list[Any]:
+    if isinstance(value, (list, tuple, set)):
+        return list(value)
+    return [] if value is None else [value]
+
+
+def _analytics_identity(value: Any) -> str | None:
+    text = _analytics_text(value)
+    if not text:
+        return None
+    folded = unicodedata.normalize("NFKD", text).casefold()
+    return " ".join(folded.split())
+
+
+def _analytics_row_value(document: Mapping[str, Any]) -> Decimal:
+    explicit_total = _analytics_decimal(document.get("total_value"), positive_only=True)
+    if explicit_total is None:
+        explicit_total = _analytics_decimal(document.get("winning_total_value"), positive_only=True)
+    if explicit_total is not None:
+        return explicit_total
+    quantity = _analytics_decimal(document.get("quantity"), positive_only=True)
+    unit_price = _analytics_decimal(document.get("winning_unit_price"), positive_only=True)
+    return quantity * unit_price if quantity is not None and unit_price is not None else Decimal(0)
+
+
+def _analytics_package_key(group: str, document: Mapping[str, Any]) -> str:
+    package_code = _analytics_identity(document.get("bid_invitation_code"))
+    if package_code:
+        return f"package:{package_code}"
+    decision = _analytics_identity(document.get("decision_number"))
+    if decision:
+        return f"{group}:decision:{decision}"
+    return f"{group}:row:{_analytics_text(document.get('id')) or id(document)}"
+
+
+def _analytics_province(value: Any) -> str | None:
+    try:
+        normalized = normalize_location(value) or ""
+    except (NormalizationError, TypeError, ValueError):
+        normalized = _analytics_text(value) or ""
+    parts = [part.strip() for part in re.split(r"[;,]", normalized) if part.strip()]
+    province_prefix = re.compile(r"^(?:tỉnh|thành phố|tp\.?|city)\s+", re.IGNORECASE)
+    for part in parts:
+        if province_prefix.match(part):
+            return province_prefix.sub("", part).strip() or None
+    return parts[-1] if parts else None
+
+
+def build_dashboard_selection_clauses(group: str, selection: Mapping[str, Any] | None = None) -> tuple[str, ...]:
+    """Translate temporary dashboard selections into safe server-side filters."""
+    selection = selection or {}
+    schema_group = normalize_group(group)
+    product_field = {"goods": "item_name", "medicines": "medicine_name", "traditional_medicine": "item_name"}[schema_group]
+    clauses: list[str] = []
+    product = _analytics_text(selection.get("product"))
+    province = _analytics_text(selection.get("province"))
+    investor = _analytics_text(selection.get("investor"))
+    if product:
+        clauses.append(_exact_clause(product_field, product))
+    if province:
+        clauses.append(_partial_clause("location", province))
+    if investor:
+        clauses.append(_exact_clause("procuring_entity_name", investor))
+    return tuple(clauses)
+
+
+def build_dashboard_column_filter_clauses(group: str, column_filters: Mapping[str, Any] | None = None) -> tuple[str, ...]:
+    """Apply table-scoped filters to analytics when they are part of UI state."""
+    if not isinstance(column_filters, Mapping):
+        return ()
+    public = public_group(group)
+    contract = {field["name"]: field for field in get_group_contract(public).get("fields", [])}
+    clauses: list[str] = []
+    for raw_name, raw_rule in column_filters.items():
+        field_name = canonical_field_for(public, raw_name) or str(raw_name)
+        field_info = contract.get(field_name)
+        if not field_info or not field_info.get("filterable"):
+            raise TypesenseShadowError(
+                f"dashboard cannot apply table filter field: {raw_name}",
+                QUERY_CONTRACT_FAILURE,
+            )
+        values = raw_rule if isinstance(raw_rule, list) else raw_rule.get("values") if isinstance(raw_rule, Mapping) else None
+        if values:
+            typed_clause = _typed_list_clause(field_name, values, field_info["type"])
+            if typed_clause:
+                clauses.append(typed_clause)
+        text_rule = raw_rule.get("text") if isinstance(raw_rule, Mapping) and "text" in raw_rule else (
+            raw_rule if isinstance(raw_rule, Mapping) and raw_rule.get("operator") else None
+        )
+        if not isinstance(text_rule, Mapping):
+            continue
+        def text_clause(rule: Mapping[str, Any]) -> str | None:
+            operator = str(rule.get("operator") or "equals")
+            value = str(rule.get("value") or "").strip()
+            if not value:
+                return None
+            escaped = _escape_filter_value(value)
+            if operator == "equals":
+                return _typed_exact_clause(field_name, value, field_info["type"])
+            if operator == "notEquals":
+                return f"{field_name}:!={escaped}"
+            if operator == "beginsWith":
+                return f"{field_name}:{escaped}*"
+            if operator == "endsWith":
+                return f"{field_name}:*{escaped}"
+            if operator == "contains":
+                return f"{field_name}:*{escaped}*"
+            if operator == "notContains":
+                return f"{field_name}:!*{escaped}*"
+            raise TypesenseShadowError(
+                f"dashboard cannot apply table filter operator: {operator}",
+                QUERY_CONTRACT_FAILURE,
+            )
+
+        text_clauses = [text_clause(text_rule)]
+        if text_rule.get("custom") and str(text_rule.get("secondValue") or "").strip():
+            text_clauses.append(text_clause({
+                "operator": text_rule.get("secondOperator") or "equals",
+                "value": text_rule.get("secondValue"),
+            }))
+        text_clauses = [item for item in text_clauses if item]
+        if len(text_clauses) > 1 and text_rule.get("logic") == "or":
+            clauses.append("(" + " || ".join(text_clauses) + ")")
+        else:
+            clauses.extend(text_clauses)
+    return tuple(clauses)
+
+
+def _analytics_date(value: Any) -> date | None:
+    text = _analytics_text(value)
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError:
+        try:
+            return datetime.strptime(text[:10], "%d/%m/%Y").date()
+        except ValueError:
+            return None
+
+
+def _analytics_number(value: Decimal) -> int | float:
+    return int(value) if value == value.to_integral_value() else float(value)
+
+
+def _analytics_quantile(values: Sequence[Decimal], ratio: float) -> Decimal:
+    if not values:
+        return Decimal(0)
+    if len(values) == 1:
+        return values[0]
+    position = (len(values) - 1) * ratio
+    lower = int(math.floor(position))
+    upper = int(math.ceil(position))
+    if lower == upper:
+        return values[lower]
+    fraction = Decimal(str(position - lower))
+    return values[lower] + (values[upper] - values[lower]) * fraction
+
+
+def build_dashboard_price_histogram(values: Iterable[Any], *, max_bins: int = 12) -> dict[str, Any]:
+    """Build a real price histogram; logarithmic bins keep right-skewed prices readable."""
+    valid = sorted(
+        value for value in (_analytics_decimal(item, positive_only=True) for item in values)
+        if value is not None
+    )
+    if not valid:
+        return {"bins": [], "count": 0, "stats": {"min": None, "p25": None, "median": None, "p75": None, "max": None}}
+
+    minimum, maximum = valid[0], valid[-1]
+    bin_count = min(max_bins, max(5, math.ceil(math.sqrt(len(valid)))))
+    if minimum == maximum:
+        edges = [minimum, minimum + (Decimal(1) if minimum == 0 else minimum * Decimal("0.05"))]
+    elif maximum / minimum >= Decimal(100):
+        log_min, log_max = math.log10(float(minimum)), math.log10(float(maximum))
+        edges = [Decimal(str(10 ** (log_min + (log_max - log_min) * index / bin_count))) for index in range(bin_count + 1)]
+        edges[0], edges[-1] = minimum, maximum
+    else:
+        step = (maximum - minimum) / Decimal(bin_count)
+        edges = [minimum + step * index for index in range(bin_count + 1)]
+        edges[-1] = maximum
+
+    bins = [{"start": edges[index], "end": edges[index + 1], "count": 0} for index in range(len(edges) - 1)]
+    for value in valid:
+        index = next((idx for idx in range(len(bins) - 1) if value < bins[idx]["end"]), len(bins) - 1)
+        bins[index]["count"] += 1
+    return {
+        "bins": [
+            {"start": _analytics_number(item["start"]), "end": _analytics_number(item["end"]), "count": item["count"]}
+            for item in bins
+        ],
+        "count": len(valid),
+        "stats": {
+            "min": _analytics_number(minimum),
+            "p25": _analytics_number(_analytics_quantile(valid, 0.25)),
+            "median": _analytics_number(_analytics_quantile(valid, 0.5)),
+            "p75": _analytics_number(_analytics_quantile(valid, 0.75)),
+            "max": _analytics_number(maximum),
+        },
+    }
+
+
+def aggregate_dashboard_documents(documents_by_group: Mapping[str, Sequence[Mapping[str, Any]]]) -> dict[str, Any]:
+    """Aggregate every matched Typesense document, never a paginated UI page."""
+    product_fields = {"goods": "item_name", "medicines": "medicine_name", "traditional_medicine": "item_name"}
+    packages: dict[str, dict[str, Any]] = {}
+    products: dict[str, dict[str, Any]] = {}
+    investors: dict[str, dict[str, Any]] = {}
+    provinces: dict[str, dict[str, Any]] = {}
+    bidders: set[str] = set()
+    prices: list[Decimal] = []
+    dated_values: list[tuple[date, Decimal]] = []
+    seen_documents: set[tuple[str, str]] = set()
+    matched_observations = 0
+
+    for group, documents in documents_by_group.items():
+        product_field = product_fields.get(group, "item_name")
+        for document in documents:
+            if not isinstance(document, Mapping):
+                continue
+            document_id = _analytics_text(document.get("id"))
+            if document_id and (group, document_id) in seen_documents:
+                continue
+            if document_id:
+                seen_documents.add((group, document_id))
+            matched_observations += 1
+            package_key = _analytics_package_key(group, document)
+            package = packages.setdefault(package_key, {"value": Decimal(0), "investor_key": None})
+            row_value = _analytics_row_value(document)
+            package["value"] += row_value
+
+            product_name = _analytics_text(document.get(product_field))
+            if product_name:
+                product_key = product_name
+                entry = products.setdefault(product_key, {"name": product_name, "packages": set(), "group": public_group(group)})
+                entry["packages"].add(package_key)
+
+            bidder_values = _analytics_values(document.get("winning_bidder_id")) or _analytics_values(document.get("winning_bidder_name"))
+            bidders.update(identity for identity in (_analytics_identity(value) for value in bidder_values) if identity)
+
+            investor_name = _analytics_text(document.get("procuring_entity_name"))
+            investor_id = _analytics_identity(document.get("procuring_entity_id"))
+            # Name is the stable display contract across collections; use ID only
+            # when a source row has no investor name at all.
+            investor_key = _analytics_identity(investor_name) or investor_id
+            if investor_key:
+                package["investor_key"] = package["investor_key"] or investor_key
+                investor = investors.setdefault(investor_key, {"name": investor_name or investor_key, "packages": set()})
+                investor["packages"].add(package_key)
+
+            province = _analytics_province(document.get("location"))
+            if province and row_value > 0:
+                entry = provinces.setdefault(province, {"name": province, "value": Decimal(0), "packages": set()})
+                entry["value"] += row_value
+                entry["packages"].add(package_key)
+
+            if row_value > 0:
+                prices.append(_analytics_decimal(document.get("winning_unit_price"), positive_only=True) or Decimal(0))
+                result_date = _analytics_date(document.get("result_posted_at")) or _analytics_date(document.get("decision_issued_at"))
+                if result_date:
+                    dated_values.append((result_date, row_value))
+
+    total_value = sum((package["value"] for package in packages.values()), Decimal(0))
+    top_investors = []
+    for key, investor in investors.items():
+        total = sum((packages[package_key]["value"] for package_key in investor["packages"]), Decimal(0))
+        top_investors.append({"name": investor["name"], "package_count": len(investor["packages"]), "total_awarded_value": _analytics_number(total), "key": key})
+    top_investors.sort(key=lambda item: (-float(item["total_awarded_value"]), item["name"].casefold()))
+
+    product_rows = [
+        {"name": entry["name"], "count": len(entry["packages"]), "group": entry["group"]}
+        for entry in products.values()
+    ]
+    product_rows.sort(key=lambda item: (-item["count"], item["name"].casefold()))
+
+    geography = [
+        {"province": entry["name"], "total_awarded_value": _analytics_number(entry["value"]), "package_count": len(entry["packages"])}
+        for entry in provinces.values()
+    ]
+    geography.sort(key=lambda item: (-float(item["total_awarded_value"]), item["province"].casefold()))
+
+    timeline = {"grain": None, "points": []}
+    if dated_values:
+        first, last = min(item[0] for item in dated_values), max(item[0] for item in dated_values)
+        span_days = (last - first).days
+        grain = "day" if span_days <= 90 else "month" if span_days <= 730 else "quarter" if span_days <= 1825 else "year"
+        buckets: dict[str, Decimal] = {}
+        for current_date, value in dated_values:
+            if grain == "day":
+                period = current_date.isoformat()
+            elif grain == "month":
+                period = current_date.strftime("%Y-%m")
+            elif grain == "quarter":
+                period = f"{current_date.year}-Q{((current_date.month - 1) // 3) + 1}"
+            else:
+                period = str(current_date.year)
+            buckets[period] = buckets.get(period, Decimal(0)) + value
+        timeline = {"grain": grain, "points": [{"period": period, "total_awarded_value": _analytics_number(buckets[period])} for period in sorted(buckets)]}
+
+    return {
+        "summary": {
+            "total_awarded_value": _analytics_number(total_value),
+            "package_count": len(packages),
+            "bidder_count": len(bidders),
+            "investor_count": len(investors),
+        },
+        "geography": geography,
+        "top_products": product_rows[:10],
+        "timeline": timeline,
+        "unit_price_distribution": build_dashboard_price_histogram(prices),
+        "top_investors": top_investors[:5],
+        "meta": {"complete": True, "matched_observations": matched_observations, "groups": sorted(public_group(group) for group in documents_by_group)},
+    }
+
+
 class SearchRepository(Protocol):
     async def search(self, query: ProcurementQuery) -> TypesenseSearchResult:
         ...
@@ -1328,6 +1671,88 @@ class TypesenseSearchRepository:
             latency_ms=(time.perf_counter() - started) * 1000,
             page=query.page,
             per_page=query.limit,
+        )
+
+    def _request_all(
+        self,
+        query: ProcurementQuery,
+        *,
+        additional_filter_clauses: Sequence[str] = (),
+        include_fields: Sequence[str] = (),
+    ) -> list[Mapping[str, Any]]:
+        """Fetch complete match universe for server-side analytics.
+
+        This path deliberately does not use standard/full search caps. It transfers
+        only aggregation fields to the API process, never raw analytics rows to the browser.
+        """
+        if not self.config.api_key:
+            raise TypesenseShadowError("Typesense shadow API key is not configured")
+        plan = translate_typesense_query(
+            query,
+            serving_generation=self.config.serving_generation,
+            additional_filter_clauses=additional_filter_clauses,
+        )
+        if plan.unsupported_filters or plan.unsupported_sorts:
+            unsupported = ", ".join((*plan.unsupported_filters, *plan.unsupported_sorts))
+            raise TypesenseShadowError(f"unsupported search contract field(s): {unsupported}", QUERY_CONTRACT_FAILURE)
+
+        request_params = dict(plan.params)
+        if include_fields:
+            request_params["include_fields"] = ",".join(dict.fromkeys(include_fields))
+        documents: list[Mapping[str, Any]] = []
+        page = 1
+        per_page = TYPESENSE_MAX_HITS_PER_PAGE
+        found: int | None = None
+
+        while True:
+            request_params.update({"page": page, "per_page": per_page})
+            url = f"{self.config.base_url}/collections/{quote(plan.collection, safe='')}/documents/search?{urlencode(request_params, doseq=True)}"
+            request = Request(url, method="GET", headers={
+                "Accept": "application/json",
+                "X-TYPESENSE-API-KEY": self.config.api_key,
+            })
+            try:
+                with self._opener(request, timeout=max(self.config.timeout_seconds, 2.0)) as response:
+                    raw = response.read()
+            except HTTPError as exc:
+                code = SHADOW_INFRA_ERROR if exc.code in {408, 425, 429} or exc.code >= 500 else QUERY_CONTRACT_FAILURE
+                raise TypesenseShadowError(f"Typesense HTTP {exc.code}", code=code) from exc
+            except (URLError, TimeoutError, OSError) as exc:
+                raise TypesenseShadowError(f"Typesense request failed: {type(exc).__name__}") from exc
+            try:
+                payload = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise TypesenseShadowError("Typesense returned invalid JSON") from exc
+            if not isinstance(payload, Mapping) or not isinstance(payload.get("found"), int) or payload["found"] < 0:
+                raise TypesenseShadowError("Typesense returned malformed analytics metadata")
+            found = int(payload["found"]) if found is None else found
+            hits = payload.get("hits", [])
+            if not isinstance(hits, list):
+                raise TypesenseShadowError("Typesense returned malformed analytics hits")
+            for hit in hits:
+                if not isinstance(hit, Mapping) or not isinstance(hit.get("document"), Mapping):
+                    raise TypesenseShadowError("Typesense returned malformed analytics hit")
+                document = dict(hit["document"])
+                if not isinstance(document.get("id"), str) or not document["id"]:
+                    raise TypesenseShadowError("Typesense analytics document has no identity")
+                documents.append(document)
+            if not hits or page * per_page >= found:
+                break
+            page += 1
+        return documents
+
+    async def analytics_documents(
+        self,
+        query: ProcurementQuery,
+        *,
+        additional_filter_clauses: Sequence[str] = (),
+        include_fields: Sequence[str] = (),
+    ) -> list[Mapping[str, Any]]:
+        return await asyncio.to_thread(
+            self._request_all,
+            query,
+            additional_filter_clauses=additional_filter_clauses,
+            include_fields=include_fields,
         )
 
     async def search(self, query: ProcurementQuery) -> TypesenseSearchResult:

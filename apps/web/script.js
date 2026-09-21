@@ -2836,6 +2836,9 @@ function refreshRenderedTables({ resetScroll = true, redrawCharts = true } = {})
             const chartData = getInsightChartDataSets();
             void drawCharts(chartData.df1, chartData.df2, chartData.df3);
         }
+        if (isDashboardActive()) {
+            void refreshDashboardAnalytics();
+        }
     }
 }
 
@@ -2912,6 +2915,11 @@ function updateScopeSwitcherCounts(df1Count, df2Count, df3Count = 0) {
 }
 
 function selectResultViewWithMostRows() {
+    // A dashboard selection is a deliberate user choice. Do not switch back
+    // to a table merely because a new search returned a different row count.
+    const activeView = document.querySelector('.scope-btn.active')?.getAttribute('data-view');
+    if (activeView === 'dashboard-panel') return;
+
     const resultCounts = [
         { view: 'df2-panel', count: Number(currentQueryMeta.df2WorkingCount) || currentDisplayedDf2.length },
         { view: 'df1-panel', count: Number(currentQueryMeta.df1WorkingCount) || currentDisplayedDf1.length },
@@ -2920,7 +2928,6 @@ function selectResultViewWithMostRows() {
     const largestCount = Math.max(...resultCounts.map(({ count }) => count));
     if (largestCount <= 0) return;
 
-    const activeView = document.querySelector('.scope-btn.active')?.getAttribute('data-view');
     if (resultCounts.some(({ view, count }) => view === activeView && count === largestCount)) return;
 
     const largestResult = resultCounts.find(({ count }) => count === largestCount);
@@ -3469,22 +3476,6 @@ function setInfoBannerMessage(target, title, message) {
     target.appendChild(strong);
     target.appendChild(document.createElement('br'));
     target.appendChild(document.createTextNode(message));
-}
-
-function createTooltip(targetElement, contentNode) {
-    const tooltip = document.createElement("div");
-    tooltip.className = "external-tooltip";
-    if (contentNode) {
-        Array.from(contentNode.childNodes).forEach((child) => {
-            tooltip.appendChild(child.cloneNode(true));
-        });
-    }
-
-    const rect = targetElement.getBoundingClientRect();
-    tooltip.style.top = `${rect.bottom + 8}px`;
-    tooltip.style.left = `${rect.left + rect.width / 2 - 210}px`;
-
-    return tooltip;
 }
 
 // ============================== 
@@ -5101,6 +5092,10 @@ const chartInstances = {
     histogram: null,
     timeline: null
 };
+const dashboardChartInstances = {
+    timeline: null,
+    price: null
+};
 
 const CHART_JS_URL = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js';
 let chartJsLoadPromise = null;
@@ -5108,6 +5103,15 @@ let insightChartsDirty = true;
 let vietnamMapDefinition = null;
 let vietnamMapLoadPromise = null;
 let lastProvinceMapData = [];
+const lastProvinceMapDataByContainer = new Map();
+let dashboardAnalyticsController = null;
+let dashboardAnalyticsVersion = 0;
+let dashboardAnalyticsData = null;
+const dashboardSelection = {
+    product: null,
+    province: null,
+    investor: null
+};
 
 const CHART_THEME = {
     primary: '#127495',
@@ -5353,9 +5357,11 @@ function getProvinceValueEntries(data) {
         const current = adminValueMap.get(adminUnit.key) || {
             name: adminUnit.name,
             parts: adminUnit.parts,
-            value: 0
+            value: 0,
+            packageCount: 0
         };
         current.value += value;
+        current.packageCount += Number(r?.package_count || 0);
         adminValueMap.set(adminUnit.key, current);
     });
 
@@ -5501,16 +5507,25 @@ function loadVietnamProvinceMap() {
     return vietnamMapLoadPromise;
 }
 
-function renderProvinceValueMap(data = []) {
+function renderProvinceValueMap(data = [], options = {}) {
+    const containerId = options.containerId || 'chart-province-map';
     lastProvinceMapData = data;
-    const container = document.getElementById('chart-province-map');
+    lastProvinceMapDataByContainer.set(containerId, data);
+    const container = document.getElementById(containerId);
     if (!container) return;
 
     if (!vietnamMapDefinition?.features?.length) {
-        showNoDataMessage('chart-province-map', 'Đang tải bản đồ Việt Nam...');
+        options.onMapLoading?.();
+        showNoDataMessage(containerId, 'Đang tải bản đồ Việt Nam...');
         loadVietnamProvinceMap()
-            .then(() => renderProvinceValueMap(lastProvinceMapData))
-            .catch(() => showNoDataMessage('chart-province-map', 'Không tải được bản đồ Việt Nam 34 tỉnh/thành.'));
+            .then(() => {
+                options.onMapReady?.();
+                renderProvinceValueMap(lastProvinceMapDataByContainer.get(containerId) || [], options);
+            })
+            .catch(() => {
+                options.onMapError?.();
+                showNoDataMessage(containerId, 'Không tải được bản đồ Việt Nam 34 tỉnh/thành.');
+            });
         return;
     }
 
@@ -5520,11 +5535,11 @@ function renderProvinceValueMap(data = []) {
 
     if (!maxValue) {
         container.replaceChildren();
-        showNoDataMessage('chart-province-map', 'Không có dữ liệu tỉnh/thành để hiển thị.');
+        showNoDataMessage(containerId, 'Không có dữ liệu tỉnh/thành để hiển thị.');
         return;
     }
 
-    hideNoDataMessage('chart-province-map');
+    hideNoDataMessage(containerId);
     container.replaceChildren();
     const tooltip = getOrCreateProvinceMapTooltip(container);
 
@@ -5588,6 +5603,7 @@ function renderProvinceValueMap(data = []) {
         path.dataset.valueText = valueText;
         path.setAttribute('tabindex', '0');
         path.setAttribute('aria-label', `${displayName}: ${valueText}`);
+        path.classList.toggle('is-selected', getProvinceMapKey(options.selectedProvince || '') === provinceKey);
 
         path.addEventListener('pointerenter', (event) => {
             if (activeProvincePath && activeProvincePath !== path) {
@@ -5603,15 +5619,22 @@ function renderProvinceValueMap(data = []) {
             nameEl.textContent = displayName;
             valueEl.textContent = valueText;
             partsEl.textContent = mergeStatus;
+            const packageCount = Number(provinceValue?.packageCount || 0);
+            if (packageCount > 0) {
+                const packageEl = document.createElement('span');
+                packageEl.textContent = `${packageCount.toLocaleString('vi-VN')} gói thầu`;
+                tooltip.appendChild(packageEl);
+            }
             tooltip.append(nameEl, valueEl, partsEl);
             tooltip.classList.add('visible');
             moveProvinceMapTooltip(container, tooltip, event);
         });
+        path.addEventListener('click', () => options.onProvinceSelect?.(displayName));
         path.addEventListener('pointermove', (event) => {
             moveProvinceMapTooltip(container, tooltip, event);
         });
         path.addEventListener('pointerleave', (event) => {
-            if (event.relatedTarget?.closest?.('#chart-province-map svg path')) {
+            if (event.relatedTarget?.closest?.('svg path')) {
                 return;
             }
             if (activeProvincePath === path) {
@@ -6334,6 +6357,399 @@ async function drawCharts(df1Data, df2Data, df3Data = []) {
     });
     updateInsightDataPreviews(totalRecords);
     insightChartsDirty = false;
+}
+
+function isDashboardActive() {
+    return document.getElementById('dashboard-panel')?.classList.contains('active');
+}
+
+function dashboardWidgetElement(key) {
+    return document.querySelector(`[data-dashboard-widget="${key}"]`);
+}
+
+function setDashboardWidgetState(key, message, type = 'empty') {
+    const widget = dashboardWidgetElement(key);
+    const body = widget?.querySelector('.dashboard-widget-body');
+    if (!widget || !body) return;
+    const state = document.createElement('div');
+    state.className = `dashboard-widget-state is-${type}`;
+    state.textContent = message;
+    body.querySelector('.dashboard-widget-state')?.remove();
+    body.querySelector('canvas')?.setAttribute('hidden', 'hidden');
+    body.appendChild(state);
+    widget.dataset.state = type;
+}
+
+function clearDashboardWidgetState(key) {
+    const widget = dashboardWidgetElement(key);
+    const body = widget?.querySelector('.dashboard-widget-body');
+    if (!widget || !body) return;
+    body.querySelector('.dashboard-widget-state')?.remove();
+    body.querySelector('canvas')?.removeAttribute('hidden');
+    delete widget.dataset.state;
+}
+
+function setDashboardStatus(message = '', type = '') {
+    const status = document.getElementById('dashboard-status');
+    if (!status) return;
+    status.textContent = message;
+    status.className = `dashboard-header-status${type ? ` is-${type}` : ''}`;
+}
+
+function formatDashboardCurrency(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number.toLocaleString('vi-VN') : '—';
+}
+
+function formatDashboardCount(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number.toLocaleString('vi-VN') : '—';
+}
+
+function renderDashboardBaseContext() {
+    const container = document.getElementById('dashboard-base-context');
+    if (!container) return;
+    container.replaceChildren();
+    const request = currentQueryRequest || {};
+    const parts = [];
+    if (String(request.text || '').trim()) parts.push(`Từ khóa: ${request.text.trim()}`);
+    if (request.group) parts.push(`Nhóm: ${request.group}`);
+    if (request.scope && request.scope !== 'all') parts.push(`Phạm vi: ${request.scope}`);
+    if (request.dateRanges && Object.keys(request.dateRanges).length) parts.push('Có lọc thời gian');
+    if (request.filters && Object.keys(request.filters).length) parts.push('Có bộ lọc nâng cao');
+    if (request.columnFilters && Object.keys(request.columnFilters).length) parts.push('Có lọc cột');
+    if (!parts.length) parts.push('Toàn bộ kết quả phù hợp với tìm kiếm hiện tại');
+    parts.forEach(text => {
+        const chip = document.createElement('span');
+        chip.className = 'dashboard-context-chip';
+        chip.textContent = text;
+        container.appendChild(chip);
+    });
+}
+
+function renderDashboardSelections() {
+    const bar = document.getElementById('dashboard-selection-bar');
+    const chips = document.getElementById('dashboard-selection-chips');
+    const clear = document.getElementById('dashboard-clear-selections');
+    if (!bar || !chips) return;
+    chips.replaceChildren();
+    const labels = { product: 'Sản phẩm', province: 'Tỉnh/thành', investor: 'Chủ đầu tư' };
+    Object.entries(dashboardSelection).forEach(([key, value]) => {
+        if (!value) return;
+        const chip = document.createElement('span');
+        chip.className = 'dashboard-selection-chip';
+        chip.textContent = `${labels[key]}: ${value}`;
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.textContent = '×';
+        remove.setAttribute('aria-label', `Bỏ chọn ${labels[key]}`);
+        remove.addEventListener('click', () => setDashboardSelection(key, null));
+        chip.appendChild(remove);
+        chips.appendChild(chip);
+    });
+    const hasSelection = Object.values(dashboardSelection).some(Boolean);
+    bar.hidden = !hasSelection;
+    if (clear) clear.hidden = !hasSelection;
+}
+
+function resetDashboardSelection() {
+    dashboardSelection.product = null;
+    dashboardSelection.province = null;
+    dashboardSelection.investor = null;
+    renderDashboardSelections();
+}
+
+function setDashboardSelection(key, value) {
+    if (!Object.prototype.hasOwnProperty.call(dashboardSelection, key)) return;
+    dashboardSelection[key] = value ? String(value).trim() : null;
+    renderDashboardSelections();
+    if (isDashboardActive()) void refreshDashboardAnalytics({ force: true });
+}
+
+function getDashboardBaseRequest(request = currentQueryRequest) {
+    const base = buildQueryRequest(request);
+    delete base.page;
+    delete base.limit;
+    delete base.sort;
+    return base;
+}
+
+function buildDashboardAnalyticsRequest(request = currentQueryRequest, selection = dashboardSelection) {
+    return {
+        scope: request?.scope || 'all',
+        group: request?.group,
+        sourceTypes: request?.sourceTypes || [],
+        filters: request?.filters || {},
+        text: request?.text || '',
+        searchFields: request?.searchFields || [],
+        structuredFilters: request?.structuredFilters || {},
+        ranges: request?.ranges || {},
+        dateRanges: request?.dateRanges || {},
+        exactIdentifiers: request?.exactIdentifiers || {},
+        crossGroupSearch: request?.crossGroupSearch === true,
+        crossGroupSearchFields: request?.crossGroupSearchFields || [],
+        columnFilters: request?.columnFilters || {},
+        dashboardSelection: {
+            product: selection?.product || null,
+            province: selection?.province || null,
+            investor: selection?.investor || null
+        }
+    };
+}
+
+function resetDashboardCharts() {
+    Object.keys(dashboardChartInstances).forEach(key => {
+        dashboardChartInstances[key]?.destroy?.();
+        dashboardChartInstances[key] = null;
+    });
+}
+
+function renderDashboardSummary(summary = {}) {
+    const values = {
+        total_awarded_value: formatDashboardCurrency(summary.total_awarded_value),
+        package_count: formatDashboardCount(summary.package_count),
+        bidder_count: formatDashboardCount(summary.bidder_count),
+        investor_count: formatDashboardCount(summary.investor_count)
+    };
+    document.querySelectorAll('[data-dashboard-kpi]').forEach(node => {
+        node.textContent = values[node.dataset.dashboardKpi] || '—';
+    });
+}
+
+function renderDashboardMap(geography = []) {
+    const rows = (Array.isArray(geography) ? geography : []).map(item => ({
+        location: item.province,
+        total_value: item.total_awarded_value,
+        package_count: item.package_count
+    }));
+    if (!rows.length) {
+        setDashboardWidgetState('geography', 'Không có dữ liệu tỉnh/thành.', 'empty');
+        return;
+    }
+    clearDashboardWidgetState('geography');
+    renderProvinceValueMap(rows, {
+        containerId: 'dashboard-province-map',
+        selectedProvince: dashboardSelection.province,
+        onProvinceSelect: province => setDashboardSelection('province', province),
+        onMapLoading: () => setDashboardWidgetState('geography', 'Đang tải bản đồ Việt Nam…', 'loading'),
+        onMapReady: () => clearDashboardWidgetState('geography'),
+        onMapError: () => setDashboardWidgetState('geography', 'Không tải được bản đồ Việt Nam.', 'error')
+    });
+}
+
+function renderDashboardProducts(products = []) {
+    const container = document.getElementById('dashboard-top-products');
+    if (!container) return;
+    if (!products.length) {
+        setDashboardWidgetState('top_products', 'Không có sản phẩm phù hợp.', 'empty');
+        return;
+    }
+    clearDashboardWidgetState('top_products');
+    container.replaceChildren();
+    const maxCount = Math.max(...products.map(item => Number(item.count || 0)), 1);
+    products.slice(0, 10).forEach((product, index) => {
+        const row = document.createElement('div');
+        row.className = 'dashboard-product-row';
+        row.classList.toggle('is-selected', dashboardSelection.product === product.name);
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'dashboard-product-bar';
+        button.style.setProperty('--bar-width', `${Math.max(4, (Number(product.count || 0) / maxCount) * 100)}%`);
+        button.setAttribute('aria-pressed', String(dashboardSelection.product === product.name));
+        button.title = product.name;
+        const rank = document.createElement('span');
+        rank.className = 'dashboard-product-rank';
+        rank.textContent = String(index + 1);
+        const name = document.createElement('span');
+        name.className = 'dashboard-product-name';
+        name.textContent = product.name;
+        const count = document.createElement('strong');
+        count.className = 'dashboard-product-count';
+        count.textContent = formatDashboardCount(product.count);
+        button.append(rank, name, count);
+        button.addEventListener('click', () => setDashboardSelection('product', product.name));
+        row.appendChild(button);
+        container.appendChild(row);
+    });
+}
+
+async function renderDashboardCharts(timeline = {}, priceDistribution = {}) {
+    resetDashboardCharts();
+    const timelinePoints = Array.isArray(timeline.points) ? timeline.points : [];
+    const priceBins = Array.isArray(priceDistribution.bins) ? priceDistribution.bins : [];
+    if (!timelinePoints.length) setDashboardWidgetState('timeline', 'Không có dữ liệu thời gian.', 'empty');
+    if (!priceBins.length) setDashboardWidgetState('unit_price_distribution', 'Không có đơn giá hợp lệ.', 'empty');
+    if (!timelinePoints.length && !priceBins.length) return;
+
+    try {
+        await ensureChartJsLoaded();
+    } catch (error) {
+        if (timelinePoints.length) setDashboardWidgetState('timeline', 'Không tải được biểu đồ.', 'error');
+        if (priceBins.length) setDashboardWidgetState('unit_price_distribution', 'Không tải được biểu đồ.', 'error');
+        return;
+    }
+
+    if (timelinePoints.length) {
+        const canvas = document.getElementById('dashboard-timeline-chart');
+        clearDashboardWidgetState('timeline');
+        dashboardChartInstances.timeline = new window.Chart(canvas.getContext('2d'), {
+            type: 'line',
+            data: {
+                labels: timelinePoints.map(point => point.period),
+                datasets: [{
+                    data: timelinePoints.map(point => point.total_awarded_value),
+                    borderColor: CHART_THEME.accent,
+                    backgroundColor: CHART_THEME.accentSoft,
+                    fill: true,
+                    tension: 0,
+                    pointRadius: 2,
+                    pointHitRadius: 12
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: { label: item => formatCurrencyTooltip(Number(item.raw)) } }
+                },
+                scales: {
+                    x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 8 } },
+                    y: { beginAtZero: true, grid: { color: CHART_THEME.grid }, ticks: { callback: value => formatCurrencyAxis(value) } }
+                }
+            }
+        });
+    }
+    if (priceBins.length) {
+        const canvas = document.getElementById('dashboard-price-chart');
+        clearDashboardWidgetState('unit_price_distribution');
+        dashboardChartInstances.price = new window.Chart(canvas.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: priceBins.map(bin => `${formatPriceAxis(bin.start)} – ${formatPriceAxis(bin.end)}`),
+                datasets: [{ data: priceBins.map(bin => bin.count), backgroundColor: CHART_THEME.primary, borderRadius: 4, maxBarThickness: 42 }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: { title: items => `Khoảng giá: ${items[0]?.label || ''}`, label: item => `Số quan sát: ${item.formattedValue}` } }
+                },
+                scales: {
+                    x: { grid: { display: false }, ticks: { autoSkip: true, maxRotation: 45, minRotation: 45, maxTicksLimit: 6 } },
+                    y: { beginAtZero: true, grid: { color: CHART_THEME.grid }, ticks: { stepSize: 1 } }
+                }
+            }
+        });
+    }
+}
+
+function renderDashboardInvestors(investors = []) {
+    const body = document.getElementById('dashboard-top-investors');
+    if (!body) return;
+    if (!investors.length) {
+        setDashboardWidgetState('top_investors', 'Không có chủ đầu tư phù hợp.', 'empty');
+        return;
+    }
+    clearDashboardWidgetState('top_investors');
+    body.replaceChildren();
+    investors.slice(0, 5).forEach(investor => {
+        const row = document.createElement('tr');
+        const nameCell = document.createElement('td');
+        const name = document.createElement('button');
+        name.type = 'button';
+        name.className = 'dashboard-investor-link';
+        name.textContent = investor.name;
+        name.title = investor.name;
+        name.addEventListener('click', () => setDashboardSelection('investor', investor.name));
+        nameCell.appendChild(name);
+        const packageCell = document.createElement('td');
+        packageCell.textContent = formatDashboardCount(investor.package_count);
+        const valueCell = document.createElement('td');
+        valueCell.textContent = formatCurrencyTooltip(Number(investor.total_awarded_value || 0));
+        row.append(nameCell, packageCell, valueCell);
+        body.appendChild(row);
+    });
+}
+
+function renderDashboardAnalytics(payload) {
+    dashboardAnalyticsData = payload;
+    renderDashboardSummary(payload?.summary || {});
+    renderDashboardBaseContext();
+    renderDashboardSelections();
+    renderDashboardMap(payload?.geography || []);
+    renderDashboardProducts(payload?.top_products || []);
+    renderDashboardInvestors(payload?.top_investors || []);
+    void renderDashboardCharts(payload?.timeline || {}, payload?.unit_price_distribution || {});
+    setDashboardStatus(payload?.analytics_complete ? 'Toàn bộ kết quả phù hợp' : 'Dữ liệu giới hạn', payload?.analytics_complete ? 'complete' : 'warning');
+}
+
+function renderDashboardEmpty(message = 'Thực hiện tìm kiếm để xem phân tích.') {
+    dashboardAnalyticsData = null;
+    resetDashboardCharts();
+    renderDashboardSummary({});
+    renderDashboardBaseContext();
+    ['geography', 'top_products', 'timeline', 'unit_price_distribution', 'top_investors'].forEach(key => setDashboardWidgetState(key, message, 'empty'));
+    setDashboardStatus('', '');
+}
+
+async function refreshDashboardAnalytics({ force = false } = {}) {
+    if (!isDashboardActive()) return;
+    renderDashboardBaseContext();
+    renderDashboardSelections();
+
+    // An untouched dashboard must not issue an unbounded "match all" request.
+    // Once the user has searched (including a valid zero-result search), the
+    // backend owns the complete-universe aggregation.
+    if (!hasActiveQueryFilters(currentQueryRequest) && Number(currentQueryMeta?.totalCount || 0) <= 0) {
+        renderDashboardEmpty();
+        return;
+    }
+
+    const baseRequest = getDashboardBaseRequest(currentQueryRequest);
+    const baseKey = stableStringify(baseRequest);
+    if (refreshDashboardAnalytics.lastBaseKey && refreshDashboardAnalytics.lastBaseKey !== baseKey) {
+        resetDashboardSelection();
+    }
+    refreshDashboardAnalytics.lastBaseKey = baseKey;
+    const requestBody = buildDashboardAnalyticsRequest(baseRequest, dashboardSelection);
+    const requestKey = stableStringify(requestBody);
+    if (!force && refreshDashboardAnalytics.lastRequestKey === requestKey && dashboardAnalyticsData) return;
+    refreshDashboardAnalytics.lastRequestKey = requestKey;
+
+    dashboardAnalyticsController?.abort();
+    dashboardAnalyticsController = new AbortController();
+    const version = ++dashboardAnalyticsVersion;
+    setDashboardStatus('Đang tải phân tích…', 'loading');
+    ['geography', 'top_products', 'timeline', 'unit_price_distribution', 'top_investors'].forEach(key => setDashboardWidgetState(key, 'Đang tải dữ liệu…', 'loading'));
+    try {
+        await window.BIDFinderAuth?.whenReady?.();
+        if (!requireAuthenticatedSession('login', 'full_query')) throw new Error('Bạn cần đăng nhập để xem phân tích.');
+        const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/dashboard-analytics`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestBody),
+            signal: dashboardAnalyticsController.signal
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload?.success === false) throw new Error(payload?.detail || payload?.message || `HTTP ${response.status}`);
+        if (version !== dashboardAnalyticsVersion) return;
+        renderDashboardAnalytics(payload);
+    } catch (error) {
+        if (error?.name === 'AbortError' || version !== dashboardAnalyticsVersion) return;
+        setDashboardStatus('Phân tích chưa khả dụng', 'error');
+        ['geography', 'top_products', 'timeline', 'unit_price_distribution', 'top_investors'].forEach(key => setDashboardWidgetState(key, 'Không tải được dữ liệu phân tích.', 'error'));
+    }
+}
+
+function initDashboardEvents() {
+    document.getElementById('dashboard-clear-selections')?.addEventListener('click', () => {
+        resetDashboardSelection();
+        void refreshDashboardAnalytics({ force: true });
+    });
+    renderDashboardSelections();
+    renderDashboardEmpty();
 }
 
 function showNoDataMessage(canvasId, message) {
@@ -9154,8 +9570,12 @@ function activateResultView(targetId) {
     const button = document.querySelector(`.scope-btn[data-view="${targetId}"]`);
     const activeButton = document.querySelector('.scope-btn.active');
     if (!button) return;
+
+    document.getElementById('legacy-pagination')?.classList.toggle('is-dashboard-hidden', targetId === 'dashboard-panel');
+
     if (activeButton === button) {
         updateLegacyPagination();
+        if (targetId === 'dashboard-panel') void refreshDashboardAnalytics();
         return;
     }
 
@@ -9177,6 +9597,7 @@ function activateResultView(targetId) {
     resultPanels.forEach(panel => panel.classList.remove('active'));
     targetPanel.classList.add('active');
     updateLegacyPagination();
+    if (targetId === 'dashboard-panel') void refreshDashboardAnalytics();
 }
 
 function syncScopeSwitcherSlider() {
@@ -10198,6 +10619,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initBulkSearchEvents();
     initFeedbackModalEvents();
     initInsightDrawerEvents();
+    initDashboardEvents();
     initProductJourney();
     initResultViewSwitching();
     initLegacyDatasetControls();

@@ -55,6 +55,9 @@ from typesense_shadow import (
     SHADOW_INFRA_ERROR,
     TypesenseSearchRepository,
     TypesenseShadowError,
+    aggregate_dashboard_documents,
+    build_dashboard_column_filter_clauses,
+    build_dashboard_selection_clauses,
     build_bulk_canonical_query,
     build_canonical_query,
     schedule_shadow_autocomplete,
@@ -827,6 +830,19 @@ class QueryPreviewRequest(BaseModel):
     exactIdentifiers: Dict[str, Any] = Field(default_factory=dict)
     crossGroupSearch: bool = False
     crossGroupSearchFields: List[str] = Field(default_factory=list)
+
+
+class DashboardSelection(BaseModel):
+    product: Optional[str] = None
+    province: Optional[str] = None
+    investor: Optional[str] = None
+
+
+class DashboardAnalyticsRequest(QueryPreviewRequest):
+    dashboardSelection: DashboardSelection = Field(default_factory=DashboardSelection)
+    # Kept separate from canonical backend filters. These are table-scoped
+    # exploratory filters and are applied only when the dashboard requests them.
+    columnFilters: Dict[str, Any] = Field(default_factory=dict)
 
 
 class BulkQueryRequest(BaseModel):
@@ -4262,6 +4278,89 @@ async def create_ai_search_preview(request: Request, payload: AISearchPreviewReq
             provider_invoked=planner_invoked,
         )
         return internal_error_response()
+
+
+@app.post("/api/dashboard-analytics")
+async def dashboard_analytics(request: Request, payload: DashboardAnalyticsRequest):
+    limited = await enforce_rate_limit(request, "dashboard-analytics", QUERY_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+    if not procurement_backend_config().typesense_primary:
+        raise HTTPException(status_code=503, detail="Dashboard analytics requires Typesense backend")
+
+    filters = payload.filters or FilterRequest()
+    groups = _query_groups(payload)
+    selection = payload.dashboardSelection.model_dump(exclude_none=True)
+    include_fields_by_group = {
+        "medicines": (
+            "id", "medicine_name", "quantity", "winning_unit_price", "winning_bidder_id", "winning_bidder_name",
+            "bid_invitation_code", "decision_number", "procuring_entity_id", "procuring_entity_name", "location",
+            "result_posted_at", "decision_issued_at",
+        ),
+        "goods": (
+            "id", "item_name", "quantity", "winning_unit_price", "winning_bidder_id", "winning_bidder_name",
+            "bid_invitation_code", "decision_number", "procuring_entity_id", "procuring_entity_name", "location",
+            "result_posted_at", "decision_issued_at",
+        ),
+        "traditional": (
+            "id", "item_name", "quantity", "winning_unit_price", "winning_bidder_id", "winning_bidder_name",
+            "bid_invitation_code", "decision_number", "procuring_entity_id", "procuring_entity_name", "location",
+            "result_posted_at", "decision_issued_at",
+        ),
+    }
+    include_fields_by_group["traditional_medicine"] = include_fields_by_group["traditional"]
+
+    async with optional_db_connection(request, "full_query") as conn:
+        await enforce_data_access_policy(conn, request, "full_query")
+
+        async def fetch_group(group: str) -> tuple[str, list[Mapping[str, Any]]]:
+            query = build_canonical_query(
+                group,
+                filters,
+                sort=[],
+                limit=250,
+                page=1,
+                search_mode="standard",
+                endpoint="/api/dashboard-analytics",
+                source_types=payload.sourceTypes,
+                text=payload.text,
+                search_fields=payload.searchFields,
+                structured_filters=payload.structuredFilters,
+                ranges=payload.ranges,
+                date_ranges=payload.dateRanges,
+                exact_identifiers=payload.exactIdentifiers,
+                query_mode="search",
+                cross_group_search=payload.crossGroupSearch,
+                cross_group_search_fields=payload.crossGroupSearchFields,
+            )
+            scoped_column_filters = payload.columnFilters.get(group) or payload.columnFilters.get(query.group) or {}
+            if query.group == "traditional_medicine":
+                scoped_column_filters = scoped_column_filters or payload.columnFilters.get("traditional") or {}
+            clauses = (
+                *build_dashboard_selection_clauses(query.group, selection),
+                *build_dashboard_column_filter_clauses(query.group, scoped_column_filters),
+            )
+            documents = await typesense_search_repository.analytics_documents(
+                query,
+                additional_filter_clauses=clauses,
+                include_fields=include_fields_by_group.get(group, include_fields_by_group["goods"]),
+            )
+            return query.group, documents
+
+        try:
+            group_documents = dict(await asyncio.gather(*(fetch_group(group) for group in groups)))
+        except TypesenseShadowError as exc:
+            status_code = 503 if exc.code == SHADOW_INFRA_ERROR else 422
+            raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+
+    analytics = aggregate_dashboard_documents(group_documents)
+    return JSONResponse(content={
+        "success": True,
+        "backend": "typesense",
+        "analytics_complete": True,
+        "result_universe": "all_matching_documents",
+        **analytics,
+    })
 
 
 @app.post("/api/query")

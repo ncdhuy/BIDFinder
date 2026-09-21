@@ -31,6 +31,7 @@ EXPECTED_ROUTES = [
     ("POST", "/api/ai/search-plan"),
     ("GET", "/api/ai/usage"),
     ("POST", "/api/ai/search-preview"),
+    ("POST", "/api/dashboard-analytics"),
     ("POST", "/api/query"),
     ("POST", "/api/bulk-query"),
     ("POST", "/api/query-preview"),
