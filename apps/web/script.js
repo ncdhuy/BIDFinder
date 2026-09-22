@@ -5369,11 +5369,12 @@ function appendFeaturedProvinceLabels(svg, valueByProvince) {
     const renderedWidth = svg.getBoundingClientRect().width;
     const pixelsPerUnit = renderedWidth > 0 ? renderedWidth / viewBoxWidth : 1;
     const pixelsToUnits = pixelsPerUnit > 0 ? 1 / pixelsPerUnit : 1;
-    const labelWidth = 156 * pixelsToUnits;
-    const labelHeight = 46 * pixelsToUnits;
-    const titleSize = 14 * pixelsToUnits;
-    const valueSize = 12.5 * pixelsToUnits;
-    const labelGap = 18 * pixelsToUnits;
+    const labelWidth = 132 * pixelsToUnits;
+    const labelHeight = 36 * pixelsToUnits;
+    const titleSize = 12 * pixelsToUnits;
+    const valueSize = 11 * pixelsToUnits;
+    const labelGap = 12 * pixelsToUnits;
+    const rightInset = 8 * pixelsToUnits;
     const paths = Array.from(svg.querySelectorAll('path[data-admin-key]'));
 
     FEATURED_PROVINCE_LABELS.forEach(({ label, aliases }) => {
@@ -5390,7 +5391,7 @@ function appendFeaturedProvinceLabels(svg, valueByProvince) {
 
         const anchorX = box.x + box.width;
         const anchorY = box.y + box.height / 2;
-        const labelX = anchorX + labelGap;
+        const labelX = Math.min(anchorX + labelGap, viewBoxWidth - labelWidth - rightInset);
         const labelY = anchorY;
         const value = valueByProvince.get(path.dataset.adminKey)?.value || Number(path.dataset.value) || 0;
         const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
@@ -5405,7 +5406,7 @@ function appendFeaturedProvinceLabels(svg, valueByProvince) {
         const anchor = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
         anchor.setAttribute('cx', String(anchorX));
         anchor.setAttribute('cy', String(anchorY));
-        anchor.setAttribute('r', String(4 * pixelsToUnits));
+        anchor.setAttribute('r', String(3 * pixelsToUnits));
 
         const background = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
         background.setAttribute('x', String(labelX));
@@ -5415,13 +5416,13 @@ function appendFeaturedProvinceLabels(svg, valueByProvince) {
         background.setAttribute('rx', '8');
 
         const name = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        name.setAttribute('x', String(labelX + 12));
+        name.setAttribute('x', String(labelX + 8 * pixelsToUnits));
         name.setAttribute('y', String(labelY - 6));
         name.setAttribute('font-size', String(titleSize));
         name.textContent = label;
 
         const amount = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        amount.setAttribute('x', String(labelX + 12));
+        amount.setAttribute('x', String(labelX + 8 * pixelsToUnits));
         amount.setAttribute('y', String(labelY + valueSize + 1));
         amount.setAttribute('font-size', String(valueSize));
         amount.textContent = value ? formatCurrencyTooltip(value) : 'Không có dữ liệu';
@@ -5549,7 +5550,7 @@ function renderProvinceValueMap(data = [], options = {}) {
 
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', vietnamMapDefinition.viewBox);
-    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    svg.setAttribute('preserveAspectRatio', 'xMinYMid meet');
     svg.setAttribute('aria-hidden', 'true');
 
     let activeProvincePath = null;

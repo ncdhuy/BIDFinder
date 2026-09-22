@@ -23,10 +23,12 @@ assert.match(html, /class="dashboard-widget-title"[\s\S]{0,160}data-feather="tre
 assert.match(style, /\.dashboard-main-grid[\s\S]{0,180}grid-auto-rows: clamp\(300px, 34vh, 320px\)/);
 assert.match(style, /\.dashboard-main-grid \{[\s\S]{0,120}grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
 assert.match(style, /\.dashboard-secondary-grid[\s\S]{0,180}grid-auto-rows: clamp\(220px, 25vh, 250px\)/);
-assert.match(style, /#dashboard-province-map svg[\s\S]{0,120}display: block;[\s\S]{0,120}width: calc\(100% - 240px\);[\s\S]{0,100}height: calc\(100% - 10px\);/);
+assert.match(style, /#dashboard-province-map svg[\s\S]{0,120}display: block;[\s\S]{0,120}width: calc\(100% - 196px\);[\s\S]{0,100}height: calc\(100% - 6px\);/);
 assert.match(script, /function hideNoDataMessage\(canvasId\)[\s\S]{0,240}msg\.remove\(\)/);
 assert.match(style, /\.province-map-legend-items[\s\S]{0,120}flex-direction: column/);
-assert.match(style, /\.province-map-legend-swatch[\s\S]{0,160}width: 14px[\s\S]{0,60}height: 14px/);
+assert.match(style, /#dashboard-province-map \.province-map-legend[\s\S]{0,180}width: min\(184px, 30%\);[\s\S]{0,100}padding: 8px 9px/);
+assert.match(style, /#dashboard-province-map \.province-map-legend-swatch[\s\S]{0,160}width: 14px[\s\S]{0,60}height: 14px/);
+assert.match(style, /#dashboard-province-map \.province-map-legend-label[\s\S]{0,100}font-size: 10\.5px/);
 assert.doesNotMatch(style, /province-map-legend-scale|province-map-legend-labels/);
 assert.match(style, /\.dashboard-product-bar[\s\S]{0,260}grid-template-rows: auto 4px/);
 assert.match(style, /\.dashboard-product-track[\s\S]{0,220}border-radius: 4px/);
@@ -97,8 +99,8 @@ assert.match(style, /\.dashboard-widget-title svg[\s\S]{0,180}color: var\(--dash
 assert.match(style, /\.dashboard-widget-head h3[\s\S]{0,120}font-size: 16px/);
 assert.match(style, /\.vietnam-province-map[\s\S]{0,320}background: transparent/);
 assert.match(style, /\.province-map-feature-label[\s\S]{0,180}pointer-events: none/);
-assert.match(style, /#dashboard-province-map svg[\s\S]{0,180}width: calc\(100% - 240px\)/);
-assert.match(style, /#dashboard-province-map \.province-map-legend-label[\s\S]{0,100}font-size: 12px/);
+assert.match(style, /#dashboard-province-map svg[\s\S]{0,180}width: calc\(100% - 196px\)/);
+assert.match(style, /#dashboard-province-map \.province-map-legend-label[\s\S]{0,100}font-size: 10\.5px/);
 assert.doesNotMatch(html, /Phân bổ theo địa điểm trong toàn bộ kết quả phù hợp/);
 assert.match(style, /\.dashboard-context-chip-label[\s\S]{0,160}text-overflow: ellipsis/);
 assert.match(style, /color: #1d78e9;[\s\S]{0,50}background: #dcecff/);
