@@ -5369,13 +5369,22 @@ function appendFeaturedProvinceLabels(svg, valueByProvince) {
     const renderedWidth = svg.getBoundingClientRect().width;
     const pixelsPerUnit = renderedWidth > 0 ? renderedWidth / viewBoxWidth : 1;
     const pixelsToUnits = pixelsPerUnit > 0 ? 1 / pixelsPerUnit : 1;
-    const labelWidth = 132 * pixelsToUnits;
-    const labelHeight = 36 * pixelsToUnits;
-    const titleSize = 12 * pixelsToUnits;
-    const valueSize = 11 * pixelsToUnits;
-    const labelGap = 12 * pixelsToUnits;
+    const titleSize = 14 * pixelsToUnits;
+    const valueSize = 13 * pixelsToUnits;
+    const horizontalPadding = 10 * pixelsToUnits;
+    const verticalPadding = 7 * pixelsToUnits;
+    const lineGap = 2 * pixelsToUnits;
+    const labelHeight = titleSize + valueSize + lineGap + verticalPadding * 2;
+    const labelGap = 16 * pixelsToUnits;
     const rightInset = 8 * pixelsToUnits;
     const paths = Array.from(svg.querySelectorAll('path[data-admin-key]'));
+    const measureText = (node, fallbackText, fontSize) => {
+        if (typeof node.getComputedTextLength === 'function') {
+            const measuredWidth = node.getComputedTextLength();
+            if (Number.isFinite(measuredWidth) && measuredWidth > 0) return measuredWidth;
+        }
+        return fallbackText.length * fontSize * 0.62;
+    };
 
     FEATURED_PROVINCE_LABELS.forEach(({ label, aliases }) => {
         const aliasKeys = aliases.map(alias => getProvinceMapKey(alias));
@@ -5391,44 +5400,53 @@ function appendFeaturedProvinceLabels(svg, valueByProvince) {
 
         const anchorX = box.x + box.width;
         const anchorY = box.y + box.height / 2;
-        const labelX = Math.min(anchorX + labelGap, viewBoxWidth - labelWidth - rightInset);
         const labelY = anchorY;
         const value = valueByProvince.get(path.dataset.adminKey)?.value || Number(path.dataset.value) || 0;
+        const valueText = value ? formatCurrencyTooltip(value) : 'Không có dữ liệu';
         const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         group.classList.add('province-map-feature-label');
 
         const connector = document.createElementNS('http://www.w3.org/2000/svg', 'line');
         connector.setAttribute('x1', String(anchorX));
         connector.setAttribute('y1', String(anchorY));
-        connector.setAttribute('x2', String(labelX - 8 * pixelsToUnits));
         connector.setAttribute('y2', String(labelY));
 
         const anchor = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
         anchor.setAttribute('cx', String(anchorX));
         anchor.setAttribute('cy', String(anchorY));
-        anchor.setAttribute('r', String(3 * pixelsToUnits));
+        anchor.setAttribute('r', String(5 * pixelsToUnits));
 
         const background = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        background.setAttribute('x', String(labelX));
-        background.setAttribute('y', String(labelY - labelHeight / 2));
-        background.setAttribute('width', String(labelWidth));
-        background.setAttribute('height', String(labelHeight));
-        background.setAttribute('rx', '8');
 
         const name = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        name.setAttribute('x', String(labelX + 8 * pixelsToUnits));
-        name.setAttribute('y', String(labelY - 6));
         name.setAttribute('font-size', String(titleSize));
         name.textContent = label;
 
         const amount = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        amount.setAttribute('x', String(labelX + 8 * pixelsToUnits));
-        amount.setAttribute('y', String(labelY + valueSize + 1));
         amount.setAttribute('font-size', String(valueSize));
-        amount.textContent = value ? formatCurrencyTooltip(value) : 'Không có dữ liệu';
+        amount.textContent = valueText;
 
         group.append(connector, anchor, background, name, amount);
         svg.appendChild(group);
+
+        const contentWidth = Math.max(
+            measureText(name, label, titleSize),
+            measureText(amount, valueText, valueSize)
+        );
+        const labelWidth = contentWidth + horizontalPadding * 2;
+        const labelX = Math.min(anchorX + labelGap, viewBoxWidth - labelWidth - rightInset);
+        const labelTop = labelY - labelHeight / 2;
+
+        connector.setAttribute('x2', String(labelX));
+        background.setAttribute('x', String(labelX));
+        background.setAttribute('y', String(labelTop));
+        background.setAttribute('width', String(labelWidth));
+        background.setAttribute('height', String(labelHeight));
+        background.setAttribute('rx', String(5 * pixelsToUnits));
+        name.setAttribute('x', String(labelX + horizontalPadding));
+        name.setAttribute('y', String(labelTop + verticalPadding + titleSize));
+        amount.setAttribute('x', String(labelX + horizontalPadding));
+        amount.setAttribute('y', String(labelTop + verticalPadding + titleSize + lineGap + valueSize));
     });
 }
 
