@@ -6274,6 +6274,17 @@ function formatDashboardCount(value) {
 
 function getDashboardSearchKeyword(request = {}) {
     const searchForm = getProcurementSearchForm();
+    const keywordFields = [
+        'medicine_name', 'item_name', 'active_ingredient_or_herbal_component',
+        'scientific_name', 'model_mark', 'brand', 'technical_specification'
+    ];
+    const stateField = keywordFields.find(field => searchForm?.state?.criteria?.[field]);
+    const requestField = [...(request.crossGroupSearchFields || []), ...(request.searchFields || [])]
+        .find(field => keywordFields.includes(field));
+    const fieldName = stateField || requestField;
+    const label = fieldName && typeof searchForm?.fieldLabel === 'function'
+        ? searchForm.fieldLabel(fieldName)
+        : 'Điều kiện tìm kiếm';
     const formPayload = typeof searchForm?.collectFilterPayload === 'function'
         ? searchForm.collectFilterPayload()
         : {};
@@ -6287,12 +6298,12 @@ function getDashboardSearchKeyword(request = {}) {
         .find(value => typeof value === 'string' && value.trim())
         ?.trim()
         .replace(/^(["'])(.*)\1$/, '$2') || '';
-    return text;
+    return { label, text };
 }
 
 function collectDashboardContextParts(request = {}) {
-    const text = getDashboardSearchKeyword(request);
-    return text ? [`Từ khóa: ${text}`] : [];
+    const { label, text } = getDashboardSearchKeyword(request);
+    return text ? [`${label}: ${text}`] : [];
 }
 
 function renderDashboardBaseContext() {
