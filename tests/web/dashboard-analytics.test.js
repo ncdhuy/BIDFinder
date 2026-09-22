@@ -7,6 +7,10 @@ const style = fs.readFileSync('apps/web/style.css', 'utf8');
 
 assert.match(html, /data-view="dashboard-panel"/);
 assert.match(html, /Dashboard phân tích kết quả tìm kiếm/);
+assert.match(html, /class="dashboard-header-row"/);
+assert.match(html, /class="dashboard-title-icon"[\s\S]{0,140}data-feather="bar-chart-2"/);
+assert.match(html, /class="dashboard-context-bar"[\s\S]{0,220}data-feather="filter"/);
+assert.match(html, /Bộ lọc đang áp dụng:/);
 assert.match(html, /data-dashboard-kpi="total_awarded_value"/);
 assert.match(html, /id="dashboard-province-map"/);
 assert.match(html, /id="dashboard-top-products"/);
@@ -20,6 +24,9 @@ assert.match(style, /\.dashboard-product-bar[\s\S]{0,260}grid-template-rows: aut
 assert.match(style, /\.dashboard-product-track[\s\S]{0,220}border-radius: 4px/);
 assert.match(style, /\.dashboard-selection-bar\[hidden\][\s\S]{0,60}display: none/);
 assert.match(style, /\.dashboard-selection-chip-label[\s\S]{0,180}text-overflow: ellipsis/);
+assert.match(style, /\.dashboard-header-row[\s\S]{0,180}grid-template-columns: minmax\(0, 1fr\) minmax\(0, 1fr\)/);
+assert.match(style, /\.dashboard-context-bar[\s\S]{0,220}min-height: 42px/);
+assert.match(style, /\.dashboard-header-status:empty[\s\S]{0,40}display: none/);
 assert.match(style, /\.legacy-pagination\.is-dashboard-hidden\s*\{\s*display: none/);
 
 assert.match(script, /function buildDashboardAnalyticsRequest\(request = currentQueryRequest, selection = dashboardSelection\)/);

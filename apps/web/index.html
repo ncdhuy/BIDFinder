@@ -363,14 +363,23 @@
 
                     <section class="data-section-vertical result-panel dashboard-panel" id="dashboard-panel" aria-labelledby="dashboard-title">
                         <div class="dashboard-shell-card">
-                            <header class="dashboard-header">
-                                <div>
-                                    <h2 id="dashboard-title">Dashboard phân tích kết quả tìm kiếm</h2>
-                                    <p class="dashboard-subtitle">Tổng quan dữ liệu từ bộ lọc hiện tại</p>
+                            <div class="dashboard-header-row">
+                                <header class="dashboard-header">
+                                    <span class="dashboard-title-icon" aria-hidden="true"><i data-feather="bar-chart-2"></i></span>
+                                    <div class="dashboard-title-copy">
+                                        <h2 id="dashboard-title">Dashboard phân tích kết quả tìm kiếm</h2>
+                                        <p class="dashboard-subtitle">Tổng quan dữ liệu từ bộ lọc hiện tại</p>
+                                    </div>
+                                </header>
+                                <div class="dashboard-header-context">
+                                    <div class="dashboard-context-bar">
+                                        <span class="dashboard-context-icon" aria-hidden="true"><i data-feather="filter"></i></span>
+                                        <span class="dashboard-context-label">Bộ lọc đang áp dụng:</span>
+                                        <div class="dashboard-context" id="dashboard-base-context" aria-label="Bộ lọc hiện tại"></div>
+                                    </div>
+                                    <div class="dashboard-header-status" id="dashboard-status" role="status" aria-live="polite"></div>
                                 </div>
-                                <div class="dashboard-header-status" id="dashboard-status" role="status" aria-live="polite"></div>
-                            </header>
-                            <div class="dashboard-context" id="dashboard-base-context" aria-label="Bộ lọc hiện tại"></div>
+                            </div>
                             <div class="dashboard-selection-bar" id="dashboard-selection-bar" hidden>
                                 <span class="dashboard-selection-label">Đang khám phá:</span>
                                 <div class="dashboard-selection-chips" id="dashboard-selection-chips"></div>
