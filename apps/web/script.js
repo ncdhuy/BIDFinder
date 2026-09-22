@@ -6452,14 +6452,16 @@ async function drawCharts(df1Data, df2Data, df3Data = []) {
     insightChartsDirty = false;
 }
 
-function formatDashboardTrendLabel(value) {
-    if (value >= 1_000_000_000) {
-        return (value / 1_000_000_000).toLocaleString('vi-VN', { maximumFractionDigits: 1 });
-    }
-    if (value >= 1_000_000) {
-        return (value / 1_000_000).toLocaleString('vi-VN', { maximumFractionDigits: 1 });
-    }
-    return Number(value).toLocaleString('vi-VN', { maximumFractionDigits: 0 });
+function getDashboardTrendUnit(values = []) {
+    const maximum = Math.max(...values.map(value => Number(value)).filter(Number.isFinite), 0);
+    if (maximum >= 1_000_000_000) return { factor: 1_000_000_000, label: 'Tỷ đồng' };
+    if (maximum >= 1_000_000) return { factor: 1_000_000, label: 'Triệu đồng' };
+    return { factor: 1, label: 'Đồng' };
+}
+
+function formatDashboardTrendLabel(value, unit) {
+    const scaled = Number(value) / (unit?.factor || 1);
+    return scaled.toLocaleString('vi-VN', { maximumFractionDigits: Math.abs(scaled) < 1 ? 2 : 1 });
 }
 
 const dashboardTimelineLabelsPlugin = {
@@ -6468,6 +6470,7 @@ const dashboardTimelineLabelsPlugin = {
         const dataset = chart.data.datasets[0];
         const points = chart.getDatasetMeta(0)?.data || [];
         const { ctx, chartArea } = chart;
+        const unit = chart.options.plugins.dashboardTimelineLabels?.unit || getDashboardTrendUnit(dataset.data);
         ctx.save();
         ctx.fillStyle = '#1268d3';
         ctx.font = `700 10px ${getComputedStyle(document.body).fontFamily}`;
@@ -6477,7 +6480,7 @@ const dashboardTimelineLabelsPlugin = {
         points.forEach((point, index) => {
             const value = Number(dataset.data[index]);
             if (!Number.isFinite(value) || (index % labelStep !== 0 && index !== points.length - 1)) return;
-            ctx.fillText(formatDashboardTrendLabel(value), point.x, Math.max(chartArea.top + 10, point.y - 9));
+            ctx.fillText(formatDashboardTrendLabel(value, unit), point.x, Math.max(chartArea.top + 10, point.y - 9));
         });
         ctx.restore();
     }
@@ -6829,6 +6832,7 @@ async function renderDashboardCharts(timeline = {}, priceDistribution = {}) {
     resetDashboardCharts();
     const timelinePoints = getDashboardTimelinePoints(timeline);
     const priceBins = Array.isArray(priceDistribution.bins) ? priceDistribution.bins : [];
+    const trendUnit = getDashboardTrendUnit(timelinePoints.map(point => point.total_awarded_value));
     if (!timelinePoints.length) setDashboardWidgetState('timeline', 'Không có dữ liệu thời gian.', 'empty');
     if (!priceBins.length) setDashboardWidgetState('unit_price_distribution', 'Không có đơn giá hợp lệ.', 'empty');
     if (!timelinePoints.length && !priceBins.length) return;
@@ -6869,12 +6873,18 @@ async function renderDashboardCharts(timeline = {}, priceDistribution = {}) {
                 maintainAspectRatio: false,
                 layout: { padding: { top: 15, right: 6 } },
                 plugins: {
+                    dashboardTimelineLabels: { unit: trendUnit },
                     legend: { display: false },
                     tooltip: { callbacks: { label: item => formatCurrencyTooltip(Number(item.raw)) } }
                 },
                 scales: {
                     x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 8 } },
-                    y: { beginAtZero: true, grid: { color: CHART_THEME.grid }, ticks: { callback: value => formatCurrencyAxis(value) } }
+                    y: {
+                        beginAtZero: true,
+                        grid: { color: CHART_THEME.grid },
+                        title: { display: true, text: trendUnit.label, color: CHART_THEME.axis, font: { size: 10, weight: '600' } },
+                        ticks: { callback: value => formatDashboardTrendLabel(value, trendUnit) }
+                    }
                 }
             }
         });
@@ -6912,8 +6922,12 @@ function updateDashboardTimelineChart(timeline = {}) {
     }
     clearDashboardWidgetState('timeline');
     const chart = dashboardChartInstances.timeline;
+    const trendUnit = getDashboardTrendUnit(timelinePoints.map(point => point.total_awarded_value));
     chart.data.labels = timelinePoints.map(point => point.period);
     chart.data.datasets[0].data = timelinePoints.map(point => point.total_awarded_value);
+    chart.options.plugins.dashboardTimelineLabels.unit = trendUnit;
+    chart.options.scales.y.title.text = trendUnit.label;
+    chart.options.scales.y.ticks.callback = value => formatDashboardTrendLabel(value, trendUnit);
     chart.update('none');
 }
 
