@@ -8957,8 +8957,10 @@ body.dashboard-view-active .app-footer {
 
 #dashboard-province-map svg {
   display: block;
-  width: 100%;
-  height: 100%;
+  width: calc(100% - 240px);
+  height: calc(100% - 10px);
+  margin: 10px auto 0 4px;
+  transform: translateY(2%);
   max-width: none;
   max-height: none;
 }
@@ -8968,15 +8970,35 @@ body.dashboard-view-active .app-footer {
   right: 12px;
   bottom: auto;
   left: auto;
-  width: 178px;
-  padding: 9px 10px;
+  width: 220px;
+  padding: 12px 14px;
   transform: translateY(-50%);
   box-shadow: 0 5px 14px rgba(16, 34, 48, 0.09);
 }
 
 #dashboard-province-map .province-map-legend-title {
-  margin-bottom: 4px;
-  font-size: 10px;
+  margin-bottom: 9px;
+  font-size: 13px;
+}
+
+#dashboard-province-map .province-map-legend-items {
+  gap: 6px;
+}
+
+#dashboard-province-map .province-map-legend-item {
+  grid-template-columns: 18px minmax(0, 1fr);
+  column-gap: 9px;
+}
+
+#dashboard-province-map .province-map-legend-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+}
+
+#dashboard-province-map .province-map-legend-label {
+  font-size: 12px;
+  line-height: 1.25;
 }
 
 #dashboard-province-map path.is-selected { stroke: #073c52; stroke-width: 1.6; }
@@ -8991,6 +9013,7 @@ body.dashboard-view-active .dashboard-widget-state {
 }
 
 @media (max-width: 820px) {
+  #dashboard-province-map svg { width: calc(100% - 210px); }
   body.dashboard-view-active .page-container { min-height: 100vh; }
   .result-table-tabs .dashboard-view-choice { margin-left: 4px; padding-left: 7px; }
   .result-table-tabs .dashboard-view-label { display: none; }

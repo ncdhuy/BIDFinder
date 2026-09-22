@@ -5352,12 +5352,11 @@ function createProvinceMapLegend(colorBuckets) {
 }
 
 const FEATURED_PROVINCE_LABELS = [
-    { label: 'Hà Nội', aliases: ['Hà Nội'], offsetY: -0.012 },
-    { label: 'Đà Nẵng', aliases: ['Đà Nẵng'], offsetY: 0 },
+    { label: 'Hà Nội', aliases: ['Hà Nội'] },
+    { label: 'Đà Nẵng', aliases: ['Đà Nẵng'] },
     {
         label: 'TP. Hồ Chí Minh',
-        aliases: ['TP. Hồ Chí Minh', 'Thành phố Hồ Chí Minh', 'Hồ Chí Minh'],
-        offsetY: 0.018
+        aliases: ['TP. Hồ Chí Minh', 'Thành phố Hồ Chí Minh', 'Hồ Chí Minh']
     }
 ];
 
@@ -5367,13 +5366,17 @@ function appendFeaturedProvinceLabels(svg, valueByProvince) {
     const viewBoxHeight = viewBox[3];
     if (!viewBoxWidth || !viewBoxHeight) return;
 
-    const labelWidth = viewBoxWidth * 0.18;
-    const labelHeight = Math.max(viewBoxHeight * 0.045, 52);
-    const titleSize = Math.max(12, Math.min(22, viewBoxWidth * 0.018));
-    const valueSize = Math.max(11, Math.min(19, viewBoxWidth * 0.016));
+    const renderedWidth = svg.getBoundingClientRect().width;
+    const pixelsPerUnit = renderedWidth > 0 ? renderedWidth / viewBoxWidth : 1;
+    const pixelsToUnits = pixelsPerUnit > 0 ? 1 / pixelsPerUnit : 1;
+    const labelWidth = 156 * pixelsToUnits;
+    const labelHeight = 46 * pixelsToUnits;
+    const titleSize = 14 * pixelsToUnits;
+    const valueSize = 12.5 * pixelsToUnits;
+    const labelGap = 18 * pixelsToUnits;
     const paths = Array.from(svg.querySelectorAll('path[data-admin-key]'));
 
-    FEATURED_PROVINCE_LABELS.forEach(({ label, aliases, offsetY }) => {
+    FEATURED_PROVINCE_LABELS.forEach(({ label, aliases }) => {
         const aliasKeys = aliases.map(alias => getProvinceMapKey(alias));
         const path = paths.find(item => aliasKeys.includes(item.dataset.adminKey));
         if (!path || typeof path.getBBox !== 'function') return;
@@ -5387,8 +5390,8 @@ function appendFeaturedProvinceLabels(svg, valueByProvince) {
 
         const anchorX = box.x + box.width;
         const anchorY = box.y + box.height / 2;
-        const labelX = Math.max(anchorX + viewBoxWidth * 0.018, viewBoxWidth * 0.58);
-        const labelY = anchorY + viewBoxHeight * offsetY;
+        const labelX = anchorX + labelGap;
+        const labelY = anchorY;
         const value = valueByProvince.get(path.dataset.adminKey)?.value || Number(path.dataset.value) || 0;
         const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         group.classList.add('province-map-feature-label');
@@ -5396,13 +5399,13 @@ function appendFeaturedProvinceLabels(svg, valueByProvince) {
         const connector = document.createElementNS('http://www.w3.org/2000/svg', 'line');
         connector.setAttribute('x1', String(anchorX));
         connector.setAttribute('y1', String(anchorY));
-        connector.setAttribute('x2', String(labelX - 8));
+        connector.setAttribute('x2', String(labelX - 8 * pixelsToUnits));
         connector.setAttribute('y2', String(labelY));
 
         const anchor = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
         anchor.setAttribute('cx', String(anchorX));
         anchor.setAttribute('cy', String(anchorY));
-        anchor.setAttribute('r', String(Math.max(4, viewBoxWidth * 0.006)));
+        anchor.setAttribute('r', String(4 * pixelsToUnits));
 
         const background = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
         background.setAttribute('x', String(labelX));
