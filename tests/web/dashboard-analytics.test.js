@@ -26,7 +26,12 @@ assert.match(style, /\.dashboard-selection-bar\[hidden\][\s\S]{0,60}display: non
 assert.match(style, /\.dashboard-selection-chip-label[\s\S]{0,180}text-overflow: ellipsis/);
 assert.match(style, /\.dashboard-header-row[\s\S]{0,180}grid-template-columns: minmax\(0, 1fr\) minmax\(0, 1fr\)/);
 assert.match(style, /\.dashboard-context-bar[\s\S]{0,220}min-height: 42px/);
-assert.match(style, /\.dashboard-header-status:empty[\s\S]{0,40}display: none/);
+assert.doesNotMatch(html, /dashboard-status|Phân tích toàn bộ kết quả phù hợp/);
+assert.doesNotMatch(script, /setDashboardStatus|Phân tích toàn bộ kết quả phù hợp/);
+assert.doesNotMatch(html, /dashboard-kpi-unit/);
+assert.match(style, /\.dashboard-kpi-icon[\s\S]{0,220}width: 44px[\s\S]{0,80}height: 44px/);
+assert.match(style, /\.dashboard-kpi-label[\s\S]{0,120}color: var\(--color-primary-dark\)/);
+assert.match(style, /\.dashboard-kpi-card strong[\s\S]{0,160}color: var\(--color-primary-dark\)/);
 assert.match(style, /\.legacy-pagination\.is-dashboard-hidden\s*\{\s*display: none/);
 
 assert.match(script, /function buildDashboardAnalyticsRequest\(request = currentQueryRequest, selection = dashboardSelection\)/);
@@ -60,7 +65,6 @@ const selectionResetSource = script.slice(
 );
 assert.doesNotMatch(selectionResetSource, /currentQueryRequest/);
 assert.match(script, /function renderDashboardEmpty\(/);
-assert.match(script, /analytics_complete/);
 assert.match(script, /tension: 0/);
 
 console.log('Dashboard analytics contract passed');

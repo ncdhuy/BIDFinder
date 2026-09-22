@@ -6252,13 +6252,6 @@ function clearDashboardWidgetState(key) {
     delete widget.dataset.state;
 }
 
-function setDashboardStatus(message = '', type = '') {
-    const status = document.getElementById('dashboard-status');
-    if (!status) return;
-    status.textContent = message;
-    status.className = `dashboard-header-status${type ? ` is-${type}` : ''}`;
-}
-
 function formatDashboardCurrency(value) {
     const number = Number(value);
     if (!Number.isFinite(number)) return '—';
@@ -6649,7 +6642,6 @@ function renderDashboardAnalytics(payload) {
     renderDashboardProducts(payload?.top_products || []);
     renderDashboardInvestors(payload?.top_investors || []);
     void renderDashboardCharts(payload?.timeline || {}, payload?.unit_price_distribution || {});
-    setDashboardStatus(payload?.analytics_complete ? 'Phân tích toàn bộ kết quả phù hợp' : 'Dữ liệu giới hạn', payload?.analytics_complete ? 'complete' : 'warning');
 }
 
 function renderDashboardEmpty(message = 'Thực hiện tìm kiếm để xem phân tích.') {
@@ -6658,7 +6650,6 @@ function renderDashboardEmpty(message = 'Thực hiện tìm kiếm để xem ph�
     renderDashboardSummary({});
     renderDashboardBaseContext();
     ['geography', 'top_products', 'timeline', 'unit_price_distribution', 'top_investors'].forEach(key => setDashboardWidgetState(key, message, 'empty'));
-    setDashboardStatus('', '');
 }
 
 async function refreshDashboardAnalytics({ force = false } = {}) {
@@ -6695,7 +6686,6 @@ async function refreshDashboardAnalytics({ force = false } = {}) {
     const controller = new AbortController();
     dashboardAnalyticsController = controller;
     const version = ++dashboardAnalyticsVersion;
-    setDashboardStatus('Đang tải phân tích…', 'loading');
     ['geography', 'top_products', 'timeline', 'unit_price_distribution', 'top_investors'].forEach(key => setDashboardWidgetState(key, 'Đang tải dữ liệu…', 'loading'));
     try {
         await window.BIDFinderAuth?.whenReady?.();
@@ -6711,7 +6701,6 @@ async function refreshDashboardAnalytics({ force = false } = {}) {
         renderDashboardAnalytics(payload);
     } catch (error) {
         if (error?.name === 'AbortError' || version !== dashboardAnalyticsVersion) return;
-        setDashboardStatus('Phân tích chưa khả dụng', 'error');
         ['geography', 'top_products', 'timeline', 'unit_price_distribution', 'top_investors'].forEach(key => setDashboardWidgetState(key, 'Không tải được dữ liệu phân tích.', 'error'));
     }
 }

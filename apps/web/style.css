@@ -8236,18 +8236,6 @@ body.product-journey-active #panel-overlay.show {
   color: var(--color-text-secondary);
   font-size: 11px;
 }
-.dashboard-header-status {
-  min-height: 24px;
-  padding: 5px 9px;
-  border-radius: 999px;
-  color: var(--color-text-secondary);
-  font-size: 11px;
-  white-space: nowrap;
-}
-.dashboard-header-status.is-loading { background: #eef4f7; color: #527084; }
-.dashboard-header-status.is-complete { background: #e7f5ef; color: #197054; }
-.dashboard-header-status.is-warning,
-.dashboard-header-status.is-error { background: #fff5e8; color: #9a641e; }
 .dashboard-context,
 .dashboard-selection-chips {
   display: flex;
@@ -8332,7 +8320,6 @@ body.product-journey-active #panel-overlay.show {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.dashboard-kpi-unit { color: #79909c; font-size: 10px; }
 .dashboard-main-grid { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
 .dashboard-secondary-grid { grid-template-columns: minmax(0, 5fr) minmax(0, 3fr) minmax(0, 4fr); }
 .dashboard-widget {
@@ -8598,7 +8585,7 @@ body.dashboard-view-active .app-footer {
   border: 1px solid #d4e6f1;
   border-radius: 10px;
   background: #edf6fb;
-  color: var(--color-primary);
+  color: var(--color-primary-dark);
 }
 
 .dashboard-title-icon svg {
@@ -8612,7 +8599,7 @@ body.dashboard-view-active .app-footer {
 }
 
 .dashboard-header h2 {
-  color: var(--color-primary);
+  color: var(--color-primary-dark);
   font-size: clamp(18px, 1.35vw, 21px);
   letter-spacing: -0.015em;
 }
@@ -8638,7 +8625,7 @@ body.dashboard-view-active .app-footer {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
-  color: var(--color-primary);
+  color: var(--color-primary-dark);
 }
 
 .dashboard-context-icon svg {
@@ -8649,7 +8636,7 @@ body.dashboard-view-active .app-footer {
 
 .dashboard-context-label {
   flex: 0 0 auto;
-  color: var(--color-primary);
+  color: var(--color-primary-dark);
   font-size: 11px;
   font-weight: 700;
   white-space: nowrap;
@@ -8670,17 +8657,6 @@ body.dashboard-view-active .app-footer {
 
 .dashboard-context-bar .dashboard-context-chip.is-more {
   flex: 0 0 auto;
-}
-
-.dashboard-header-status {
-  width: fit-content;
-  margin-left: auto;
-  min-height: 0;
-  margin-top: 5px;
-}
-
-.dashboard-header-status:empty {
-  display: none;
 }
 
 .dashboard-subtitle {
@@ -8737,16 +8713,16 @@ body.dashboard-view-active .app-footer {
 }
 
 .dashboard-kpi-grid {
-  grid-auto-rows: minmax(90px, auto);
+  grid-auto-rows: minmax(104px, auto);
 }
 
 .dashboard-kpi-card {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-columns: 44px minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
-  min-height: 90px;
-  padding: 10px 12px;
+  gap: 12px;
+  min-height: 104px;
+  padding: 14px 16px;
   border-color: #dbe5e9;
   background: #fff;
 }
@@ -8760,9 +8736,9 @@ body.dashboard-view-active .app-footer {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
   color: #2a7891;
   background: #e1eff4;
 }
@@ -8770,22 +8746,21 @@ body.dashboard-view-active .app-footer {
 .dashboard-kpi-card:nth-child(2) .dashboard-kpi-icon { color: #26816e; background: #dff1ea; }
 .dashboard-kpi-card:nth-child(3) .dashboard-kpi-icon { color: #bb7734; background: #faead4; }
 .dashboard-kpi-card:nth-child(4) .dashboard-kpi-icon { color: #755d9b; background: #ebe3f6; }
-.dashboard-kpi-icon svg { width: 15px; height: 15px; stroke-width: 2.2; }
+.dashboard-kpi-icon svg { width: 23px; height: 23px; stroke-width: 2.1; }
 .dashboard-kpi-copy { min-width: 0; }
 
 .dashboard-kpi-label {
-  font-size: 10.5px;
+  color: var(--color-primary-dark);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .dashboard-kpi-card strong {
   margin-top: 3px;
-  font-size: clamp(16px, 1.5vw, 22px);
+  color: var(--color-primary-dark);
+  font-size: clamp(24px, 1.8vw, 30px);
+  line-height: 1.1;
   letter-spacing: -0.02em;
-}
-
-.dashboard-kpi-unit {
-  display: block;
-  margin-top: 1px;
 }
 
 .dashboard-main-grid {
@@ -8958,5 +8933,4 @@ body.dashboard-view-active .dashboard-widget-state {
   .dashboard-context-empty { max-width: 100%; }
   .dashboard-header-row { grid-template-columns: 1fr; gap: 8px; }
   .dashboard-header-context { width: 100%; }
-  .dashboard-header-status { margin-left: 0; }
 }
