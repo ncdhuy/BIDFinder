@@ -5237,15 +5237,13 @@ function formatProvinceScaleValue(value) {
     const amount = Number(value) || 0;
     const format = divisor => {
         const compact = amount / divisor;
-        return Number.isInteger(compact)
-            ? String(compact)
-            : compact.toLocaleString('vi-VN', { maximumFractionDigits: 1 });
+        return compact.toLocaleString('vi-VN', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
     };
 
     if (amount >= 1_000_000_000) return `${format(1_000_000_000)} tỷ`;
     if (amount >= 1_000_000) return `${format(1_000_000)} triệu`;
     if (amount >= 1_000) return `${format(1_000)} nghìn`;
-    return Math.round(amount).toLocaleString('vi-VN');
+    return amount.toLocaleString('vi-VN', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
 function getNiceProvinceScaleStep(maxValue, targetBucketCount = 7) {
@@ -5422,7 +5420,7 @@ function getProvinceMainlandAnchor(svg, path, fallbackBox) {
     return anchor;
 }
 
-function appendFeaturedProvinceLabels(svg, valueByProvince) {
+function appendFeaturedProvinceLabels(svg, valueByProvince, options = {}) {
     const viewBox = String(svg.getAttribute('viewBox') || '').split(/\s+/).map(Number);
     const viewBoxWidth = viewBox[2];
     const viewBoxHeight = viewBox[3];
@@ -5465,7 +5463,8 @@ function appendFeaturedProvinceLabels(svg, valueByProvince) {
         const anchorY = mainlandAnchor.y;
         const labelY = anchorY;
         const value = valueByProvince.get(path.dataset.adminKey)?.value || Number(path.dataset.value) || 0;
-        const valueText = value ? formatCurrencyTooltip(value) : 'Không có dữ liệu';
+        const formatValue = options.formatCurrency || formatCurrencyTooltip;
+        const valueText = value ? formatValue(value) : 'Không có dữ liệu';
         const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         group.classList.add('province-map-feature-label');
 
@@ -5615,6 +5614,7 @@ function renderProvinceValueMap(data = [], options = {}) {
     }
 
     const valueByProvince = getProvinceValueEntries(data);
+    const formatValue = options.formatCurrency || formatCurrencyTooltip;
     const values = Array.from(valueByProvince.values()).map(item => item.value);
     const maxValue = Math.max(...values, 0);
 
@@ -5672,7 +5672,7 @@ function renderProvinceValueMap(data = [], options = {}) {
         const fillColor = getProvinceFill(value, colorBuckets);
         const displayName = provinceValue?.name || provinceName;
         const mergeStatus = getProvinceMergeStatus(provinceName, provinceValue, properties);
-        const valueText = value ? formatCurrencyTooltip(value) : 'Không có dữ liệu';
+        const valueText = value ? formatValue(value) : 'Không có dữ liệu';
 
         path.setAttribute('d', pathData);
         path.setAttribute('fill', fillColor);
@@ -5709,7 +5709,10 @@ function renderProvinceValueMap(data = [], options = {}) {
             const packageCount = Number(provinceValue?.packageCount || 0);
             if (packageCount > 0) {
                 const packageEl = document.createElement('span');
-                packageEl.textContent = `${packageCount.toLocaleString('vi-VN')} gói thầu`;
+                const formattedCount = typeof options.formatCount === 'function'
+                    ? options.formatCount(packageCount)
+                    : packageCount.toLocaleString('vi-VN');
+                packageEl.textContent = `${formattedCount} gói thầu`;
                 tooltip.appendChild(packageEl);
             }
             tooltip.append(nameEl, valueEl, partsEl);
@@ -5755,7 +5758,7 @@ function renderProvinceValueMap(data = [], options = {}) {
     });
 
     container.appendChild(svg);
-    appendFeaturedProvinceLabels(svg, valueByProvince);
+    appendFeaturedProvinceLabels(svg, valueByProvince, options);
     container.appendChild(createProvinceMapLegend(colorBuckets));
     provincePreviewVersion += 1;
     requestAnimationFrame(() => fitProvinceMapViewBox(svg));
@@ -6071,6 +6074,12 @@ function formatPriceAxis(value) {
     const numericValue = Number(value);
     if (!Number.isFinite(numericValue)) return '';
     return numericValue.toLocaleString('vi-VN', { maximumFractionDigits: 2 });
+}
+
+function formatDashboardPriceAxis(value) {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) return '';
+    return numericValue.toLocaleString('vi-VN', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
 function formatCurrencyAxis(value) {
@@ -6461,7 +6470,7 @@ function getDashboardTrendUnit(values = []) {
 
 function formatDashboardTrendLabel(value, unit) {
     const scaled = Number(value) / (unit?.factor || 1);
-    return scaled.toLocaleString('vi-VN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return scaled.toLocaleString('vi-VN', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
 function formatDashboardTimelinePeriod(period) {
@@ -6565,21 +6574,36 @@ function clearDashboardWidgetState(key) {
 function formatDashboardCurrency(value) {
     const number = Number(value);
     if (!Number.isFinite(number)) return '—';
+    const format = divisor => (number / divisor).toLocaleString('vi-VN', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
     if (number >= 1_000_000_000_000_000) {
-        return `${(number / 1_000_000_000_000).toLocaleString('vi-VN', { maximumFractionDigits: 2 })} nghìn tỷ ₫`;
+        return `${format(1_000_000_000_000)} nghìn tỷ ₫`;
     }
     if (number >= 1_000_000_000) {
-        return `${(number / 1_000_000_000).toLocaleString('vi-VN', { maximumFractionDigits: 2 })} tỷ ₫`;
+        return `${format(1_000_000_000)} tỷ ₫`;
     }
     if (number >= 1_000_000) {
-        return `${(number / 1_000_000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} triệu ₫`;
+        return `${format(1_000_000)} triệu ₫`;
     }
-    return `${number.toLocaleString('vi-VN')} ₫`;
+    return `${number.toLocaleString('vi-VN', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} ₫`;
+}
+
+function formatDashboardCurrencyTooltip(value) {
+    const amount = Number(value);
+    if (!Number.isFinite(amount)) return '—';
+    if (amount >= 1_000_000_000) {
+        return `${(amount / 1_000_000_000).toLocaleString('vi-VN', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} tỷ`;
+    }
+    if (amount >= 1_000_000) {
+        return `${(amount / 1_000_000).toLocaleString('vi-VN', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} triệu`;
+    }
+    return amount.toLocaleString('vi-VN', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
 function formatDashboardCount(value) {
     const number = Number(value);
-    return Number.isFinite(number) ? number.toLocaleString('vi-VN') : '—';
+    return Number.isFinite(number)
+        ? number.toLocaleString('vi-VN', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+        : '—';
 }
 
 function getDashboardSearchKeyword(request = {}) {
@@ -6760,7 +6784,7 @@ function renderDashboardSummary(summary = {}) {
         if (node.dataset.dashboardKpi === 'total_awarded_value') {
             const exact = Number(summary.total_awarded_value);
             node.title = Number.isFinite(exact)
-                ? `${exact.toLocaleString('vi-VN')} VND`
+                ? `${exact.toLocaleString('vi-VN', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} VND`
                 : '';
         }
     });
@@ -6780,6 +6804,8 @@ function renderDashboardMap(geography = []) {
     renderProvinceValueMap(rows, {
         containerId: 'dashboard-province-map',
         selectedProvince: dashboardSelection.province,
+        formatCurrency: formatDashboardCurrencyTooltip,
+        formatCount: formatDashboardCount,
         onProvinceSelect: province => setDashboardSelection('province', province),
         onMapLoading: () => setDashboardWidgetState('geography', 'Đang tải bản đồ Việt Nam…', 'loading'),
         onMapReady: () => clearDashboardWidgetState('geography'),
@@ -6887,7 +6913,7 @@ async function renderDashboardCharts(timeline = {}, priceDistribution = {}) {
                     tooltip: {
                         callbacks: {
                             title: items => formatDashboardTimelinePeriod(items[0]?.label || ''),
-                            label: item => formatCurrencyTooltip(Number(item.raw))
+                            label: item => formatDashboardCurrencyTooltip(Number(item.raw))
                         }
                     }
                 },
@@ -6909,7 +6935,7 @@ async function renderDashboardCharts(timeline = {}, priceDistribution = {}) {
         dashboardChartInstances.price = new window.Chart(canvas.getContext('2d'), {
             type: 'bar',
             data: {
-                labels: priceBins.map(bin => `${formatPriceAxis(bin.start)} – ${formatPriceAxis(bin.end)}`),
+                labels: priceBins.map(bin => `${formatDashboardPriceAxis(bin.start)} – ${formatDashboardPriceAxis(bin.end)}`),
                 datasets: [{ data: priceBins.map(bin => bin.count), backgroundColor: CHART_THEME.primary, borderRadius: 4, maxBarThickness: 42 }]
             },
             options: {
@@ -6917,11 +6943,20 @@ async function renderDashboardCharts(timeline = {}, priceDistribution = {}) {
                 maintainAspectRatio: false,
                 plugins: {
                     legend: { display: false },
-                    tooltip: { callbacks: { title: items => `Khoảng giá: ${items[0]?.label || ''}`, label: item => `Số quan sát: ${item.formattedValue}` } }
+                    tooltip: {
+                        callbacks: {
+                            title: items => `Khoảng giá: ${items[0]?.label || ''}`,
+                            label: item => `Số quan sát: ${formatDashboardCount(Number(item.raw))}`
+                        }
+                    }
                 },
                 scales: {
                     x: { grid: { display: false }, ticks: { autoSkip: true, maxRotation: 45, minRotation: 45, maxTicksLimit: 6 } },
-                    y: { beginAtZero: true, grid: { color: CHART_THEME.grid }, ticks: { stepSize: 1 } }
+                    y: {
+                        beginAtZero: true,
+                        grid: { color: CHART_THEME.grid },
+                        ticks: { stepSize: 1, callback: value => formatDashboardCount(value) }
+                    }
                 }
             }
         });
@@ -6973,7 +7008,7 @@ function renderDashboardInvestors(investors = []) {
         const packageCell = document.createElement('td');
         packageCell.textContent = formatDashboardCount(investor.package_count);
         const valueCell = document.createElement('td');
-        valueCell.textContent = formatCurrencyTooltip(Number(investor.total_awarded_value || 0));
+        valueCell.textContent = formatDashboardCurrencyTooltip(Number(investor.total_awarded_value || 0));
         row.append(rankCell, nameCell, packageCell, valueCell);
         body.appendChild(row);
     });
