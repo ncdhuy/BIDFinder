@@ -5430,8 +5430,8 @@ function appendFeaturedProvinceLabels(svg, valueByProvince) {
     const renderedWidth = svg.getBoundingClientRect().width;
     const pixelsPerUnit = renderedWidth > 0 ? renderedWidth / viewBoxWidth : 1;
     const pixelsToUnits = pixelsPerUnit > 0 ? 1 / pixelsPerUnit : 1;
-    const titleSize = 16 * pixelsToUnits;
-    const valueSize = 14 * pixelsToUnits;
+    const titleSize = 18 * pixelsToUnits;
+    const valueSize = 18 * pixelsToUnits;
     const horizontalPadding = 11 * pixelsToUnits;
     const verticalPadding = 8 * pixelsToUnits;
     const lineGap = 3 * pixelsToUnits;

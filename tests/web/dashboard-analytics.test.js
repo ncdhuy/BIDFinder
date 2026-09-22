@@ -23,7 +23,8 @@ assert.match(html, /class="dashboard-widget-title"[\s\S]{0,160}data-feather="tre
 assert.match(style, /\.dashboard-main-grid[\s\S]{0,180}grid-auto-rows: clamp\(300px, 34vh, 320px\)/);
 assert.match(style, /\.dashboard-main-grid \{[\s\S]{0,120}grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
 assert.match(style, /\.dashboard-secondary-grid[\s\S]{0,180}grid-auto-rows: clamp\(220px, 25vh, 250px\)/);
-assert.match(style, /#dashboard-province-map svg[\s\S]{0,120}display: block;[\s\S]{0,120}width: calc\(100% - 196px\);[\s\S]{0,100}height: calc\(100% - 6px\);/);
+assert.match(style, /#dashboard-province-map svg[\s\S]{0,120}display: block;[\s\S]{0,120}width: calc\(100% - 196px\);[\s\S]{0,100}height: 100%;/);
+assert.match(style, /\.dashboard-map-widget \.dashboard-widget-head[\s\S]{0,100}border-bottom: 0/);
 assert.match(script, /function hideNoDataMessage\(canvasId\)[\s\S]{0,240}msg\.remove\(\)/);
 assert.match(style, /\.province-map-legend-items[\s\S]{0,120}flex-direction: column/);
 assert.match(style, /#dashboard-province-map \.province-map-legend[\s\S]{0,180}width: min\(184px, 30%\);[\s\S]{0,100}padding: 8px 9px/);
@@ -95,6 +96,7 @@ assert.match(script, /const quantileIndex = Math\.min/);
 assert.match(script, /function appendFeaturedProvinceLabels\(svg, valueByProvince\)/);
 assert.match(script, /function getProvinceMainlandAnchor\(svg, path, fallbackBox\)/);
 assert.match(script, /const labelY = anchorY/);
+assert.match(script, /const titleSize = 18 \* pixelsToUnits;[\s\S]{0,80}const valueSize = 18 \* pixelsToUnits/);
 assert.match(script, /preserveAspectRatio', 'xMidYMid meet'/);
 assert.match(script, /getComputedTextLength/);
 assert.match(script, /connector\.setAttribute\('x2', String\(labelX\)\)/);

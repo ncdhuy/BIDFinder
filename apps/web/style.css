@@ -8871,7 +8871,12 @@ body.dashboard-view-active .app-footer {
 
 .dashboard-map-body {
   height: auto;
-  padding: 0 8px 8px;
+  padding: 0 8px;
+}
+
+.dashboard-map-widget .dashboard-widget-head {
+  padding-bottom: 4px;
+  border-bottom: 0;
 }
 
 .dashboard-chart-body {
@@ -8959,9 +8964,9 @@ body.dashboard-view-active .app-footer {
 #dashboard-province-map svg {
   display: block;
   width: calc(100% - 196px);
-  height: calc(100% - 6px);
-  margin: 6px auto 0 0;
-  transform: translateY(3px);
+  height: 100%;
+  margin: 0 auto 0 0;
+  transform: translateY(6px);
   max-width: none;
   max-height: none;
 }
