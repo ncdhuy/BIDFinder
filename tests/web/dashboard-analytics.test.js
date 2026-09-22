@@ -30,8 +30,8 @@ assert.doesNotMatch(html, /dashboard-status|Phân tích toàn bộ kết quả p
 assert.doesNotMatch(script, /setDashboardStatus|Phân tích toàn bộ kết quả phù hợp/);
 assert.doesNotMatch(html, /dashboard-kpi-unit/);
 assert.match(style, /\.dashboard-kpi-icon[\s\S]{0,220}width: 44px[\s\S]{0,80}height: 44px/);
-assert.match(style, /\.dashboard-kpi-label[\s\S]{0,120}color: var\(--color-primary-dark\)/);
-assert.match(style, /\.dashboard-kpi-card strong[\s\S]{0,160}color: var\(--color-primary-dark\)/);
+assert.match(style, /\.dashboard-kpi-label[\s\S]{0,120}color: var\(--dashboard-navy\)/);
+assert.match(style, /\.dashboard-kpi-card strong[\s\S]{0,160}color: var\(--dashboard-navy\)/);
 assert.match(style, /\.legacy-pagination\.is-dashboard-hidden\s*\{\s*display: none/);
 
 assert.match(script, /function buildDashboardAnalyticsRequest\(request = currentQueryRequest, selection = dashboardSelection\)/);
@@ -66,5 +66,9 @@ const selectionResetSource = script.slice(
 assert.doesNotMatch(selectionResetSource, /currentQueryRequest/);
 assert.match(script, /function renderDashboardEmpty\(/);
 assert.match(script, /tension: 0/);
+assert.match(script, /dashboard-context-chip-label/);
+assert.match(script, /if \(\/keyword\/i\.test\(readable\)\) return 'Từ khóa'/);
+assert.match(style, /--dashboard-navy: #122e5a/);
+assert.match(style, /\.dashboard-context-chip-label[\s\S]{0,160}text-overflow: ellipsis/);
 
 console.log('Dashboard analytics contract passed');

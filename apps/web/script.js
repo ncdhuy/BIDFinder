@@ -6277,6 +6277,7 @@ function formatDashboardFilterLabel(key) {
         .replace(/([a-z])([A-Z])/g, '$1 $2')
         .replace(/[_-]+/g, ' ')
         .trim();
+    if (/keyword/i.test(readable)) return 'Từ khóa';
     return readable ? readable.charAt(0).toUpperCase() + readable.slice(1) : 'Bộ lọc';
 }
 
@@ -6320,19 +6321,21 @@ function renderDashboardBaseContext() {
     container.replaceChildren();
     const request = currentQueryRequest || {};
     const parts = collectDashboardContextParts(request);
-    parts.slice(0, 3).forEach(text => {
+    const appendChip = (className, text, title = text) => {
         const chip = document.createElement('span');
-        chip.className = 'dashboard-context-chip';
-        chip.textContent = text;
-        chip.title = text;
+        chip.className = className;
+        chip.title = title;
+        const label = document.createElement('span');
+        label.className = 'dashboard-context-chip-label';
+        label.textContent = text;
+        chip.appendChild(label);
         container.appendChild(chip);
+    };
+    parts.slice(0, 3).forEach(text => {
+        appendChip('dashboard-context-chip', text);
     });
     if (parts.length > 3) {
-        const remaining = document.createElement('span');
-        remaining.className = 'dashboard-context-chip is-more';
-        remaining.textContent = `+${parts.length - 3} bộ lọc`;
-        remaining.title = parts.slice(3).join('\n');
-        container.appendChild(remaining);
+        appendChip('dashboard-context-chip is-more', `+${parts.length - 3} bộ lọc`, parts.slice(3).join('\n'));
     }
     if (!parts.length) {
         const empty = document.createElement('span');
