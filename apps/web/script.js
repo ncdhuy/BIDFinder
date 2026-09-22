@@ -6464,6 +6464,15 @@ function formatDashboardTrendLabel(value, unit) {
     return scaled.toLocaleString('vi-VN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function formatDashboardTimelinePeriod(period) {
+    const value = String(period || '');
+    const quarter = value.match(/^(\d{4})-Q([1-4])$/);
+    if (quarter) return `Q${quarter[2]}/${quarter[1]}`;
+    const month = value.match(/^(\d{4})-(\d{2})$/);
+    if (month) return `${month[2]}/${month[1]}`;
+    return value;
+}
+
 const dashboardTimelineLabelsPlugin = {
     id: 'dashboardTimelineLabels',
     afterDatasetsDraw(chart) {
@@ -6851,7 +6860,7 @@ async function renderDashboardCharts(timeline = {}, priceDistribution = {}) {
         dashboardChartInstances.timeline = new window.Chart(canvas.getContext('2d'), {
             type: 'line',
             data: {
-                labels: timelinePoints.map(point => point.period),
+                labels: timelinePoints.map(point => formatDashboardTimelinePeriod(point.period)),
                 datasets: [{
                     data: timelinePoints.map(point => point.total_awarded_value),
                     borderColor: '#1677e8',
@@ -6875,7 +6884,12 @@ async function renderDashboardCharts(timeline = {}, priceDistribution = {}) {
                 plugins: {
                     dashboardTimelineLabels: { unit: trendUnit },
                     legend: { display: false },
-                    tooltip: { callbacks: { label: item => formatCurrencyTooltip(Number(item.raw)) } }
+                    tooltip: {
+                        callbacks: {
+                            title: items => formatDashboardTimelinePeriod(items[0]?.label || ''),
+                            label: item => formatCurrencyTooltip(Number(item.raw))
+                        }
+                    }
                 },
                 scales: {
                     x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 8 } },
@@ -6923,7 +6937,7 @@ function updateDashboardTimelineChart(timeline = {}) {
     clearDashboardWidgetState('timeline');
     const chart = dashboardChartInstances.timeline;
     const trendUnit = getDashboardTrendUnit(timelinePoints.map(point => point.total_awarded_value));
-    chart.data.labels = timelinePoints.map(point => point.period);
+    chart.data.labels = timelinePoints.map(point => formatDashboardTimelinePeriod(point.period));
     chart.data.datasets[0].data = timelinePoints.map(point => point.total_awarded_value);
     chart.options.plugins.dashboardTimelineLabels.unit = trendUnit;
     chart.options.scales.y.title.text = trendUnit.label;
