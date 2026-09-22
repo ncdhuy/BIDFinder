@@ -8362,7 +8362,7 @@ body.product-journey-active #panel-overlay.show {
   white-space: nowrap;
 }
 .dashboard-main-grid { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
-.dashboard-secondary-grid { grid-template-columns: minmax(0, 5fr) minmax(0, 3fr) minmax(0, 4fr); }
+.dashboard-secondary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .dashboard-widget {
   position: relative;
   min-width: 0;

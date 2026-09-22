@@ -6461,7 +6461,7 @@ function getDashboardTrendUnit(values = []) {
 
 function formatDashboardTrendLabel(value, unit) {
     const scaled = Number(value) / (unit?.factor || 1);
-    return scaled.toLocaleString('vi-VN', { maximumFractionDigits: Math.abs(scaled) < 1 ? 2 : 1 });
+    return scaled.toLocaleString('vi-VN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 const dashboardTimelineLabelsPlugin = {
