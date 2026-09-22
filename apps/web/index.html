@@ -142,7 +142,7 @@
                 <div id="data-tab" class="tab-content active">
                     <div class="result-table-tabs toolbar" id="data-view-switcher">
                         <div class="result-table-tab-list toolbar-navigation">
-                            <div class="result-table-tab-choice" role="tablist" aria-label="Chọn bảng kết quả">
+                            <div class="result-table-tab-choice" role="tablist" aria-label="Chọn miền dữ liệu">
                                 <button class="scope-btn result-table-tab" type="button" data-view="df2-panel" aria-selected="false" role="tab" title="Hàng hóa">
                                     <span class="tab-plate" aria-hidden="true"></span>
                                     <span class="scope-icon" aria-hidden="true">
@@ -167,8 +167,11 @@
                                     <span class="scope-text">Dược liệu</span>
                                     <span class="scope-count" id="df3-count-switcher">0</span>
                                 </button>
+                            </div>
+                            <div class="dashboard-view-choice" aria-label="Không gian phân tích">
+                                <span class="dashboard-view-label">Phân tích</span>
                                 <button class="scope-btn result-table-tab dashboard-tab" type="button" data-view="dashboard-panel" aria-selected="false" role="tab" title="Dashboard phân tích">
-                                    <span class="scope-icon" aria-hidden="true">📊</span>
+                                    <span class="scope-icon" aria-hidden="true"><i data-feather="bar-chart-2"></i></span>
                                     <span class="scope-text">Dashboard</span>
                                 </button>
                             </div>
@@ -362,7 +365,6 @@
                         <div class="dashboard-shell-card">
                             <header class="dashboard-header">
                                 <div>
-                                    <p class="dashboard-kicker">Phân tích kết quả tìm kiếm</p>
                                     <h2 id="dashboard-title">Dashboard phân tích kết quả tìm kiếm</h2>
                                     <p class="dashboard-subtitle">Tổng quan dữ liệu từ bộ lọc hiện tại</p>
                                 </div>
@@ -377,24 +379,36 @@
 
                             <div class="dashboard-grid dashboard-kpi-grid">
                                 <article class="dashboard-kpi-card" data-dashboard-widget="summary">
-                                    <span class="dashboard-kpi-label">Tổng giá trị trúng thầu</span>
-                                    <strong data-dashboard-kpi="total_awarded_value">—</strong>
-                                    <span class="dashboard-kpi-unit">VND</span>
+                                    <span class="dashboard-kpi-icon" aria-hidden="true"><i data-feather="dollar-sign"></i></span>
+                                    <div class="dashboard-kpi-copy">
+                                        <span class="dashboard-kpi-label">Tổng giá trị trúng thầu</span>
+                                        <strong data-dashboard-kpi="total_awarded_value">—</strong>
+                                        <span class="dashboard-kpi-unit">VND</span>
+                                    </div>
                                 </article>
                                 <article class="dashboard-kpi-card" data-dashboard-widget="summary">
-                                    <span class="dashboard-kpi-label">Số gói thầu</span>
-                                    <strong data-dashboard-kpi="package_count">—</strong>
-                                    <span class="dashboard-kpi-unit">gói</span>
+                                    <span class="dashboard-kpi-icon" aria-hidden="true"><i data-feather="package"></i></span>
+                                    <div class="dashboard-kpi-copy">
+                                        <span class="dashboard-kpi-label">Số gói thầu</span>
+                                        <strong data-dashboard-kpi="package_count">—</strong>
+                                        <span class="dashboard-kpi-unit">gói</span>
+                                    </div>
                                 </article>
                                 <article class="dashboard-kpi-card" data-dashboard-widget="summary">
-                                    <span class="dashboard-kpi-label">Số nhà thầu</span>
-                                    <strong data-dashboard-kpi="bidder_count">—</strong>
-                                    <span class="dashboard-kpi-unit">nhà thầu</span>
+                                    <span class="dashboard-kpi-icon" aria-hidden="true"><i data-feather="users"></i></span>
+                                    <div class="dashboard-kpi-copy">
+                                        <span class="dashboard-kpi-label">Số nhà thầu</span>
+                                        <strong data-dashboard-kpi="bidder_count">—</strong>
+                                        <span class="dashboard-kpi-unit">nhà thầu</span>
+                                    </div>
                                 </article>
                                 <article class="dashboard-kpi-card" data-dashboard-widget="summary">
-                                    <span class="dashboard-kpi-label">Số chủ đầu tư</span>
-                                    <strong data-dashboard-kpi="investor_count">—</strong>
-                                    <span class="dashboard-kpi-unit">chủ đầu tư</span>
+                                    <span class="dashboard-kpi-icon" aria-hidden="true"><i data-feather="briefcase"></i></span>
+                                    <div class="dashboard-kpi-copy">
+                                        <span class="dashboard-kpi-label">Số chủ đầu tư</span>
+                                        <strong data-dashboard-kpi="investor_count">—</strong>
+                                        <span class="dashboard-kpi-unit">chủ đầu tư</span>
+                                    </div>
                                 </article>
                             </div>
 
@@ -435,7 +449,7 @@
                                     </div>
                                     <div class="dashboard-widget-body dashboard-investors-wrap">
                                         <table class="dashboard-investors-table">
-                                            <thead><tr><th>Tên chủ đầu tư</th><th>Số gói thầu</th><th>Tổng giá trị</th></tr></thead>
+                                            <thead><tr><th>#</th><th>Tên chủ đầu tư</th><th>Số gói thầu</th><th>Tổng giá trị</th></tr></thead>
                                             <tbody id="dashboard-top-investors"></tbody>
                                         </table>
                                     </div>
@@ -470,7 +484,6 @@
             <div class="panel-header">
                 <div class="panel-title-group">
                     <h3><i data-feather="search"></i>Tìm kiếm nâng cao</h3>
-                    <button id="filter-help-btn" class="help-icon" type="button" aria-label="Trợ giúp">i</button>
                 </div>
                 <button id="close-filter-panel" class="btn-close window-close-button" type="button" aria-label="Đóng">
                     <i data-feather="x"></i>
@@ -479,17 +492,6 @@
             <div class="panel-body">
                 <typesense-search-form></typesense-search-form>
             </div>
-        </div>
-
-        <div id="filter-help-tooltip-content" style="display:none;">
-            <div class="help-tooltip-title">💡 Mẹo tìm kiếm</div>
-            <ul>
-                <li><strong>Thêm từ khóa:</strong> Gõ từ khóa hoặc chọn từ gợi ý, sau đó nhấn <code>Enter</code> để tạo 1 thẻ từ khóa.</li>
-                <li><strong>Đổi điều kiện giữa 2 từ khóa:</strong> Nút nằm giữa hai thẻ mặc định là <code>OR</code>. Bấm vào để chuyển thành <code>AND</code> hoặc <code>NOT</code>.</li>
-                <li><strong><code>OR</code>:</strong> Hiển thị kết quả chứa <em>ít nhất một</em> trong hai từ khóa.</li>
-                <li><strong><code>AND</code>:</strong> Hiển thị kết quả phải chứa <em>cả hai</em> từ khóa.</li>
-                <li><strong><code>NOT</code>:</strong> Loại bỏ kết quả chứa từ khóa đứng <em>sau</em> nút <code>NOT</code>.</li>
-            </ul>
         </div>
 
         <!-- Overlay -->
@@ -1005,9 +1007,36 @@
             </div>
             <div class="history-body">
                 <div class="history-chart-shell">
+                    <div class="history-daily-summary" id="history-daily-summary" aria-live="polite">
+                        <div class="history-summary-period" id="history-summary-period">Đang tải thống kê…</div>
+                        <article class="history-summary-card history-summary-card-count">
+                            <div class="history-summary-heading">
+                                <i data-feather="check-circle"></i>
+                                <span>Số gói thầu được phê duyệt</span>
+                            </div>
+                            <strong id="history-summary-approved-count">—</strong>
+                            <span class="history-summary-detail" id="history-summary-approved-detail">Đang tải dữ liệu…</span>
+                        </article>
+                        <article class="history-summary-card history-summary-card-package">
+                            <div class="history-summary-heading">
+                                <i data-feather="award"></i>
+                                <span>Gói thầu có giá trị cao nhất</span>
+                            </div>
+                            <strong id="history-summary-package-value">—</strong>
+                            <span class="history-summary-detail" id="history-summary-package-detail">Chưa có dữ liệu trong ngày</span>
+                        </article>
+                        <article class="history-summary-card history-summary-card-goods">
+                            <div class="history-summary-heading">
+                                <i data-feather="package"></i>
+                                <span>Hàng hóa có đơn giá cao nhất</span>
+                            </div>
+                            <strong id="history-summary-goods-value">—</strong>
+                            <span class="history-summary-detail" id="history-summary-goods-detail">Chưa có dữ liệu trong ngày</span>
+                        </article>
+                    </div>
                     <div class="history-chart-toolbar">
                         <div class="history-chart-copy">
-                            <strong>Số gói thầu đăng tải KQLCNT theo ngày</strong>
+                            <strong>Số gói thầu được phê duyệt theo ngày</strong>
                             <span>Xem xu hướng theo khoảng thời gian gần đây.</span>
                         </div>
                         <div class="history-range-switch" role="tablist" aria-label="Chọn khoảng thời gian">
@@ -1017,10 +1046,10 @@
                         </div>
                     </div>
                     <div id="history-list" class="history-chart-container">
-                        <canvas id="history-timeline-chart" aria-label="Biểu đồ số gói thầu đăng tải KQLCNT theo ngày"></canvas>
+                        <canvas id="history-timeline-chart" aria-label="Biểu đồ số gói thầu được phê duyệt theo ngày"></canvas>
                         <div class="history-empty">
                             <i data-feather="clock"></i>
-                            <p>Chưa có dữ liệu lịch sử đăng tải KQLCNT</p>
+                            <p>Chưa có dữ liệu lịch sử phê duyệt gói thầu</p>
                         </div>
                     </div>
                 </div>
@@ -1058,7 +1087,7 @@
                     </div>
                 </div>
                 <div class="bulk-field-columns">
-                    <span class="bulk-field-columns-title">Trường tham chiếu theo contract Typesense</span>
+                    <span class="bulk-field-columns-title">Cột tham chiếu</span>
                     <div id="bulk-field-panels" class="bulk-field-panels" aria-live="polite">
                         <p class="bulk-contract-status" id="bulk-contract-status">Đang tải danh mục trường tìm kiếm…</p>
                     </div>

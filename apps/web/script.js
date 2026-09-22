@@ -3219,6 +3219,8 @@ function initLandingShell() {
             authenticated: Boolean(window.BIDFinderAuth?.isAuthenticated?.())
         });
 
+        requestHistoryAutoOpen();
+
         if (mustLogin && !window.BIDFinderAuth?.isAuthenticated()) {
             window.BIDFinderAuth?.requestIntent('enter-app');
             window.BIDFinderAuth?.openAuthModal('register');
@@ -3226,6 +3228,7 @@ function initLandingShell() {
         }
 
         syncLandingView('app');
+        maybeAutoOpenHistoryAfterEntry();
         window.BIDFinderAnalytics?.page?.({ view: 'app' });
         initializeAppData();
     };
@@ -3277,6 +3280,7 @@ function initLandingShell() {
         if (authed) {
             if (intent === 'enter-app') {
                 syncLandingView('app');
+                maybeAutoOpenHistoryAfterEntry();
             }
 
             if ((sessionStorage.getItem('bidfinder:view') || 'landing') === 'app' || intent === 'enter-app') {
@@ -3316,154 +3320,6 @@ function initLandingShell() {
         initEmptyCharts();
         syncLandingView('landing');
     });
-}
-
-function initFilterHelpExternalTooltip() {
-    const helpBtn = document.getElementById("filter-help-btn");
-    const contentEl = document.getElementById("filter-help-tooltip-content");
-    if (!helpBtn || !contentEl) return;
-
-    let externalTooltip = null;
-    let pinnedOpen = false;
-
-    injectTooltipStyles();
-
-    const positionTooltip = () => {
-        if (!externalTooltip) return;
-
-        const rect = helpBtn.getBoundingClientRect();
-        const tooltipWidth = externalTooltip.offsetWidth || 420;
-        const margin = 12;
-        const desiredLeft = rect.left + (rect.width / 2) - (tooltipWidth / 2);
-        const maxLeft = Math.max(margin, window.innerWidth - tooltipWidth - margin);
-        const left = Math.max(margin, Math.min(desiredLeft, maxLeft));
-
-        externalTooltip.style.top = `${rect.bottom + 8}px`;
-        externalTooltip.style.left = `${left}px`;
-    };
-
-    const showTooltip = ({ pinned = false } = {}) => {
-        if (!externalTooltip) {
-            externalTooltip = createTooltip(helpBtn, contentEl);
-            document.body.appendChild(externalTooltip);
-        }
-
-        pinnedOpen = pinned || pinnedOpen;
-        helpBtn.setAttribute("aria-expanded", pinnedOpen ? "true" : "false");
-        positionTooltip();
-    };
-
-    const hideTooltip = (force = false) => {
-        if (!force && pinnedOpen) return;
-        if (externalTooltip) {
-            externalTooltip.remove();
-            externalTooltip = null;
-        }
-        pinnedOpen = false;
-        helpBtn.setAttribute("aria-expanded", "false");
-    };
-
-    const openPinnedTooltip = () => {
-        showTooltip({ pinned: true });
-        helpBtn.focus({ preventScroll: true });
-    };
-
-    window.BIDFinderOpenFilterHelp = openPinnedTooltip;
-
-    helpBtn.addEventListener("mouseenter", () => showTooltip());
-    helpBtn.addEventListener("mouseleave", () => hideTooltip());
-    helpBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-
-        if (externalTooltip && pinnedOpen) {
-            hideTooltip(true);
-            return;
-        }
-
-        openPinnedTooltip();
-    });
-
-    document.addEventListener("click", (e) => {
-        if (!externalTooltip || !pinnedOpen) return;
-        if (helpBtn.contains(e.target) || externalTooltip.contains(e.target)) return;
-        hideTooltip(true);
-    });
-
-    document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape") hideTooltip(true);
-    });
-
-    document.addEventListener("bidfinder:open-filter-help", () => {
-        openPinnedTooltip();
-    });
-
-    window.addEventListener("resize", positionTooltip);
-    window.addEventListener("scroll", positionTooltip, true);
-}
-
-function injectTooltipStyles() {
-    const styleId = "external-tooltip-style-filter-help";
-    if (document.getElementById(styleId)) return;
-
-    const style = document.createElement("style");
-    style.id = styleId;
-    style.textContent = `
-        .external-tooltip {
-            position: fixed;
-            background: #ffffff;
-            border: 1px solid #cfe0ea;
-            border-radius: 10px;
-            padding: 16px 18px;
-            width: 420px;
-            max-width: 90vw;
-            box-shadow: 0 18px 36px rgba(16, 34, 48, 0.14);
-            z-index: 999999;
-            font-family: Inter, sans-serif;
-        }
-        .external-tooltip .help-tooltip-title {
-            margin: 0 0 10px 0;
-            font-size: 14px;
-            font-weight: 600;
-            color: #0f5b77;
-        }
-        .external-tooltip ul {
-            margin: 0;
-            padding-left: 18px;
-            list-style: none;
-        }
-        .external-tooltip li {
-            margin-bottom: 8px;
-            font-size: 12px;
-            line-height: 1.5;
-            color: #56707f;
-            position: relative;
-        }
-        .external-tooltip li:last-child {
-            margin-bottom: 0;
-        }
-        .external-tooltip li::before {
-            content: "•";
-            position: absolute;
-            left: -14px;
-            color: #127495;
-            font-weight: 700;
-        }
-        .external-tooltip strong {
-            color: #183445;
-            font-weight: 600;
-        }
-        .external-tooltip code {
-            background: rgba(18, 116, 149, 0.10);
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-family: 'Courier New', monospace;
-            font-size: 11px;
-            color: #0f5b77;
-            font-weight: 600;
-        }
-    `;
-    document.head.appendChild(style);
 }
 
 function setInfoBannerMessage(target, title, message) {
@@ -5513,14 +5369,15 @@ function renderProvinceValueMap(data = [], options = {}) {
     lastProvinceMapDataByContainer.set(containerId, data);
     const container = document.getElementById(containerId);
     if (!container) return;
+    container.classList.add('vietnam-province-map');
 
     if (!vietnamMapDefinition?.features?.length) {
         options.onMapLoading?.();
         showNoDataMessage(containerId, 'Đang tải bản đồ Việt Nam...');
         loadVietnamProvinceMap()
             .then(() => {
-                options.onMapReady?.();
                 renderProvinceValueMap(lastProvinceMapDataByContainer.get(containerId) || [], options);
+                options.onMapReady?.();
             })
             .catch(() => {
                 options.onMapError?.();
@@ -6398,7 +6255,17 @@ function setDashboardStatus(message = '', type = '') {
 
 function formatDashboardCurrency(value) {
     const number = Number(value);
-    return Number.isFinite(number) ? number.toLocaleString('vi-VN') : '—';
+    if (!Number.isFinite(number)) return '—';
+    if (number >= 1_000_000_000_000_000) {
+        return `${(number / 1_000_000_000_000).toLocaleString('vi-VN', { maximumFractionDigits: 2 })} nghìn tỷ ₫`;
+    }
+    if (number >= 1_000_000_000) {
+        return `${(number / 1_000_000_000).toLocaleString('vi-VN', { maximumFractionDigits: 2 })} tỷ ₫`;
+    }
+    if (number >= 1_000_000) {
+        return `${(number / 1_000_000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} triệu ₫`;
+    }
+    return `${number.toLocaleString('vi-VN')} ₫`;
 }
 
 function formatDashboardCount(value) {
@@ -6406,25 +6273,74 @@ function formatDashboardCount(value) {
     return Number.isFinite(number) ? number.toLocaleString('vi-VN') : '—';
 }
 
+function formatDashboardFilterLabel(key) {
+    const readable = String(key || '')
+        .replace(/([a-z])([A-Z])/g, '$1 $2')
+        .replace(/[_-]+/g, ' ')
+        .trim();
+    return readable ? readable.charAt(0).toUpperCase() + readable.slice(1) : 'Bộ lọc';
+}
+
+function formatDashboardFilterValue(value) {
+    if (Array.isArray(value)) return value.filter(Boolean).join(', ');
+    if (value && typeof value === 'object') {
+        const values = value.in || (value.eq !== undefined ? [value.eq] : null);
+        if (Array.isArray(values) && values.length) return values.filter(Boolean).join(', ');
+        if (value.from || value.to) return [value.from, value.to].filter(Boolean).join(' – ');
+        const preferred = ['value', 'values', 'text', 'label', 'min', 'max'];
+        const preferredValue = preferred.find(key => value[key] !== '' && value[key] !== null && value[key] !== undefined);
+        if (preferredValue) return formatDashboardFilterValue(value[preferredValue]);
+        const entry = Object.entries(value).find(([, nested]) => nested !== '' && nested !== null && nested !== undefined);
+        return entry ? formatDashboardFilterValue(entry[1]) : '';
+    }
+    return value === null || value === undefined ? '' : String(value).trim();
+}
+
+function collectDashboardContextParts(request = {}) {
+    const parts = [];
+    const text = String(request.text || '').trim();
+    if (text) parts.push(`Từ khóa: ${text}`);
+    if (request.group) parts.push(`Nhóm: ${request.group}`);
+    if (Array.isArray(request.sourceTypes) && request.sourceTypes.length) {
+        parts.push(`Nguồn: ${request.sourceTypes.join(', ')}`);
+    }
+
+    ['dateRanges', 'structuredFilters', 'ranges', 'filters', 'columnFilters'].forEach(key => {
+        Object.entries(request[key] || {}).forEach(([field, value]) => {
+            const displayValue = formatDashboardFilterValue(value);
+            if (displayValue) parts.push(`${formatDashboardFilterLabel(field)}: ${displayValue}`);
+        });
+    });
+
+    return [...new Set(parts)];
+}
+
 function renderDashboardBaseContext() {
     const container = document.getElementById('dashboard-base-context');
     if (!container) return;
     container.replaceChildren();
     const request = currentQueryRequest || {};
-    const parts = [];
-    if (String(request.text || '').trim()) parts.push(`Từ khóa: ${request.text.trim()}`);
-    if (request.group) parts.push(`Nhóm: ${request.group}`);
-    if (request.scope && request.scope !== 'all') parts.push(`Phạm vi: ${request.scope}`);
-    if (request.dateRanges && Object.keys(request.dateRanges).length) parts.push('Có lọc thời gian');
-    if (request.filters && Object.keys(request.filters).length) parts.push('Có bộ lọc nâng cao');
-    if (request.columnFilters && Object.keys(request.columnFilters).length) parts.push('Có lọc cột');
-    if (!parts.length) parts.push('Toàn bộ kết quả phù hợp với tìm kiếm hiện tại');
-    parts.forEach(text => {
+    const parts = collectDashboardContextParts(request);
+    parts.slice(0, 3).forEach(text => {
         const chip = document.createElement('span');
         chip.className = 'dashboard-context-chip';
         chip.textContent = text;
+        chip.title = text;
         container.appendChild(chip);
     });
+    if (parts.length > 3) {
+        const remaining = document.createElement('span');
+        remaining.className = 'dashboard-context-chip is-more';
+        remaining.textContent = `+${parts.length - 3} bộ lọc`;
+        remaining.title = parts.slice(3).join('\n');
+        container.appendChild(remaining);
+    }
+    if (!parts.length) {
+        const empty = document.createElement('span');
+        empty.className = 'dashboard-context-empty';
+        empty.textContent = 'Không có bộ lọc bổ sung';
+        container.appendChild(empty);
+    }
 }
 
 function renderDashboardSelections() {
@@ -6513,6 +6429,12 @@ function renderDashboardSummary(summary = {}) {
     };
     document.querySelectorAll('[data-dashboard-kpi]').forEach(node => {
         node.textContent = values[node.dataset.dashboardKpi] || '—';
+        if (node.dataset.dashboardKpi === 'total_awarded_value') {
+            const exact = Number(summary.total_awarded_value);
+            node.title = Number.isFinite(exact)
+                ? `${exact.toLocaleString('vi-VN')} VND`
+                : '';
+        }
     });
 }
 
@@ -6566,7 +6488,14 @@ function renderDashboardProducts(products = []) {
         const count = document.createElement('strong');
         count.className = 'dashboard-product-count';
         count.textContent = formatDashboardCount(product.count);
-        button.append(rank, name, count);
+        const track = document.createElement('span');
+        track.className = 'dashboard-product-track';
+        track.setAttribute('aria-hidden', 'true');
+        const fill = document.createElement('span');
+        fill.className = 'dashboard-product-fill';
+        fill.style.width = `${Math.max(4, (Number(product.count || 0) / maxCount) * 100)}%`;
+        track.appendChild(fill);
+        button.append(rank, name, count, track);
         button.addEventListener('click', () => setDashboardSelection('product', product.name));
         row.appendChild(button);
         container.appendChild(row);
@@ -6654,8 +6583,11 @@ function renderDashboardInvestors(investors = []) {
     }
     clearDashboardWidgetState('top_investors');
     body.replaceChildren();
-    investors.slice(0, 5).forEach(investor => {
+    investors.slice(0, 5).forEach((investor, index) => {
         const row = document.createElement('tr');
+        const rankCell = document.createElement('td');
+        rankCell.className = 'dashboard-investor-rank';
+        rankCell.textContent = String(index + 1);
         const nameCell = document.createElement('td');
         const name = document.createElement('button');
         name.type = 'button';
@@ -6668,7 +6600,7 @@ function renderDashboardInvestors(investors = []) {
         packageCell.textContent = formatDashboardCount(investor.package_count);
         const valueCell = document.createElement('td');
         valueCell.textContent = formatCurrencyTooltip(Number(investor.total_awarded_value || 0));
-        row.append(nameCell, packageCell, valueCell);
+        row.append(rankCell, nameCell, packageCell, valueCell);
         body.appendChild(row);
     });
 }
@@ -6682,7 +6614,7 @@ function renderDashboardAnalytics(payload) {
     renderDashboardProducts(payload?.top_products || []);
     renderDashboardInvestors(payload?.top_investors || []);
     void renderDashboardCharts(payload?.timeline || {}, payload?.unit_price_distribution || {});
-    setDashboardStatus(payload?.analytics_complete ? 'Toàn bộ kết quả phù hợp' : 'Dữ liệu giới hạn', payload?.analytics_complete ? 'complete' : 'warning');
+    setDashboardStatus(payload?.analytics_complete ? 'Phân tích toàn bộ kết quả phù hợp' : 'Dữ liệu giới hạn', payload?.analytics_complete ? 'complete' : 'warning');
 }
 
 function renderDashboardEmpty(message = 'Thực hiện tìm kiếm để xem phân tích.') {
@@ -6725,7 +6657,6 @@ async function refreshDashboardAnalytics({ force = false } = {}) {
     ['geography', 'top_products', 'timeline', 'unit_price_distribution', 'top_investors'].forEach(key => setDashboardWidgetState(key, 'Đang tải dữ liệu…', 'loading'));
     try {
         await window.BIDFinderAuth?.whenReady?.();
-        if (!requireAuthenticatedSession('login', 'full_query')) throw new Error('Bạn cần đăng nhập để xem phân tích.');
         const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/dashboard-analytics`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -6793,7 +6724,7 @@ function drawChart(key, config, data) {
     const ctx = canvas.getContext('2d');
     const chartType = config.getType ? config.getType(chartData) : config.type;
     const dataset = {
-        label: key === 'histogram' ? 'Số lượng bản ghi' : 'Tổng trị giá (VND)',
+        label: key === 'histogram' ? 'Số bản ghi' : 'Tổng trị giá (VND)',
         // Point objects are only valid for the exact-price scatter chart.
         // A singleton exact-price result is rendered as a category bar chart,
         // so it must receive plain numeric values instead of { x, y } points.
@@ -6832,11 +6763,51 @@ function drawChart(key, config, data) {
 
 // ======== 2. METADATA
 let metadata = null;
+const historyMetadataCache = new Map();
+const historyMetadataRequests = new Map();
+const HISTORY_METADATA_CACHE_TTL_MS = 60 * 1000;
 let appDataInitialized = false;
 let historyTimelineChart = null;
 let activeHistoryRangeDays = 30;
+const HISTORY_AUTO_OPEN_SESSION_KEY = 'bidfinder:history-auto-opened-date';
+let pendingHistoryAutoOpen = false;
+let historyAutoOpenedDateFallback = '';
+
+function getVietnamCalendarDate(value = new Date()) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Ho_Chi_Minh',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+    }).formatToParts(value);
+    const values = Object.fromEntries(parts.map(({ type, value: partValue }) => [type, partValue]));
+    return `${values.year}-${values.month}-${values.day}`;
+}
+
+function requestHistoryAutoOpen() {
+    pendingHistoryAutoOpen = true;
+}
+
+function maybeAutoOpenHistoryAfterEntry() {
+    if (!pendingHistoryAutoOpen) return;
+    pendingHistoryAutoOpen = false;
+
+    const today = getVietnamCalendarDate();
+    let alreadyOpened = historyAutoOpenedDateFallback === today;
+    try {
+        alreadyOpened = sessionStorage.getItem(HISTORY_AUTO_OPEN_SESSION_KEY) === today;
+        if (!alreadyOpened) {
+            sessionStorage.setItem(HISTORY_AUTO_OPEN_SESSION_KEY, today);
+        }
+    } catch (error) {
+        historyAutoOpenedDateFallback = today;
+    }
+    if (!alreadyOpened) showHistoryModal();
+}
 
 function getHistoryDayKey(value) {
+    const dateText = typeof value === 'string' ? value.match(/^(\d{4})-(\d{2})-(\d{2})/) : null;
+    if (dateText) return `${dateText[1]}-${dateText[2]}-${dateText[3]}`;
     const parsed = value instanceof Date ? new Date(value) : (value ? new Date(value) : null);
     if (!parsed || Number.isNaN(parsed.getTime())) return null;
     parsed.setHours(0, 0, 0, 0);
@@ -6846,7 +6817,7 @@ function getHistoryDayKey(value) {
     return `${year}-${month}-${day}`;
 }
 
-function buildHistoryTimelineData(timeline, rangeDays = 30) {
+function buildHistoryTimelineData(timeline, rangeDays = 30, endDateValue = metadata?.update_dashboard?.date) {
     const countsByDay = new Map();
     (Array.isArray(timeline) ? timeline : []).forEach((item) => {
         const dayKey = getHistoryDayKey(item?.date);
@@ -6856,7 +6827,10 @@ function buildHistoryTimelineData(timeline, rangeDays = 30) {
 
     const labels = [];
     const values = [];
-    const today = new Date();
+    const endDateMatch = String(endDateValue || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+    const today = endDateMatch
+        ? new Date(Number(endDateMatch[1]), Number(endDateMatch[2]) - 1, Number(endDateMatch[3]))
+        : new Date();
     today.setHours(0, 0, 0, 0);
 
     for (let offset = rangeDays - 1; offset >= 0; offset -= 1) {
@@ -6867,7 +6841,15 @@ function buildHistoryTimelineData(timeline, rangeDays = 30) {
         values.push(countsByDay.get(dayKey) || 0);
     }
 
-    return { labels, values };
+    const actualPointCount = labels.length;
+    for (let offset = 1; offset <= 3; offset += 1) {
+        const date = new Date(today);
+        date.setDate(today.getDate() + offset);
+        labels.push(date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }));
+        values.push(0);
+    }
+
+    return { labels, values, actualPointCount };
 }
 
 function destroyHistoryTimelineChart() {
@@ -6883,6 +6865,111 @@ function updateHistoryRangeButtons() {
     });
 }
 
+function getHistoryValueLabelIndexes(pointCount, chartWidth) {
+    const total = Math.max(0, Math.floor(Number(pointCount) || 0));
+    if (!total) return [];
+
+    const width = Number.isFinite(Number(chartWidth)) ? Math.max(0, Number(chartWidth)) : 0;
+    const labelCount = Math.min(total, 6, Math.max(3, Math.floor(width / 150)));
+    if (labelCount === 1) return [0];
+
+    return Array.from({ length: labelCount }, (_, index) =>
+        Math.round(index * (total - 1) / (labelCount - 1))
+    );
+}
+
+function formatHistorySummaryDate(value) {
+    const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return match ? `${match[3]}/${match[2]}` : '—';
+}
+
+function formatHistorySummaryPeriod(summary) {
+    const dateLabel = formatHistorySummaryDate(summary?.date);
+    const cutoff = String(summary?.cutoff || '').trim();
+    if (dateLabel === '—' || !cutoff) {
+        return 'Đang tải thống kê…';
+    }
+    return 'Số liệu trong ngày';
+}
+
+function formatHistorySummaryCutoff(summary) {
+    const dateLabel = formatHistorySummaryDate(summary?.date);
+    const cutoff = String(summary?.cutoff || '').trim();
+    if (dateLabel === '—' || !cutoff) {
+        return 'Đang tải dữ liệu…';
+    }
+    return `Dữ liệu tạm tính đến ${cutoff}, ${dateLabel}`;
+}
+
+function formatHistorySummaryDetail(label, value) {
+    return `<strong>${escapeHtml(label)}</strong>: ${escapeHtml(value || 'Chưa rõ')}`;
+}
+
+function formatHistorySummaryCurrency(value) {
+    const amount = Number(value);
+    if (!Number.isFinite(amount) || amount < 0) return '—';
+
+    const decimalFormatter = new Intl.NumberFormat('vi-VN', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    });
+    if (amount >= 1_000_000_000) {
+        return `${decimalFormatter.format(amount / 1_000_000_000)} tỷ`;
+    }
+    if (amount >= 1_000_000) {
+        return `${decimalFormatter.format(amount / 1_000_000)} triệu`;
+    }
+    return `${amount.toLocaleString('vi-VN')} ₫`;
+}
+
+function renderHistoryDashboard(summary) {
+    const periodNode = document.getElementById('history-summary-period');
+    const countNode = document.getElementById('history-summary-approved-count');
+    const countDetailNode = document.getElementById('history-summary-approved-detail');
+    const packageValueNode = document.getElementById('history-summary-package-value');
+    const packageDetailNode = document.getElementById('history-summary-package-detail');
+    const goodsValueNode = document.getElementById('history-summary-goods-value');
+    const goodsDetailNode = document.getElementById('history-summary-goods-detail');
+    if (!periodNode || !countNode || !countDetailNode || !packageValueNode || !packageDetailNode || !goodsValueNode || !goodsDetailNode) return;
+
+    if (!summary || typeof summary !== 'object') {
+        periodNode.textContent = 'Đang tải thống kê…';
+        countNode.textContent = '—';
+        countDetailNode.textContent = 'Đang tải dữ liệu…';
+        packageValueNode.textContent = '—';
+        packageDetailNode.textContent = 'Đang tải dữ liệu…';
+        goodsValueNode.textContent = '—';
+        goodsDetailNode.textContent = 'Đang tải dữ liệu…';
+        return;
+    }
+
+    const count = Number(summary?.approved_package_count);
+    countNode.textContent = Number.isFinite(count)
+        ? `${count.toLocaleString('vi-VN')} gói`
+        : '—';
+    periodNode.textContent = formatHistorySummaryPeriod(summary);
+    countDetailNode.textContent = formatHistorySummaryCutoff(summary);
+
+    const highestPackage = summary?.highest_package;
+    packageValueNode.textContent = formatHistorySummaryCurrency(highestPackage?.value);
+    if (highestPackage) {
+        packageDetailNode.innerHTML = formatHistorySummaryDetail('Chủ đầu tư', highestPackage.owner);
+    } else {
+        packageDetailNode.textContent = 'Chưa có dữ liệu trong ngày';
+    }
+
+    const highestGoods = summary?.highest_goods;
+    goodsValueNode.textContent = formatHistorySummaryCurrency(highestGoods?.value);
+    if (highestGoods) {
+        goodsDetailNode.innerHTML = [
+            formatHistorySummaryDetail('Chủ đầu tư', highestGoods.owner),
+            formatHistorySummaryDetail('Tên hàng hóa', highestGoods.name)
+        ].join('<br>');
+    } else {
+        goodsDetailNode.textContent = 'Chưa có dữ liệu trong ngày';
+    }
+}
+
 function renderHistoryTimelineChart(timeline) {
     const chartCanvas = document.getElementById('history-timeline-chart');
     const emptyState = document.querySelector('#history-list .history-empty');
@@ -6896,7 +6983,11 @@ function renderHistoryTimelineChart(timeline) {
         return;
     }
 
-    const { labels, values } = buildHistoryTimelineData(normalizedTimeline, activeHistoryRangeDays);
+    const { labels, values, actualPointCount } = buildHistoryTimelineData(
+        normalizedTimeline,
+        activeHistoryRangeDays,
+        metadata?.update_dashboard?.date,
+    );
     chartCanvas.hidden = false;
     if (emptyState) emptyState.hidden = true;
 
@@ -6914,8 +7005,9 @@ function renderHistoryTimelineChart(timeline) {
         data: {
             labels,
             datasets: [{
-                label: 'Số gói thầu đăng tải KQLCNT',
+                label: 'Số gói thầu được phê duyệt theo ngày',
                 data: values,
+                actualPointCount,
                 borderColor: '#127495',
                 backgroundColor: gradient,
                 fill: true,
@@ -6927,9 +7019,72 @@ function renderHistoryTimelineChart(timeline) {
                 pointHoverBackgroundColor: '#127495',
                 pointHoverBorderColor: '#ffffff',
                 pointHoverBorderWidth: 2,
-                borderWidth: 3
+                borderWidth: 3,
+                segment: {
+                    borderDash: context => (
+                        context.p0DataIndex >= actualPointCount - 1 ? [7, 6] : undefined
+                    )
+                }
             }]
         },
+        plugins: [{
+            id: 'history-value-labels',
+            afterDatasetsDraw(chart) {
+                const values = chart.data.datasets[0]?.data || [];
+                const labels = chart.data.labels || [];
+                const points = chart.getDatasetMeta(0)?.data || [];
+                const area = chart.chartArea;
+                if (!area || !values.length) return;
+
+                const { ctx } = chart;
+                const actualPointCount = Number(chart.data.datasets[0]?.actualPointCount) || values.length;
+                const labelIndexes = getHistoryValueLabelIndexes(actualPointCount, area.width);
+                const labelHeight = 22;
+                const horizontalPadding = 7;
+                const radius = 6;
+
+                ctx.save();
+                ctx.font = '600 10px Inter, system-ui, sans-serif';
+                ctx.textBaseline = 'middle';
+
+                labelIndexes.forEach((index) => {
+                    const point = points[index];
+                    const value = Number(values[index]);
+                    if (!point || !Number.isFinite(value) || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+
+                    const label = `${String(labels[index] || '').replace('-', '/')}: ${value.toLocaleString('vi-VN')} gói thầu`;
+                    const labelWidth = ctx.measureText(label).width + horizontalPadding * 2;
+                    const left = Math.max(area.left, Math.min(point.x - labelWidth / 2, area.right - labelWidth));
+                    const aboveTop = point.y - labelHeight - 8;
+                    const top = aboveTop >= area.top ? aboveTop : point.y + 8;
+
+                    ctx.beginPath();
+                    ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
+                    ctx.fillStyle = '#127495';
+                    ctx.fill();
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.stroke();
+
+                    ctx.beginPath();
+                    ctx.moveTo(left + radius, top);
+                    ctx.arcTo(left + labelWidth, top, left + labelWidth, top + labelHeight, radius);
+                    ctx.arcTo(left + labelWidth, top + labelHeight, left, top + labelHeight, radius);
+                    ctx.arcTo(left, top + labelHeight, left, top, radius);
+                    ctx.arcTo(left, top, left + labelWidth, top, radius);
+                    ctx.closePath();
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.96)';
+                    ctx.fill();
+                    ctx.lineWidth = 1;
+                    ctx.strokeStyle = 'rgba(18, 116, 149, 0.32)';
+                    ctx.stroke();
+                    ctx.fillStyle = '#0f3448';
+                    ctx.fillText(label, left + horizontalPadding, top + labelHeight / 2);
+                });
+
+                ctx.restore();
+            }
+        }],
         options: {
             responsive: true,
             maintainAspectRatio: false,
@@ -6952,7 +7107,7 @@ function renderHistoryTimelineChart(timeline) {
                             return items?.[0]?.label || '';
                         },
                         label(context) {
-                            return `${Number(context.parsed?.y || 0).toLocaleString('vi-VN')} gói thầu`;
+                            return `${Number(context.parsed?.y || 0).toLocaleString('vi-VN')} gói`;
                         }
                     }
                 }
@@ -6990,7 +7145,7 @@ function renderHistoryTimelineChart(timeline) {
     });
 }
 
-async function loadMetadata() {
+async function loadMetadata(historyDays = activeHistoryRangeDays) {
     if (!requireAuthenticatedSession('login', 'metadata')) {
         metadata = null;
         return;
@@ -6998,17 +7153,46 @@ async function loadMetadata() {
 
     try {
         console.log('🔄 Đang tải metadata...');
-        const res = await getAuthorizedFetch()(`${API_BASE_URL}/api/metadata`);
-        const meta = await res.json();
-        
-        console.log('📦 Response từ API:', meta);
-        
-        if (meta.success) {
-            metadata = meta;
-            markDatabaseWarm();
-            console.log('✅ Load metadata thành công:', metadata);
-        } else {
+        const requestedHistoryDays = [30, 90, 180].includes(Number(historyDays))
+            ? Number(historyDays)
+            : 30;
+        const cachedEntry = historyMetadataCache.get(requestedHistoryDays);
+        if (cachedEntry && Date.now() - cachedEntry.cachedAt < HISTORY_METADATA_CACHE_TTL_MS) {
+            metadata = cachedEntry.value;
+            return cachedEntry.value;
+        }
+        historyMetadataCache.delete(requestedHistoryDays);
+
+        const pending = historyMetadataRequests.get(requestedHistoryDays);
+        if (pending) {
+            const result = await pending;
+            if (result) metadata = result;
+            return result;
+        }
+
+        const request = (async () => {
+            const res = await getAuthorizedFetch()(
+                `${API_BASE_URL}/api/metadata?history_days=${requestedHistoryDays}`
+            );
+            const meta = await res.json();
+            
+            console.log('📦 Response từ API:', meta);
+            
+            if (meta.success) {
+                historyMetadataCache.set(requestedHistoryDays, { value: meta, cachedAt: Date.now() });
+                metadata = meta;
+                markDatabaseWarm();
+                console.log('✅ Load metadata thành công:', metadata);
+                return meta;
+            }
             console.warn('⚠️ API trả về success=false:', meta.message);
+            return null;
+        })();
+        historyMetadataRequests.set(requestedHistoryDays, request);
+        try {
+            return await request;
+        } finally {
+            historyMetadataRequests.delete(requestedHistoryDays);
         }
     } catch (e) {
         console.error('❌ Load metadata error:', e);
@@ -7018,10 +7202,12 @@ async function loadMetadata() {
 function showHistoryModal() {
     if (!requireAuthenticatedSession('login', 'metadata')) return;
 
+    hideActiveActionTooltip();
     const modal = document.getElementById('history-modal');
     const updateTimeline = metadata?.update_timeline || [];
     const hasData = Array.isArray(updateTimeline) && updateTimeline.length > 0;
     updateHistoryRangeButtons();
+    renderHistoryDashboard(metadata?.update_dashboard);
     
     modal.classList.add('show');
     feather.replace();
@@ -7033,13 +7219,30 @@ function showHistoryModal() {
     } else {
         renderEmptyHistory();
     }
+
+    if (!metadata?.update_dashboard?.date) {
+        void loadMetadata(activeHistoryRangeDays).then(() => {
+            if (!modal.classList.contains('show')) return;
+            renderHistoryDashboard(metadata?.update_dashboard);
+            const freshTimeline = metadata?.update_timeline || [];
+            if (freshTimeline.length) {
+                void ensureChartJsLoaded()
+                    .then(() => renderHistoryTimelineChart(freshTimeline))
+                    .catch(error => console.error('Unable to refresh Chart.js for history', error));
+            } else {
+                renderEmptyHistory();
+            }
+        }).catch(error => console.error('Unable to refresh history metadata', error));
+    }
 }
 
 function renderHistoryData(historyTimeline) {
+    renderHistoryDashboard(metadata?.update_dashboard);
     renderHistoryTimelineChart(historyTimeline || []);
 }
 
 function renderEmptyHistory() {
+    renderHistoryDashboard(metadata?.update_dashboard);
     renderHistoryTimelineChart([]);
 }
 
@@ -7712,7 +7915,6 @@ function initStorageAndElements() {
 
     initPanels();
     initTableWorkspaceControls();
-    initFilterHelpExternalTooltip();
 }
 
 
@@ -7736,9 +7938,16 @@ function initModalEvents() {
             if (!Number.isFinite(nextRange) || nextRange <= 0) return;
             activeHistoryRangeDays = nextRange;
             updateHistoryRangeButtons();
-            void ensureChartJsLoaded()
-                .then(() => renderHistoryTimelineChart(metadata?.update_timeline || []))
-                .catch(error => console.error('Unable to load Chart.js for history', error));
+            void loadMetadata(nextRange)
+                .then(() => {
+                    if (activeHistoryRangeDays !== nextRange) return null;
+                    return ensureChartJsLoaded();
+                })
+                .then(() => {
+                    if (activeHistoryRangeDays !== nextRange) return;
+                    renderHistoryTimelineChart(metadata?.update_timeline || []);
+                })
+                .catch(error => console.error('Unable to refresh history range', error));
         });
     });
 }
@@ -9571,7 +9780,10 @@ function activateResultView(targetId) {
     const activeButton = document.querySelector('.scope-btn.active');
     if (!button) return;
 
-    document.getElementById('legacy-pagination')?.classList.toggle('is-dashboard-hidden', targetId === 'dashboard-panel');
+    const isDashboardView = targetId === 'dashboard-panel';
+    document.body.classList.toggle('dashboard-view-active', isDashboardView);
+    document.getElementById('data-tab')?.classList.toggle('dashboard-view-active', isDashboardView);
+    document.getElementById('legacy-pagination')?.classList.toggle('is-dashboard-hidden', isDashboardView);
 
     if (activeButton === button) {
         updateLegacyPagination();
@@ -10002,9 +10214,9 @@ function getProductJourneySteps() {
         },
         {
             title: 'Lịch sử cập nhật',
-            body: 'Theo dõi gói thầu được cập nhật theo khoảng thời gian.',
+            body: 'Theo dõi số gói thầu được phê duyệt theo thời gian.',
             afterTitle: 'Lịch sử cập nhật',
-            afterBody: 'Theo dõi gói thầu được cập nhật theo khoảng thời gian.',
+            afterBody: 'Theo dõi số gói thầu được phê duyệt theo thời gian.',
             selector: '#open-run-history',
             focusAfterSelector: '#history-modal .history-content',
             afterClick: openHistoryForJourney
@@ -10480,6 +10692,14 @@ function initProductJourney() {
 let actionTooltipElement = null;
 let actionTooltipAnchor = null;
 
+function isHistoryModalOpen() {
+    return document.getElementById?.('history-modal')?.classList.contains('show') === true;
+}
+
+function shouldSuppressActionTooltip(button) {
+    return button?.id === 'open-run-history' && isHistoryModalOpen();
+}
+
 function getActionTooltipElement() {
     if (actionTooltipElement) return actionTooltipElement;
     actionTooltipElement = document.createElement('div');
@@ -10514,7 +10734,10 @@ function positionActionTooltip() {
 }
 
 function showActionTooltip(button) {
-    if (!button?.dataset.title) return;
+    if (!button?.dataset.title || shouldSuppressActionTooltip(button)) {
+        if (actionTooltipAnchor === button) hideActiveActionTooltip();
+        return;
+    }
     const tooltip = getActionTooltipElement();
     actionTooltipAnchor = button;
     tooltip.textContent = button.dataset.title;
@@ -10524,12 +10747,17 @@ function showActionTooltip(button) {
     positionActionTooltip();
 }
 
-function hideActionTooltip(button) {
-    if (actionTooltipAnchor !== button || !actionTooltipElement) return;
+function hideActiveActionTooltip() {
+    if (!actionTooltipElement) return;
     actionTooltipElement.classList.remove('is-visible');
     actionTooltipElement.setAttribute('aria-hidden', 'true');
-    button.removeAttribute('aria-describedby');
+    actionTooltipAnchor?.removeAttribute('aria-describedby');
     actionTooltipAnchor = null;
+}
+
+function hideActionTooltip(button) {
+    if (actionTooltipAnchor !== button) return;
+    hideActiveActionTooltip();
 }
 
 function setActionTooltip(button, label) {
@@ -10558,9 +10786,12 @@ function initActionTooltips() {
         button.addEventListener('mouseleave', () => hideActionTooltip(button));
         button.addEventListener('focusin', () => showActionTooltip(button));
         button.addEventListener('focusout', () => hideActionTooltip(button));
+        button.addEventListener('click', () => hideActionTooltip(button));
     });
     window.addEventListener('resize', positionActionTooltip);
     window.addEventListener('scroll', positionActionTooltip, true);
+    window.addEventListener('blur', hideActiveActionTooltip);
+    document.addEventListener?.('visibilitychange', hideActiveActionTooltip);
 }
 
 async function initializeAppData() {
@@ -10572,6 +10803,7 @@ async function initializeAppData() {
     }
 
     if (appDataInitialized) {
+        maybeAutoOpenHistoryAfterEntry();
         return;
     }
 
@@ -10586,6 +10818,7 @@ async function initializeAppData() {
         await loadMetadata();
         initEmptyCharts();
         await restoreFilterUrlState();
+        maybeAutoOpenHistoryAfterEntry();
         
         console.log('✅ App initialized - Ready for filtering from database');
         
@@ -10595,6 +10828,7 @@ async function initializeAppData() {
         console.error('⚠️ Server có thể đang khởi động, vui lòng đợi 30s và refresh lại');
         await loadMetadata();
         initEmptyCharts();
+        maybeAutoOpenHistoryAfterEntry();
     }
 }
 
