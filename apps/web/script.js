@@ -6504,6 +6504,69 @@ const dashboardTimelineLabelsPlugin = {
     }
 };
 
+function truncateDashboardBidderLabel(value, maxLength = 24) {
+    const label = String(value || '').trim();
+    return label.length > maxLength ? `${label.slice(0, maxLength - 1)}…` : label;
+}
+
+const dashboardBidderPriceLabelsPlugin = {
+    id: 'dashboardBidderPriceLabels',
+    afterDatasetsDraw(chart) {
+        const { ctx, chartArea } = chart;
+        if (!chartArea || !Array.isArray(chart.data?.datasets)) return;
+
+        ctx.save();
+        ctx.font = `600 10px ${getComputedStyle(document.body).fontFamily}`;
+        ctx.textBaseline = 'middle';
+
+        const labels = chart.data.datasets.map((dataset, datasetIndex) => {
+            const points = chart.getDatasetMeta(datasetIndex)?.data || [];
+            const point = [...points].reverse().find(item => (
+                !item.skip && Number.isFinite(item.x) && Number.isFinite(item.y)
+            ));
+            if (!point || !dataset.label) return null;
+
+            const text = truncateDashboardBidderLabel(dataset.label);
+            const placeLeft = point.x + 12 + ctx.measureText(text).width > chartArea.right - 2;
+            return {
+                point,
+                text,
+                color: dataset.borderColor || '#1268d3',
+                textX: placeLeft ? point.x - 10 : point.x + 10,
+                lineX: placeLeft ? point.x - 6 : point.x + 6,
+                textAlign: placeLeft ? 'right' : 'left',
+                y: Math.min(chartArea.bottom - 8, Math.max(chartArea.top + 8, point.y))
+            };
+        }).filter(Boolean).sort((left, right) => left.y - right.y);
+
+        const labelGap = 15;
+        labels.forEach((label, index) => {
+            if (index > 0) label.y = Math.max(label.y, labels[index - 1].y + labelGap);
+        });
+        for (let index = labels.length - 2; index >= 0; index -= 1) {
+            labels[index].y = Math.min(labels[index].y, labels[index + 1].y - labelGap);
+        }
+
+        labels.forEach(label => {
+            ctx.strokeStyle = label.color;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(label.point.x, label.point.y);
+            ctx.lineTo(label.lineX, label.y);
+            ctx.stroke();
+
+            ctx.fillStyle = label.color;
+            ctx.beginPath();
+            ctx.arc(label.point.x, label.point.y, 2.8, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.textAlign = label.textAlign;
+            ctx.fillText(label.text, label.textX, label.y);
+        });
+        ctx.restore();
+    }
+};
+
 function getDashboardTimelinePoints(timeline = {}) {
     const selected = timeline?.series?.[dashboardTimelineGrain];
     if (Array.isArray(selected)) return selected;
@@ -6942,7 +7005,7 @@ async function renderDashboardCharts(timeline = {}, bidderPriceSeries = []) {
         const priceMin = Math.min(...priceValues);
         const priceMax = Math.max(...priceValues);
         const priceScaleMax = priceMin === priceMax ? priceMax * 1.1 : priceMax;
-        dashboardChartInstances.price = new window.Chart(canvas.getContext('2d'), {
+    dashboardChartInstances.price = new window.Chart(canvas.getContext('2d'), {
             type: 'line',
             data: {
                 datasets: bidderSeries.map((series, index) => ({
@@ -6969,26 +7032,14 @@ async function renderDashboardCharts(timeline = {}, bidderPriceSeries = []) {
                     showLine: true
                 }))
             },
+            plugins: [dashboardBidderPriceLabelsPlugin],
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
                 interaction: { mode: 'nearest', intersect: true },
-                layout: { padding: { top: 8, right: 8 } },
+                layout: { padding: { top: 8, right: 12 } },
                 plugins: {
-                    legend: {
-                        display: true,
-                        position: 'bottom',
-                        labels: {
-                            usePointStyle: true,
-                            boxWidth: 8,
-                            padding: 8,
-                            font: { size: 10 },
-                            generateLabels: chart => window.Chart.defaults.plugins.legend.labels.generateLabels(chart).map(item => ({
-                                ...item,
-                                text: item.text.length > 28 ? `${item.text.slice(0, 27)}…` : item.text
-                            }))
-                        }
-                    },
+                    legend: { display: false },
                     tooltip: {
                         callbacks: {
                             title: items => items[0]?.dataset?.label || '',

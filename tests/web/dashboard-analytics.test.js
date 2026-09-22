@@ -123,6 +123,16 @@ const selectionResetSource = script.slice(
 assert.doesNotMatch(selectionResetSource, /currentQueryRequest/);
 assert.match(script, /function renderDashboardEmpty\(/);
 assert.match(script, /tension: 0/);
+assert.match(script, /const dashboardBidderPriceLabelsPlugin =/);
+assert.match(script, /id: 'dashboardBidderPriceLabels'/);
+assert.match(script, /plugins: \[dashboardBidderPriceLabelsPlugin\]/);
+const bidderPriceChartSource = script.slice(
+  script.indexOf('dashboardChartInstances.price ='),
+  script.indexOf('function updateDashboardTimelineChart')
+);
+assert.match(bidderPriceChartSource, /legend: \{ display: false \}/);
+assert.doesNotMatch(bidderPriceChartSource, /position: 'bottom'/);
+assert.doesNotMatch(bidderPriceChartSource, /generateLabels:/);
 assert.match(script, /dashboard-context-chip-label/);
 assert.match(script, /function getDashboardSearchKeyword\(request = \{\}\)/);
 assert.match(script, /const keywordFields = \[/);
