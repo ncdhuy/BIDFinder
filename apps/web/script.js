@@ -4978,17 +4978,17 @@ const CHART_THEME = {
     grid: '#dde7ec',
     border: '#d1dde4',
     surface: '#ffffff',
-    mapNoData: '#eef6ff'
+    mapNoData: '#f2f4f6'
 };
 
 const PROVINCE_MAP_BUCKET_COLORS = [
     '#1268d3',
     '#2b80e1',
-    '#4b96e9',
-    '#70acef',
-    '#96c2f4',
-    '#b8d6f8',
-    '#d9e9fb'
+    '#4b8fcf',
+    '#708faa',
+    '#8f9ca8',
+    '#aeb6be',
+    '#c8cdd2'
 ];
 
 function ensureChartJsLoaded() {
