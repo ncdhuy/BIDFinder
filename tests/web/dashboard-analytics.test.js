@@ -67,8 +67,13 @@ assert.doesNotMatch(selectionResetSource, /currentQueryRequest/);
 assert.match(script, /function renderDashboardEmpty\(/);
 assert.match(script, /tension: 0/);
 assert.match(script, /dashboard-context-chip-label/);
-assert.match(script, /if \(\/keyword\/i\.test\(readable\)\) return 'Từ khóa'/);
+assert.match(script, /function getDashboardSearchKeyword\(request = \{\}\)/);
+assert.match(script, /crossGroupProductKeyword/);
+assert.match(script, /goodsKeyword/);
+assert.doesNotMatch(script, /function formatDashboardFilterValue/);
+assert.doesNotMatch(script, /function formatDashboardFilterLabel/);
 assert.match(style, /--dashboard-navy: #122e5a/);
 assert.match(style, /\.dashboard-context-chip-label[\s\S]{0,160}text-overflow: ellipsis/);
+assert.match(style, /color: #1d78e9;[\s\S]{0,50}background: #dcecff/);
 
 console.log('Dashboard analytics contract passed');

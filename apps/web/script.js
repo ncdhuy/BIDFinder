@@ -6272,47 +6272,27 @@ function formatDashboardCount(value) {
     return Number.isFinite(number) ? number.toLocaleString('vi-VN') : '—';
 }
 
-function formatDashboardFilterLabel(key) {
-    const readable = String(key || '')
-        .replace(/([a-z])([A-Z])/g, '$1 $2')
-        .replace(/[_-]+/g, ' ')
-        .trim();
-    if (/keyword/i.test(readable)) return 'Từ khóa';
-    return readable ? readable.charAt(0).toUpperCase() + readable.slice(1) : 'Bộ lọc';
-}
-
-function formatDashboardFilterValue(value) {
-    if (Array.isArray(value)) return value.filter(Boolean).join(', ');
-    if (value && typeof value === 'object') {
-        const values = value.in || (value.eq !== undefined ? [value.eq] : null);
-        if (Array.isArray(values) && values.length) return values.filter(Boolean).join(', ');
-        if (value.from || value.to) return [value.from, value.to].filter(Boolean).join(' – ');
-        const preferred = ['value', 'values', 'text', 'label', 'min', 'max'];
-        const preferredValue = preferred.find(key => value[key] !== '' && value[key] !== null && value[key] !== undefined);
-        if (preferredValue) return formatDashboardFilterValue(value[preferredValue]);
-        const entry = Object.entries(value).find(([, nested]) => nested !== '' && nested !== null && nested !== undefined);
-        return entry ? formatDashboardFilterValue(entry[1]) : '';
-    }
-    return value === null || value === undefined ? '' : String(value).trim();
+function getDashboardSearchKeyword(request = {}) {
+    const searchForm = getProcurementSearchForm();
+    const formPayload = typeof searchForm?.collectFilterPayload === 'function'
+        ? searchForm.collectFilterPayload()
+        : {};
+    const keywordValues = ['crossGroupProductKeyword', 'goodsKeyword']
+        .map(key => formPayload?.filters?.[key] || request.filters?.[key])
+        .flatMap(filter => Array.isArray(filter?.tokens) ? filter.tokens : [])
+        .map(token => typeof token === 'string' ? token : token?.value)
+        .filter(value => typeof value === 'string' && value.trim())
+        .join(' ');
+    const text = [formPayload?.text, keywordValues, request.text]
+        .find(value => typeof value === 'string' && value.trim())
+        ?.trim()
+        .replace(/^(["'])(.*)\1$/, '$2') || '';
+    return text;
 }
 
 function collectDashboardContextParts(request = {}) {
-    const parts = [];
-    const text = String(request.text || '').trim();
-    if (text) parts.push(`Từ khóa: ${text}`);
-    if (request.group) parts.push(`Nhóm: ${request.group}`);
-    if (Array.isArray(request.sourceTypes) && request.sourceTypes.length) {
-        parts.push(`Nguồn: ${request.sourceTypes.join(', ')}`);
-    }
-
-    ['dateRanges', 'structuredFilters', 'ranges', 'filters', 'columnFilters'].forEach(key => {
-        Object.entries(request[key] || {}).forEach(([field, value]) => {
-            const displayValue = formatDashboardFilterValue(value);
-            if (displayValue) parts.push(`${formatDashboardFilterLabel(field)}: ${displayValue}`);
-        });
-    });
-
-    return [...new Set(parts)];
+    const text = getDashboardSearchKeyword(request);
+    return text ? [`Từ khóa: ${text}`] : [];
 }
 
 function renderDashboardBaseContext() {

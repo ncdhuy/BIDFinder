@@ -8753,13 +8753,13 @@ body.dashboard-view-active .app-footer {
   width: 44px;
   height: 44px;
   border-radius: 12px;
-  color: #2a7891;
-  background: #e1eff4;
+  color: #1d78e9;
+  background: #dcecff;
 }
 
-.dashboard-kpi-card:nth-child(2) .dashboard-kpi-icon { color: #26816e; background: #dff1ea; }
-.dashboard-kpi-card:nth-child(3) .dashboard-kpi-icon { color: #bb7734; background: #faead4; }
-.dashboard-kpi-card:nth-child(4) .dashboard-kpi-icon { color: #755d9b; background: #ebe3f6; }
+.dashboard-kpi-card:nth-child(2) .dashboard-kpi-icon { color: #0aa77b; background: #ddf6ec; }
+.dashboard-kpi-card:nth-child(3) .dashboard-kpi-icon { color: #f08a16; background: #ffedcf; }
+.dashboard-kpi-card:nth-child(4) .dashboard-kpi-icon { color: #7a4de8; background: #eee6ff; }
 .dashboard-kpi-icon svg { width: 23px; height: 23px; stroke-width: 2.1; }
 .dashboard-kpi-copy { min-width: 0; }
 
