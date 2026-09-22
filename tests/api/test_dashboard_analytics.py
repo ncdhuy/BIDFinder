@@ -12,7 +12,6 @@ from typesense_shadow import (  # noqa: E402
     TypesenseShadowConfig,
     aggregate_dashboard_documents,
     build_canonical_query,
-    build_dashboard_price_histogram,
 )
 
 
@@ -82,16 +81,9 @@ class DashboardAnalyticsTest(unittest.TestCase):
         self.assertEqual(["2026-01", "2026-02"], [point["period"] for point in result["timeline"]["series"]["month"]])
         self.assertEqual(["2026-Q1"], [point["period"] for point in result["timeline"]["series"]["quarter"]])
         self.assertEqual(75, result["timeline"]["series"]["year"][0]["total_awarded_value"])
-        self.assertEqual(4, result["unit_price_distribution"]["count"])
+        self.assertIn("bidder_unit_price_series", result)
+        self.assertNotIn("unit_price_distribution", result)
         self.assertEqual("Bệnh viện A", result["top_investors"][0]["name"])
-
-    def test_price_histogram_excludes_invalid_values_and_preserves_counts(self):
-        histogram = build_dashboard_price_histogram([0, -1, None, "bad", 10, 20, 30, 1000, 2000, 3000])
-        self.assertEqual(6, histogram["count"])
-        self.assertLessEqual(len(histogram["bins"]), 12)
-        self.assertEqual(10, histogram["stats"]["min"])
-        self.assertEqual(3000, histogram["stats"]["max"])
-        self.assertEqual(6, sum(item["count"] for item in histogram["bins"]))
 
     def test_request_all_pages_complete_match_universe_beyond_search_caps(self):
         calls = []

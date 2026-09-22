@@ -6861,20 +6861,25 @@ function renderDashboardProducts(products = []) {
     });
 }
 
-async function renderDashboardCharts(timeline = {}, priceDistribution = {}) {
+async function renderDashboardCharts(timeline = {}, bidderPriceSeries = []) {
     resetDashboardCharts();
     const timelinePoints = getDashboardTimelinePoints(timeline);
-    const priceBins = Array.isArray(priceDistribution.bins) ? priceDistribution.bins : [];
+    const bidderSeries = Array.isArray(bidderPriceSeries) ? bidderPriceSeries : [];
+    const bidderValues = bidderSeries.flatMap(series => (Array.isArray(series?.points) ? series.points : []))
+        .map(point => Number(point?.total_awarded_value))
+        .filter(Number.isFinite);
+    const bidderUnit = getDashboardTrendUnit(bidderValues);
+    const hasPriceSeries = bidderSeries.some(series => Array.isArray(series?.points) && series.points.some(point => Number(point?.unit_price) > 0 && Number.isFinite(Number(point?.total_awarded_value))));
     const trendUnit = getDashboardTrendUnit(timelinePoints.map(point => point.total_awarded_value));
     if (!timelinePoints.length) setDashboardWidgetState('timeline', 'Không có dữ liệu thời gian.', 'empty');
-    if (!priceBins.length) setDashboardWidgetState('unit_price_distribution', 'Không có đơn giá hợp lệ.', 'empty');
-    if (!timelinePoints.length && !priceBins.length) return;
+    if (!hasPriceSeries) setDashboardWidgetState('bidder_unit_price_series', 'Không có đơn giá hợp lệ.', 'empty');
+    if (!timelinePoints.length && !hasPriceSeries) return;
 
     try {
         await ensureChartJsLoaded();
     } catch (error) {
         if (timelinePoints.length) setDashboardWidgetState('timeline', 'Không tải được biểu đồ.', 'error');
-        if (priceBins.length) setDashboardWidgetState('unit_price_distribution', 'Không tải được biểu đồ.', 'error');
+        if (hasPriceSeries) setDashboardWidgetState('bidder_unit_price_series', 'Không tải được biểu đồ.', 'error');
         return;
     }
 
@@ -6927,33 +6932,93 @@ async function renderDashboardCharts(timeline = {}, priceDistribution = {}) {
             }
         });
     }
-    if (priceBins.length) {
+    if (hasPriceSeries) {
         const canvas = document.getElementById('dashboard-price-chart');
-        clearDashboardWidgetState('unit_price_distribution');
+        clearDashboardWidgetState('bidder_unit_price_series');
+        const seriesColors = ['#1268d3', '#2e83df', '#4b9be8', '#73afe9', '#9cc6ec'];
+        const priceValues = bidderSeries.flatMap(series => (Array.isArray(series.points) ? series.points : []))
+            .map(point => Number(point.unit_price))
+            .filter(value => Number.isFinite(value) && value > 0);
+        const priceMin = Math.min(...priceValues);
+        const priceMax = Math.max(...priceValues);
+        const priceScaleMax = priceMin === priceMax ? priceMax * 1.1 : priceMax;
         dashboardChartInstances.price = new window.Chart(canvas.getContext('2d'), {
-            type: 'bar',
+            type: 'line',
             data: {
-                labels: priceBins.map(bin => `${formatDashboardPriceAxis(bin.start)} – ${formatDashboardPriceAxis(bin.end)}`),
-                datasets: [{ data: priceBins.map(bin => bin.count), backgroundColor: CHART_THEME.primary, borderRadius: 4, maxBarThickness: 42 }]
+                datasets: bidderSeries.map((series, index) => ({
+                    label: String(series?.name || `Nhà thầu ${index + 1}`),
+                    data: (Array.isArray(series?.points) ? series.points : [])
+                        .map(point => ({
+                            x: Number(point?.unit_price),
+                            y: Number(point?.total_awarded_value),
+                            occurrence_count: Number(point?.occurrence_count || 0),
+                            package_count: Number(point?.package_count || 0)
+                        }))
+                        .filter(point => Number.isFinite(point.x) && point.x > 0 && Number.isFinite(point.y))
+                        .sort((left, right) => left.x - right.x),
+                    borderColor: seriesColors[index % seriesColors.length],
+                    backgroundColor: seriesColors[index % seriesColors.length],
+                    borderWidth: 1.5,
+                    pointRadius: 4,
+                    pointHoverRadius: 6,
+                    pointHitRadius: 12,
+                    pointBorderColor: '#ffffff',
+                    pointBorderWidth: 1.5,
+                    tension: 0,
+                    fill: false,
+                    showLine: true
+                }))
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                interaction: { mode: 'nearest', intersect: true },
+                layout: { padding: { top: 8, right: 8 } },
                 plugins: {
-                    legend: { display: false },
+                    legend: {
+                        display: true,
+                        position: 'bottom',
+                        labels: {
+                            usePointStyle: true,
+                            boxWidth: 8,
+                            padding: 8,
+                            font: { size: 10 },
+                            generateLabels: chart => window.Chart.defaults.plugins.legend.labels.generateLabels(chart).map(item => ({
+                                ...item,
+                                text: item.text.length > 28 ? `${item.text.slice(0, 27)}…` : item.text
+                            }))
+                        }
+                    },
                     tooltip: {
                         callbacks: {
-                            title: items => `Khoảng giá: ${items[0]?.label || ''}`,
-                            label: item => `Số quan sát: ${formatDashboardCount(Number(item.raw))}`
+                            title: items => items[0]?.dataset?.label || '',
+                            label: item => {
+                                const point = item.raw || {};
+                                const lines = [
+                                    `Đơn giá: ${formatDashboardPriceAxis(point.x)}`,
+                                    `Tổng giá trị: ${formatDashboardTrendLabel(point.y, bidderUnit)} ${bidderUnit.label}`,
+                                    `Số lần trúng: ${formatDashboardCount(point.occurrence_count)}`
+                                ];
+                                if (Number.isFinite(point.package_count)) lines.push(`Số gói thầu: ${formatDashboardCount(point.package_count)}`);
+                                return lines;
+                            }
                         }
                     }
                 },
                 scales: {
-                    x: { grid: { display: false }, ticks: { autoSkip: true, maxRotation: 45, minRotation: 45, maxTicksLimit: 6 } },
+                    x: {
+                        type: 'logarithmic',
+                        min: priceMin,
+                        max: priceScaleMax,
+                        grid: { color: CHART_THEME.grid },
+                        title: { display: true, text: 'Đơn giá trúng thầu', color: CHART_THEME.axis, font: { size: 10, weight: '600' } },
+                        ticks: { maxTicksLimit: 7, callback: value => formatDashboardPriceAxis(value) }
+                    },
                     y: {
                         beginAtZero: true,
                         grid: { color: CHART_THEME.grid },
-                        ticks: { stepSize: 1, callback: value => formatDashboardCount(value) }
+                        title: { display: true, text: bidderUnit.label, color: CHART_THEME.axis, font: { size: 10, weight: '600' } },
+                        ticks: { callback: value => formatDashboardTrendLabel(value, bidderUnit) }
                     }
                 }
             }
@@ -6964,7 +7029,7 @@ async function renderDashboardCharts(timeline = {}, priceDistribution = {}) {
 function updateDashboardTimelineChart(timeline = {}) {
     const timelinePoints = getDashboardTimelinePoints(timeline);
     if (!timelinePoints.length || !dashboardChartInstances.timeline) {
-        void renderDashboardCharts(timeline, dashboardAnalyticsData?.unit_price_distribution || {});
+        void renderDashboardCharts(timeline, dashboardAnalyticsData?.bidder_unit_price_series || []);
         return;
     }
     clearDashboardWidgetState('timeline');
@@ -7020,7 +7085,7 @@ function renderDashboardAnalytics(payload) {
     renderDashboardMap(payload?.geography || []);
     renderDashboardProducts(payload?.top_products || []);
     renderDashboardInvestors(payload?.top_investors || []);
-    void renderDashboardCharts(payload?.timeline || {}, payload?.unit_price_distribution || {});
+    void renderDashboardCharts(payload?.timeline || {}, payload?.bidder_unit_price_series || []);
 }
 
 function renderDashboardEmpty(message = 'Thực hiện tìm kiếm để xem phân tích.') {
@@ -7028,7 +7093,7 @@ function renderDashboardEmpty(message = 'Thực hiện tìm kiếm để xem ph�
     resetDashboardCharts();
     renderDashboardSummary({});
     renderDashboardBaseContext();
-    ['geography', 'top_products', 'timeline', 'unit_price_distribution', 'top_investors'].forEach(key => setDashboardWidgetState(key, message, 'empty'));
+    ['geography', 'top_products', 'timeline', 'bidder_unit_price_series', 'top_investors'].forEach(key => setDashboardWidgetState(key, message, 'empty'));
 }
 
 async function refreshDashboardAnalytics({ force = false } = {}) {
@@ -7065,7 +7130,7 @@ async function refreshDashboardAnalytics({ force = false } = {}) {
     const controller = new AbortController();
     dashboardAnalyticsController = controller;
     const version = ++dashboardAnalyticsVersion;
-    ['geography', 'top_products', 'timeline', 'unit_price_distribution', 'top_investors'].forEach(key => setDashboardWidgetState(key, 'Đang tải dữ liệu…', 'loading'));
+    ['geography', 'top_products', 'timeline', 'bidder_unit_price_series', 'top_investors'].forEach(key => setDashboardWidgetState(key, 'Đang tải dữ liệu…', 'loading'));
     try {
         await window.BIDFinderAuth?.whenReady?.();
         const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/dashboard-analytics`, {
@@ -7080,7 +7145,7 @@ async function refreshDashboardAnalytics({ force = false } = {}) {
         renderDashboardAnalytics(payload);
     } catch (error) {
         if (error?.name === 'AbortError' || version !== dashboardAnalyticsVersion) return;
-        ['geography', 'top_products', 'timeline', 'unit_price_distribution', 'top_investors'].forEach(key => setDashboardWidgetState(key, 'Không tải được dữ liệu phân tích.', 'error'));
+        ['geography', 'top_products', 'timeline', 'bidder_unit_price_series', 'top_investors'].forEach(key => setDashboardWidgetState(key, 'Không tải được dữ liệu phân tích.', 'error'));
     }
 }
 

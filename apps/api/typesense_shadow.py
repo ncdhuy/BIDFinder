@@ -16,7 +16,6 @@ from decimal import Decimal
 import hashlib
 import json
 import logging
-import math
 import os
 from pathlib import Path
 import random
@@ -1414,60 +1413,34 @@ def _analytics_number(value: Decimal) -> int | float:
     return int(value) if value == value.to_integral_value() else float(value)
 
 
-def _analytics_quantile(values: Sequence[Decimal], ratio: float) -> Decimal:
-    if not values:
-        return Decimal(0)
-    if len(values) == 1:
-        return values[0]
-    position = (len(values) - 1) * ratio
-    lower = int(math.floor(position))
-    upper = int(math.ceil(position))
-    if lower == upper:
-        return values[lower]
-    fraction = Decimal(str(position - lower))
-    return values[lower] + (values[upper] - values[lower]) * fraction
-
-
-def build_dashboard_price_histogram(values: Iterable[Any], *, max_bins: int = 12) -> dict[str, Any]:
-    """Build a real price histogram; logarithmic bins keep right-skewed prices readable."""
-    valid = sorted(
-        value for value in (_analytics_decimal(item, positive_only=True) for item in values)
-        if value is not None
-    )
-    if not valid:
-        return {"bins": [], "count": 0, "stats": {"min": None, "p25": None, "median": None, "p75": None, "max": None}}
-
-    minimum, maximum = valid[0], valid[-1]
-    bin_count = min(max_bins, max(5, math.ceil(math.sqrt(len(valid)))))
-    if minimum == maximum:
-        edges = [minimum, minimum + (Decimal(1) if minimum == 0 else minimum * Decimal("0.05"))]
-    elif maximum / minimum >= Decimal(100):
-        log_min, log_max = math.log10(float(minimum)), math.log10(float(maximum))
-        edges = [Decimal(str(10 ** (log_min + (log_max - log_min) * index / bin_count))) for index in range(bin_count + 1)]
-        edges[0], edges[-1] = minimum, maximum
-    else:
-        step = (maximum - minimum) / Decimal(bin_count)
-        edges = [minimum + step * index for index in range(bin_count + 1)]
-        edges[-1] = maximum
-
-    bins = [{"start": edges[index], "end": edges[index + 1], "count": 0} for index in range(len(edges) - 1)]
-    for value in valid:
-        index = next((idx for idx in range(len(bins) - 1) if value < bins[idx]["end"]), len(bins) - 1)
-        bins[index]["count"] += 1
-    return {
-        "bins": [
-            {"start": _analytics_number(item["start"]), "end": _analytics_number(item["end"]), "count": item["count"]}
-            for item in bins
-        ],
-        "count": len(valid),
-        "stats": {
-            "min": _analytics_number(minimum),
-            "p25": _analytics_number(_analytics_quantile(valid, 0.25)),
-            "median": _analytics_number(_analytics_quantile(valid, 0.5)),
-            "p75": _analytics_number(_analytics_quantile(valid, 0.75)),
-            "max": _analytics_number(maximum),
-        },
-    }
+def build_dashboard_bidder_price_series(
+    bidder_totals: Mapping[str, Decimal],
+    bidder_names: Mapping[str, str],
+    bidder_prices: Mapping[str, Mapping[Decimal, Mapping[str, Any]]],
+    *,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    """Return top bidders with exact-price awarded-value observations."""
+    ranked_keys = sorted(
+        bidder_totals,
+        key=lambda key: (-bidder_totals[key], bidder_names.get(key, key).casefold()),
+    )[:limit]
+    series = []
+    for key in ranked_keys:
+        points = []
+        for unit_price, aggregate in sorted(bidder_prices.get(key, {}).items(), key=lambda item: item[0]):
+            points.append({
+                "unit_price": _analytics_number(unit_price),
+                "total_awarded_value": _analytics_number(aggregate["value"]),
+                "occurrence_count": int(aggregate["occurrence_count"]),
+                "package_count": len(aggregate["packages"]),
+            })
+        series.append({
+            "name": bidder_names.get(key, key),
+            "total_awarded_value": _analytics_number(bidder_totals[key]),
+            "points": points,
+        })
+    return series
 
 
 def aggregate_dashboard_documents(documents_by_group: Mapping[str, Sequence[Mapping[str, Any]]]) -> dict[str, Any]:
@@ -1478,7 +1451,9 @@ def aggregate_dashboard_documents(documents_by_group: Mapping[str, Sequence[Mapp
     investors: dict[str, dict[str, Any]] = {}
     provinces: dict[str, dict[str, Any]] = {}
     bidders: set[str] = set()
-    prices: list[Decimal] = []
+    bidder_totals: dict[str, Decimal] = {}
+    bidder_names: dict[str, str] = {}
+    bidder_prices: dict[str, dict[Decimal, dict[str, Any]]] = {}
     dated_values: list[tuple[date, Decimal]] = []
     seen_documents: set[tuple[str, str]] = set()
     matched_observations = 0
@@ -1505,8 +1480,27 @@ def aggregate_dashboard_documents(documents_by_group: Mapping[str, Sequence[Mapp
                 entry = products.setdefault(product_key, {"name": product_name, "packages": set(), "group": public_group(group)})
                 entry["packages"].add(package_key)
 
-            bidder_values = _analytics_values(document.get("winning_bidder_id")) or _analytics_values(document.get("winning_bidder_name"))
-            bidders.update(identity for identity in (_analytics_identity(value) for value in bidder_values) if identity)
+            bidder_identity_values = _analytics_values(document.get("winning_bidder_id")) or _analytics_values(document.get("winning_bidder_name"))
+            bidder_display_values = _analytics_values(document.get("winning_bidder_name")) or bidder_identity_values
+            valid_unit_price = _analytics_decimal(document.get("winning_unit_price"), positive_only=True)
+            for index, raw_bidder in enumerate(bidder_identity_values):
+                bidder_key = _analytics_identity(raw_bidder)
+                if not bidder_key:
+                    continue
+                bidder_label = _analytics_text(bidder_display_values[index] if index < len(bidder_display_values) else raw_bidder) or bidder_key
+                bidders.add(bidder_key)
+                bidder_names.setdefault(bidder_key, bidder_label)
+                bidder_totals[bidder_key] = bidder_totals.get(bidder_key, Decimal(0)) + row_value
+                if row_value <= 0 or valid_unit_price is None:
+                    continue
+                price_entry = bidder_prices.setdefault(bidder_key, {}).setdefault(valid_unit_price, {
+                    "value": Decimal(0),
+                    "occurrence_count": 0,
+                    "packages": set(),
+                })
+                price_entry["value"] += row_value
+                price_entry["occurrence_count"] += 1
+                price_entry["packages"].add(package_key)
 
             investor_name = _analytics_text(document.get("procuring_entity_name"))
             investor_id = _analytics_identity(document.get("procuring_entity_id"))
@@ -1525,7 +1519,6 @@ def aggregate_dashboard_documents(documents_by_group: Mapping[str, Sequence[Mapp
                 entry["packages"].add(package_key)
 
             if row_value > 0:
-                prices.append(_analytics_decimal(document.get("winning_unit_price"), positive_only=True) or Decimal(0))
                 result_date = _analytics_date(document.get("result_posted_at")) or _analytics_date(document.get("decision_issued_at"))
                 if result_date:
                     dated_values.append((result_date, row_value))
@@ -1588,7 +1581,7 @@ def aggregate_dashboard_documents(documents_by_group: Mapping[str, Sequence[Mapp
         "geography": geography,
         "top_products": product_rows[:10],
         "timeline": timeline,
-        "unit_price_distribution": build_dashboard_price_histogram(prices),
+        "bidder_unit_price_series": build_dashboard_bidder_price_series(bidder_totals, bidder_names, bidder_prices),
         "top_investors": top_investors[:5],
         "meta": {"complete": True, "matched_observations": matched_observations, "groups": sorted(public_group(group) for group in documents_by_group)},
     }
