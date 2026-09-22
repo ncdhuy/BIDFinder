@@ -8876,8 +8876,13 @@ body.dashboard-view-active .app-footer {
 .dashboard-products {
   min-height: 0;
   padding: 4px 10px 6px;
-  gap: 1px;
-  justify-content: flex-start;
+  gap: 0;
+  justify-content: space-between;
+}
+
+.dashboard-products-widget .dashboard-widget-head {
+  align-items: center;
+  padding-block: 8px;
 }
 
 .dashboard-products-measure {
@@ -8888,11 +8893,20 @@ body.dashboard-view-active .app-footer {
   white-space: nowrap;
 }
 
+.dashboard-product-row {
+  display: flex;
+  flex: 1 1 0;
+  width: 100%;
+  min-height: 24px;
+  max-height: 28px;
+}
+
 .dashboard-product-bar {
   grid-template-columns: 26px minmax(145px, 0.85fr) minmax(120px, 1.4fr) 38px;
   grid-template-rows: 20px;
   column-gap: 8px;
   min-height: 24px;
+  height: 100%;
   padding: 1px 6px;
   border-color: transparent;
   border-radius: 6px;
@@ -8948,8 +8962,8 @@ body.dashboard-view-active .app-footer {
   display: block;
   height: 100%;
   border-radius: 3px;
-  background: #3b86d7;
-  transition: width 160ms ease, background-color 160ms ease;
+  background: var(--product-bar-color, #3b86d7);
+  transition: width 160ms ease, filter 160ms ease;
 }
 
 .dashboard-product-bar:hover,
@@ -8958,7 +8972,9 @@ body.dashboard-view-active .app-footer {
   background: #f5fafb;
 }
 
-.dashboard-product-row.is-selected .dashboard-product-fill { background: #135fb4; }
+.dashboard-product-row.is-selected .dashboard-product-fill {
+  filter: saturate(1.15) brightness(0.82);
+}
 
 .dashboard-investors-wrap { overflow: hidden; }
 .dashboard-investors-table { font-size: 10.5px; }

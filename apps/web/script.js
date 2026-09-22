@@ -6717,6 +6717,12 @@ function renderDashboardProducts(products = []) {
     container.replaceChildren();
     const maxCount = Math.max(...products.map(item => Number(item.count || 0)), 1);
     products.slice(0, 10).forEach((product, index) => {
+        const countValue = Number(product.count || 0);
+        const countRatio = Math.max(0, Math.min(1, countValue / maxCount));
+        const colorIndex = Math.min(
+            PROVINCE_MAP_BUCKET_COLORS.length - 1,
+            Math.round((1 - countRatio) * (PROVINCE_MAP_BUCKET_COLORS.length - 1))
+        );
         const row = document.createElement('div');
         row.className = 'dashboard-product-row';
         row.dataset.dashboardProduct = product.name;
@@ -6740,7 +6746,8 @@ function renderDashboardProducts(products = []) {
         track.setAttribute('aria-hidden', 'true');
         const fill = document.createElement('span');
         fill.className = 'dashboard-product-fill';
-        fill.style.width = `${Math.max(4, (Number(product.count || 0) / maxCount) * 100)}%`;
+        fill.style.width = `${Math.max(4, countRatio * 100)}%`;
+        fill.style.setProperty('--product-bar-color', PROVINCE_MAP_BUCKET_COLORS[colorIndex]);
         track.appendChild(fill);
         button.append(rank, name, count, track);
         button.addEventListener('click', () => setDashboardSelection('product', product.name));

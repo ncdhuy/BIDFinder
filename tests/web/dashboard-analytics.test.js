@@ -15,6 +15,7 @@ assert.match(html, /data-dashboard-kpi="total_awarded_value"/);
 assert.match(html, /id="dashboard-province-map"/);
 assert.match(html, /id="dashboard-top-products"/);
 assert.match(html, /class="dashboard-products-measure"/);
+assert.doesNotMatch(html, /Số gói thầu có chứa sản phẩm\./);
 assert.match(html, /id="dashboard-timeline-chart"/);
 assert.match(html, /id="dashboard-price-chart"/);
 assert.match(html, /id="dashboard-top-investors"/);
@@ -36,6 +37,8 @@ assert.match(style, /\.dashboard-product-bar[\s\S]{0,260}grid-template-columns: 
 assert.match(style, /\.dashboard-product-track[\s\S]{0,220}grid-column: 3[\s\S]{0,100}height: 18px/);
 assert.doesNotMatch(style, /dashboard-product-bar::before/);
 assert.doesNotMatch(script, /--bar-width/);
+assert.match(script, /fill\.style\.setProperty\('--product-bar-color', PROVINCE_MAP_BUCKET_COLORS\[colorIndex\]\)/);
+assert.match(style, /\.dashboard-products[\s\S]{0,160}justify-content: space-between/);
 assert.match(style, /\.dashboard-selection-bar\[hidden\][\s\S]{0,60}display: none/);
 assert.match(style, /\.dashboard-selection-chip-label[\s\S]{0,180}text-overflow: ellipsis/);
 assert.match(style, /\.dashboard-header-row[\s\S]{0,180}grid-template-columns: minmax\(0, 1fr\) minmax\(0, 1fr\)/);
