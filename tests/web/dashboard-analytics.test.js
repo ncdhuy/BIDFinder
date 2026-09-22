@@ -51,7 +51,7 @@ assert.match(script, /borderColor: '#1677e8'/);
 assert.match(script, /function formatDashboardTrendLabel\(value, unit\)[\s\S]{0,220}toLocaleString\('vi-VN'/);
 assert.match(script, /minimumFractionDigits: 1, maximumFractionDigits: 1/);
 assert.match(script, /function formatDashboardCurrency\(value\)[\s\S]{0,520}minimumFractionDigits: 1, maximumFractionDigits: 1/);
-assert.match(script, /function formatDashboardCount\(value\)[\s\S]{0,180}minimumFractionDigits: 1, maximumFractionDigits: 1/);
+assert.match(script, /function formatDashboardCount\(value\)[\s\S]{0,180}number\.toLocaleString\('vi-VN'\)/);
 assert.match(script, /function formatDashboardPriceAxis\(value\)[\s\S]{0,180}minimumFractionDigits: 1, maximumFractionDigits: 1/);
 assert.match(script, /function formatProvinceScaleValue\(value\)[\s\S]{0,260}minimumFractionDigits: 1, maximumFractionDigits: 1/);
 assert.match(script, /formatDashboardPriceAxis\(bin\.start\)/);

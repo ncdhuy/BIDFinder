@@ -6601,9 +6601,7 @@ function formatDashboardCurrencyTooltip(value) {
 
 function formatDashboardCount(value) {
     const number = Number(value);
-    return Number.isFinite(number)
-        ? number.toLocaleString('vi-VN', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
-        : '—';
+    return Number.isFinite(number) ? number.toLocaleString('vi-VN') : '—';
 }
 
 function getDashboardSearchKeyword(request = {}) {
