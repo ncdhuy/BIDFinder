@@ -21,9 +21,10 @@ assert.match(style, /\.dashboard-main-grid[\s\S]{0,180}grid-auto-rows: clamp\(30
 assert.match(style, /\.dashboard-main-grid \{[\s\S]{0,120}grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
 assert.match(style, /\.dashboard-secondary-grid[\s\S]{0,180}grid-auto-rows: clamp\(220px, 25vh, 250px\)/);
 assert.match(style, /#dashboard-province-map svg[\s\S]{0,120}display: block;[\s\S]{0,80}width: 100%;[\s\S]{0,40}height: 100%;/);
-assert.match(style, /\.dashboard-map-body > \.no-data-msg[\s\S]{0,180}display: none/);
-assert.match(style, /#dashboard-province-map \.province-map-legend[\s\S]{0,260}grid-template-rows: auto 132px/);
-assert.match(style, /#dashboard-province-map \.province-map-legend-scale[\s\S]{0,180}background: linear-gradient\(0deg, var\(--map-zero\), var\(--map-low\) 32%, var\(--map-high\)\)/);
+assert.match(script, /function hideNoDataMessage\(canvasId\)[\s\S]{0,240}msg\.remove\(\)/);
+assert.match(style, /\.province-map-legend-items[\s\S]{0,120}flex-direction: column/);
+assert.match(style, /\.province-map-legend-swatch[\s\S]{0,160}width: 14px[\s\S]{0,60}height: 14px/);
+assert.doesNotMatch(style, /province-map-legend-scale|province-map-legend-labels/);
 assert.match(style, /\.dashboard-product-bar[\s\S]{0,260}grid-template-rows: auto 4px/);
 assert.match(style, /\.dashboard-product-track[\s\S]{0,220}border-radius: 4px/);
 assert.match(style, /\.dashboard-selection-bar\[hidden\][\s\S]{0,60}display: none/);
@@ -80,8 +81,9 @@ assert.doesNotMatch(script, /function formatDashboardFilterValue/);
 assert.doesNotMatch(script, /function formatDashboardFilterLabel/);
 assert.match(style, /--dashboard-navy: #122e5a/);
 assert.match(style, /--dashboard-blue: #0f62d6/);
-assert.match(script, /mapLow: '#76b5f4'/);
-assert.match(script, /mapHigh: '#0c67d9'/);
+assert.match(script, /const PROVINCE_MAP_COLOR_BUCKETS = \[/);
+assert.match(script, /label: '> 500\.000\.000'/);
+assert.doesNotMatch(html, /Phân bổ theo địa điểm trong toàn bộ kết quả phù hợp/);
 assert.match(style, /\.dashboard-context-chip-label[\s\S]{0,160}text-overflow: ellipsis/);
 assert.match(style, /color: #1d78e9;[\s\S]{0,50}background: #dcecff/);
 

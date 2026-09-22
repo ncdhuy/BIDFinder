@@ -4978,10 +4978,19 @@ const CHART_THEME = {
     grid: '#dde7ec',
     border: '#d1dde4',
     surface: '#ffffff',
-    mapNoData: '#eef6ff',
-    mapLow: '#76b5f4',
-    mapHigh: '#0c67d9'
+    mapNoData: '#eef6ff'
 };
+
+const PROVINCE_MAP_COLOR_BUCKETS = [
+    { min: 500_000_000, color: '#1268d3', label: '> 500.000.000' },
+    { min: 200_000_000, color: '#2b80e1', label: '200.000.000 - 500.000.000' },
+    { min: 100_000_000, color: '#4b96e9', label: '100.000.000 - 200.000.000' },
+    { min: 50_000_000, color: '#70acef', label: '50.000.000 - 100.000.000' },
+    { min: 10_000_000, color: '#96c2f4', label: '10.000.000 - 50.000.000' },
+    { min: 1_000_000, color: '#b8d6f8', label: '1.000.000 - 10.000.000' },
+    { min: 0, color: '#d9e9fb', label: '< 1.000.000' },
+    { noData: true, color: CHART_THEME.mapNoData, label: 'Không có dữ liệu' }
+];
 
 function ensureChartJsLoaded() {
     if (window.Chart) return Promise.resolve(window.Chart);
@@ -5224,20 +5233,10 @@ function getProvinceValueEntries(data) {
     return adminValueMap;
 }
 
-function interpolateHexColor(startColor, endColor, ratio) {
-    const clampedRatio = Math.max(0, Math.min(1, ratio));
-    const start = startColor.replace('#', '').match(/.{1,2}/g).map(value => parseInt(value, 16));
-    const end = endColor.replace('#', '').match(/.{1,2}/g).map(value => parseInt(value, 16));
-    const mixed = start.map((channel, index) =>
-        Math.round(channel + (end[index] - channel) * clampedRatio)
-    );
-    return `#${mixed.map(value => value.toString(16).padStart(2, '0')).join('')}`;
-}
-
-function getProvinceFill(value, maxValue) {
-    if (!value || !maxValue) return CHART_THEME.mapNoData;
-    const ratio = Math.sqrt(value / maxValue);
-    return interpolateHexColor(CHART_THEME.mapLow, CHART_THEME.mapHigh, ratio);
+function getProvinceFill(value) {
+    if (!value) return CHART_THEME.mapNoData;
+    return PROVINCE_MAP_COLOR_BUCKETS.find(bucket => !bucket.noData && value >= bucket.min)?.color
+        || CHART_THEME.mapNoData;
 }
 
 function getProvinceMergeStatus(provinceName, provinceValue, mapProperties = {}) {
@@ -5256,7 +5255,7 @@ function getProvinceMergeStatus(provinceName, provinceValue, mapProperties = {})
     return `Sáp nhập: ${parts}`;
 }
 
-function createProvinceMapLegend(maxValue) {
+function createProvinceMapLegend() {
     const legend = document.createElement('div');
     legend.className = 'province-map-legend';
     legend.setAttribute('aria-hidden', 'true');
@@ -5265,23 +5264,25 @@ function createProvinceMapLegend(maxValue) {
     title.className = 'province-map-legend-title';
     title.textContent = 'Tổng giá trị trúng thầu';
 
-    const scale = document.createElement('span');
-    scale.className = 'province-map-legend-scale';
-    scale.style.setProperty('--map-zero', CHART_THEME.mapNoData);
-    scale.style.setProperty('--map-low', CHART_THEME.mapLow);
-    scale.style.setProperty('--map-high', CHART_THEME.mapHigh);
+    const items = document.createElement('div');
+    items.className = 'province-map-legend-items';
+    PROVINCE_MAP_COLOR_BUCKETS.forEach(bucket => {
+        const item = document.createElement('div');
+        item.className = 'province-map-legend-item';
 
-    const labels = document.createElement('span');
-    labels.className = 'province-map-legend-labels';
+        const swatch = document.createElement('span');
+        swatch.className = 'province-map-legend-swatch';
+        swatch.style.backgroundColor = bucket.color;
 
-    const minLabel = document.createElement('span');
-    minLabel.textContent = '0';
+        const label = document.createElement('span');
+        label.className = 'province-map-legend-label';
+        label.textContent = bucket.label;
 
-    const maxLabel = document.createElement('span');
-    maxLabel.textContent = formatCurrencyTooltip(maxValue);
+        item.append(swatch, label);
+        items.appendChild(item);
+    });
 
-    labels.append(minLabel, maxLabel);
-    legend.append(title, scale, labels);
+    legend.append(title, items);
     return legend;
 }
 
@@ -5440,7 +5441,7 @@ function renderProvinceValueMap(data = [], options = {}) {
         const provinceKey = getProvinceMapKey(provinceName);
         const provinceValue = valueByProvince.get(provinceKey);
         const value = provinceValue?.value || 0;
-        const fillColor = getProvinceFill(value, maxValue);
+        const fillColor = getProvinceFill(value);
         const displayName = provinceValue?.name || provinceName;
         const mergeStatus = getProvinceMergeStatus(provinceName, provinceValue, properties);
         const valueText = value ? formatCurrencyTooltip(value) : 'Không có dữ liệu';
@@ -5526,7 +5527,7 @@ function renderProvinceValueMap(data = [], options = {}) {
     });
 
     container.appendChild(svg);
-    container.appendChild(createProvinceMapLegend(maxValue));
+    container.appendChild(createProvinceMapLegend());
     provincePreviewVersion += 1;
     requestAnimationFrame(() => fitProvinceMapViewBox(svg));
 }
@@ -6729,7 +6730,7 @@ function hideNoDataMessage(canvasId) {
     if (!canvas) return;
     
     const msg = canvas.parentElement.querySelector('.no-data-msg');
-    if (msg) msg.classList.remove('visible');
+    if (msg) msg.remove();
     canvas.classList.remove('hidden');
 }
 
