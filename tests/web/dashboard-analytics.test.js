@@ -3,6 +3,7 @@ const fs = require('node:fs');
 
 const script = fs.readFileSync('apps/web/script.js', 'utf8');
 const html = fs.readFileSync('apps/web/index.html', 'utf8');
+const style = fs.readFileSync('apps/web/style.css', 'utf8');
 
 assert.match(html, /data-view="dashboard-panel"/);
 assert.match(html, /Dashboard phân tích kết quả tìm kiếm/);
@@ -12,6 +13,14 @@ assert.match(html, /id="dashboard-top-products"/);
 assert.match(html, /id="dashboard-timeline-chart"/);
 assert.match(html, /id="dashboard-price-chart"/);
 assert.match(html, /id="dashboard-top-investors"/);
+assert.match(style, /\.dashboard-main-grid[\s\S]{0,180}grid-auto-rows: clamp\(300px, 34vh, 320px\)/);
+assert.match(style, /\.dashboard-secondary-grid[\s\S]{0,180}grid-auto-rows: clamp\(220px, 25vh, 250px\)/);
+assert.match(style, /#dashboard-province-map svg[\s\S]{0,120}display: block;[\s\S]{0,80}width: 100%;[\s\S]{0,40}height: 100%;/);
+assert.match(style, /\.dashboard-product-bar[\s\S]{0,260}grid-template-rows: auto 4px/);
+assert.match(style, /\.dashboard-product-track[\s\S]{0,220}border-radius: 4px/);
+assert.match(style, /\.dashboard-selection-bar\[hidden\][\s\S]{0,60}display: none/);
+assert.match(style, /\.dashboard-selection-chip-label[\s\S]{0,180}text-overflow: ellipsis/);
+assert.match(style, /\.legacy-pagination\.is-dashboard-hidden\s*\{\s*display: none/);
 
 assert.match(script, /function buildDashboardAnalyticsRequest\(request = currentQueryRequest, selection = dashboardSelection\)/);
 assert.match(script, /columnFilters: request\?\.columnFilters \|\| \{\}/);
@@ -37,6 +46,7 @@ assert.match(script, /const leavingDashboard = activeButton\?\.getAttribute\('da
 assert.match(script, /path\.setAttribute\('role', 'button'\)/);
 assert.match(script, /path\.addEventListener\('keydown', event =>/);
 assert.match(script, /legacy-pagination[^\n]*is-dashboard-hidden/);
+assert.match(script, /Tổng giá trị trúng thầu/);
 const selectionResetSource = script.slice(
   script.indexOf('function resetDashboardSelection'),
   script.indexOf('function getDashboardBaseRequest')

@@ -5263,7 +5263,7 @@ function createProvinceMapLegend(maxValue) {
 
     const title = document.createElement('span');
     title.className = 'province-map-legend-title';
-    title.textContent = 'Tổng giá trị';
+    title.textContent = 'Tổng giá trị trúng thầu';
 
     const scale = document.createElement('span');
     scale.className = 'province-map-legend-scale';
@@ -6360,13 +6360,17 @@ function renderDashboardSelections() {
         if (!value) return;
         const chip = document.createElement('span');
         chip.className = 'dashboard-selection-chip';
-        chip.textContent = `${labels[key]}: ${value}`;
+        const label = document.createElement('span');
+        label.className = 'dashboard-selection-chip-label';
+        label.textContent = `${labels[key]}: ${value}`;
+        label.title = label.textContent;
         const remove = document.createElement('button');
         remove.type = 'button';
         remove.textContent = '×';
         remove.setAttribute('aria-label', `Bỏ chọn ${labels[key]}`);
+        remove.title = `Bỏ chọn ${labels[key]}`;
         remove.addEventListener('click', () => setDashboardSelection(key, null));
-        chip.appendChild(remove);
+        chip.append(label, remove);
         chips.appendChild(chip);
     });
     const hasSelection = Object.values(dashboardSelection).some(Boolean);
