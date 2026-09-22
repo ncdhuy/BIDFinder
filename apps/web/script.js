@@ -5459,6 +5459,7 @@ function renderProvinceValueMap(data = [], options = {}) {
         path.dataset.value = String(value);
         path.dataset.valueText = valueText;
         path.setAttribute('tabindex', '0');
+        path.setAttribute('role', 'button');
         path.setAttribute('aria-label', `${displayName}: ${valueText}`);
         path.classList.toggle('is-selected', getProvinceMapKey(options.selectedProvince || '') === provinceKey);
 
@@ -5487,6 +5488,11 @@ function renderProvinceValueMap(data = [], options = {}) {
             moveProvinceMapTooltip(container, tooltip, event);
         });
         path.addEventListener('click', () => options.onProvinceSelect?.(displayName));
+        path.addEventListener('keydown', event => {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            options.onProvinceSelect?.(displayName);
+        });
         path.addEventListener('pointermove', (event) => {
             moveProvinceMapTooltip(container, tooltip, event);
         });
@@ -6366,6 +6372,24 @@ function renderDashboardSelections() {
     const hasSelection = Object.values(dashboardSelection).some(Boolean);
     bar.hidden = !hasSelection;
     if (clear) clear.hidden = !hasSelection;
+    syncDashboardSelectionVisuals();
+}
+
+function syncDashboardSelectionVisuals() {
+    document.querySelectorAll('.dashboard-product-row[data-dashboard-product]').forEach(row => {
+        const isSelected = row.dataset.dashboardProduct === (dashboardSelection.product || '');
+        row.classList.toggle('is-selected', isSelected);
+        row.querySelector('.dashboard-product-bar')?.setAttribute('aria-pressed', String(isSelected));
+    });
+
+    const selectedProvinceKey = getProvinceMapKey(dashboardSelection.province || '');
+    document.querySelectorAll('#dashboard-province-map path[data-province]').forEach(path => {
+        path.classList.toggle('is-selected', getProvinceMapKey(path.dataset.province || '') === selectedProvinceKey && Boolean(selectedProvinceKey));
+    });
+
+    document.querySelectorAll('.dashboard-investor-row[data-dashboard-investor]').forEach(row => {
+        row.classList.toggle('is-selected', row.dataset.dashboardInvestor === (dashboardSelection.investor || ''));
+    });
 }
 
 function resetDashboardSelection() {
@@ -6377,7 +6401,10 @@ function resetDashboardSelection() {
 
 function setDashboardSelection(key, value) {
     if (!Object.prototype.hasOwnProperty.call(dashboardSelection, key)) return;
-    dashboardSelection[key] = value ? String(value).trim() : null;
+    const nextValue = value ? String(value).trim() : '';
+    dashboardSelection[key] = nextValue && dashboardSelection[key] === nextValue
+        ? null
+        : (nextValue || null);
     renderDashboardSelections();
     if (isDashboardActive()) void refreshDashboardAnalytics({ force: true });
 }
@@ -6472,6 +6499,7 @@ function renderDashboardProducts(products = []) {
     products.slice(0, 10).forEach((product, index) => {
         const row = document.createElement('div');
         row.className = 'dashboard-product-row';
+        row.dataset.dashboardProduct = product.name;
         row.classList.toggle('is-selected', dashboardSelection.product === product.name);
         const button = document.createElement('button');
         button.type = 'button';
@@ -6585,6 +6613,9 @@ function renderDashboardInvestors(investors = []) {
     body.replaceChildren();
     investors.slice(0, 5).forEach((investor, index) => {
         const row = document.createElement('tr');
+        row.className = 'dashboard-investor-row';
+        row.dataset.dashboardInvestor = investor.name;
+        row.classList.toggle('is-selected', dashboardSelection.investor === investor.name);
         const rankCell = document.createElement('td');
         rankCell.className = 'dashboard-investor-rank';
         rankCell.textContent = String(index + 1);
@@ -6628,6 +6659,12 @@ function renderDashboardEmpty(message = 'Thực hiện tìm kiếm để xem ph�
 
 async function refreshDashboardAnalytics({ force = false } = {}) {
     if (!isDashboardActive()) return;
+    const baseRequest = getDashboardBaseRequest(currentQueryRequest);
+    const baseKey = stableStringify(baseRequest);
+    if (refreshDashboardAnalytics.lastBaseKey && refreshDashboardAnalytics.lastBaseKey !== baseKey) {
+        resetDashboardSelection();
+    }
+    refreshDashboardAnalytics.lastBaseKey = baseKey;
     renderDashboardBaseContext();
     renderDashboardSelections();
 
@@ -6635,23 +6672,24 @@ async function refreshDashboardAnalytics({ force = false } = {}) {
     // Once the user has searched (including a valid zero-result search), the
     // backend owns the complete-universe aggregation.
     if (!hasActiveQueryFilters(currentQueryRequest) && Number(currentQueryMeta?.totalCount || 0) <= 0) {
+        dashboardAnalyticsController?.abort();
+        dashboardAnalyticsController = null;
+        dashboardAnalyticsVersion += 1;
+        refreshDashboardAnalytics.lastRequestKey = '';
+        if (Object.values(dashboardSelection).some(Boolean)) resetDashboardSelection();
         renderDashboardEmpty();
         return;
     }
 
-    const baseRequest = getDashboardBaseRequest(currentQueryRequest);
-    const baseKey = stableStringify(baseRequest);
-    if (refreshDashboardAnalytics.lastBaseKey && refreshDashboardAnalytics.lastBaseKey !== baseKey) {
-        resetDashboardSelection();
-    }
-    refreshDashboardAnalytics.lastBaseKey = baseKey;
     const requestBody = buildDashboardAnalyticsRequest(baseRequest, dashboardSelection);
     const requestKey = stableStringify(requestBody);
     if (!force && refreshDashboardAnalytics.lastRequestKey === requestKey && dashboardAnalyticsData) return;
     refreshDashboardAnalytics.lastRequestKey = requestKey;
 
+    dashboardAnalyticsData = null;
     dashboardAnalyticsController?.abort();
-    dashboardAnalyticsController = new AbortController();
+    const controller = new AbortController();
+    dashboardAnalyticsController = controller;
     const version = ++dashboardAnalyticsVersion;
     setDashboardStatus('Đang tải phân tích…', 'loading');
     ['geography', 'top_products', 'timeline', 'unit_price_distribution', 'top_investors'].forEach(key => setDashboardWidgetState(key, 'Đang tải dữ liệu…', 'loading'));
@@ -6661,7 +6699,7 @@ async function refreshDashboardAnalytics({ force = false } = {}) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(requestBody),
-            signal: dashboardAnalyticsController.signal
+            signal: controller.signal
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || payload?.success === false) throw new Error(payload?.detail || payload?.message || `HTTP ${response.status}`);
@@ -9779,6 +9817,14 @@ function activateResultView(targetId) {
     const button = document.querySelector(`.scope-btn[data-view="${targetId}"]`);
     const activeButton = document.querySelector('.scope-btn.active');
     if (!button) return;
+
+    const leavingDashboard = activeButton?.getAttribute('data-view') === 'dashboard-panel'
+        && targetId !== 'dashboard-panel';
+    if (leavingDashboard) {
+        dashboardAnalyticsController?.abort();
+        dashboardAnalyticsController = null;
+        dashboardAnalyticsVersion += 1;
+    }
 
     const isDashboardView = targetId === 'dashboard-panel';
     document.body.classList.toggle('dashboard-view-active', isDashboardView);

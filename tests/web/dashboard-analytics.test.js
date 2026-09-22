@@ -17,11 +17,31 @@ assert.match(script, /function buildDashboardAnalyticsRequest\(request = current
 assert.match(script, /columnFilters: request\?\.columnFilters \|\| \{\}/);
 assert.match(script, /dashboardSelection: \{/);
 assert.match(script, /getAuthorizedFetch\(\)\(`\$\{API_BASE_URL\}\/api\/dashboard-analytics`/);
+assert.doesNotMatch(script, /refreshDashboardAnalytics[\s\S]{0,1800}requireAuthenticatedSession\('login', 'full_query'\)/);
 assert.match(script, /dashboardAnalyticsController\?\.abort\(\)/);
 assert.match(script, /function setDashboardSelection\(key, value\)/);
 assert.match(script, /onProvinceSelect: province => setDashboardSelection\('province', province\)/);
 assert.match(script, /setDashboardSelection\('product', product\.name\)/);
 assert.match(script, /setDashboardSelection\('investor', investor\.name\)/);
+assert.match(script, /function syncDashboardSelectionVisuals\(\)/);
+assert.match(script, /row\.dataset\.dashboardProduct = product\.name/);
+assert.match(script, /row\.dataset\.dashboardInvestor = investor\.name/);
+assert.match(script, /const nextValue = value \? String\(value\)\.trim\(\) : ''/);
+assert.match(script, /dashboardAnalyticsVersion \+= 1;[\s\S]{0,120}refreshDashboardAnalytics\.lastRequestKey = ''/);
+assert.match(script, /const controller = new AbortController\(\)/);
+assert.match(script, /signal: controller\.signal/);
+assert.match(script, /if \(refreshDashboardAnalytics\.lastBaseKey && refreshDashboardAnalytics\.lastBaseKey !== baseKey\) \{\s*resetDashboardSelection\(\);/);
+assert.match(script, /function getDashboardBaseRequest\(request = currentQueryRequest\)[\s\S]{0,260}delete base\.page;[\s\S]{0,80}delete base\.limit;/);
+assert.match(script, /if \(!hasActiveQueryFilters\(currentQueryRequest\)[\s\S]{0,360}renderDashboardEmpty\(\);/);
+assert.match(script, /const leavingDashboard = activeButton\?\.getAttribute\('data-view'\) === 'dashboard-panel'/);
+assert.match(script, /path\.setAttribute\('role', 'button'\)/);
+assert.match(script, /path\.addEventListener\('keydown', event =>/);
+assert.match(script, /legacy-pagination[^\n]*is-dashboard-hidden/);
+const selectionResetSource = script.slice(
+  script.indexOf('function resetDashboardSelection'),
+  script.indexOf('function getDashboardBaseRequest')
+);
+assert.doesNotMatch(selectionResetSource, /currentQueryRequest/);
 assert.match(script, /function renderDashboardEmpty\(/);
 assert.match(script, /analytics_complete/);
 assert.match(script, /tension: 0/);
