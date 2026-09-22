@@ -5257,18 +5257,34 @@ function getNiceProvinceScaleStep(maxValue, targetBucketCount = 7) {
     return multiplier * magnitude;
 }
 
-function buildProvinceMapColorBuckets(maxValue) {
-    const numericMax = Number(maxValue) || 0;
-    if (numericMax <= 0) return [];
+function buildProvinceMapColorBuckets(values = []) {
+    const positiveValues = values
+        .map(value => Number(value))
+        .filter(value => Number.isFinite(value) && value > 0)
+        .sort((left, right) => left - right);
+    if (!positiveValues.length) return [];
 
-    const step = getNiceProvinceScaleStep(numericMax);
-    const upperBound = Math.ceil(numericMax / step) * step;
-    const bucketCount = Math.max(1, Math.ceil(upperBound / step));
-    const buckets = Array.from({ length: bucketCount }, (_, index) => {
-        const upper = upperBound - index * step;
-        const lower = Math.max(0, upper - step);
+    const numericMax = positiveValues[positiveValues.length - 1];
+    const targetBucketCount = Math.min(PROVINCE_MAP_BUCKET_COLORS.length, positiveValues.length);
+    const roundingStep = getNiceProvinceScaleStep(numericMax, targetBucketCount * 10);
+    const roundedUpperBounds = [];
+
+    for (let index = 1; index <= targetBucketCount; index += 1) {
+        const quantileIndex = Math.min(
+            positiveValues.length - 1,
+            Math.ceil((index * positiveValues.length) / targetBucketCount) - 1
+        );
+        const rawUpper = index === targetBucketCount ? numericMax : positiveValues[quantileIndex];
+        const roundedUpper = Math.ceil(rawUpper / roundingStep) * roundingStep;
+        if (roundedUpper > (roundedUpperBounds.at(-1) || 0)) {
+            roundedUpperBounds.push(roundedUpper);
+        }
+    }
+
+    const buckets = roundedUpperBounds.reverse().map((upper, index, bounds) => {
+        const lower = index === bounds.length - 1 ? 0 : bounds[index + 1];
         const label = lower === 0
-            ? `< ${formatProvinceScaleValue(upper)}`
+            ? `${bounds.length === 1 ? '≤' : '<'} ${formatProvinceScaleValue(upper)}`
             : `${formatProvinceScaleValue(lower)} - ${formatProvinceScaleValue(upper)}`;
 
         return {
@@ -5333,6 +5349,83 @@ function createProvinceMapLegend(colorBuckets) {
 
     legend.append(title, items);
     return legend;
+}
+
+const FEATURED_PROVINCE_LABELS = [
+    { label: 'Hà Nội', aliases: ['Hà Nội'], offsetY: -0.012 },
+    { label: 'Đà Nẵng', aliases: ['Đà Nẵng'], offsetY: 0 },
+    {
+        label: 'TP. Hồ Chí Minh',
+        aliases: ['TP. Hồ Chí Minh', 'Thành phố Hồ Chí Minh', 'Hồ Chí Minh'],
+        offsetY: 0.018
+    }
+];
+
+function appendFeaturedProvinceLabels(svg, valueByProvince) {
+    const viewBox = String(svg.getAttribute('viewBox') || '').split(/\s+/).map(Number);
+    const viewBoxWidth = viewBox[2];
+    const viewBoxHeight = viewBox[3];
+    if (!viewBoxWidth || !viewBoxHeight) return;
+
+    const labelWidth = viewBoxWidth * 0.18;
+    const labelHeight = Math.max(viewBoxHeight * 0.045, 52);
+    const titleSize = Math.max(12, Math.min(22, viewBoxWidth * 0.018));
+    const valueSize = Math.max(11, Math.min(19, viewBoxWidth * 0.016));
+    const paths = Array.from(svg.querySelectorAll('path[data-admin-key]'));
+
+    FEATURED_PROVINCE_LABELS.forEach(({ label, aliases, offsetY }) => {
+        const aliasKeys = aliases.map(alias => getProvinceMapKey(alias));
+        const path = paths.find(item => aliasKeys.includes(item.dataset.adminKey));
+        if (!path || typeof path.getBBox !== 'function') return;
+
+        let box;
+        try {
+            box = path.getBBox();
+        } catch {
+            return;
+        }
+
+        const anchorX = box.x + box.width;
+        const anchorY = box.y + box.height / 2;
+        const labelX = Math.max(anchorX + viewBoxWidth * 0.018, viewBoxWidth * 0.58);
+        const labelY = anchorY + viewBoxHeight * offsetY;
+        const value = valueByProvince.get(path.dataset.adminKey)?.value || Number(path.dataset.value) || 0;
+        const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        group.classList.add('province-map-feature-label');
+
+        const connector = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        connector.setAttribute('x1', String(anchorX));
+        connector.setAttribute('y1', String(anchorY));
+        connector.setAttribute('x2', String(labelX - 8));
+        connector.setAttribute('y2', String(labelY));
+
+        const anchor = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        anchor.setAttribute('cx', String(anchorX));
+        anchor.setAttribute('cy', String(anchorY));
+        anchor.setAttribute('r', String(Math.max(4, viewBoxWidth * 0.006)));
+
+        const background = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        background.setAttribute('x', String(labelX));
+        background.setAttribute('y', String(labelY - labelHeight / 2));
+        background.setAttribute('width', String(labelWidth));
+        background.setAttribute('height', String(labelHeight));
+        background.setAttribute('rx', '8');
+
+        const name = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        name.setAttribute('x', String(labelX + 12));
+        name.setAttribute('y', String(labelY - 6));
+        name.setAttribute('font-size', String(titleSize));
+        name.textContent = label;
+
+        const amount = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        amount.setAttribute('x', String(labelX + 12));
+        amount.setAttribute('y', String(labelY + valueSize + 1));
+        amount.setAttribute('font-size', String(valueSize));
+        amount.textContent = value ? formatCurrencyTooltip(value) : 'Không có dữ liệu';
+
+        group.append(connector, anchor, background, name, amount);
+        svg.appendChild(group);
+    });
 }
 
 function getOrCreateProvinceMapTooltip(container) {
@@ -5446,7 +5539,7 @@ function renderProvinceValueMap(data = [], options = {}) {
         return;
     }
 
-    const colorBuckets = buildProvinceMapColorBuckets(maxValue);
+    const colorBuckets = buildProvinceMapColorBuckets(values);
     hideNoDataMessage(containerId);
     container.replaceChildren();
     const tooltip = getOrCreateProvinceMapTooltip(container);
@@ -5577,6 +5670,7 @@ function renderProvinceValueMap(data = [], options = {}) {
     });
 
     container.appendChild(svg);
+    appendFeaturedProvinceLabels(svg, valueByProvince);
     container.appendChild(createProvinceMapLegend(colorBuckets));
     provincePreviewVersion += 1;
     requestAnimationFrame(() => fitProvinceMapViewBox(svg));

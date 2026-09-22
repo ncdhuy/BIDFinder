@@ -4940,8 +4940,7 @@ body {
   height: 100%;
   overflow: hidden;
   border-radius: 8px;
-  background:
-    linear-gradient(180deg, #e8f2f6 0%, #f4f8fa 100%);
+  background: transparent;
 }
 
 .vietnam-province-map svg {
@@ -4973,6 +4972,36 @@ body {
   stroke-linejoin: round;
   stroke-linecap: round;
   paint-order: stroke;
+}
+
+.vietnam-province-map .province-map-feature-label {
+  pointer-events: none;
+}
+
+.vietnam-province-map .province-map-feature-label line {
+  stroke: #0f62d6;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.vietnam-province-map .province-map-feature-label circle {
+  fill: #0f62d6;
+  stroke: #ffffff;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.vietnam-province-map .province-map-feature-label rect {
+  fill: #ffffff;
+  stroke: #b9d2ee;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.vietnam-province-map .province-map-feature-label text {
+  fill: var(--dashboard-navy, #122e5a);
+  font-family: inherit;
+  font-weight: 800;
 }
 
 .province-map-tooltip {
