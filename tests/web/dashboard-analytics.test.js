@@ -27,7 +27,7 @@ assert.match(html, /<span>Tổng giá trị trúng thầu theo thời gian<\/spa
 assert.match(style, /\.dashboard-main-grid[\s\S]{0,180}grid-auto-rows: clamp\(300px, 34vh, 320px\)/);
 assert.match(style, /\.dashboard-main-grid \{[\s\S]{0,120}grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
 assert.match(style, /\.dashboard-secondary-grid[\s\S]{0,180}grid-auto-rows: clamp\(220px, 25vh, 250px\)/);
-assert.match(style, /\.dashboard-secondary-grid \{ grid-template-columns: repeat\(3, minmax\(0, 1fr\)\); \}/);
+assert.match(style, /\.dashboard-secondary-grid \{\s*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);\s*grid-auto-rows: clamp\(220px, 25vh, 250px\)/);
 assert.match(style, /#dashboard-province-map svg[\s\S]{0,120}display: block;[\s\S]{0,120}width: calc\(100% - 196px\);[\s\S]{0,100}height: 100%;/);
 assert.match(style, /\.dashboard-map-widget \.dashboard-widget-head[\s\S]{0,100}border-bottom: 0/);
 assert.match(script, /function hideNoDataMessage\(canvasId\)[\s\S]{0,240}msg\.remove\(\)/);
