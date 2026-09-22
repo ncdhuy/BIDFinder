@@ -8779,7 +8779,7 @@ body.dashboard-view-active .app-footer {
 }
 
 .dashboard-main-grid {
-  grid-template-columns: minmax(0, 1.38fr) minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   grid-auto-rows: clamp(300px, 34vh, 320px);
 }
 
@@ -8896,6 +8896,24 @@ body.dashboard-view-active .app-footer {
   min-height: 0;
 }
 
+.dashboard-map-body > .no-data-msg {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 18px;
+  color: #6d8295;
+  font-size: 12px;
+  text-align: center;
+}
+
+.dashboard-map-body > .no-data-msg.visible {
+  display: flex;
+}
+
 #dashboard-province-map svg {
   display: block;
   width: 100%;
@@ -8905,22 +8923,49 @@ body.dashboard-view-active .app-footer {
 }
 
 #dashboard-province-map .province-map-legend {
-  top: auto;
-  right: auto;
-  bottom: 10px;
-  left: 10px;
-  width: min(172px, calc(100% - 20px));
-  padding: 6px 8px;
+  top: 50%;
+  right: 12px;
+  bottom: auto;
+  left: auto;
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  grid-template-rows: auto 132px;
+  column-gap: 7px;
+  align-items: center;
+  width: 88px;
+  padding: 8px 7px;
+  transform: translateY(-50%);
   box-shadow: 0 5px 14px rgba(16, 34, 48, 0.09);
 }
 
 #dashboard-province-map .province-map-legend-title {
+  grid-column: 1 / -1;
   margin-bottom: 4px;
   font-size: 10px;
 }
 
-#dashboard-province-map .province-map-legend-scale { height: 6px; }
-#dashboard-province-map .province-map-legend-labels { margin-top: 4px; font-size: 9px; }
+#dashboard-province-map .province-map-legend-scale {
+  grid-column: 1;
+  grid-row: 2;
+  width: 12px;
+  height: 132px;
+  background: linear-gradient(0deg, var(--map-zero), var(--map-low) 32%, var(--map-high));
+}
+
+#dashboard-province-map .province-map-legend-labels {
+  grid-column: 2;
+  grid-row: 2;
+  display: flex;
+  min-height: 132px;
+  flex-direction: column-reverse;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0;
+  margin-top: 0;
+  font-size: 9px;
+  line-height: 1.2;
+}
+
 #dashboard-province-map path.is-selected { stroke: #073c52; stroke-width: 1.6; }
 
 body.dashboard-view-active .dashboard-widget-state {
@@ -8928,7 +8973,7 @@ body.dashboard-view-active .dashboard-widget-state {
 }
 
 @media (max-width: 1180px) {
-  .dashboard-main-grid { grid-template-columns: minmax(0, 1.25fr) minmax(280px, .9fr); }
+  .dashboard-main-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dashboard-secondary-grid { grid-template-columns: minmax(0, 1fr) minmax(260px, .9fr); }
 }
 

@@ -4978,9 +4978,9 @@ const CHART_THEME = {
     grid: '#dde7ec',
     border: '#d1dde4',
     surface: '#ffffff',
-    mapNoData: '#fdfefe',
-    mapLow: '#8fc7d2',
-    mapHigh: '#0a516d'
+    mapNoData: '#eef6ff',
+    mapLow: '#76b5f4',
+    mapHigh: '#0c67d9'
 };
 
 function ensureChartJsLoaded() {
