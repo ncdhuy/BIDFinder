@@ -94,6 +94,7 @@ assert.doesNotMatch(script, /min: 500_000_000/);
 assert.match(script, /const quantileIndex = Math\.min/);
 assert.match(script, /function appendFeaturedProvinceLabels\(svg, valueByProvince\)/);
 assert.match(script, /const labelY = anchorY/);
+assert.match(script, /preserveAspectRatio', 'xMidYMid meet'/);
 assert.match(style, /\.dashboard-widget-title[\s\S]{0,180}color: var\(--dashboard-navy\)/);
 assert.match(style, /\.dashboard-widget-title svg[\s\S]{0,180}color: var\(--dashboard-blue\)/);
 assert.match(style, /\.dashboard-widget-head h3[\s\S]{0,120}font-size: 16px/);
