@@ -51,6 +51,8 @@ assert.doesNotMatch(script, /formatDashboardTrendLabel[\s\S]{0,180}` tỷ`/);
 assert.match(script, /labelStep = Math\.max\(1, Math\.ceil\(points\.length \/ 6\)\)/);
 assert.match(script, /function updateDashboardTimelineChart\(timeline = \{\}\)/);
 assert.match(script, /chart\.update\('none'\)/);
+assert.match(script, /!Array\.isArray\(dashboardAnalyticsData\.timeline\?\.series\?\.\[grain\]\)/);
+assert.match(script, /refreshDashboardAnalytics\(\{ force: true \}\)/);
 assert.match(style, /\.dashboard-products[\s\S]{0,160}justify-content: space-between/);
 assert.match(style, /\.dashboard-product-row\.is-selected \.dashboard-product-bar[\s\S]{0,180}box-shadow: inset 0 0 0 1px var\(--dashboard-navy\)/);
 assert.doesNotMatch(style, /saturate\(1\.15\) brightness\(0\.82\)/);

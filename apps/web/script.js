@@ -7033,6 +7033,10 @@ function initDashboardEvents() {
         if (!['year', 'quarter', 'month'].includes(grain)) return;
         dashboardTimelineGrain = grain;
         if (dashboardAnalyticsData) {
+            if (!Array.isArray(dashboardAnalyticsData.timeline?.series?.[grain])) {
+                void refreshDashboardAnalytics({ force: true });
+                return;
+            }
             updateDashboardTimelineChart(dashboardAnalyticsData.timeline || {});
         }
     });
