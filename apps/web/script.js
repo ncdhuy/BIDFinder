@@ -6724,7 +6724,6 @@ function renderDashboardProducts(products = []) {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'dashboard-product-bar';
-        button.style.setProperty('--bar-width', `${Math.max(4, (Number(product.count || 0) / maxCount) * 100)}%`);
         button.setAttribute('aria-pressed', String(dashboardSelection.product === product.name));
         button.title = product.name;
         const rank = document.createElement('span');
