@@ -8554,6 +8554,7 @@ body.dashboard-view-active .app-footer {
 
 .dashboard-shell-card {
   --dashboard-navy: #122e5a;
+  --dashboard-blue: #1d78e9;
   gap: 8px;
   padding: 12px;
   border-radius: 12px;
@@ -8583,10 +8584,10 @@ body.dashboard-view-active .app-footer {
   justify-content: center;
   width: 38px;
   height: 38px;
-  border: 1px solid #d4e6f1;
+  border: 1px solid #cfe2ff;
   border-radius: 10px;
-  background: #edf6fb;
-  color: var(--dashboard-navy);
+  background: #e7f1ff;
+  color: var(--dashboard-blue);
 }
 
 .dashboard-title-icon svg {
@@ -8626,7 +8627,7 @@ body.dashboard-view-active .app-footer {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
-  color: var(--dashboard-navy);
+  color: var(--dashboard-blue);
 }
 
 .dashboard-context-icon svg {
@@ -8637,7 +8638,7 @@ body.dashboard-view-active .app-footer {
 
 .dashboard-context-label {
   flex: 0 0 auto;
-  color: var(--dashboard-navy);
+  color: var(--dashboard-blue);
   font-size: 11px;
   font-weight: 700;
   white-space: nowrap;
@@ -8657,9 +8658,9 @@ body.dashboard-view-active .app-footer {
 }
 
 .dashboard-context-bar .dashboard-context-chip {
-  border-color: #d4deec;
-  background: #f4f7fc;
-  color: var(--dashboard-navy);
+  border-color: #c9defc;
+  background: #e7f1ff;
+  color: var(--dashboard-blue);
 }
 
 .dashboard-context-bar .dashboard-context-chip.is-more {
