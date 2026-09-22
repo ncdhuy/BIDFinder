@@ -4981,15 +4981,14 @@ const CHART_THEME = {
     mapNoData: '#eef6ff'
 };
 
-const PROVINCE_MAP_COLOR_BUCKETS = [
-    { min: 500_000_000, color: '#1268d3', label: '> 500.000.000' },
-    { min: 200_000_000, color: '#2b80e1', label: '200.000.000 - 500.000.000' },
-    { min: 100_000_000, color: '#4b96e9', label: '100.000.000 - 200.000.000' },
-    { min: 50_000_000, color: '#70acef', label: '50.000.000 - 100.000.000' },
-    { min: 10_000_000, color: '#96c2f4', label: '10.000.000 - 50.000.000' },
-    { min: 1_000_000, color: '#b8d6f8', label: '1.000.000 - 10.000.000' },
-    { min: 0, color: '#d9e9fb', label: '< 1.000.000' },
-    { noData: true, color: CHART_THEME.mapNoData, label: 'Không có dữ liệu' }
+const PROVINCE_MAP_BUCKET_COLORS = [
+    '#1268d3',
+    '#2b80e1',
+    '#4b96e9',
+    '#70acef',
+    '#96c2f4',
+    '#b8d6f8',
+    '#d9e9fb'
 ];
 
 function ensureChartJsLoaded() {
@@ -5233,9 +5232,59 @@ function getProvinceValueEntries(data) {
     return adminValueMap;
 }
 
-function getProvinceFill(value) {
+function formatProvinceScaleValue(value) {
+    const amount = Number(value) || 0;
+    const format = divisor => {
+        const compact = amount / divisor;
+        return Number.isInteger(compact)
+            ? String(compact)
+            : compact.toLocaleString('vi-VN', { maximumFractionDigits: 1 });
+    };
+
+    if (amount >= 1_000_000_000) return `${format(1_000_000_000)} tỷ`;
+    if (amount >= 1_000_000) return `${format(1_000_000)} triệu`;
+    if (amount >= 1_000) return `${format(1_000)} nghìn`;
+    return Math.round(amount).toLocaleString('vi-VN');
+}
+
+function getNiceProvinceScaleStep(maxValue, targetBucketCount = 7) {
+    const rawStep = maxValue / targetBucketCount;
+    if (!Number.isFinite(rawStep) || rawStep <= 0) return 1;
+
+    const magnitude = 10 ** Math.floor(Math.log10(rawStep));
+    const normalized = rawStep / magnitude;
+    const multiplier = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+    return multiplier * magnitude;
+}
+
+function buildProvinceMapColorBuckets(maxValue) {
+    const numericMax = Number(maxValue) || 0;
+    if (numericMax <= 0) return [];
+
+    const step = getNiceProvinceScaleStep(numericMax);
+    const upperBound = Math.ceil(numericMax / step) * step;
+    const bucketCount = Math.max(1, Math.ceil(upperBound / step));
+    const buckets = Array.from({ length: bucketCount }, (_, index) => {
+        const upper = upperBound - index * step;
+        const lower = Math.max(0, upper - step);
+        const label = lower === 0
+            ? `< ${formatProvinceScaleValue(upper)}`
+            : `${formatProvinceScaleValue(lower)} - ${formatProvinceScaleValue(upper)}`;
+
+        return {
+            min: lower,
+            color: PROVINCE_MAP_BUCKET_COLORS[Math.min(index, PROVINCE_MAP_BUCKET_COLORS.length - 1)],
+            label
+        };
+    });
+
+    buckets.push({ noData: true, color: CHART_THEME.mapNoData, label: 'Không có dữ liệu' });
+    return buckets;
+}
+
+function getProvinceFill(value, colorBuckets) {
     if (!value) return CHART_THEME.mapNoData;
-    return PROVINCE_MAP_COLOR_BUCKETS.find(bucket => !bucket.noData && value >= bucket.min)?.color
+    return colorBuckets.find(bucket => !bucket.noData && value >= bucket.min)?.color
         || CHART_THEME.mapNoData;
 }
 
@@ -5255,7 +5304,7 @@ function getProvinceMergeStatus(provinceName, provinceValue, mapProperties = {})
     return `Sáp nhập: ${parts}`;
 }
 
-function createProvinceMapLegend() {
+function createProvinceMapLegend(colorBuckets) {
     const legend = document.createElement('div');
     legend.className = 'province-map-legend';
     legend.setAttribute('aria-hidden', 'true');
@@ -5266,7 +5315,7 @@ function createProvinceMapLegend() {
 
     const items = document.createElement('div');
     items.className = 'province-map-legend-items';
-    PROVINCE_MAP_COLOR_BUCKETS.forEach(bucket => {
+    colorBuckets.forEach(bucket => {
         const item = document.createElement('div');
         item.className = 'province-map-legend-item';
 
@@ -5397,6 +5446,7 @@ function renderProvinceValueMap(data = [], options = {}) {
         return;
     }
 
+    const colorBuckets = buildProvinceMapColorBuckets(maxValue);
     hideNoDataMessage(containerId);
     container.replaceChildren();
     const tooltip = getOrCreateProvinceMapTooltip(container);
@@ -5441,7 +5491,7 @@ function renderProvinceValueMap(data = [], options = {}) {
         const provinceKey = getProvinceMapKey(provinceName);
         const provinceValue = valueByProvince.get(provinceKey);
         const value = provinceValue?.value || 0;
-        const fillColor = getProvinceFill(value);
+        const fillColor = getProvinceFill(value, colorBuckets);
         const displayName = provinceValue?.name || provinceName;
         const mergeStatus = getProvinceMergeStatus(provinceName, provinceValue, properties);
         const valueText = value ? formatCurrencyTooltip(value) : 'Không có dữ liệu';
@@ -5527,7 +5577,7 @@ function renderProvinceValueMap(data = [], options = {}) {
     });
 
     container.appendChild(svg);
-    container.appendChild(createProvinceMapLegend());
+    container.appendChild(createProvinceMapLegend(colorBuckets));
     provincePreviewVersion += 1;
     requestAnimationFrame(() => fitProvinceMapViewBox(svg));
 }

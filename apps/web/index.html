@@ -6,7 +6,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://accounts.google.com https://cdn.jsdelivr.net https://cdn.sheetjs.com https://us-assets.i.posthog.com https://eu-assets.i.posthog.com https://app-assets.i.posthog.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com data:; connect-src 'self' http://127.0.0.1:8002 https://api.bidfinder.vn https://accounts.google.com https://us.i.posthog.com https://eu.i.posthog.com https://app.posthog.com; frame-src https://accounts.google.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self' https://accounts.google.com;">
     <meta name="referrer" content="strict-origin-when-cross-origin">
     <title>BIDFinder - Hệ thống quản lý dữ liệu đấu thầu y tế</title>
-<link rel="stylesheet" href="style.css?v=dashboard-map-buckets-20260922">
+<link rel="stylesheet" href="style.css?v=dashboard-map-scale-titles-20260922">
     <link rel="stylesheet" href="auth.css">
     <script src="https://unpkg.com/feather-icons"></script>
 </head>
@@ -420,7 +420,7 @@
                                 <article class="dashboard-widget dashboard-map-widget" data-dashboard-widget="geography">
                                     <div class="dashboard-widget-head">
                                         <div>
-                                            <h3>Tổng giá trị trúng thầu theo tỉnh/thành</h3>
+                                            <h3 class="dashboard-widget-title"><i data-feather="map-pin" aria-hidden="true"></i><span>Tổng giá trị trúng thầu theo tỉnh/thành</span></h3>
                                         </div>
                                     </div>
                                     <div class="dashboard-widget-body dashboard-map-body" id="dashboard-province-map" role="img" aria-label="Bản đồ tổng giá trị trúng thầu theo tỉnh/thành"></div>
@@ -428,7 +428,7 @@
                                 <article class="dashboard-widget dashboard-products-widget" data-dashboard-widget="top_products">
                                     <div class="dashboard-widget-head">
                                         <div>
-                                            <h3>Top 10 sản phẩm xuất hiện nhiều nhất</h3>
+                                            <h3 class="dashboard-widget-title"><i data-feather="bar-chart-2" aria-hidden="true"></i><span>Top 10 sản phẩm xuất hiện nhiều nhất</span></h3>
                                             <p>Số gói thầu có chứa sản phẩm.</p>
                                         </div>
                                     </div>
@@ -438,16 +438,16 @@
 
                             <div class="dashboard-grid dashboard-secondary-grid">
                                 <article class="dashboard-widget dashboard-trend-widget" data-dashboard-widget="timeline">
-                                    <div class="dashboard-widget-head"><h3>Xu hướng giá trị trúng thầu theo thời gian</h3></div>
+                                    <div class="dashboard-widget-head"><h3 class="dashboard-widget-title"><i data-feather="trending-up" aria-hidden="true"></i><span>Xu hướng giá trị trúng thầu theo thời gian</span></h3></div>
                                     <div class="dashboard-widget-body dashboard-chart-body"><canvas id="dashboard-timeline-chart"></canvas></div>
                                 </article>
                                 <article class="dashboard-widget dashboard-price-widget" data-dashboard-widget="unit_price_distribution">
-                                    <div class="dashboard-widget-head"><h3>Phân bố đơn giá trúng thầu</h3></div>
+                                    <div class="dashboard-widget-head"><h3 class="dashboard-widget-title"><i data-feather="pie-chart" aria-hidden="true"></i><span>Phân bố đơn giá trúng thầu</span></h3></div>
                                     <div class="dashboard-widget-body dashboard-chart-body"><canvas id="dashboard-price-chart"></canvas></div>
                                 </article>
                                 <article class="dashboard-widget dashboard-investors-widget" data-dashboard-widget="top_investors">
                                     <div class="dashboard-widget-head">
-                                        <div><h3>Top chủ đầu tư</h3><p>Xếp theo tổng giá trị trúng thầu.</p></div>
+                                        <div><h3 class="dashboard-widget-title"><i data-feather="briefcase" aria-hidden="true"></i><span>Top chủ đầu tư</span></h3><p>Xếp theo tổng giá trị trúng thầu.</p></div>
                                         <button class="dashboard-link-btn" id="dashboard-show-all-investors" type="button" hidden>Xem tất cả</button>
                                     </div>
                                     <div class="dashboard-widget-body dashboard-investors-wrap">
@@ -1260,7 +1260,7 @@
     <script src="config.js"></script>
     <script src="auth.js"></script>
     <script src="typesense-search-form.js"></script>
-<script src="script.js?v=dashboard-map-buckets-20260922"></script>
+<script src="script.js?v=dashboard-map-scale-titles-20260922"></script>
     <script src="ai-search-chat.js"></script>
     <script>
         feather.replace();
