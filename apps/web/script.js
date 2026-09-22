@@ -6454,10 +6454,10 @@ async function drawCharts(df1Data, df2Data, df3Data = []) {
 
 function formatDashboardTrendLabel(value) {
     if (value >= 1_000_000_000) {
-        return `${(value / 1_000_000_000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} tỷ`;
+        return (value / 1_000_000_000).toLocaleString('vi-VN', { maximumFractionDigits: 1 });
     }
     if (value >= 1_000_000) {
-        return `${(value / 1_000_000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} tr`;
+        return (value / 1_000_000).toLocaleString('vi-VN', { maximumFractionDigits: 1 });
     }
     return Number(value).toLocaleString('vi-VN', { maximumFractionDigits: 0 });
 }
@@ -6473,9 +6473,10 @@ const dashboardTimelineLabelsPlugin = {
         ctx.font = `700 10px ${getComputedStyle(document.body).fontFamily}`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
+        const labelStep = Math.max(1, Math.ceil(points.length / 6));
         points.forEach((point, index) => {
             const value = Number(dataset.data[index]);
-            if (!Number.isFinite(value)) return;
+            if (!Number.isFinite(value) || (index % labelStep !== 0 && index !== points.length - 1)) return;
             ctx.fillText(formatDashboardTrendLabel(value), point.x, Math.max(chartArea.top + 10, point.y - 9));
         });
         ctx.restore();
@@ -6486,6 +6487,31 @@ function getDashboardTimelinePoints(timeline = {}) {
     const selected = timeline?.series?.[dashboardTimelineGrain];
     if (Array.isArray(selected)) return selected;
     const fallback = Array.isArray(timeline?.points) ? timeline.points : [];
+    if (timeline?.grain === dashboardTimelineGrain) return fallback;
+    const buckets = new Map();
+    fallback.forEach(point => {
+        const period = String(point?.period || '');
+        const match = period.match(/^(\d{4})(?:-(\d{2})(?:-\d{2})?|\-Q([1-4]))?$/);
+        if (!match) return;
+        const year = match[1];
+        const month = match[2];
+        const quarter = match[3] || (month ? String(Math.ceil(Number(month) / 3)) : '');
+        const target = dashboardTimelineGrain === 'year'
+            ? year
+            : dashboardTimelineGrain === 'quarter' && quarter
+                ? `${year}-Q${quarter}`
+                : dashboardTimelineGrain === 'month' && month
+                    ? `${year}-${month}`
+                    : null;
+        if (!target) return;
+        buckets.set(target, (buckets.get(target) || 0) + Number(point.total_awarded_value || 0));
+    });
+    if (buckets.size) {
+        return [...buckets.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([period, total_awarded_value]) => ({
+            period,
+            total_awarded_value
+        }));
+    }
     if (timeline?.grain && ['year', 'quarter', 'month'].includes(timeline.grain)) {
         dashboardTimelineGrain = timeline.grain;
         const control = document.getElementById('dashboard-trend-grain');
@@ -6878,6 +6904,19 @@ async function renderDashboardCharts(timeline = {}, priceDistribution = {}) {
     }
 }
 
+function updateDashboardTimelineChart(timeline = {}) {
+    const timelinePoints = getDashboardTimelinePoints(timeline);
+    if (!timelinePoints.length || !dashboardChartInstances.timeline) {
+        void renderDashboardCharts(timeline, dashboardAnalyticsData?.unit_price_distribution || {});
+        return;
+    }
+    clearDashboardWidgetState('timeline');
+    const chart = dashboardChartInstances.timeline;
+    chart.data.labels = timelinePoints.map(point => point.period);
+    chart.data.datasets[0].data = timelinePoints.map(point => point.total_awarded_value);
+    chart.update('none');
+}
+
 function renderDashboardInvestors(investors = []) {
     const body = document.getElementById('dashboard-top-investors');
     if (!body) return;
@@ -6994,10 +7033,7 @@ function initDashboardEvents() {
         if (!['year', 'quarter', 'month'].includes(grain)) return;
         dashboardTimelineGrain = grain;
         if (dashboardAnalyticsData) {
-            void renderDashboardCharts(
-                dashboardAnalyticsData.timeline || {},
-                dashboardAnalyticsData.unit_price_distribution || {}
-            );
+            updateDashboardTimelineChart(dashboardAnalyticsData.timeline || {});
         }
     });
     renderDashboardSelections();
