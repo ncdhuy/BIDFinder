@@ -79,6 +79,9 @@ class DashboardAnalyticsTest(unittest.TestCase):
         self.assertEqual({"Amox": 2}, {row["name"]: row["count"] for row in result["top_products"] if row["name"] == "Amox"})
         self.assertEqual(2, len(result["geography"]))
         self.assertEqual("day", result["timeline"]["grain"])
+        self.assertEqual(["2026-01", "2026-02"], [point["period"] for point in result["timeline"]["series"]["month"]])
+        self.assertEqual(["2026-Q1"], [point["period"] for point in result["timeline"]["series"]["quarter"]])
+        self.assertEqual(75, result["timeline"]["series"]["year"][0]["total_awarded_value"])
         self.assertEqual(4, result["unit_price_distribution"]["count"])
         self.assertEqual("Bệnh viện A", result["top_investors"][0]["name"])
 

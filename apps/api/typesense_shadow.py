@@ -1549,23 +1549,34 @@ def aggregate_dashboard_documents(documents_by_group: Mapping[str, Sequence[Mapp
     ]
     geography.sort(key=lambda item: (-float(item["total_awarded_value"]), item["province"].casefold()))
 
-    timeline = {"grain": None, "points": []}
+    timeline = {"grain": None, "points": [], "series": {"month": [], "quarter": [], "year": []}}
     if dated_values:
         first, last = min(item[0] for item in dated_values), max(item[0] for item in dated_values)
         span_days = (last - first).days
         grain = "day" if span_days <= 90 else "month" if span_days <= 730 else "quarter" if span_days <= 1825 else "year"
-        buckets: dict[str, Decimal] = {}
+        buckets_by_grain: dict[str, dict[str, Decimal]] = {key: {} for key in ("day", "month", "quarter", "year")}
         for current_date, value in dated_values:
-            if grain == "day":
-                period = current_date.isoformat()
-            elif grain == "month":
-                period = current_date.strftime("%Y-%m")
-            elif grain == "quarter":
-                period = f"{current_date.year}-Q{((current_date.month - 1) // 3) + 1}"
-            else:
-                period = str(current_date.year)
-            buckets[period] = buckets.get(period, Decimal(0)) + value
-        timeline = {"grain": grain, "points": [{"period": period, "total_awarded_value": _analytics_number(buckets[period])} for period in sorted(buckets)]}
+            periods = {
+                "day": current_date.isoformat(),
+                "month": current_date.strftime("%Y-%m"),
+                "quarter": f"{current_date.year}-Q{((current_date.month - 1) // 3) + 1}",
+                "year": str(current_date.year),
+            }
+            for bucket_grain, period in periods.items():
+                buckets = buckets_by_grain[bucket_grain]
+                buckets[period] = buckets.get(period, Decimal(0)) + value
+        series = {
+            bucket_grain: [
+                {"period": period, "total_awarded_value": _analytics_number(value)}
+                for period, value in sorted(buckets.items())
+            ]
+            for bucket_grain, buckets in buckets_by_grain.items()
+        }
+        timeline = {
+            "grain": grain,
+            "points": series[grain],
+            "series": {key: series[key] for key in ("month", "quarter", "year")},
+        }
 
     return {
         "summary": {

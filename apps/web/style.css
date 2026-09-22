@@ -8872,6 +8872,27 @@ body.dashboard-view-active .app-footer {
   padding: 6px 10px 8px;
 }
 
+.dashboard-trend-widget .dashboard-widget-head {
+  align-items: center;
+}
+
+.dashboard-trend-grain {
+  min-width: 92px;
+  height: 30px;
+  padding: 0 28px 0 10px;
+  border: 1px solid #cbdbea;
+  border-radius: 6px;
+  background-color: #fff;
+  color: var(--dashboard-navy);
+  font: 700 11px/1 var(--font-family);
+  cursor: pointer;
+}
+
+.dashboard-trend-grain:focus-visible {
+  outline: 2px solid #1677e8;
+  outline-offset: 2px;
+}
+
 .dashboard-products {
   min-height: 0;
   padding: 4px 10px 6px;

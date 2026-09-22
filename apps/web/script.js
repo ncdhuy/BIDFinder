@@ -4963,6 +4963,7 @@ const lastProvinceMapDataByContainer = new Map();
 let dashboardAnalyticsController = null;
 let dashboardAnalyticsVersion = 0;
 let dashboardAnalyticsData = null;
+let dashboardTimelineGrain = 'year';
 const dashboardSelection = {
     product: null,
     province: null,
@@ -6451,6 +6452,48 @@ async function drawCharts(df1Data, df2Data, df3Data = []) {
     insightChartsDirty = false;
 }
 
+function formatDashboardTrendLabel(value) {
+    if (value >= 1_000_000_000) {
+        return `${(value / 1_000_000_000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} tỷ`;
+    }
+    if (value >= 1_000_000) {
+        return `${(value / 1_000_000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} tr`;
+    }
+    return Number(value).toLocaleString('vi-VN', { maximumFractionDigits: 0 });
+}
+
+const dashboardTimelineLabelsPlugin = {
+    id: 'dashboardTimelineLabels',
+    afterDatasetsDraw(chart) {
+        const dataset = chart.data.datasets[0];
+        const points = chart.getDatasetMeta(0)?.data || [];
+        const { ctx, chartArea } = chart;
+        ctx.save();
+        ctx.fillStyle = '#1268d3';
+        ctx.font = `700 10px ${getComputedStyle(document.body).fontFamily}`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        points.forEach((point, index) => {
+            const value = Number(dataset.data[index]);
+            if (!Number.isFinite(value)) return;
+            ctx.fillText(formatDashboardTrendLabel(value), point.x, Math.max(chartArea.top + 10, point.y - 9));
+        });
+        ctx.restore();
+    }
+};
+
+function getDashboardTimelinePoints(timeline = {}) {
+    const selected = timeline?.series?.[dashboardTimelineGrain];
+    if (Array.isArray(selected)) return selected;
+    const fallback = Array.isArray(timeline?.points) ? timeline.points : [];
+    if (timeline?.grain && ['year', 'quarter', 'month'].includes(timeline.grain)) {
+        dashboardTimelineGrain = timeline.grain;
+        const control = document.getElementById('dashboard-trend-grain');
+        if (control) control.value = dashboardTimelineGrain;
+    }
+    return fallback;
+}
+
 function isDashboardActive() {
     return document.getElementById('dashboard-panel')?.classList.contains('active');
 }
@@ -6758,7 +6801,7 @@ function renderDashboardProducts(products = []) {
 
 async function renderDashboardCharts(timeline = {}, priceDistribution = {}) {
     resetDashboardCharts();
-    const timelinePoints = Array.isArray(timeline.points) ? timeline.points : [];
+    const timelinePoints = getDashboardTimelinePoints(timeline);
     const priceBins = Array.isArray(priceDistribution.bins) ? priceDistribution.bins : [];
     if (!timelinePoints.length) setDashboardWidgetState('timeline', 'Không có dữ liệu thời gian.', 'empty');
     if (!priceBins.length) setDashboardWidgetState('unit_price_distribution', 'Không có đơn giá hợp lệ.', 'empty');
@@ -6781,17 +6824,24 @@ async function renderDashboardCharts(timeline = {}, priceDistribution = {}) {
                 labels: timelinePoints.map(point => point.period),
                 datasets: [{
                     data: timelinePoints.map(point => point.total_awarded_value),
-                    borderColor: CHART_THEME.accent,
-                    backgroundColor: CHART_THEME.accentSoft,
+                    borderColor: '#1677e8',
+                    backgroundColor: 'rgba(22, 119, 232, 0.14)',
                     fill: true,
                     tension: 0,
-                    pointRadius: 2,
-                    pointHitRadius: 12
+                    pointRadius: 5,
+                    pointHoverRadius: 7,
+                    pointHitRadius: 12,
+                    pointBackgroundColor: '#1677e8',
+                    pointBorderColor: '#ffffff',
+                    pointBorderWidth: 2,
+                    borderWidth: 2.5
                 }]
             },
+            plugins: [dashboardTimelineLabelsPlugin],
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                layout: { padding: { top: 15, right: 6 } },
                 plugins: {
                     legend: { display: false },
                     tooltip: { callbacks: { label: item => formatCurrencyTooltip(Number(item.raw)) } }
@@ -6938,6 +6988,17 @@ function initDashboardEvents() {
     document.getElementById('dashboard-clear-selections')?.addEventListener('click', () => {
         resetDashboardSelection();
         void refreshDashboardAnalytics({ force: true });
+    });
+    document.getElementById('dashboard-trend-grain')?.addEventListener('change', event => {
+        const grain = event.target.value;
+        if (!['year', 'quarter', 'month'].includes(grain)) return;
+        dashboardTimelineGrain = grain;
+        if (dashboardAnalyticsData) {
+            void renderDashboardCharts(
+                dashboardAnalyticsData.timeline || {},
+                dashboardAnalyticsData.unit_price_distribution || {}
+            );
+        }
     });
     renderDashboardSelections();
     renderDashboardEmpty();
