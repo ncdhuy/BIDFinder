@@ -100,7 +100,8 @@ assert.match(script, /const titleSize = 18 \* pixelsToUnits;[\s\S]{0,80}const va
 assert.match(script, /preserveAspectRatio', 'xMidYMid meet'/);
 assert.match(script, /getComputedTextLength/);
 assert.match(script, /connector\.setAttribute\('x2', String\(labelX\)\)/);
-assert.match(script, /const labelGap = 64 \* pixelsToUnits/);
+assert.match(script, /const lineGap = 6 \* pixelsToUnits/);
+assert.match(script, /const labelGap = 88 \* pixelsToUnits/);
 assert.match(script, /anchor\.setAttribute\('r', String\(6 \* pixelsToUnits\)\)/);
 assert.match(style, /\.dashboard-widget-title[\s\S]{0,180}color: var\(--dashboard-navy\)/);
 assert.match(style, /\.dashboard-widget-title svg[\s\S]{0,180}color: var\(--dashboard-blue\)/);

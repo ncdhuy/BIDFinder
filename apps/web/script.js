@@ -5434,9 +5434,9 @@ function appendFeaturedProvinceLabels(svg, valueByProvince) {
     const valueSize = 18 * pixelsToUnits;
     const horizontalPadding = 11 * pixelsToUnits;
     const verticalPadding = 8 * pixelsToUnits;
-    const lineGap = 3 * pixelsToUnits;
+    const lineGap = 6 * pixelsToUnits;
     const labelHeight = titleSize + valueSize + lineGap + verticalPadding * 2;
-    const labelGap = 64 * pixelsToUnits;
+    const labelGap = 88 * pixelsToUnits;
     const rightInset = 8 * pixelsToUnits;
     const paths = Array.from(svg.querySelectorAll('path[data-admin-key]'));
     const measureText = (node, fallbackText, fontSize) => {
