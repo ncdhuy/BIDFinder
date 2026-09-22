@@ -5360,6 +5360,67 @@ const FEATURED_PROVINCE_LABELS = [
     }
 ];
 
+function getProvinceMainlandAnchor(svg, path, fallbackBox) {
+    const pathData = String(path.getAttribute('d') || '');
+    const subpaths = pathData.match(/[Mm][^Mm]*/g) || [];
+    let mainlandPath = null;
+    let mainlandBox = fallbackBox;
+    let largestArea = -1;
+
+    if (subpaths.length > 1) {
+        subpaths.forEach(pathSegment => {
+            const candidate = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            candidate.setAttribute('d', pathSegment);
+            candidate.setAttribute('visibility', 'hidden');
+            candidate.setAttribute('pointer-events', 'none');
+            svg.appendChild(candidate);
+
+            try {
+                const candidateBox = candidate.getBBox();
+                const candidateArea = candidateBox.width * candidateBox.height;
+                if (candidateArea > largestArea) {
+                    mainlandPath?.remove();
+                    mainlandPath = candidate;
+                    mainlandBox = candidateBox;
+                    largestArea = candidateArea;
+                    return;
+                }
+            } catch {
+                // Fall through and discard invalid path segments.
+            }
+            candidate.remove();
+        });
+    }
+
+    const geometry = mainlandPath || path;
+    const xRatios = [0.72, 0.62, 0.52, 0.42, 0.32];
+    const yRatios = [0.5, 0.42, 0.58, 0.34, 0.66];
+    let anchor = {
+        x: mainlandBox.x + mainlandBox.width * 0.58,
+        y: mainlandBox.y + mainlandBox.height * 0.5
+    };
+
+    if (typeof geometry.isPointInFill === 'function' && typeof svg.createSVGPoint === 'function') {
+        let found = false;
+        for (const yRatio of yRatios) {
+            for (const xRatio of xRatios) {
+                const point = svg.createSVGPoint();
+                point.x = mainlandBox.x + mainlandBox.width * xRatio;
+                point.y = mainlandBox.y + mainlandBox.height * yRatio;
+                if (geometry.isPointInFill(point)) {
+                    anchor = { x: point.x, y: point.y };
+                    found = true;
+                    break;
+                }
+            }
+            if (found) break;
+        }
+    }
+
+    mainlandPath?.remove();
+    return anchor;
+}
+
 function appendFeaturedProvinceLabels(svg, valueByProvince) {
     const viewBox = String(svg.getAttribute('viewBox') || '').split(/\s+/).map(Number);
     const viewBoxWidth = viewBox[2];
@@ -5369,13 +5430,13 @@ function appendFeaturedProvinceLabels(svg, valueByProvince) {
     const renderedWidth = svg.getBoundingClientRect().width;
     const pixelsPerUnit = renderedWidth > 0 ? renderedWidth / viewBoxWidth : 1;
     const pixelsToUnits = pixelsPerUnit > 0 ? 1 / pixelsPerUnit : 1;
-    const titleSize = 14 * pixelsToUnits;
-    const valueSize = 13 * pixelsToUnits;
-    const horizontalPadding = 10 * pixelsToUnits;
-    const verticalPadding = 7 * pixelsToUnits;
-    const lineGap = 2 * pixelsToUnits;
+    const titleSize = 16 * pixelsToUnits;
+    const valueSize = 14 * pixelsToUnits;
+    const horizontalPadding = 11 * pixelsToUnits;
+    const verticalPadding = 8 * pixelsToUnits;
+    const lineGap = 3 * pixelsToUnits;
     const labelHeight = titleSize + valueSize + lineGap + verticalPadding * 2;
-    const labelGap = 16 * pixelsToUnits;
+    const labelGap = 64 * pixelsToUnits;
     const rightInset = 8 * pixelsToUnits;
     const paths = Array.from(svg.querySelectorAll('path[data-admin-key]'));
     const measureText = (node, fallbackText, fontSize) => {
@@ -5398,8 +5459,9 @@ function appendFeaturedProvinceLabels(svg, valueByProvince) {
             return;
         }
 
-        const anchorX = box.x + box.width;
-        const anchorY = box.y + box.height / 2;
+        const mainlandAnchor = getProvinceMainlandAnchor(svg, path, box);
+        const anchorX = mainlandAnchor.x;
+        const anchorY = mainlandAnchor.y;
         const labelY = anchorY;
         const value = valueByProvince.get(path.dataset.adminKey)?.value || Number(path.dataset.value) || 0;
         const valueText = value ? formatCurrencyTooltip(value) : 'Không có dữ liệu';
@@ -5414,7 +5476,7 @@ function appendFeaturedProvinceLabels(svg, valueByProvince) {
         const anchor = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
         anchor.setAttribute('cx', String(anchorX));
         anchor.setAttribute('cy', String(anchorY));
-        anchor.setAttribute('r', String(5 * pixelsToUnits));
+        anchor.setAttribute('r', String(6 * pixelsToUnits));
 
         const background = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
 
