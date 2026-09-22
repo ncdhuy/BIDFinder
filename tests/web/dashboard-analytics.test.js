@@ -96,7 +96,7 @@ assert.doesNotMatch(script, /function formatDashboardFilterLabel/);
 assert.match(style, /--dashboard-navy: #122e5a/);
 assert.match(style, /--dashboard-blue: #0f62d6/);
 assert.match(script, /const PROVINCE_MAP_BUCKET_COLORS = \[/);
-assert.match(script, /'#708faa'[\s\S]{0,80}'#c8cdd2'/);
+assert.match(script, /'#70acef'[\s\S]{0,80}'#dde2e6'/);
 assert.match(script, /mapNoData: '#f2f4f6'/);
 assert.match(script, /function getNiceProvinceScaleStep\(maxValue, targetBucketCount = 7\)/);
 assert.match(script, /function buildProvinceMapColorBuckets\(values = \[\]\)/);

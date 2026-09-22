@@ -4984,11 +4984,11 @@ const CHART_THEME = {
 const PROVINCE_MAP_BUCKET_COLORS = [
     '#1268d3',
     '#2b80e1',
-    '#4b8fcf',
-    '#708faa',
-    '#8f9ca8',
-    '#aeb6be',
-    '#c8cdd2'
+    '#4b96e9',
+    '#70acef',
+    '#9cc7ef',
+    '#c5d6e3',
+    '#dde2e6'
 ];
 
 function ensureChartJsLoaded() {
