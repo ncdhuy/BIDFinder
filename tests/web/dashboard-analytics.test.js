@@ -66,17 +66,34 @@ assert.equal(formatDashboardCompactPrice(500_000), '500 nghìn');
 assert.equal(formatDashboardCompactPrice(1_000_000), '1 triệu');
 assert.equal(formatDashboardCompactPrice(999_999), '1 triệu');
 assert.match(script, /function formatProvinceScaleValue\(value\)[\s\S]{0,260}minimumFractionDigits: 1, maximumFractionDigits: 1/);
-const markerDetailsSource = script.match(/function getDashboardPriceMarkerPosition\(chartArea, bins, value\) \{[\s\S]*?\n\}/)?.[0];
-const markerPositionSource = script.match(/function getDashboardPriceMarkerX\(chartArea, bins, value\) \{[\s\S]*?\n\}/)?.[0];
-const { getDashboardPriceMarkerX, getDashboardPriceMarkerPosition } = vm.runInNewContext(
-    `(() => { ${markerDetailsSource}; ${markerPositionSource}; return { getDashboardPriceMarkerX, getDashboardPriceMarkerPosition }; })()`
+const markerPositionSource = script.match(/function getDashboardPriceMarkerPosition\(_chartArea, value, coreInterval, xScale\) \{[\s\S]*?\n\}/)?.[0];
+const geometrySource = script.match(/function getDashboardPriceBinGeometry\(bins\) \{[\s\S]*?\n\}/)?.[0];
+const quartileGroupsSource = script.match(/function getDashboardQuartileGroups\(statistics\) \{[\s\S]*?\n\}/)?.[0];
+const { getDashboardPriceMarkerPosition, getDashboardPriceBinGeometry, getDashboardQuartileGroups } = vm.runInNewContext(
+    `(() => { ${markerPositionSource}; ${geometrySource}; ${quartileGroupsSource}; return { getDashboardPriceMarkerPosition, getDashboardPriceBinGeometry, getDashboardQuartileGroups }; })()`
 );
-const unevenMarkerBins = [
-    { min: 0, max: 10 }, { min: 10, max: 110 }, { min: 110, max: 1_110 },
-    { min: 1_110, max: 11_110 }, { min: 11_110, max: 111_110 },
-    { min: 111_110, max: 1_111_110 }, { min: 1_111_110, max: 11_111_110 }
-];
-assert.equal(getDashboardPriceMarkerX({ left: 100, right: 800 }, unevenMarkerBins, 60), 250);
+const markerScale = { getPixelForValue: value => 100 + value * 100 };
+const trueScaleMarker = getDashboardPriceMarkerPosition(null, 10_000, { min: 1_000, max: 100_000 }, markerScale);
+assert.equal(trueScaleMarker.x, 500);
+assert.equal(trueScaleMarker.clamped, false);
+const clampedQuartile = getDashboardPriceMarkerPosition(null, 10_000_000, { min: 1_000, max: 100_000 }, markerScale);
+assert.equal(clampedQuartile.x, 600);
+assert.equal(clampedQuartile.clamped, true);
+assert.equal(clampedQuartile.cutoff, 100_000);
+const histogramGeometry = getDashboardPriceBinGeometry([
+    { min: 1_000, max: 2_000, kind: 'histogram' },
+    { min: 2_000, max: 10_000, kind: 'histogram' },
+    { min: 10_000, max: 100_000, kind: 'histogram' },
+    { min: 1_000_000_000_000, max: 1_000_000_000_000, kind: 'outside_core' }
+]);
+assert.ok(Math.abs((histogramGeometry[0].end - histogramGeometry[0].start) - (histogramGeometry[1].end - histogramGeometry[1].start)) > 0.1);
+assert.ok(histogramGeometry[3].end < Math.log10(100_000) + 2);
+const equalQuartileGroups = getDashboardQuartileGroups({ p25: 1_300, median: 1_300, p75: 1_300 });
+assert.equal(equalQuartileGroups.length, 1);
+assert.equal(JSON.stringify(Array.from(equalQuartileGroups[0].markers, marker => marker.label)), JSON.stringify(['P25', 'Trung vị', 'P75']));
+const pairQuartileGroups = getDashboardQuartileGroups({ p25: 1_300, median: 1_305, p75: 2_000 });
+assert.equal(pairQuartileGroups.length, 2);
+assert.equal(pairQuartileGroups[0].markers.length, 2);
 const histogramScaleSource = script.match(/function getDashboardHistogramScale\(counts\) \{[\s\S]*?\n\}/)?.[0];
 const getDashboardHistogramScale = vm.runInNewContext(`(${histogramScaleSource})`);
 const dominantHistogramScale = getDashboardHistogramScale([886, 3, 1, 0, 0, 0, 0]);
@@ -88,62 +105,58 @@ assert.ok(Math.abs(dominantHistogramScale.inverse(dominantHistogramScale.display
 const normalHistogramScale = getDashboardHistogramScale([10, 8, 6, 4, 3, 2, 1]);
 assert.equal(normalHistogramScale.compressed, false);
 assert.deepEqual(Array.from(normalHistogramScale.displayCounts), [10, 8, 6, 4, 3, 2, 1]);
-const coreAndOverflowBins = [
-    { min: 0, max: 100 }, { min: 100, max: 200 }, { min: 200, max: 300 },
-    { min: 300, max: 400 }, { min: 400, max: 500 }, { min: 500, max: 600 },
-    { min: 600, max: 1_000_000_000_000, overflow: true }
-];
-assert.equal(getDashboardPriceMarkerPosition({ left: 100, right: 800 }, coreAndOverflowBins, 150).x, 250);
-const clampedQuartile = getDashboardPriceMarkerPosition({ left: 100, right: 800 }, coreAndOverflowBins, 10_000);
-assert.equal(clampedQuartile.x, 700);
-assert.equal(clampedQuartile.clamped, true);
-assert.equal(clampedQuartile.cutoff, 600);
-assert.equal(getDashboardPriceMarkerPosition({ left: 100, right: 800 }, coreAndOverflowBins, 600).x, 700);
-const priceLabelHelpers = script.match(/function getDashboardPriceLabelParts\(value\) \{[\s\S]*?\n\}[\s\S]*?function formatDashboardPriceBinLabel\(bin, index, bins\) \{[\s\S]*?\n\}/)?.[0];
-const { formatDashboardPriceBinLabel } = vm.runInNewContext(`(() => { ${priceLabelHelpers}; return { formatDashboardPriceBinLabel }; })()`);
+const priceLabelHelpers = script.match(/function formatDashboardCompactPrice\(value\) \{[\s\S]*?\n\}/)?.[0]
+    + script.match(/function getDashboardPriceLabelParts\(value\) \{[\s\S]*?\n\}/)?.[0];
+const priceLabelFunction = script.match(/function formatDashboardPriceBinLabel\(bin\) \{[\s\S]*?\n\}/)?.[0];
+const { formatDashboardPriceBinLabel } = vm.runInNewContext(`(() => { ${priceLabelHelpers}; ${priceLabelFunction}; return { formatDashboardPriceBinLabel }; })()`);
 const readablePriceBins = [
-    { min: 0, max: 50_000 }, { min: 50_000, max: 100_000 }, { min: 100_000, max: 200_000 },
-    { min: 200_000, max: 500_000 }, { min: 500_000, max: 1_000_000 },
-    { min: 1_000_000, max: 2_000_000 }, { min: 2_000_000, max: 4_000_000, overflow: true }
+    { min: 50_000, max: 100_000, kind: 'histogram' },
+    { min: 1_300, max: 1_300, kind: 'price_level' },
+    { min: 200_000, max: 500_000, kind: 'histogram' },
+    { min: 2_000_000, max: 10_000_000, kind: 'outside_core' }
 ];
-assert.equal(readablePriceBins.length, 7);
-assert.equal(formatDashboardPriceBinLabel(readablePriceBins[0], 0, readablePriceBins), '< 50 nghìn');
-assert.equal(JSON.stringify(formatDashboardPriceBinLabel(readablePriceBins[1], 1, readablePriceBins)), JSON.stringify(['50–100', 'nghìn']));
-assert.equal(formatDashboardPriceBinLabel(readablePriceBins[6], 6, readablePriceBins), 'Ngoại lệ');
-assert.match(script, /bin\.overflow \|\| index === bins\.length - 1\) return 'Ngoại lệ'/);
+assert.equal(JSON.stringify(formatDashboardPriceBinLabel(readablePriceBins[0])), JSON.stringify(['50–100', 'nghìn']));
+assert.equal(formatDashboardPriceBinLabel(readablePriceBins[1]), '1,3 nghìn');
+assert.equal(JSON.stringify(formatDashboardPriceBinLabel(readablePriceBins[2])), JSON.stringify(['200–500', 'nghìn']));
+assert.equal(formatDashboardPriceBinLabel(readablePriceBins[3]), 'Ngoài vùng lõi');
+assert.match(script, /bin\.kind === 'outside_core'[\s\S]{0,100}return 'Ngoài vùng lõi'/);
 assert.match(script, /unit_price_distribution/);
 assert.match(script, /type: 'line'/);
 assert.match(script, /const dashboardPriceDistributionPlugin =/);
 assert.match(script, /key: 'p25', label: 'P25', color: '#16a34a'/);
 assert.match(script, /key: 'median', label: 'Trung vị', color: '#1677e8'/);
 assert.match(script, /key: 'p75', label: 'P75', color: '#f97316'/);
-assert.match(script, /chart\.getDatasetMeta\(0\)\?\.data\.forEach/);
+assert.match(script, /beforeDatasetsDraw\(chart, _args, options\)/);
+assert.match(script, /xScale\.getPixelForValue\(bounds\.start\)/);
+assert.match(script, /yScale\.getPixelForValue\(countScale\.transform\(bin\.count\)\)/);
 const priceStatsRendererSource = script.slice(
     script.indexOf('function renderDashboardPriceStats'),
     script.indexOf('function getDashboardTimelinePoints')
 );
 assert.match(priceStatsRendererSource, /\['Mean', 'mean'\], \['Median', 'median'\], \['Min', 'min'\], \['Max', 'max'\]/);
 assert.doesNotMatch(priceStatsRendererSource, /P25|P75|IQR/);
-assert.match(priceStatsRendererSource, /Các đơn giá ngoại lệ phía trên ngưỡng hiển thị được gộp vào cột cuối/);
+assert.match(priceStatsRendererSource, /Các đơn giá ngoài vùng lõi được gộp vào cột cuối/);
 const priceChartSource = script.slice(
   script.indexOf('async function renderDashboardCharts'),
   script.indexOf('function updateDashboardTimelineChart')
 );
 assert.match(priceChartSource, /plugins: \[dashboardPriceDistributionPlugin\]/);
-assert.match(priceChartSource, /type: 'bar'/);
-assert.match(priceChartSource, /priceBinLabels = priceBins\.map/);
-assert.match(priceChartSource, /overflow: bin\?\.overflow === true/);
+assert.match(priceChartSource, /type: 'scatter'/);
+assert.match(priceChartSource, /priceBinLabels = priceBins\.map\(formatDashboardPriceBinLabel\)/);
+assert.match(priceChartSource, /const coreInterval = priceDistribution\?\.core_interval/);
+assert.match(priceChartSource, /kind: bin\?\.kind/);
 assert.match(priceChartSource, /outlierMin:/);
 assert.match(priceChartSource, /outlierMax:/);
-assert.match(priceChartSource, /maxTicksLimit: 7/);
-assert.match(priceChartSource, /dashboardPriceDistribution: \{[\s\S]{0,180}bins: priceBins,[\s\S]{0,120}rawCounts: priceCountScale\.rawCounts,[\s\S]{0,120}countScale: priceCountScale/);
-assert.match(priceChartSource, /data: priceCountScale\.displayCounts/);
+assert.match(priceChartSource, /maxTicksLimit: 6/);
+assert.match(priceChartSource, /dashboardPriceDistribution: \{[\s\S]{0,180}bins: priceBins,[\s\S]{0,120}geometry: priceBinGeometry,[\s\S]{0,120}coreInterval,[\s\S]{0,120}rawCounts: priceCountScale\.rawCounts,[\s\S]{0,120}countScale: priceCountScale/);
+assert.match(priceChartSource, /x: priceBinGeometry\[index\]\?\.center/);
 assert.match(priceChartSource, /axis\.ticks = priceCountScale\.ticks\.map/);
 assert.match(priceChartSource, /Số gói thầu \(nén >/);
-assert.match(priceChartSource, /title: items => items\[0\]\?\.label/);
+assert.match(priceChartSource, /title: items => priceBinLabels\[items\[0\]\?\.dataIndex\]/);
 assert.match(priceChartSource, /Số gói thầu:/);
 assert.match(priceChartSource, /afterLabel: item =>/);
-assert.match(priceChartSource, /Đơn giá ngoại lệ:/);
+assert.match(priceChartSource, /Giá nhỏ nhất:/);
+assert.match(priceChartSource, /kind === 'outside_core'/);
 assert.match(priceChartSource, /renderDashboardPriceStats\(hasPriceDistribution \? priceStats : null, priceBins\)/);
 assert.doesNotMatch(priceChartSource, /bidder_unit_price_series|dashboardBidderPriceLabels|type: 'logarithmic'/);
 assert.match(script, /function formatDashboardTimelinePeriod\(period\)[\s\S]{0,260}`Q\$\{quarter\[2\]\}\/\$\{quarter\[1\]\}`[\s\S]{0,180}`\$\{month\[2\]\}\/\$\{month\[1\]\}`/);

@@ -13,10 +13,11 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP
+from decimal import Decimal
 import hashlib
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import random
@@ -1445,7 +1446,7 @@ def build_dashboard_bidder_price_series(
 
 
 def build_dashboard_price_distribution(raw_prices: Iterable[Any]) -> dict[str, Any]:
-    """Build exact statistics, six core price bins, and one overflow bucket."""
+    """Build full-data statistics and a robust, data-adaptive price distribution."""
     prices = []
     for raw_price in raw_prices:
         price = _analytics_decimal(raw_price, positive_only=True)
@@ -1453,7 +1454,7 @@ def build_dashboard_price_distribution(raw_prices: Iterable[Any]) -> dict[str, A
             prices.append(price)
     prices.sort()
     if not prices:
-        return {"statistics": None, "bins": []}
+        return {"mode": None, "core_interval": None, "statistics": None, "bins": []}
 
     count = len(prices)
 
@@ -1470,151 +1471,213 @@ def build_dashboard_price_distribution(raw_prices: Iterable[Any]) -> dict[str, A
     p25 = quantile(Decimal("0.25"))
     p75 = quantile(Decimal("0.75"))
     minimum, maximum = prices[0], prices[-1]
-
-    def nice_floor_step(value: Decimal) -> Decimal:
-        if value <= 0:
-            return Decimal(1)
-        magnitude = Decimal(10) ** value.adjusted()
-        normalized = value / magnitude
-        multiplier = max(
-            candidate for candidate in (Decimal(1), Decimal(2), Decimal(5))
-            if candidate <= normalized
-        )
-        return multiplier * magnitude
-
-    def nice_ceil(value: Decimal) -> Decimal:
-        magnitude = Decimal(10) ** value.adjusted()
-        normalized = value / magnitude
-        multiplier = next(candidate for candidate in (Decimal(1), Decimal(2), Decimal(5), Decimal(10))
-                          if candidate >= normalized)
-        return multiplier * magnitude
-
-    def round_to_step(value: Decimal, step: Decimal) -> Decimal:
-        return (value / step).to_integral_value(rounding=ROUND_HALF_UP) * step
-
-    def floor_to_step(value: Decimal, step: Decimal) -> Decimal:
-        return (value / step).to_integral_value(rounding=ROUND_FLOOR) * step
-
-    def ceil_to_step(value: Decimal, step: Decimal) -> Decimal:
-        return (value / step).to_integral_value(rounding=ROUND_CEILING) * step
-
     iqr = p75 - p25
-    exact_frequencies = Counter(prices)
-    mode_price, mode_count = max(exact_frequencies.items(), key=lambda item: item[1])
-    narrow_width = max(abs(median) * Decimal("0.20"), Decimal(1))
-    left = best_left = best_right = 0
-    best_window_count = 0
-    for right, price in enumerate(prices):
-        while price - prices[left] > narrow_width:
-            left += 1
-        window_count = right - left + 1
-        if window_count > best_window_count:
-            best_left, best_right, best_window_count = left, right, window_count
 
-    exact_mode_dominates = mode_count >= 3 and Decimal(mode_count) / count >= Decimal("0.50")
-    narrow_region_dominates = Decimal(best_window_count) / count >= Decimal("0.70")
-    near_zero_iqr = iqr <= max(Decimal(1), abs(median) * Decimal("0.01"))
-    mode_aware = near_zero_iqr or exact_mode_dominates or narrow_region_dominates
+    def log10_price(price: Decimal) -> float:
+        exponent = price.adjusted()
+        return exponent + math.log10(float(price.scaleb(-exponent)))
 
-    if mode_aware:
-        dense_minimum, dense_maximum = prices[best_left], prices[best_right]
-        center = mode_price if exact_mode_dominates else (dense_minimum + dense_maximum) / Decimal(2)
-        magnitude = Decimal(10) ** center.adjusted()
-        minor_step = magnitude / Decimal(10)
-        inner_step = max(
-            minor_step * 2,
-            nice_floor_step((dense_maximum - dense_minimum) / Decimal(2))
-            if dense_maximum > dense_minimum else minor_step * 2,
-        )
-        inner_low = floor_to_step(dense_minimum, inner_step)
-        inner_high = ceil_to_step(dense_maximum, inner_step)
-        if inner_low == inner_high:
-            inner_low -= inner_step
-            inner_high += inner_step
+    log_prices = [log10_price(price) for price in prices]
 
-        first_edge = floor_to_step(dense_minimum, magnitude)
-        if first_edge <= 0 or first_edge >= inner_low:
-            first_edge = inner_low - inner_step
-        if first_edge <= 0:
-            first_edge = inner_low / 2
+    def shortest_interval(values: Sequence[float], target_count: int) -> tuple[int, int]:
+        target_count = min(len(values), max(1, target_count))
+        best_start = 0
+        best_end = target_count - 1
+        best_width = values[best_end] - values[best_start]
+        for start in range(1, len(values) - target_count + 1):
+            end = start + target_count - 1
+            width = values[end] - values[start]
+            if width < best_width:
+                best_start, best_end, best_width = start, end, width
+        return best_start, best_end
 
-        next_major = (inner_high // magnitude + 1) * magnitude
-        outer_middle = nice_ceil(next_major * Decimal("2.5"))
-        outer_high = nice_ceil(outer_middle * Decimal(4))
-        core_edges = [first_edge, inner_low, inner_high, next_major, outer_middle, outer_high]
-    else:
-        # In a broad distribution, cap the core at the lower of P99 and the
-        # Tukey fence. Unlike the mode path, both bounds remain informative.
-        robust_maximum = min(quantile(Decimal("0.99")), p75 + Decimal(3) * iqr)
-        robust_minimum = next(price for price in prices if price <= robust_maximum)
-        cutoff_step = nice_floor_step((robust_maximum - robust_minimum) / Decimal(100))
-        core_maximum = floor_to_step(robust_maximum, cutoff_step)
-        if core_maximum <= robust_minimum:
-            core_maximum = robust_maximum
-        core_values = [price for price in prices if price <= core_maximum]
-        core_minimum = core_values[0]
-        span = core_maximum - core_minimum
-        step = nice_floor_step(span / Decimal(10))
-        quantile_edges = []
-        previous = Decimal(0)
-        for index in range(1, 6):
-            edge = round_to_step(quantile(Decimal(index) / Decimal(6), core_values), step)
-            if edge <= previous:
-                edge = previous + step
-            if edge >= core_maximum:
-                quantile_edges = []
-                break
-            quantile_edges.append(edge)
-            previous = edge
+    def numeric_quantile(values: Sequence[float], fraction: float) -> float:
+        position = (len(values) - 1) * fraction
+        lower = int(position)
+        upper = min(lower + 1, len(values) - 1)
+        return values[lower] + (values[upper] - values[lower]) * (position - lower)
 
-        if len(quantile_edges) != 5:
-            # Quantile ties can occur in multimodal data. Use rounded points
-            # across the robust core span without reaching toward global max.
-            step = nice_floor_step(span / Decimal(6))
-            quantile_edges = []
-            previous = core_minimum
-            for index in range(1, 6):
-                edge = round_to_step(core_minimum + span * Decimal(index) / Decimal(6), step)
-                edge = max(edge, previous + step)
-                edge = min(edge, core_maximum - step * Decimal(6 - index))
-                quantile_edges.append(edge)
-                previous = edge
-        core_edges = [*quantile_edges, core_maximum]
+    core_start, core_end = shortest_interval(log_prices, math.ceil(count * 0.99))
+    core_minimum, core_maximum = prices[core_start], prices[core_end]
+    core_prices = [price for price in prices if core_minimum <= price <= core_maximum]
+    core_logs = [log10_price(price) for price in core_prices]
+    outside_prices = [price for price in prices if price < core_minimum or price > core_maximum]
+    core_frequencies = Counter(core_prices)
+    dominant_price, dominant_count = max(core_frequencies.items(), key=lambda item: item[1])
+    dense_target = math.ceil(len(core_prices) * 0.70)
+    dense_start, dense_end = shortest_interval(core_logs, dense_target)
+    dense_log_width = core_logs[dense_end] - core_logs[dense_start]
+    exact_dominant = dominant_count / len(core_prices) >= 0.50
+    narrow_dominant = dense_log_width <= math.log10(1.20)
+    near_equal_quartiles = iqr <= max(Decimal("1e-9"), abs(median) * Decimal("0.01"))
+    point_mass = (
+        near_equal_quartiles
+        or exact_dominant
+        or narrow_dominant
+        or len(core_frequencies) <= 5
+    )
 
-    core_upper = core_edges[-1]
-    core_boundaries = core_edges[:-1]
-    bin_counts = [0] * 7
-    overflow_prices = []
-    for price in prices:
-        if price > core_upper:
-            bin_counts[-1] += 1
-            overflow_prices.append(price)
+    bins: list[dict[str, Any]]
+    if point_mass:
+        if len(core_frequencies) <= 5:
+            bins = [
+                {"min": _analytics_number(price), "max": _analytics_number(price), "count": frequency, "kind": "price_level"}
+                for price, frequency in sorted(core_frequencies.items())
+            ]
         else:
-            bin_counts[bisect_right(core_boundaries, price)] += 1
+            if narrow_dominant:
+                dense_minimum, dense_maximum = core_prices[dense_start], core_prices[dense_end]
+            elif exact_dominant:
+                dense_minimum = dense_maximum = dominant_price
+            else:
+                dense_minimum, dense_maximum = core_prices[dense_start], core_prices[dense_end]
+            dense_values = [price for price in core_prices if dense_minimum <= price <= dense_maximum]
+            bins = [{
+                "min": _analytics_number(dense_minimum),
+                "max": _analytics_number(dense_maximum),
+                "count": len(dense_values),
+                "kind": "price_level" if dense_minimum == dense_maximum else "price_range",
+            }]
+            residual = [
+                (price, frequency)
+                for price, frequency in sorted(core_frequencies.items())
+                if price < dense_minimum or price > dense_maximum
+            ]
+            bins.extend({
+                "min": _analytics_number(price),
+                "max": _analytics_number(price),
+                "count": frequency,
+                "kind": "price_level",
+            } for price, frequency in residual[:4])
+            tail = residual[4:]
+            if tail:
+                tail_prices = [price for price, _ in tail]
+                bins.append({
+                    "min": _analytics_number(tail_prices[0]),
+                    "max": _analytics_number(tail_prices[-1]),
+                    "count": sum(frequency for _, frequency in tail),
+                    "kind": "other",
+                })
+            bins.sort(key=lambda bin_item: (Decimal(str(bin_item["min"])), Decimal(str(bin_item["max"]))))
+    else:
+        log_minimum, log_maximum = core_logs[0], core_logs[-1]
+        log_iqr = numeric_quantile(core_logs, 0.75) - numeric_quantile(core_logs, 0.25)
+        fd_width = 2 * log_iqr / (len(core_logs) ** (1 / 3)) if log_iqr > 0 else 0
+        bin_count = math.ceil((log_maximum - log_minimum) / fd_width) if fd_width > 0 else math.ceil(math.log2(len(core_logs)) + 1)
+        bin_count = min(8, max(5, bin_count))
 
-    core_ranges = list(zip([Decimal(0), *core_boundaries], core_edges))
-    bins = [
-        {"min": _analytics_number(lower), "max": _analytics_number(upper), "count": bin_counts[index]}
-        for index, (lower, upper) in enumerate(core_ranges)
-    ]
-    bins.append({
-        "min": _analytics_number(core_upper),
-        "max": _analytics_number(core_upper),
-        "count": bin_counts[-1],
-        "overflow": True,
-        "outlier_min": _analytics_number(overflow_prices[0]) if overflow_prices else None,
-        "outlier_max": _analytics_number(overflow_prices[-1]) if overflow_prices else None,
-    })
+        def decimal_from_log(value: float) -> Decimal:
+            exponent = math.floor(value)
+            fraction = Decimal(str(value - exponent))
+            return (Decimal(10) ** exponent) * (Decimal(10) ** fraction)
+
+        def nice_floor_step(value: Decimal) -> Decimal:
+            if value <= 0:
+                return Decimal(1)
+            magnitude = Decimal(10) ** value.adjusted()
+            normalized = value / magnitude
+            multiplier = max(candidate for candidate in (Decimal(1), Decimal(2), Decimal(5)) if candidate <= normalized)
+            return multiplier * magnitude
+
+        def nice_boundary(value: float) -> tuple[float, Decimal] | None:
+            price = decimal_from_log(value)
+            bin_log_width = (log_maximum - log_minimum) / bin_count
+            ratio = 10 ** min(bin_log_width, 300)
+            approximate_step = price * Decimal(str((ratio - 1) / 2))
+            step = nice_floor_step(approximate_step)
+            candidate = (price / step).to_integral_value(rounding=ROUND_HALF_UP) * step
+            if candidate <= 0:
+                return None
+            candidate_log = log10_price(candidate)
+            if not log_minimum < candidate_log < log_maximum:
+                return None
+            return candidate_log, candidate
+
+        ideal_edges = [
+            log_minimum + (log_maximum - log_minimum) * index / bin_count
+            for index in range(1, bin_count)
+        ]
+        nice_edges = [nice_boundary(value) for value in ideal_edges]
+        rounded_logs = [edge[0] for edge in nice_edges if edge is not None]
+        rounded_are_ordered = (
+            len(rounded_logs) == len(ideal_edges)
+            and all(left < right for left, right in zip(
+                [log_minimum, *rounded_logs], [*rounded_logs, log_maximum]
+            ))
+        )
+        if rounded_are_ordered:
+            boundary_logs = rounded_logs
+            boundary_prices = [edge[1] for edge in nice_edges if edge is not None]
+        else:
+            boundary_logs = ideal_edges
+            boundary_prices = [decimal_from_log(value) for value in ideal_edges]
+
+        log_edges = [log_minimum, *boundary_logs, log_maximum]
+        price_edges = [core_minimum, *boundary_prices, core_maximum]
+        counts = [0] * bin_count
+        for log_price in core_logs:
+            counts[min(bin_count - 1, bisect_right(boundary_logs, log_price))] += 1
+        raw_bins = [{
+            "minimum": price_edges[index],
+            "maximum": price_edges[index + 1],
+            "log_minimum": log_edges[index],
+            "log_maximum": log_edges[index + 1],
+            "count": counts[index],
+        } for index in range(bin_count)]
+
+        while len(raw_bins) > 1 and any(bin_item["count"] == 0 for bin_item in raw_bins):
+            empty_index = next(index for index, bin_item in enumerate(raw_bins) if bin_item["count"] == 0)
+            if empty_index == 0:
+                raw_bins[1]["minimum"] = raw_bins[0]["minimum"]
+                raw_bins[1]["log_minimum"] = raw_bins[0]["log_minimum"]
+                raw_bins.pop(0)
+            elif empty_index == len(raw_bins) - 1:
+                raw_bins[-2]["maximum"] = raw_bins[-1]["maximum"]
+                raw_bins[-2]["log_maximum"] = raw_bins[-1]["log_maximum"]
+                raw_bins.pop()
+            else:
+                left_width = raw_bins[empty_index]["log_maximum"] - raw_bins[empty_index - 1]["log_minimum"]
+                right_width = raw_bins[empty_index + 1]["log_maximum"] - raw_bins[empty_index]["log_minimum"]
+                if left_width <= right_width:
+                    raw_bins[empty_index - 1]["maximum"] = raw_bins[empty_index]["maximum"]
+                    raw_bins[empty_index - 1]["log_maximum"] = raw_bins[empty_index]["log_maximum"]
+                    raw_bins.pop(empty_index)
+                else:
+                    raw_bins[empty_index + 1]["minimum"] = raw_bins[empty_index]["minimum"]
+                    raw_bins[empty_index + 1]["log_minimum"] = raw_bins[empty_index]["log_minimum"]
+                    raw_bins.pop(empty_index)
+        bins = [{
+            "min": _analytics_number(bin_item["minimum"]),
+            "max": _analytics_number(bin_item["maximum"]),
+            "count": bin_item["count"],
+            "kind": "histogram",
+        } for bin_item in raw_bins]
+
+    if outside_prices:
+        bins.append({
+            "min": _analytics_number(outside_prices[0]),
+            "max": _analytics_number(outside_prices[-1]),
+            "count": len(outside_prices),
+            "kind": "outside_core",
+            "outside_core": True,
+            "outlier_min": _analytics_number(outside_prices[0]),
+            "outlier_max": _analytics_number(outside_prices[-1]),
+        })
 
     return {
-        "display_cutoff": _analytics_number(core_upper),
+        "mode": "point_mass" if point_mass else "histogram",
+        "core_interval": {
+            "min": _analytics_number(core_minimum),
+            "max": _analytics_number(core_maximum),
+            "count": len(core_prices),
+        },
         "statistics": {
             "count": count,
             "mean": _analytics_number(mean),
             "median": _analytics_number(median),
             "p25": _analytics_number(p25),
             "p75": _analytics_number(p75),
-            "iqr": _analytics_number(p75 - p25),
+            "iqr": _analytics_number(iqr),
             "min": _analytics_number(minimum),
             "max": _analytics_number(maximum),
         },
