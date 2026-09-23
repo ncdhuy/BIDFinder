@@ -8,7 +8,6 @@ been assembled.
 from __future__ import annotations
 
 import asyncio
-from bisect import bisect_right
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
@@ -17,7 +16,6 @@ from decimal import Decimal
 import hashlib
 import json
 import logging
-import math
 import os
 from pathlib import Path
 import random
@@ -1305,6 +1303,148 @@ def _analytics_package_key(group: str, document: Mapping[str, Any]) -> str:
     return f"{group}:row:{_analytics_text(document.get('id')) or id(document)}"
 
 
+def cluster_dashboard_price_levels(raw_prices: Iterable[Any]) -> list[list[Decimal]]:
+    """Cluster nearby positive prices with a bounded, scale-relative tolerance."""
+    prices = sorted({
+        price for raw_price in raw_prices
+        if (price := _analytics_decimal(raw_price, positive_only=True)) is not None
+    })
+    if len(prices) < 2:
+        return [[price] for price in prices]
+
+    gaps = sorted(right.ln() - left.ln() for left, right in zip(prices, prices[1:]))
+    middle = len(gaps) // 2
+    threshold = gaps[middle] if len(gaps) % 2 else (gaps[middle - 1] + gaps[middle]) / 2
+    threshold = max(Decimal("1.01").ln(), min(Decimal("1.05").ln(), threshold * Decimal("1.25")))
+    max_span = Decimal("1.05")
+
+    clusters: list[list[Decimal]] = [[prices[0]]]
+    for price in prices[1:]:
+        current = clusters[-1]
+        close_enough = price.ln() - current[-1].ln() <= threshold
+        bounded_span = price / current[0] <= max_span
+        if close_enough and bounded_span:
+            current.append(price)
+        else:
+            clusters.append([price])
+    return clusters
+
+
+def _dashboard_median(values: Sequence[Decimal]) -> Decimal:
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2
+
+
+def build_dashboard_bidder_price_bands(
+    observations: Sequence[Mapping[str, Any]],
+    *,
+    selected_product: Any = None,
+    limit: int = 5,
+) -> dict[str, Any]:
+    """Rank bidders by distinct wins in their most frequent comparable price band."""
+    selected_product_key = _analytics_identity(selected_product)
+    valid: list[dict[str, Any]] = []
+    for observation in observations:
+        price = _analytics_decimal(observation.get("unit_price"), positive_only=True)
+        bidder_key = _analytics_identity(observation.get("bidder_key"))
+        if price is None or not bidder_key:
+            continue
+        product_key = _analytics_identity(observation.get("product_key") or observation.get("product"))
+        if selected_product_key and product_key != selected_product_key:
+            continue
+        valid.append({
+            **observation,
+            "unit_price": price,
+            "bidder_key": bidder_key,
+            "product_key": product_key,
+            "unit_key": _analytics_identity(observation.get("unit_key") or observation.get("unit")) or "",
+            "package_key": str(observation.get("package_key") or observation.get("record_key") or ""),
+            "record_key": str(observation.get("record_key") or observation.get("package_key") or ""),
+            "awarded_value": _analytics_decimal(observation.get("awarded_value")) or Decimal(0),
+            "bidder_name": _analytics_text(observation.get("bidder_name")) or bidder_key,
+            "unit": _analytics_text(observation.get("unit")),
+        })
+
+    contexts = {(item["product_key"], item["unit_key"]) for item in valid}
+    if valid and not selected_product_key and (
+        len(contexts) > 1 or any(not product_key for product_key, _ in contexts)
+    ):
+        return {"requires_product_selection": True, "items": []}
+    if selected_product_key:
+        valid = [item for item in valid if item["product_key"] == selected_product_key]
+
+    by_context_bidder: dict[tuple[str | None, str, str], list[dict[str, Any]]] = {}
+    for item in valid:
+        context = (item["product_key"], item["unit_key"], item["bidder_key"])
+        by_context_bidder.setdefault(context, []).append(item)
+
+    best_by_bidder: dict[str, dict[str, Any]] = {}
+    for (product_key, unit_key, bidder_key), rows in by_context_bidder.items():
+        unique_records: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            unique_records.setdefault(row["record_key"], row)
+        prices = [row["unit_price"] for row in unique_records.values()]
+        bidder_name = min((row["bidder_name"] for row in rows), key=lambda name: (name.casefold(), name))
+        unit = min((row["unit"] for row in rows if row["unit"]), key=lambda name: (name.casefold(), name), default=None)
+        records_by_price: dict[Decimal, list[dict[str, Any]]] = {}
+        for row in unique_records.values():
+            records_by_price.setdefault(row["unit_price"], []).append(row)
+
+        for cluster in cluster_dashboard_price_levels(prices):
+            package_prices: dict[str, set[Decimal]] = {}
+            band_value = Decimal(0)
+            packages: set[str] = set()
+            for price in cluster:
+                for row in records_by_price[price]:
+                    package_key = row["package_key"]
+                    packages.add(package_key)
+                    package_prices.setdefault(package_key, set()).add(price)
+                    band_value += row["awarded_value"]
+            if not packages:
+                continue
+            package_observed_prices = [_dashboard_median(tuple(values)) for values in package_prices.values()]
+            band = {
+                "bidder_key": bidder_key,
+                "bidder_name": bidder_name,
+                "price_min": _analytics_number(cluster[0]),
+                "price_max": _analytics_number(cluster[-1]),
+                "median_price": _analytics_number(_dashboard_median(package_observed_prices)),
+                "distinct_win_count": len(packages),
+                "corresponding_awarded_value": _analytics_number(band_value),
+                "unit": unit,
+                "_product_key": product_key or "",
+                "_unit_key": unit_key,
+            }
+            current = best_by_bidder.get(bidder_key)
+            band_order = (
+                -band["distinct_win_count"],
+                -Decimal(str(band["corresponding_awarded_value"])),
+                band["_product_key"], band["_unit_key"], Decimal(str(band["price_min"])),
+            )
+            if current is None or band_order < current["_order"]:
+                band["_order"] = band_order
+                best_by_bidder[bidder_key] = band
+
+    ranked = sorted(
+        best_by_bidder.values(),
+        key=lambda band: (
+            -band["distinct_win_count"],
+            -Decimal(str(band["corresponding_awarded_value"])),
+            band["bidder_name"].casefold(),
+            band["bidder_key"],
+        ),
+    )[:max(0, limit)]
+    for band in ranked:
+        band.pop("_order", None)
+        band.pop("_product_key", None)
+        band.pop("_unit_key", None)
+        band.pop("bidder_key", None)
+    return {"requires_product_selection": False, "items": ranked}
+
+
 def _analytics_province(value: Any) -> str | None:
     try:
         normalized = normalize_location(value) or ""
@@ -1415,277 +1555,13 @@ def _analytics_number(value: Decimal) -> int | float:
     return int(value) if value == value.to_integral_value() else float(value)
 
 
-def build_dashboard_bidder_price_series(
-    bidder_totals: Mapping[str, Decimal],
-    bidder_names: Mapping[str, str],
-    bidder_prices: Mapping[str, Mapping[Decimal, Mapping[str, Any]]],
+
+
+def aggregate_dashboard_documents(
+    documents_by_group: Mapping[str, Sequence[Mapping[str, Any]]],
     *,
-    limit: int = 5,
-) -> list[dict[str, Any]]:
-    """Return top bidders with exact-price awarded-value observations."""
-    ranked_keys = sorted(
-        bidder_totals,
-        key=lambda key: (-bidder_totals[key], bidder_names.get(key, key).casefold()),
-    )[:limit]
-    series = []
-    for key in ranked_keys:
-        points = []
-        for unit_price, aggregate in sorted(bidder_prices.get(key, {}).items(), key=lambda item: item[0]):
-            points.append({
-                "unit_price": _analytics_number(unit_price),
-                "total_awarded_value": _analytics_number(aggregate["value"]),
-                "occurrence_count": int(aggregate["occurrence_count"]),
-                "package_count": len(aggregate["packages"]),
-            })
-        series.append({
-            "name": bidder_names.get(key, key),
-            "total_awarded_value": _analytics_number(bidder_totals[key]),
-            "points": points,
-        })
-    return series
-
-
-def build_dashboard_price_distribution(raw_prices: Iterable[Any]) -> dict[str, Any]:
-    """Build full-data statistics and a robust, data-adaptive price distribution."""
-    prices = []
-    for raw_price in raw_prices:
-        price = _analytics_decimal(raw_price, positive_only=True)
-        if price is not None:
-            prices.append(price)
-    prices.sort()
-    if not prices:
-        return {"mode": None, "core_interval": None, "statistics": None, "bins": []}
-
-    count = len(prices)
-
-    def quantile(fraction: Decimal, values: Sequence[Decimal] | None = None) -> Decimal:
-        values = prices if values is None else values
-        position = Decimal(len(values) - 1) * fraction
-        lower_index = int(position)
-        upper_index = min(lower_index + 1, len(values) - 1)
-        remainder = position - lower_index
-        return values[lower_index] + (values[upper_index] - values[lower_index]) * remainder
-
-    mean = sum(prices, Decimal(0)) / Decimal(count)
-    median = quantile(Decimal("0.5"))
-    p25 = quantile(Decimal("0.25"))
-    p75 = quantile(Decimal("0.75"))
-    minimum, maximum = prices[0], prices[-1]
-    iqr = p75 - p25
-
-    def log10_price(price: Decimal) -> float:
-        exponent = price.adjusted()
-        return exponent + math.log10(float(price.scaleb(-exponent)))
-
-    log_prices = [log10_price(price) for price in prices]
-
-    def shortest_interval(values: Sequence[float], target_count: int) -> tuple[int, int]:
-        target_count = min(len(values), max(1, target_count))
-        best_start = 0
-        best_end = target_count - 1
-        best_width = values[best_end] - values[best_start]
-        for start in range(1, len(values) - target_count + 1):
-            end = start + target_count - 1
-            width = values[end] - values[start]
-            if width < best_width:
-                best_start, best_end, best_width = start, end, width
-        return best_start, best_end
-
-    def numeric_quantile(values: Sequence[float], fraction: float) -> float:
-        position = (len(values) - 1) * fraction
-        lower = int(position)
-        upper = min(lower + 1, len(values) - 1)
-        return values[lower] + (values[upper] - values[lower]) * (position - lower)
-
-    core_start, core_end = shortest_interval(log_prices, math.ceil(count * 0.99))
-    core_minimum, core_maximum = prices[core_start], prices[core_end]
-    core_prices = [price for price in prices if core_minimum <= price <= core_maximum]
-    core_logs = [log10_price(price) for price in core_prices]
-    outside_prices = [price for price in prices if price < core_minimum or price > core_maximum]
-    core_frequencies = Counter(core_prices)
-    dominant_price, dominant_count = max(core_frequencies.items(), key=lambda item: item[1])
-    dense_target = math.ceil(len(core_prices) * 0.70)
-    dense_start, dense_end = shortest_interval(core_logs, dense_target)
-    dense_log_width = core_logs[dense_end] - core_logs[dense_start]
-    exact_dominant = dominant_count / len(core_prices) >= 0.50
-    narrow_dominant = dense_log_width <= math.log10(1.20)
-    near_equal_quartiles = iqr <= max(Decimal("1e-9"), abs(median) * Decimal("0.01"))
-    point_mass = (
-        near_equal_quartiles
-        or exact_dominant
-        or narrow_dominant
-        or len(core_frequencies) <= 5
-    )
-
-    bins: list[dict[str, Any]]
-    if point_mass:
-        if len(core_frequencies) <= 5:
-            bins = [
-                {"min": _analytics_number(price), "max": _analytics_number(price), "count": frequency, "kind": "price_level"}
-                for price, frequency in sorted(core_frequencies.items())
-            ]
-        else:
-            if narrow_dominant:
-                dense_minimum, dense_maximum = core_prices[dense_start], core_prices[dense_end]
-            elif exact_dominant:
-                dense_minimum = dense_maximum = dominant_price
-            else:
-                dense_minimum, dense_maximum = core_prices[dense_start], core_prices[dense_end]
-            dense_values = [price for price in core_prices if dense_minimum <= price <= dense_maximum]
-            bins = [{
-                "min": _analytics_number(dense_minimum),
-                "max": _analytics_number(dense_maximum),
-                "count": len(dense_values),
-                "kind": "price_level" if dense_minimum == dense_maximum else "price_range",
-            }]
-            residual = [
-                (price, frequency)
-                for price, frequency in sorted(core_frequencies.items())
-                if price < dense_minimum or price > dense_maximum
-            ]
-            bins.extend({
-                "min": _analytics_number(price),
-                "max": _analytics_number(price),
-                "count": frequency,
-                "kind": "price_level",
-            } for price, frequency in residual[:4])
-            tail = residual[4:]
-            if tail:
-                tail_prices = [price for price, _ in tail]
-                bins.append({
-                    "min": _analytics_number(tail_prices[0]),
-                    "max": _analytics_number(tail_prices[-1]),
-                    "count": sum(frequency for _, frequency in tail),
-                    "kind": "other",
-                })
-            bins.sort(key=lambda bin_item: (Decimal(str(bin_item["min"])), Decimal(str(bin_item["max"]))))
-    else:
-        log_minimum, log_maximum = core_logs[0], core_logs[-1]
-        log_iqr = numeric_quantile(core_logs, 0.75) - numeric_quantile(core_logs, 0.25)
-        fd_width = 2 * log_iqr / (len(core_logs) ** (1 / 3)) if log_iqr > 0 else 0
-        bin_count = math.ceil((log_maximum - log_minimum) / fd_width) if fd_width > 0 else math.ceil(math.log2(len(core_logs)) + 1)
-        bin_count = min(8, max(5, bin_count))
-
-        def decimal_from_log(value: float) -> Decimal:
-            exponent = math.floor(value)
-            fraction = Decimal(str(value - exponent))
-            return (Decimal(10) ** exponent) * (Decimal(10) ** fraction)
-
-        def nice_floor_step(value: Decimal) -> Decimal:
-            if value <= 0:
-                return Decimal(1)
-            magnitude = Decimal(10) ** value.adjusted()
-            normalized = value / magnitude
-            multiplier = max(candidate for candidate in (Decimal(1), Decimal(2), Decimal(5)) if candidate <= normalized)
-            return multiplier * magnitude
-
-        def nice_boundary(value: float) -> tuple[float, Decimal] | None:
-            price = decimal_from_log(value)
-            bin_log_width = (log_maximum - log_minimum) / bin_count
-            ratio = 10 ** min(bin_log_width, 300)
-            approximate_step = price * Decimal(str((ratio - 1) / 2))
-            step = nice_floor_step(approximate_step)
-            candidate = (price / step).to_integral_value(rounding=ROUND_HALF_UP) * step
-            if candidate <= 0:
-                return None
-            candidate_log = log10_price(candidate)
-            if not log_minimum < candidate_log < log_maximum:
-                return None
-            return candidate_log, candidate
-
-        ideal_edges = [
-            log_minimum + (log_maximum - log_minimum) * index / bin_count
-            for index in range(1, bin_count)
-        ]
-        nice_edges = [nice_boundary(value) for value in ideal_edges]
-        rounded_logs = [edge[0] for edge in nice_edges if edge is not None]
-        rounded_are_ordered = (
-            len(rounded_logs) == len(ideal_edges)
-            and all(left < right for left, right in zip(
-                [log_minimum, *rounded_logs], [*rounded_logs, log_maximum]
-            ))
-        )
-        if rounded_are_ordered:
-            boundary_logs = rounded_logs
-            boundary_prices = [edge[1] for edge in nice_edges if edge is not None]
-        else:
-            boundary_logs = ideal_edges
-            boundary_prices = [decimal_from_log(value) for value in ideal_edges]
-
-        log_edges = [log_minimum, *boundary_logs, log_maximum]
-        price_edges = [core_minimum, *boundary_prices, core_maximum]
-        counts = [0] * bin_count
-        for log_price in core_logs:
-            counts[min(bin_count - 1, bisect_right(boundary_logs, log_price))] += 1
-        raw_bins = [{
-            "minimum": price_edges[index],
-            "maximum": price_edges[index + 1],
-            "log_minimum": log_edges[index],
-            "log_maximum": log_edges[index + 1],
-            "count": counts[index],
-        } for index in range(bin_count)]
-
-        while len(raw_bins) > 1 and any(bin_item["count"] == 0 for bin_item in raw_bins):
-            empty_index = next(index for index, bin_item in enumerate(raw_bins) if bin_item["count"] == 0)
-            if empty_index == 0:
-                raw_bins[1]["minimum"] = raw_bins[0]["minimum"]
-                raw_bins[1]["log_minimum"] = raw_bins[0]["log_minimum"]
-                raw_bins.pop(0)
-            elif empty_index == len(raw_bins) - 1:
-                raw_bins[-2]["maximum"] = raw_bins[-1]["maximum"]
-                raw_bins[-2]["log_maximum"] = raw_bins[-1]["log_maximum"]
-                raw_bins.pop()
-            else:
-                left_width = raw_bins[empty_index]["log_maximum"] - raw_bins[empty_index - 1]["log_minimum"]
-                right_width = raw_bins[empty_index + 1]["log_maximum"] - raw_bins[empty_index]["log_minimum"]
-                if left_width <= right_width:
-                    raw_bins[empty_index - 1]["maximum"] = raw_bins[empty_index]["maximum"]
-                    raw_bins[empty_index - 1]["log_maximum"] = raw_bins[empty_index]["log_maximum"]
-                    raw_bins.pop(empty_index)
-                else:
-                    raw_bins[empty_index + 1]["minimum"] = raw_bins[empty_index]["minimum"]
-                    raw_bins[empty_index + 1]["log_minimum"] = raw_bins[empty_index]["log_minimum"]
-                    raw_bins.pop(empty_index)
-        bins = [{
-            "min": _analytics_number(bin_item["minimum"]),
-            "max": _analytics_number(bin_item["maximum"]),
-            "count": bin_item["count"],
-            "kind": "histogram",
-        } for bin_item in raw_bins]
-
-    if outside_prices:
-        bins.append({
-            "min": _analytics_number(outside_prices[0]),
-            "max": _analytics_number(outside_prices[-1]),
-            "count": len(outside_prices),
-            "kind": "outside_core",
-            "outside_core": True,
-            "outlier_min": _analytics_number(outside_prices[0]),
-            "outlier_max": _analytics_number(outside_prices[-1]),
-        })
-
-    return {
-        "mode": "point_mass" if point_mass else "histogram",
-        "core_interval": {
-            "min": _analytics_number(core_minimum),
-            "max": _analytics_number(core_maximum),
-            "count": len(core_prices),
-        },
-        "statistics": {
-            "count": count,
-            "mean": _analytics_number(mean),
-            "median": _analytics_number(median),
-            "p25": _analytics_number(p25),
-            "p75": _analytics_number(p75),
-            "iqr": _analytics_number(iqr),
-            "min": _analytics_number(minimum),
-            "max": _analytics_number(maximum),
-        },
-        "bins": bins,
-    }
-
-
-def aggregate_dashboard_documents(documents_by_group: Mapping[str, Sequence[Mapping[str, Any]]]) -> dict[str, Any]:
+    selected_product: Any = None,
+) -> dict[str, Any]:
     """Aggregate every matched Typesense document, never a paginated UI page."""
     product_fields = {"goods": "item_name", "medicines": "medicine_name", "traditional_medicine": "item_name"}
     packages: dict[str, dict[str, Any]] = {}
@@ -1693,10 +1569,7 @@ def aggregate_dashboard_documents(documents_by_group: Mapping[str, Sequence[Mapp
     investors: dict[str, dict[str, Any]] = {}
     provinces: dict[str, dict[str, Any]] = {}
     bidders: set[str] = set()
-    bidder_totals: dict[str, Decimal] = {}
-    bidder_names: dict[str, str] = {}
-    bidder_prices: dict[str, dict[Decimal, dict[str, Any]]] = {}
-    unit_prices: list[Decimal] = []
+    bidder_price_observations: list[dict[str, Any]] = []
     dated_values: list[tuple[date, Decimal]] = []
     seen_documents: set[tuple[str, str]] = set()
     matched_observations = 0
@@ -1726,26 +1599,27 @@ def aggregate_dashboard_documents(documents_by_group: Mapping[str, Sequence[Mapp
             bidder_identity_values = _analytics_values(document.get("winning_bidder_id")) or _analytics_values(document.get("winning_bidder_name"))
             bidder_display_values = _analytics_values(document.get("winning_bidder_name")) or bidder_identity_values
             valid_unit_price = _analytics_decimal(document.get("winning_unit_price"), positive_only=True)
-            if valid_unit_price is not None:
-                unit_prices.append(valid_unit_price)
+            unit_name = _analytics_text(document.get("unit"))
             for index, raw_bidder in enumerate(bidder_identity_values):
                 bidder_key = _analytics_identity(raw_bidder)
                 if not bidder_key:
                     continue
                 bidder_label = _analytics_text(bidder_display_values[index] if index < len(bidder_display_values) else raw_bidder) or bidder_key
                 bidders.add(bidder_key)
-                bidder_names.setdefault(bidder_key, bidder_label)
-                bidder_totals[bidder_key] = bidder_totals.get(bidder_key, Decimal(0)) + row_value
-                if row_value <= 0 or valid_unit_price is None:
+                if valid_unit_price is None:
                     continue
-                price_entry = bidder_prices.setdefault(bidder_key, {}).setdefault(valid_unit_price, {
-                    "value": Decimal(0),
-                    "occurrence_count": 0,
-                    "packages": set(),
+                bidder_price_observations.append({
+                    "bidder_key": bidder_key,
+                    "bidder_name": bidder_label,
+                    "product_key": _analytics_identity(product_name),
+                    "product": product_name,
+                    "unit_key": _analytics_identity(unit_name),
+                    "unit": unit_name,
+                    "unit_price": valid_unit_price,
+                    "awarded_value": row_value,
+                    "package_key": package_key,
+                    "record_key": f"{group}:{document_id}" if document_id else f"{group}:object:{id(document)}",
                 })
-                price_entry["value"] += row_value
-                price_entry["occurrence_count"] += 1
-                price_entry["packages"].add(package_key)
 
             investor_name = _analytics_text(document.get("procuring_entity_name"))
             investor_id = _analytics_identity(document.get("procuring_entity_id"))
@@ -1826,8 +1700,10 @@ def aggregate_dashboard_documents(documents_by_group: Mapping[str, Sequence[Mapp
         "geography": geography,
         "top_products": product_rows[:10],
         "timeline": timeline,
-        "unit_price_distribution": build_dashboard_price_distribution(unit_prices),
-        "bidder_unit_price_series": build_dashboard_bidder_price_series(bidder_totals, bidder_names, bidder_prices),
+        "bidder_price_band_analysis": build_dashboard_bidder_price_bands(
+            bidder_price_observations,
+            selected_product=selected_product,
+        ),
         "top_investors": top_investors[:5],
         "meta": {"complete": True, "matched_observations": matched_observations, "groups": sorted(public_group(group) for group in documents_by_group)},
     }

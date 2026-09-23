@@ -8872,64 +8872,6 @@ body.dashboard-view-active .app-footer {
   padding: 6px 10px 8px;
 }
 
-.dashboard-price-chart-body {
-  position: relative;
-  display: block;
-  padding: 4px 9px 7px;
-}
-
-.dashboard-price-stats {
-  position: absolute;
-  z-index: 2;
-  top: 8px;
-  right: 12px;
-  display: flex;
-  width: max-content;
-  max-width: 44%;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-  padding: 6px 8px;
-  border: 1px solid #d5e2ee;
-  border-radius: 7px;
-  background: rgba(248, 251, 255, 0.96);
-  box-shadow: 0 2px 7px rgba(18, 46, 90, 0.08);
-  pointer-events: none;
-}
-
-.dashboard-price-stat {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: minmax(48px, 1fr) auto;
-  align-items: baseline;
-  gap: 8px;
-  line-height: 1.1;
-}
-
-.dashboard-price-stat span {
-  overflow: hidden;
-  color: var(--color-text-secondary);
-  font-size: 9px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dashboard-price-stat strong {
-  overflow: hidden;
-  color: var(--dashboard-navy);
-  font-size: 9px;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dashboard-price-chart-body canvas {
-  display: block;
-  width: 100% !important;
-  height: 100% !important;
-  min-height: 0;
-}
-
 .dashboard-trend-widget .dashboard-widget-head {
   align-items: center;
 }
@@ -9116,6 +9058,30 @@ body.dashboard-view-active .app-footer {
 }
 
 #dashboard-province-map path.is-selected { stroke: #073c52; stroke-width: 1.6; }
+
+.dashboard-price-bands-wrap { overflow: hidden; padding: 0; }
+.dashboard-price-band-table th:nth-child(1),
+.dashboard-price-band-table td:nth-child(1) { width: 7%; text-align: center; }
+.dashboard-price-band-table th:nth-child(2),
+.dashboard-price-band-table td:nth-child(2) { width: 25%; text-align: left; }
+.dashboard-price-band-table th:nth-child(3),
+.dashboard-price-band-table td:nth-child(3) { width: 43%; text-align: left; }
+.dashboard-price-band-table th:nth-child(4),
+.dashboard-price-band-table td:nth-child(4) { width: 25%; text-align: right; }
+.dashboard-price-band-table th { white-space: normal; line-height: 1.25; }
+.dashboard-price-band-table td { vertical-align: middle; }
+.dashboard-price-band-bidder,
+.dashboard-price-band-primary,
+.dashboard-price-band-secondary {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dashboard-price-band-bidder { color: var(--dashboard-navy); font-weight: 600; }
+.dashboard-price-band-primary { color: var(--dashboard-navy); font-weight: 600; }
+.dashboard-price-band-secondary { margin-top: 3px; color: var(--color-text-secondary); font-size: 9.5px; }
+.dashboard-price-band-total { white-space: nowrap; text-align: right !important; color: var(--dashboard-navy); font-weight: 600; }
 
 body.dashboard-view-active .dashboard-widget-state {
   background: rgba(255, 255, 255, 0.96);

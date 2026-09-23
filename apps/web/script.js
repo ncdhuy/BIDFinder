@@ -4949,8 +4949,7 @@ const chartInstances = {
     timeline: null
 };
 const dashboardChartInstances = {
-    timeline: null,
-    price: null
+    timeline: null
 };
 
 const CHART_JS_URL = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js';
@@ -6076,88 +6075,6 @@ function formatPriceAxis(value) {
     return numericValue.toLocaleString('vi-VN', { maximumFractionDigits: 2 });
 }
 
-function formatDashboardPriceAxis(value) {
-    const numericValue = Number(value);
-    if (!Number.isFinite(numericValue)) return '';
-    return numericValue.toLocaleString('vi-VN', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-}
-
-function formatDashboardCompactPrice(value) {
-    const numericValue = Number(value);
-    if (!Number.isFinite(numericValue)) return '';
-    const format = amount => amount.toLocaleString('vi-VN', { maximumFractionDigits: 1 });
-    if (numericValue >= 1_000_000) return `${format(numericValue / 1_000_000)} triệu`;
-    if (numericValue >= 999_950) return `${format(numericValue / 1_000_000)} triệu`;
-    if (numericValue >= 1_000) return `${format(numericValue / 1_000)} nghìn`;
-    return `${format(numericValue)} đ`;
-}
-
-function getDashboardPriceLabelParts(value) {
-    const numericValue = Number(value);
-    const format = amount => amount.toLocaleString('vi-VN', { maximumFractionDigits: 1 });
-    if (numericValue >= 1_000_000) return { value: format(numericValue / 1_000_000), unit: 'triệu' };
-    if (numericValue >= 1_000) return { value: format(numericValue / 1_000), unit: 'nghìn' };
-    return { value: format(numericValue), unit: 'đ' };
-}
-
-function formatDashboardPriceBinLabel(bin) {
-    if (bin.kind === 'outside_core' || bin.outsideCore || bin.overflow) return 'Ngoài vùng lõi';
-    if (bin.kind === 'other') return 'Khác';
-    const lower = getDashboardPriceLabelParts(bin.min);
-    const upper = getDashboardPriceLabelParts(bin.max);
-    if (bin.kind === 'price_level' || Number(bin.min) === Number(bin.max)) {
-        return formatDashboardCompactPrice(bin.min);
-    }
-    if (lower.unit === upper.unit) return [`${lower.value}–${upper.value}`, lower.unit];
-    return [`${lower.value} ${lower.unit}–`, `${upper.value} ${upper.unit}`];
-}
-
-function getDashboardHistogramScale(counts) {
-    const rawCounts = counts.map(value => Math.max(0, Number(value) || 0));
-    const ranked = [...rawCounts].sort((left, right) => right - left);
-    const maximum = ranked[0] || 0;
-    const secondLargest = ranked[1] || 0;
-    const compressed = maximum >= 40 && (secondLargest === 0 || maximum > secondLargest * 20);
-
-    if (!compressed) {
-        return {
-            rawCounts,
-            displayCounts: rawCounts,
-            maximum,
-            compressed: false,
-            breakAt: null,
-            ticks: maximum > 0 ? [0, maximum / 2, maximum] : [0],
-            transform: value => Math.max(0, Number(value) || 0),
-            inverse: value => Math.max(0, Number(value) || 0)
-        };
-    }
-
-    const breakAt = Math.min(maximum - 1, Math.max(6, secondLargest * 3));
-    const compressedHeight = Math.max(12, breakAt * 1.5);
-    const transform = value => {
-        const count = Math.max(0, Number(value) || 0);
-        if (count <= breakAt) return count;
-        return breakAt + Math.sqrt((count - breakAt) / (maximum - breakAt)) * compressedHeight;
-    };
-    const inverse = value => {
-        const displayValue = Math.max(0, Number(value) || 0);
-        if (displayValue <= breakAt) return displayValue;
-        return breakAt + ((displayValue - breakAt) / compressedHeight) ** 2 * (maximum - breakAt);
-    };
-    const ticks = [...new Set([0, Math.round(breakAt / 2), breakAt, maximum])];
-    return {
-        rawCounts,
-        displayCounts: rawCounts.map(transform),
-        maximum,
-        compressed: true,
-        breakAt,
-        compressedHeight,
-        displayMaximum: transform(maximum),
-        ticks,
-        transform,
-        inverse
-    };
-}
 
 function formatCurrencyAxis(value) {
     if (value >= 1_000_000_000) {
@@ -6581,227 +6498,6 @@ const dashboardTimelineLabelsPlugin = {
     }
 };
 
-function getDashboardPriceBinGeometry(bins) {
-    const coreBins = bins.filter(bin => bin.kind !== 'outside_core');
-    if (!coreBins.length) return [];
-    const logPrice = value => Math.log10(Number(value));
-    const coreCenters = coreBins.map(bin => (logPrice(bin.min) + logPrice(bin.max)) / 2);
-    const coreIntervals = coreBins.map(bin => ({ start: logPrice(bin.min), end: logPrice(bin.max) }));
-    const intervalWidths = coreBins
-        .map(bin => logPrice(bin.max) - logPrice(bin.min))
-        .filter(width => Number.isFinite(width) && width > 0)
-        .sort((left, right) => left - right);
-    const coreSpan = Math.max(...coreCenters) - Math.min(...coreCenters);
-    const referenceWidth = intervalWidths[Math.floor(intervalWidths.length / 2)]
-        || coreSpan / Math.max(4, coreBins.length)
-        || 0.25;
-    const geometry = coreBins.map((bin, index) => {
-        let start = logPrice(bin.min);
-        let end = logPrice(bin.max);
-        if (bin.kind === 'price_level' || !(end > start)) {
-            const neighborDistances = coreIntervals
-                .filter((_interval, neighborIndex) => neighborIndex !== index)
-                .map(interval => interval.end <= coreCenters[index]
-                    ? coreCenters[index] - interval.end
-                    : interval.start >= coreCenters[index]
-                        ? interval.start - coreCenters[index]
-                        : 0)
-                .filter(distance => distance > 0);
-            const width = neighborDistances.length
-                ? Math.min(...neighborDistances) * 0.68
-                : referenceWidth * 0.68;
-            start = coreCenters[index] - width / 2;
-            end = coreCenters[index] + width / 2;
-        }
-        return { start, end, center: (start + end) / 2 };
-    });
-    const outside = bins.find(bin => bin.kind === 'outside_core');
-    if (outside) {
-        const right = Math.max(...geometry.map(item => item.end));
-        geometry.push({ start: right + referenceWidth * 0.14, end: right + referenceWidth * 1.14, outside: true });
-        geometry[geometry.length - 1].center = (geometry[geometry.length - 1].start + geometry[geometry.length - 1].end) / 2;
-    }
-    return geometry;
-}
-
-function getDashboardPriceMarkerPosition(_chartArea, value, coreInterval, xScale) {
-    const price = Number(value);
-    const minimum = Number(coreInterval?.min);
-    const maximum = Number(coreInterval?.max);
-    if (!(price > 0) || !(minimum > 0) || !(maximum >= minimum) || !xScale) return null;
-    const displayedPrice = Math.max(minimum, Math.min(maximum, price));
-    return {
-        x: xScale.getPixelForValue(Math.log10(displayedPrice)),
-        clamped: price < minimum || price > maximum,
-        cutoff: price < minimum ? minimum : maximum
-    };
-}
-
-function getDashboardQuartileGroups(statistics) {
-    const markers = [
-        { key: 'p25', label: 'P25', color: '#16a34a', value: Number(statistics?.p25) },
-        { key: 'median', label: 'Trung vị', color: '#1677e8', value: Number(statistics?.median) },
-        { key: 'p75', label: 'P75', color: '#f97316', value: Number(statistics?.p75) }
-    ].filter(marker => Number.isFinite(marker.value) && marker.value > 0);
-    const tolerance = Math.max(1e-9, Math.abs(Number(statistics?.median) || 0) * 0.01);
-    const groups = [];
-    markers.forEach(marker => {
-        const group = groups.find(candidate => Math.abs(candidate.value - marker.value) <= tolerance);
-        if (group) {
-            group.markers.push(marker);
-            group.value = group.markers.find(item => item.key === 'median')?.value
-                ?? group.markers.reduce((sum, item) => sum + item.value, 0) / group.markers.length;
-        } else {
-            groups.push({ value: marker.value, markers: [marker] });
-        }
-    });
-    return groups;
-}
-
-const dashboardPriceDistributionPlugin = {
-    id: 'dashboardPriceDistribution',
-    beforeDatasetsDraw(chart, _args, options) {
-        const { chartArea, ctx } = chart;
-        const bins = options?.bins || [];
-        const geometry = options?.geometry || [];
-        const countScale = options?.countScale;
-        if (!chartArea || !bins.length || geometry.length !== bins.length || !countScale) return;
-
-        const xScale = chart.scales.x;
-        const yScale = chart.scales.y;
-        const baseline = yScale.getPixelForValue(0);
-        ctx.save();
-        bins.forEach((bin, index) => {
-            const bounds = geometry[index];
-            const left = Math.max(chartArea.left, xScale.getPixelForValue(bounds.start));
-            const right = Math.min(chartArea.right, xScale.getPixelForValue(bounds.end));
-            const top = yScale.getPixelForValue(countScale.transform(bin.count));
-            if (!(right > left) || !Number.isFinite(top)) return;
-            ctx.fillStyle = bin.kind === 'outside_core' ? 'rgba(22, 119, 232, 0.46)' : 'rgba(22, 119, 232, 0.86)';
-            ctx.fillRect(left + 1, top, Math.max(1, right - left - 2), Math.max(0, baseline - top));
-        });
-        ctx.restore();
-    },
-    afterDatasetsDraw(chart, _args, options) {
-        const { chartArea, ctx } = chart;
-        const bins = options?.bins || [];
-        const geometry = options?.geometry || [];
-        const stats = options?.statistics;
-        if (!chartArea || !bins.length || geometry.length !== bins.length || !stats) return;
-        const xScale = chart.scales.x;
-        const yScale = chart.scales.y;
-
-        ctx.save();
-        if (options?.countScale?.compressed) {
-            const breakY = yScale.getPixelForValue(options.countScale.transform(options.countScale.breakAt));
-            ctx.setLineDash([]);
-            ctx.lineWidth = 3;
-            ctx.strokeStyle = '#ffffff';
-            ctx.beginPath();
-            ctx.moveTo(chartArea.left - 3, breakY + 4);
-            ctx.lineTo(chartArea.left + 3, breakY - 4);
-            ctx.moveTo(chartArea.left + 4, breakY + 4);
-            ctx.lineTo(chartArea.left + 10, breakY - 4);
-            ctx.stroke();
-            ctx.lineWidth = 1.4;
-            ctx.strokeStyle = '#59738b';
-            ctx.beginPath();
-            ctx.moveTo(chartArea.left - 3, breakY + 4);
-            ctx.lineTo(chartArea.left + 3, breakY - 4);
-            ctx.moveTo(chartArea.left + 4, breakY + 4);
-            ctx.lineTo(chartArea.left + 10, breakY - 4);
-            ctx.stroke();
-        }
-        ctx.font = '600 9px Inter, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'bottom';
-        bins.forEach((bin, index) => {
-            const count = Number(options?.rawCounts?.[index] ?? bin.count);
-            const center = geometry[index]?.center;
-            if (!Number.isFinite(count) || !Number.isFinite(center)) return;
-            const x = xScale.getPixelForValue(center);
-            const y = yScale.getPixelForValue(options.countScale.transform(bin.count));
-            ctx.fillStyle = '#38556f';
-            ctx.fillText(formatDashboardCount(count), x, Math.max(chartArea.top + 10, y - 4));
-        });
-
-        const markers = getDashboardQuartileGroups(stats).map(group => {
-            const position = getDashboardPriceMarkerPosition(chartArea, group.value, options.coreInterval, xScale);
-            const labels = group.markers.map(marker => marker.label).join(' = ');
-            const value = position?.clamped
-                ? `> ${formatDashboardCompactPrice(position.cutoff)}`
-                : formatDashboardCompactPrice(group.value);
-            return {
-                ...group,
-                position,
-                label: `${labels} · ${value}`,
-                color: group.markers.find(marker => marker.key === 'median')?.color || group.markers[0]?.color || '#1677e8'
-            };
-        }).filter(marker => marker.position).sort((left, right) => left.position.x - right.position.x);
-        const labelRows = [];
-        markers.forEach(marker => {
-            const markerIsMedian = marker.markers.some(item => item.key === 'median');
-            ctx.strokeStyle = marker.color;
-            ctx.lineWidth = markerIsMedian ? 1.75 : 1.25;
-            ctx.setLineDash([4, 3]);
-            ctx.beginPath();
-            ctx.moveTo(marker.position.x, chartArea.top);
-            ctx.lineTo(marker.position.x, chartArea.bottom);
-            ctx.stroke();
-
-            const labelWidth = ctx.measureText(marker.label).width;
-            const labelX = Math.max(chartArea.left + labelWidth / 2, Math.min(chartArea.right - 158 - labelWidth / 2, marker.position.x));
-            const labelLeft = labelX - labelWidth / 2;
-            let row = labelRows.findIndex(rowItems => rowItems.every(item => labelLeft > item.right + 6 || labelLeft + labelWidth < item.left - 6));
-            if (row < 0) row = labelRows.length;
-            if (!labelRows[row]) labelRows[row] = [];
-            labelRows[row].push({ left: labelLeft, right: labelLeft + labelWidth });
-            marker.labelX = labelX;
-            marker.row = row;
-        });
-        ctx.font = '600 9px Inter, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'bottom';
-        markers.forEach(marker => {
-            const position = marker.position;
-            if (!position) return;
-            ctx.fillStyle = marker.color;
-            ctx.fillText(marker.label, marker.labelX, chartArea.top - 5 - marker.row * 12);
-        });
-        ctx.restore();
-    }
-};
-
-function renderDashboardPriceStats(statistics, bins = []) {
-    const container = document.getElementById('dashboard-price-stats');
-    if (!container) return;
-    container.replaceChildren();
-    container.title = '';
-    container.setAttribute('aria-label', 'Thống kê đơn giá');
-    if (!statistics) return;
-
-    const minimum = formatDashboardPriceAxis(statistics.min);
-    const maximum = formatDashboardPriceAxis(statistics.max);
-    const overflowNote = bins.some(bin => bin.kind === 'outside_core' && Number(bin.count) > 0)
-        ? ' Các đơn giá ngoài vùng lõi được gộp vào cột cuối; giá trị thống kê vẫn tính trên toàn bộ dữ liệu hợp lệ.'
-        : '';
-    container.title = `Min: ${minimum} đ · Max: ${maximum} đ.${overflowNote}`;
-    container.setAttribute('aria-label', `Thống kê đơn giá. Min: ${minimum} đ. Max: ${maximum} đ.${overflowNote}`);
-
-    [
-        ['Mean', 'mean'], ['Median', 'median'], ['Min', 'min'], ['Max', 'max']
-    ].forEach(([label, key]) => {
-        const item = document.createElement('div');
-        item.className = 'dashboard-price-stat';
-        item.title = `${label}: ${formatDashboardPriceAxis(statistics[key])} đ`;
-        const name = document.createElement('span');
-        name.textContent = label;
-        const value = document.createElement('strong');
-        value.textContent = formatDashboardCompactPrice(statistics[key]);
-        item.append(name, value);
-        container.appendChild(item);
-    });
-}
 
 function getDashboardTimelinePoints(timeline = {}) {
     const selected = timeline?.series?.[dashboardTimelineGrain];
@@ -7160,43 +6856,17 @@ function renderDashboardProducts(products = []) {
     });
 }
 
-async function renderDashboardCharts(timeline = {}, priceDistribution = {}) {
+async function renderDashboardCharts(timeline = {}) {
     resetDashboardCharts();
     const timelinePoints = getDashboardTimelinePoints(timeline);
-    const priceStats = priceDistribution?.statistics || null;
-    const coreInterval = priceDistribution?.core_interval && {
-        min: Number(priceDistribution.core_interval.min),
-        max: Number(priceDistribution.core_interval.max),
-        count: Number(priceDistribution.core_interval.count)
-    };
-    const priceMode = priceDistribution?.mode === 'point_mass' ? 'point_mass' : 'histogram';
-    const priceBins = (Array.isArray(priceDistribution?.bins) ? priceDistribution.bins : [])
-        .map(bin => ({
-            min: Number(bin?.min),
-            max: Number(bin?.max),
-            count: Number(bin?.count),
-            kind: bin?.kind || (bin?.outside_core === true ? 'outside_core' : 'histogram'),
-            outsideCore: bin?.outside_core === true || bin?.kind === 'outside_core',
-            outlierMin: bin?.outlier_min != null && Number.isFinite(Number(bin.outlier_min)) ? Number(bin.outlier_min) : null,
-            outlierMax: bin?.outlier_max != null && Number.isFinite(Number(bin.outlier_max)) ? Number(bin.outlier_max) : null
-        }))
-        .filter(bin => Number.isFinite(bin.min) && Number.isFinite(bin.max) && bin.max >= bin.min && Number.isFinite(bin.count) && bin.count >= 0);
-    const priceBinLabels = priceBins.map(formatDashboardPriceBinLabel);
-    const priceBinGeometry = getDashboardPriceBinGeometry(priceBins);
-    const priceCountScale = getDashboardHistogramScale(priceBins.map(bin => bin.count));
-    const hasPriceDistribution = Number(priceStats?.count) > 0 && priceBins.length > 0
-        && coreInterval && coreInterval.min > 0 && coreInterval.max >= coreInterval.min;
     const trendUnit = getDashboardTrendUnit(timelinePoints.map(point => point.total_awarded_value));
     if (!timelinePoints.length) setDashboardWidgetState('timeline', 'Không có dữ liệu thời gian.', 'empty');
-    renderDashboardPriceStats(hasPriceDistribution ? priceStats : null, priceBins);
-    if (!hasPriceDistribution) setDashboardWidgetState('unit_price_distribution', 'Không có đơn giá hợp lệ.', 'empty');
-    if (!timelinePoints.length && !hasPriceDistribution) return;
+    if (!timelinePoints.length) return;
 
     try {
         await ensureChartJsLoaded();
     } catch (error) {
         if (timelinePoints.length) setDashboardWidgetState('timeline', 'Không tải được biểu đồ.', 'error');
-        if (hasPriceDistribution) setDashboardWidgetState('unit_price_distribution', 'Không tải được biểu đồ.', 'error');
         return;
     }
 
@@ -7249,123 +6919,13 @@ async function renderDashboardCharts(timeline = {}, priceDistribution = {}) {
             }
         });
     }
-    if (hasPriceDistribution) {
-        const canvas = document.getElementById('dashboard-price-chart');
-        clearDashboardWidgetState('unit_price_distribution');
-    dashboardChartInstances.price = new window.Chart(canvas.getContext('2d'), {
-            type: 'scatter',
-            data: {
-                datasets: [{
-                    data: priceBins.map((bin, index) => ({
-                        x: priceBinGeometry[index]?.center,
-                        y: priceCountScale.displayCounts[index],
-                        binIndex: index
-                    })),
-                    showLine: false,
-                    pointRadius: 0,
-                    pointHoverRadius: 0,
-                    pointHitRadius: 16
-                }]
-            },
-            plugins: [dashboardPriceDistributionPlugin],
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: { mode: 'nearest', intersect: false, axis: 'x' },
-                layout: { padding: { top: 48, right: 6 } },
-                plugins: {
-                    legend: { display: false },
-                    dashboardPriceDistribution: {
-                        bins: priceBins,
-                        geometry: priceBinGeometry,
-                        coreInterval,
-                        mode: priceMode,
-                        statistics: priceStats,
-                        rawCounts: priceCountScale.rawCounts,
-                        countScale: priceCountScale
-                    },
-                    tooltip: {
-                        callbacks: {
-                            title: items => priceBinLabels[items[0]?.dataIndex] || '',
-                            label: item => `Số gói thầu: ${formatDashboardCount(priceCountScale.rawCounts[item.dataIndex])}`,
-                            afterLabel: item => {
-                                const bin = priceBins[item.dataIndex];
-                                if (!bin || bin.count <= 0) return '';
-                                if (bin.kind === 'outside_core' && bin.outlierMin !== null && bin.outlierMax !== null) {
-                                    return [
-                                        `Giá nhỏ nhất: ${formatDashboardCompactPrice(bin.outlierMin)}`,
-                                        `Giá lớn nhất: ${formatDashboardCompactPrice(bin.outlierMax)}`
-                                    ];
-                                }
-                                if (bin.kind === 'other') {
-                                    return [
-                                        `Giá nhỏ nhất: ${formatDashboardCompactPrice(bin.min)}`,
-                                        `Giá lớn nhất: ${formatDashboardCompactPrice(bin.max)}`
-                                    ];
-                                }
-                                return '';
-                            }
-                        }
-                    }
-                },
-                scales: {
-                    x: {
-                        type: 'linear',
-                        min: Math.min(...priceBinGeometry.map(item => item.start)) - 0.03,
-                        max: Math.max(...priceBinGeometry.map(item => item.end)) + 0.03,
-                        afterBuildTicks: axis => {
-                            axis.ticks = priceBinGeometry.map(item => ({ value: item.center }));
-                        },
-                        grid: { display: false },
-                        title: { display: true, text: 'Khoảng đơn giá (đồng)', color: CHART_THEME.axis, font: { size: 9, weight: '600' }, padding: { top: 3 } },
-                        ticks: {
-                            maxRotation: 0,
-                            minRotation: 0,
-                            autoSkip: true,
-                            maxTicksLimit: 6,
-                            padding: 3,
-                            font: { size: 8 },
-                            callback: (_value, index, ticks) => priceBinLabels[ticks[index]?.value != null
-                                ? priceBinGeometry.findIndex(item => Math.abs(item.center - ticks[index].value) < 1e-8)
-                                : index] || ''
-                        }
-                    },
-                    y: {
-                        beginAtZero: true,
-                        grid: { color: CHART_THEME.grid },
-                        title: {
-                            display: true,
-                            text: priceCountScale.compressed
-                                ? `Số gói thầu (nén > ${formatDashboardCount(priceCountScale.breakAt)})`
-                                : 'Số gói thầu',
-                            color: CHART_THEME.axis,
-                            font: { size: 9, weight: '600' }
-                        },
-                        ...(priceCountScale.compressed
-                            ? {
-                                max: priceCountScale.displayMaximum * 1.12,
-                                afterBuildTicks: axis => {
-                                    axis.ticks = priceCountScale.ticks.map(count => ({ value: priceCountScale.transform(count) }));
-                                },
-                                ticks: {
-                                    callback: value => formatDashboardCount(Math.round(priceCountScale.inverse(value)))
-                                }
-                            }
-                            : {
-                                suggestedMax: Math.max(1, ...priceBins.map(bin => bin.count)) * 1.18,
-                                ticks: { precision: 0, callback: value => formatDashboardCount(value) }
-                            })
-                    }
-                }
-            }
-        });
-    }
 }
+
 
 function updateDashboardTimelineChart(timeline = {}) {
     const timelinePoints = getDashboardTimelinePoints(timeline);
     if (!timelinePoints.length || !dashboardChartInstances.timeline) {
-        void renderDashboardCharts(timeline, dashboardAnalyticsData?.unit_price_distribution || {});
+        void renderDashboardCharts(timeline);
         return;
     }
     clearDashboardWidgetState('timeline');
@@ -7413,6 +6973,70 @@ function renderDashboardInvestors(investors = []) {
     });
 }
 
+function formatDashboardBandPrice(value, unit) {
+    const number = Number(value);
+    if (!Number.isFinite(number) || number <= 0) return '—';
+    const amount = number.toLocaleString('vi-VN', { maximumFractionDigits: 1 });
+    return `${amount} đ${unit ? `/${unit}` : ''}`;
+}
+
+function renderDashboardBidderPriceBands(analysis = {}) {
+    const body = document.getElementById('dashboard-bidder-price-bands');
+    if (!body) return;
+    body.replaceChildren();
+
+    if (analysis.requires_product_selection) {
+        setDashboardWidgetState('bidder_price_bands', 'Chọn một sản phẩm trong Top 10 để phân tích vùng đơn giá trúng phổ biến.', 'empty');
+        return;
+    }
+    const items = Array.isArray(analysis.items) ? analysis.items.slice(0, 5) : [];
+    if (!items.length) {
+        setDashboardWidgetState('bidder_price_bands', 'Không có vùng đơn giá trúng phổ biến phù hợp.', 'empty');
+        return;
+    }
+
+    clearDashboardWidgetState('bidder_price_bands');
+    items.forEach((band, index) => {
+        const row = document.createElement('tr');
+        row.className = 'dashboard-investor-row dashboard-price-band-row';
+        const rank = document.createElement('td');
+        rank.className = 'dashboard-investor-rank';
+        rank.textContent = String(index + 1);
+
+        const bidderCell = document.createElement('td');
+        const bidder = document.createElement('span');
+        bidder.className = 'dashboard-price-band-bidder';
+        bidder.textContent = band.bidder_name || '—';
+        bidder.title = band.bidder_name || '';
+        bidderCell.appendChild(bidder);
+
+        const priceCell = document.createElement('td');
+        const min = Number(band.price_min);
+        const max = Number(band.price_max);
+        const median = Number(band.median_price);
+        const priceRange = Number.isFinite(min) && Number.isFinite(max)
+            ? min === max
+                ? formatDashboardBandPrice(min, band.unit)
+                : `${min.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}–${max.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} đ${band.unit ? `/${band.unit}` : ''}`
+            : '—';
+        const main = document.createElement('span');
+        main.className = 'dashboard-price-band-primary';
+        main.textContent = priceRange;
+        const detail = document.createElement('span');
+        detail.className = 'dashboard-price-band-secondary';
+        detail.textContent = `${formatDashboardCount(band.distinct_win_count)} lần trúng · trung vị ${formatDashboardBandPrice(median, band.unit)}`;
+        priceCell.title = `${priceRange}; ${detail.textContent}`;
+        priceCell.append(main, detail);
+
+        const totalCell = document.createElement('td');
+        totalCell.className = 'dashboard-price-band-total';
+        totalCell.textContent = formatDashboardCurrencyTooltip(Number(band.corresponding_awarded_value || 0));
+        totalCell.title = totalCell.textContent;
+        row.append(rank, bidderCell, priceCell, totalCell);
+        body.appendChild(row);
+    });
+}
+
 function renderDashboardAnalytics(payload) {
     dashboardAnalyticsData = payload;
     renderDashboardSummary(payload?.summary || {});
@@ -7421,7 +7045,8 @@ function renderDashboardAnalytics(payload) {
     renderDashboardMap(payload?.geography || []);
     renderDashboardProducts(payload?.top_products || []);
     renderDashboardInvestors(payload?.top_investors || []);
-    void renderDashboardCharts(payload?.timeline || {}, payload?.unit_price_distribution || {});
+    renderDashboardBidderPriceBands(payload?.bidder_price_band_analysis || {});
+    void renderDashboardCharts(payload?.timeline || {});
 }
 
 function renderDashboardEmpty(message = 'Thực hiện tìm kiếm để xem phân tích.') {
@@ -7429,7 +7054,7 @@ function renderDashboardEmpty(message = 'Thực hiện tìm kiếm để xem ph�
     resetDashboardCharts();
     renderDashboardSummary({});
     renderDashboardBaseContext();
-    ['geography', 'top_products', 'timeline', 'unit_price_distribution', 'top_investors'].forEach(key => setDashboardWidgetState(key, message, 'empty'));
+    ['geography', 'top_products', 'timeline', 'bidder_price_bands', 'top_investors'].forEach(key => setDashboardWidgetState(key, message, 'empty'));
 }
 
 async function refreshDashboardAnalytics({ force = false } = {}) {
@@ -7466,7 +7091,7 @@ async function refreshDashboardAnalytics({ force = false } = {}) {
     const controller = new AbortController();
     dashboardAnalyticsController = controller;
     const version = ++dashboardAnalyticsVersion;
-    ['geography', 'top_products', 'timeline', 'unit_price_distribution', 'top_investors'].forEach(key => setDashboardWidgetState(key, 'Đang tải dữ liệu…', 'loading'));
+    ['geography', 'top_products', 'timeline', 'bidder_price_bands', 'top_investors'].forEach(key => setDashboardWidgetState(key, 'Đang tải dữ liệu…', 'loading'));
     try {
         await window.BIDFinderAuth?.whenReady?.();
         const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/dashboard-analytics`, {
@@ -7481,7 +7106,7 @@ async function refreshDashboardAnalytics({ force = false } = {}) {
         renderDashboardAnalytics(payload);
     } catch (error) {
         if (error?.name === 'AbortError' || version !== dashboardAnalyticsVersion) return;
-        ['geography', 'top_products', 'timeline', 'unit_price_distribution', 'top_investors'].forEach(key => setDashboardWidgetState(key, 'Không tải được dữ liệu phân tích.', 'error'));
+        ['geography', 'top_products', 'timeline', 'bidder_price_bands', 'top_investors'].forEach(key => setDashboardWidgetState(key, 'Không tải được dữ liệu phân tích.', 'error'));
     }
 }
 

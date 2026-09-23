@@ -4293,17 +4293,17 @@ async def dashboard_analytics(request: Request, payload: DashboardAnalyticsReque
     selection = payload.dashboardSelection.model_dump(exclude_none=True)
     include_fields_by_group = {
         "medicines": (
-            "id", "medicine_name", "quantity", "winning_unit_price", "winning_bidder_id", "winning_bidder_name",
+            "id", "medicine_name", "unit", "quantity", "winning_unit_price", "winning_bidder_id", "winning_bidder_name",
             "bid_invitation_code", "decision_number", "procuring_entity_id", "procuring_entity_name", "location",
             "result_posted_at", "decision_issued_at",
         ),
         "goods": (
-            "id", "item_name", "quantity", "winning_unit_price", "winning_bidder_id", "winning_bidder_name",
+            "id", "item_name", "unit", "quantity", "winning_unit_price", "winning_bidder_id", "winning_bidder_name",
             "bid_invitation_code", "decision_number", "procuring_entity_id", "procuring_entity_name", "location",
             "result_posted_at", "decision_issued_at",
         ),
         "traditional": (
-            "id", "item_name", "quantity", "winning_unit_price", "winning_bidder_id", "winning_bidder_name",
+            "id", "item_name", "unit", "quantity", "winning_unit_price", "winning_bidder_id", "winning_bidder_name",
             "bid_invitation_code", "decision_number", "procuring_entity_id", "procuring_entity_name", "location",
             "result_posted_at", "decision_issued_at",
         ),
@@ -4353,7 +4353,7 @@ async def dashboard_analytics(request: Request, payload: DashboardAnalyticsReque
             status_code = 503 if exc.code == SHADOW_INFRA_ERROR else 422
             raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
-    analytics = aggregate_dashboard_documents(group_documents)
+    analytics = aggregate_dashboard_documents(group_documents, selected_product=selection.get("product"))
     return JSONResponse(content={
         "success": True,
         "backend": "typesense",

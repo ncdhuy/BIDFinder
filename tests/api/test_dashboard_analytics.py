@@ -81,8 +81,14 @@ class DashboardAnalyticsTest(unittest.TestCase):
         self.assertEqual(["2026-01", "2026-02"], [point["period"] for point in result["timeline"]["series"]["month"]])
         self.assertEqual(["2026-Q1"], [point["period"] for point in result["timeline"]["series"]["quarter"]])
         self.assertEqual(75, result["timeline"]["series"]["year"][0]["total_awarded_value"])
-        self.assertIn("bidder_unit_price_series", result)
-        self.assertEqual(4, result["unit_price_distribution"]["statistics"]["count"])
+        self.assertTrue(result["bidder_price_band_analysis"]["requires_product_selection"])
+        selected_product = aggregate_dashboard_documents(documents, selected_product="Amox")
+        bands = selected_product["bidder_price_band_analysis"]["items"]
+        self.assertEqual([("B1", 50), ("B2", 20)], [
+            (row["bidder_name"], row["corresponding_awarded_value"]) for row in bands
+        ])
+        self.assertNotIn("unit_price_distribution", selected_product)
+        self.assertNotIn("bidder_unit_price_series", selected_product)
         self.assertEqual("Bệnh viện A", result["top_investors"][0]["name"])
 
     def test_request_all_pages_complete_match_universe_beyond_search_caps(self):
@@ -108,6 +114,16 @@ class DashboardAnalyticsTest(unittest.TestCase):
 
         self.assertEqual(501, len(documents))
         self.assertEqual([1, 2, 3], calls)
+
+    def test_price_band_projection_keeps_product_and_unit_context(self):
+        server_source = (ROOT / "apps" / "api" / "server.py").read_text(encoding="utf-8")
+        route_start = server_source.index('@app.post("/api/dashboard-analytics")')
+        route_end = server_source.index('\n\n@app.', route_start + 1)
+        route_source = server_source[route_start:route_end]
+
+        self.assertIn('"unit"', route_source)
+        self.assertIn('*build_dashboard_selection_clauses(query.group, selection)', route_source)
+        self.assertIn('aggregate_dashboard_documents(group_documents, selected_product=selection.get("product"))', route_source)
 
 
 if __name__ == "__main__":
