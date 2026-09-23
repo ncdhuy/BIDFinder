@@ -13,7 +13,7 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP
 import hashlib
 import json
 import logging
@@ -1445,7 +1445,7 @@ def build_dashboard_bidder_price_series(
 
 
 def build_dashboard_price_distribution(raw_prices: Iterable[Any]) -> dict[str, Any]:
-    """Build exact descriptive statistics and six core bins plus overflow."""
+    """Build exact statistics, six core price bins, and one overflow bucket."""
     prices = []
     for raw_price in raw_prices:
         price = _analytics_decimal(raw_price, positive_only=True)
@@ -1457,55 +1457,157 @@ def build_dashboard_price_distribution(raw_prices: Iterable[Any]) -> dict[str, A
 
     count = len(prices)
 
-    def quantile(fraction: Decimal) -> Decimal:
-        position = Decimal(count - 1) * fraction
+    def quantile(fraction: Decimal, values: Sequence[Decimal] | None = None) -> Decimal:
+        values = prices if values is None else values
+        position = Decimal(len(values) - 1) * fraction
         lower_index = int(position)
-        upper_index = min(lower_index + 1, count - 1)
+        upper_index = min(lower_index + 1, len(values) - 1)
         remainder = position - lower_index
-        return prices[lower_index] + (prices[upper_index] - prices[lower_index]) * remainder
+        return values[lower_index] + (values[upper_index] - values[lower_index]) * remainder
 
     mean = sum(prices, Decimal(0)) / Decimal(count)
     median = quantile(Decimal("0.5"))
     p25 = quantile(Decimal("0.25"))
     p75 = quantile(Decimal("0.75"))
     minimum, maximum = prices[0], prices[-1]
-    # Tukey's upper fence is resistant to extreme right-tail observations. The
-    # fence determines the displayed core; it does not alter reported stats.
-    display_cutoff = p75 + Decimal(3) * (p75 - p25)
-    nice_step_target = display_cutoff / Decimal(20)
-    magnitude = Decimal(10) ** nice_step_target.adjusted()
-    normalized_step = nice_step_target / magnitude
-    nice_multiplier = max(
-        multiplier for multiplier in (Decimal(1), Decimal(2), Decimal(5))
-        if multiplier <= normalized_step
-    )
-    nice_step = nice_multiplier * magnitude
 
-    # Six rounded, progressively widening ranges span the robust core. The
-    # seventh visual bar is reserved exclusively for prices above the fence.
-    boundaries = [nice_step * multiplier for multiplier in (1, 2, 3, 5, 10)]
-    core_edges = [Decimal(0), *boundaries, display_cutoff]
+    def nice_floor_step(value: Decimal) -> Decimal:
+        if value <= 0:
+            return Decimal(1)
+        magnitude = Decimal(10) ** value.adjusted()
+        normalized = value / magnitude
+        multiplier = max(
+            candidate for candidate in (Decimal(1), Decimal(2), Decimal(5))
+            if candidate <= normalized
+        )
+        return multiplier * magnitude
+
+    def nice_ceil(value: Decimal) -> Decimal:
+        magnitude = Decimal(10) ** value.adjusted()
+        normalized = value / magnitude
+        multiplier = next(candidate for candidate in (Decimal(1), Decimal(2), Decimal(5), Decimal(10))
+                          if candidate >= normalized)
+        return multiplier * magnitude
+
+    def round_to_step(value: Decimal, step: Decimal) -> Decimal:
+        return (value / step).to_integral_value(rounding=ROUND_HALF_UP) * step
+
+    def floor_to_step(value: Decimal, step: Decimal) -> Decimal:
+        return (value / step).to_integral_value(rounding=ROUND_FLOOR) * step
+
+    def ceil_to_step(value: Decimal, step: Decimal) -> Decimal:
+        return (value / step).to_integral_value(rounding=ROUND_CEILING) * step
+
+    iqr = p75 - p25
+    exact_frequencies = Counter(prices)
+    mode_price, mode_count = max(exact_frequencies.items(), key=lambda item: item[1])
+    narrow_width = max(abs(median) * Decimal("0.20"), Decimal(1))
+    left = best_left = best_right = 0
+    best_window_count = 0
+    for right, price in enumerate(prices):
+        while price - prices[left] > narrow_width:
+            left += 1
+        window_count = right - left + 1
+        if window_count > best_window_count:
+            best_left, best_right, best_window_count = left, right, window_count
+
+    exact_mode_dominates = mode_count >= 3 and Decimal(mode_count) / count >= Decimal("0.50")
+    narrow_region_dominates = Decimal(best_window_count) / count >= Decimal("0.70")
+    near_zero_iqr = iqr <= max(Decimal(1), abs(median) * Decimal("0.01"))
+    mode_aware = near_zero_iqr or exact_mode_dominates or narrow_region_dominates
+
+    if mode_aware:
+        dense_minimum, dense_maximum = prices[best_left], prices[best_right]
+        center = mode_price if exact_mode_dominates else (dense_minimum + dense_maximum) / Decimal(2)
+        magnitude = Decimal(10) ** center.adjusted()
+        minor_step = magnitude / Decimal(10)
+        inner_step = max(
+            minor_step * 2,
+            nice_floor_step((dense_maximum - dense_minimum) / Decimal(2))
+            if dense_maximum > dense_minimum else minor_step * 2,
+        )
+        inner_low = floor_to_step(dense_minimum, inner_step)
+        inner_high = ceil_to_step(dense_maximum, inner_step)
+        if inner_low == inner_high:
+            inner_low -= inner_step
+            inner_high += inner_step
+
+        first_edge = floor_to_step(dense_minimum, magnitude)
+        if first_edge <= 0 or first_edge >= inner_low:
+            first_edge = inner_low - inner_step
+        if first_edge <= 0:
+            first_edge = inner_low / 2
+
+        next_major = (inner_high // magnitude + 1) * magnitude
+        outer_middle = nice_ceil(next_major * Decimal("2.5"))
+        outer_high = nice_ceil(outer_middle * Decimal(4))
+        core_edges = [first_edge, inner_low, inner_high, next_major, outer_middle, outer_high]
+    else:
+        # In a broad distribution, cap the core at the lower of P99 and the
+        # Tukey fence. Unlike the mode path, both bounds remain informative.
+        robust_maximum = min(quantile(Decimal("0.99")), p75 + Decimal(3) * iqr)
+        robust_minimum = next(price for price in prices if price <= robust_maximum)
+        cutoff_step = nice_floor_step((robust_maximum - robust_minimum) / Decimal(100))
+        core_maximum = floor_to_step(robust_maximum, cutoff_step)
+        if core_maximum <= robust_minimum:
+            core_maximum = robust_maximum
+        core_values = [price for price in prices if price <= core_maximum]
+        core_minimum = core_values[0]
+        span = core_maximum - core_minimum
+        step = nice_floor_step(span / Decimal(10))
+        quantile_edges = []
+        previous = Decimal(0)
+        for index in range(1, 6):
+            edge = round_to_step(quantile(Decimal(index) / Decimal(6), core_values), step)
+            if edge <= previous:
+                edge = previous + step
+            if edge >= core_maximum:
+                quantile_edges = []
+                break
+            quantile_edges.append(edge)
+            previous = edge
+
+        if len(quantile_edges) != 5:
+            # Quantile ties can occur in multimodal data. Use rounded points
+            # across the robust core span without reaching toward global max.
+            step = nice_floor_step(span / Decimal(6))
+            quantile_edges = []
+            previous = core_minimum
+            for index in range(1, 6):
+                edge = round_to_step(core_minimum + span * Decimal(index) / Decimal(6), step)
+                edge = max(edge, previous + step)
+                edge = min(edge, core_maximum - step * Decimal(6 - index))
+                quantile_edges.append(edge)
+                previous = edge
+        core_edges = [*quantile_edges, core_maximum]
+
+    core_upper = core_edges[-1]
+    core_boundaries = core_edges[:-1]
     bin_counts = [0] * 7
+    overflow_prices = []
     for price in prices:
-        if price > display_cutoff:
+        if price > core_upper:
             bin_counts[-1] += 1
+            overflow_prices.append(price)
         else:
-            bin_counts[bisect_right(boundaries, price)] += 1
+            bin_counts[bisect_right(core_boundaries, price)] += 1
 
-    core_ranges = list(zip(core_edges, core_edges[1:]))
+    core_ranges = list(zip([Decimal(0), *core_boundaries], core_edges))
     bins = [
         {"min": _analytics_number(lower), "max": _analytics_number(upper), "count": bin_counts[index]}
         for index, (lower, upper) in enumerate(core_ranges)
     ]
     bins.append({
-        "min": _analytics_number(display_cutoff),
-        "max": _analytics_number(max(maximum, display_cutoff)),
+        "min": _analytics_number(core_upper),
+        "max": _analytics_number(core_upper),
         "count": bin_counts[-1],
         "overflow": True,
+        "outlier_min": _analytics_number(overflow_prices[0]) if overflow_prices else None,
+        "outlier_max": _analytics_number(overflow_prices[-1]) if overflow_prices else None,
     })
 
     return {
-        "display_cutoff": _analytics_number(display_cutoff),
+        "display_cutoff": _analytics_number(core_upper),
         "statistics": {
             "count": count,
             "mean": _analytics_number(mean),
