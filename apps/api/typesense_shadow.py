@@ -1445,7 +1445,7 @@ def build_dashboard_bidder_price_series(
 
 
 def build_dashboard_price_distribution(raw_prices: Iterable[Any]) -> dict[str, Any]:
-    """Build descriptive statistics and seven adaptive rounded bins."""
+    """Build exact descriptive statistics and six core bins plus overflow."""
     prices = []
     for raw_price in raw_prices:
         price = _analytics_decimal(raw_price, positive_only=True)
@@ -1469,60 +1469,43 @@ def build_dashboard_price_distribution(raw_prices: Iterable[Any]) -> dict[str, A
     p25 = quantile(Decimal("0.25"))
     p75 = quantile(Decimal("0.75"))
     minimum, maximum = prices[0], prices[-1]
-    # Seven rounded, logarithmically spaced cut points keep wide price ranges
-    # readable while the first and last buckets absorb the long tails.
-    binning_minimum = max(quantile(Decimal("0.05")), Decimal("0.1"))
-    binning_maximum = max(quantile(Decimal("0.95")), binning_minimum)
-    if binning_minimum == binning_maximum:
-        binning_minimum /= 2
-        binning_maximum *= 2
+    # Tukey's upper fence is resistant to extreme right-tail observations. The
+    # fence determines the displayed core; it does not alter reported stats.
+    display_cutoff = p75 + Decimal(3) * (p75 - p25)
+    nice_step_target = display_cutoff / Decimal(20)
+    magnitude = Decimal(10) ** nice_step_target.adjusted()
+    normalized_step = nice_step_target / magnitude
+    nice_multiplier = max(
+        multiplier for multiplier in (Decimal(1), Decimal(2), Decimal(5))
+        if multiplier <= normalized_step
+    )
+    nice_step = nice_multiplier * magnitude
 
-    boundaries: list[Decimal] = []
-    for _ in range(24):
-        candidates = []
-        for exponent in range(
-            binning_minimum.adjusted() - 2,
-            binning_maximum.adjusted() + 3,
-        ):
-            magnitude = Decimal(10) ** exponent
-            candidates.extend(magnitude * multiplier for multiplier in (1, 2, 5))
-        candidates = sorted(set(candidates))
-        log_minimum = binning_minimum.ln()
-        log_span = binning_maximum.ln() - log_minimum
-        boundaries = []
-        previous = Decimal(0)
-        for index in range(1, 7):
-            target = log_minimum + log_span * Decimal(index) / Decimal(7)
-            available = [candidate for candidate in candidates if candidate > previous]
-            remaining = 6 - index
-            if len(available) <= remaining:
-                break
-            boundary = min(available, key=lambda candidate: abs(candidate.ln() - target))
-            boundaries.append(boundary)
-            previous = boundary
-        if len(boundaries) == 6:
-            break
-        binning_minimum /= 2
-        binning_maximum *= 2
-
-    if len(boundaries) != 6:
-        # Decimal logarithms retain enough precision for this fallback to
-        # produce six distinct points even for unusually narrow price ranges.
-        log_minimum = binning_minimum.ln()
-        log_span = binning_maximum.ln() - log_minimum
-        boundaries = [
-            (log_minimum + log_span * Decimal(index) / Decimal(7)).exp()
-            for index in range(1, 7)
-        ]
-
-    final_step = boundaries[-1] - boundaries[-2]
-    edges = [Decimal(0), *boundaries, max(maximum, boundaries[-1] + final_step)]
-    ranges = list(zip(edges, edges[1:]))
+    # Six rounded, progressively widening ranges span the robust core. The
+    # seventh visual bar is reserved exclusively for prices above the fence.
+    boundaries = [nice_step * multiplier for multiplier in (1, 2, 3, 5, 10)]
+    core_edges = [Decimal(0), *boundaries, display_cutoff]
     bin_counts = [0] * 7
     for price in prices:
-        bin_counts[bisect_right(boundaries, price)] += 1
+        if price > display_cutoff:
+            bin_counts[-1] += 1
+        else:
+            bin_counts[bisect_right(boundaries, price)] += 1
+
+    core_ranges = list(zip(core_edges, core_edges[1:]))
+    bins = [
+        {"min": _analytics_number(lower), "max": _analytics_number(upper), "count": bin_counts[index]}
+        for index, (lower, upper) in enumerate(core_ranges)
+    ]
+    bins.append({
+        "min": _analytics_number(display_cutoff),
+        "max": _analytics_number(max(maximum, display_cutoff)),
+        "count": bin_counts[-1],
+        "overflow": True,
+    })
 
     return {
+        "display_cutoff": _analytics_number(display_cutoff),
         "statistics": {
             "count": count,
             "mean": _analytics_number(mean),
@@ -1533,10 +1516,7 @@ def build_dashboard_price_distribution(raw_prices: Iterable[Any]) -> dict[str, A
             "min": _analytics_number(minimum),
             "max": _analytics_number(maximum),
         },
-        "bins": [
-            {"min": _analytics_number(lower), "max": _analytics_number(upper), "count": bin_counts[index]}
-            for index, (lower, upper) in enumerate(ranges)
-        ],
+        "bins": bins,
     }
 
 

@@ -6104,7 +6104,7 @@ function formatDashboardPriceBinLabel(bin, index, bins) {
     const lower = getDashboardPriceLabelParts(bin.min);
     const upper = getDashboardPriceLabelParts(bin.max);
     if (index === 0) return `< ${upper.value} ${upper.unit}`;
-    if (index === bins.length - 1) return `> ${lower.value} ${lower.unit}`;
+    if (bin.overflow || index === bins.length - 1) return `> ${lower.value} ${lower.unit}`;
     if (lower.unit === upper.unit) return [`${lower.value}–${upper.value}`, lower.unit];
     return [`${lower.value} ${lower.unit}–`, `${upper.value} ${upper.unit}`];
 }
@@ -6531,16 +6531,39 @@ const dashboardTimelineLabelsPlugin = {
     }
 };
 
-function getDashboardPriceMarkerX(chartArea, bins, value) {
+function getDashboardPriceMarkerPosition(chartArea, bins, value) {
     const price = Number(value);
-    const index = bins.findIndex((bin, binIndex) => (
-        price >= Number(bin.min) && (price < Number(bin.max) || binIndex === bins.length - 1)
-    ));
+    if (!Number.isFinite(price)) return null;
+    const overflowIndex = bins.findIndex(bin => bin.overflow);
+    const overflowBin = overflowIndex >= 0 ? bins[overflowIndex] : null;
+    const cutoff = overflowBin ? Number(overflowBin.min) : null;
+    const chartWidth = chartArea.right - chartArea.left;
+
+    if (overflowBin && price > cutoff) {
+        return {
+            x: chartArea.left + chartWidth * (overflowIndex + 0.5) / bins.length,
+            clamped: true,
+            cutoff
+        };
+    }
+
+    const index = bins.findIndex((bin, binIndex) => {
+        if (bin.overflow) return false;
+        const min = Number(bin.min);
+        const max = Number(bin.max);
+        const nextIsOverflow = bins[binIndex + 1]?.overflow === true;
+        const isLastWithoutOverflow = overflowIndex < 0 && binIndex === bins.length - 1;
+        return price >= min && (price < max || ((nextIsOverflow || isLastWithoutOverflow) && price <= max));
+    });
     if (index < 0) return null;
     const bin = bins[index];
     const span = Number(bin.max) - Number(bin.min);
     const fraction = span > 0 ? Math.max(0, Math.min(1, (price - Number(bin.min)) / span)) : 0.5;
-    return chartArea.left + (chartArea.right - chartArea.left) * (index + fraction) / bins.length;
+    return { x: chartArea.left + chartWidth * (index + fraction) / bins.length, clamped: false, cutoff };
+}
+
+function getDashboardPriceMarkerX(chartArea, bins, value) {
+    return getDashboardPriceMarkerPosition(chartArea, bins, value)?.x ?? null;
 }
 
 const dashboardPriceDistributionPlugin = {
@@ -6558,14 +6581,14 @@ const dashboardPriceDistributionPlugin = {
             { key: 'p75', label: 'P75', color: '#f97316', row: 2 }
         ];
         markers.forEach(marker => {
-            const x = getDashboardPriceMarkerX(chartArea, bins, stats[marker.key]);
-            if (x === null) return;
+            const position = getDashboardPriceMarkerPosition(chartArea, bins, stats[marker.key]);
+            if (!position) return;
             ctx.strokeStyle = marker.color;
             ctx.lineWidth = marker.key === 'median' ? 1.75 : 1.25;
             ctx.setLineDash([4, 3]);
             ctx.beginPath();
-            ctx.moveTo(x, chartArea.top);
-            ctx.lineTo(x, chartArea.bottom);
+            ctx.moveTo(position.x, chartArea.top);
+            ctx.lineTo(position.x, chartArea.bottom);
             ctx.stroke();
         });
 
@@ -6581,12 +6604,15 @@ const dashboardPriceDistributionPlugin = {
         });
 
         markers.forEach(marker => {
-            const x = getDashboardPriceMarkerX(chartArea, bins, stats[marker.key]);
-            if (x === null) return;
-            const label = `${marker.label} · ${formatDashboardCompactPrice(stats[marker.key])}`;
+            const position = getDashboardPriceMarkerPosition(chartArea, bins, stats[marker.key]);
+            if (!position) return;
+            const markerValue = position.clamped
+                ? `> ${formatDashboardCompactPrice(position.cutoff)}`
+                : formatDashboardCompactPrice(stats[marker.key]);
+            const label = `${marker.label} · ${markerValue}`;
             const labelWidth = ctx.measureText(label).width;
             const availableRight = chartArea.right - 154;
-            let labelX = Math.max(chartArea.left + labelWidth / 2, Math.min(chartArea.right - labelWidth / 2, x));
+            let labelX = Math.max(chartArea.left + labelWidth / 2, Math.min(chartArea.right - labelWidth / 2, position.x));
             if (labelX + labelWidth / 2 > availableRight) {
                 labelX = Math.max(chartArea.left + labelWidth / 2, availableRight - labelWidth / 2);
             }
@@ -6597,7 +6623,7 @@ const dashboardPriceDistributionPlugin = {
     }
 };
 
-function renderDashboardPriceStats(statistics) {
+function renderDashboardPriceStats(statistics, bins = []) {
     const container = document.getElementById('dashboard-price-stats');
     if (!container) return;
     container.replaceChildren();
@@ -6607,8 +6633,11 @@ function renderDashboardPriceStats(statistics) {
 
     const minimum = formatDashboardPriceAxis(statistics.min);
     const maximum = formatDashboardPriceAxis(statistics.max);
-    container.title = `Min: ${minimum} đ · Max: ${maximum} đ`;
-    container.setAttribute('aria-label', `Thống kê đơn giá. Min: ${minimum} đ. Max: ${maximum} đ.`);
+    const overflowNote = bins.some(bin => bin.overflow && Number(bin.count) > 0)
+        ? ' Các đơn giá ngoại lệ phía trên ngưỡng hiển thị được gộp vào cột cuối.'
+        : '';
+    container.title = `Min: ${minimum} đ · Max: ${maximum} đ.${overflowNote}`;
+    container.setAttribute('aria-label', `Thống kê đơn giá. Min: ${minimum} đ. Max: ${maximum} đ.${overflowNote}`);
 
     [
         ['Mean', 'mean'], ['Median', 'median'], ['Min', 'min'], ['Max', 'max']
@@ -6987,13 +7016,13 @@ async function renderDashboardCharts(timeline = {}, priceDistribution = {}) {
     const timelinePoints = getDashboardTimelinePoints(timeline);
     const priceStats = priceDistribution?.statistics || null;
     const priceBins = (Array.isArray(priceDistribution?.bins) ? priceDistribution.bins : [])
-        .map(bin => ({ min: Number(bin?.min), max: Number(bin?.max), count: Number(bin?.count) }))
+        .map(bin => ({ min: Number(bin?.min), max: Number(bin?.max), count: Number(bin?.count), overflow: bin?.overflow === true }))
         .filter(bin => Number.isFinite(bin.min) && Number.isFinite(bin.max) && bin.max >= bin.min && Number.isFinite(bin.count) && bin.count >= 0);
     const priceBinLabels = priceBins.map((bin, index) => formatDashboardPriceBinLabel(bin, index, priceBins));
     const hasPriceDistribution = Number(priceStats?.count) > 0 && priceBins.length > 0;
     const trendUnit = getDashboardTrendUnit(timelinePoints.map(point => point.total_awarded_value));
     if (!timelinePoints.length) setDashboardWidgetState('timeline', 'Không có dữ liệu thời gian.', 'empty');
-    renderDashboardPriceStats(hasPriceDistribution ? priceStats : null);
+    renderDashboardPriceStats(hasPriceDistribution ? priceStats : null, priceBins);
     if (!hasPriceDistribution) setDashboardWidgetState('unit_price_distribution', 'Không có đơn giá hợp lệ.', 'empty');
     if (!timelinePoints.length && !hasPriceDistribution) return;
 

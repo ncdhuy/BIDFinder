@@ -21,20 +21,38 @@ class DashboardPriceDistributionTest(unittest.TestCase):
         self.assertEqual(7, len(result["bins"]))
         self.assertEqual(len(prices), sum(bucket["count"] for bucket in result["bins"]))
         self.assertEqual(0, result["bins"][0]["min"])
+        self.assertEqual(result["display_cutoff"], result["bins"][-2]["max"])
+        self.assertEqual(result["display_cutoff"], result["bins"][-1]["min"])
         self.assertGreaterEqual(result["bins"][-1]["max"], 1_059_376)
+        self.assertTrue(result["bins"][-1]["overflow"])
         self.assertEqual(
             [bucket["max"] for bucket in result["bins"][:-1]],
             [bucket["min"] for bucket in result["bins"][1:]],
         )
-        cut_points = [bucket["max"] for bucket in result["bins"][:-1]]
-        for cut_point in cut_points:
-            magnitude = Decimal(10) ** (Decimal(str(cut_point)).adjusted())
-            self.assertIn(Decimal(str(cut_point)) / magnitude, {Decimal(1), Decimal(2), Decimal(5)})
+        scale = Decimal(str(result["bins"][0]["max"]))
+        scale_magnitude = Decimal(10) ** scale.adjusted()
+        self.assertIn(scale / scale_magnitude, {Decimal(1), Decimal(2), Decimal(5)})
+        self.assertEqual(
+            [Decimal(1), Decimal(2), Decimal(3), Decimal(5), Decimal(10)],
+            [Decimal(str(bucket["max"])) / scale for bucket in result["bins"][:5]],
+        )
+
+    def test_display_cutoff_uses_q3_plus_three_iqr_and_core_ranges_are_rounded(self):
+        result = build_dashboard_price_distribution([1_000, 2_000, 3_000, 5_000, 10_000, 20_000, 1_000_000_000_000])
+
+        # Q1=2,500; Q3=15,000; IQR=12,500; upper fence=52,500.
+        self.assertEqual(52_500, result["display_cutoff"])
+        self.assertEqual([2_000, 4_000, 6_000, 10_000, 20_000], [bucket["max"] for bucket in result["bins"][:5]])
+        self.assertEqual(1, result["bins"][-1]["count"])
+        self.assertEqual(6, sum(bucket["count"] for bucket in result["bins"][:-1]))
 
     def test_extreme_outlier_does_not_stretch_core_price_ranges(self):
         result = build_dashboard_price_distribution([3_900] * 100 + [1_000_000_000_000])
 
         self.assertEqual(7, len(result["bins"]))
+        self.assertEqual(3_900, result["display_cutoff"])
+        self.assertEqual([100, 200, 300, 500, 1_000], [bucket["max"] for bucket in result["bins"][:5]])
+        self.assertTrue(result["bins"][-1]["overflow"])
         self.assertEqual(1, result["bins"][-1]["count"])
         self.assertEqual(100, sum(bucket["count"] for bucket in result["bins"][:-1]))
 
