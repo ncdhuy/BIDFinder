@@ -8,15 +8,15 @@ been assembled.
 from __future__ import annotations
 
 import asyncio
+from bisect import bisect_right
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal, ROUND_CEILING
+from decimal import Decimal, ROUND_HALF_UP
 import hashlib
 import json
 import logging
-import math
 import os
 from pathlib import Path
 import random
@@ -1445,7 +1445,7 @@ def build_dashboard_bidder_price_series(
 
 
 def build_dashboard_price_distribution(raw_prices: Iterable[Any]) -> dict[str, Any]:
-    """Build a compact histogram and descriptive statistics from valid prices."""
+    """Build descriptive statistics and adaptive rounded bins from valid prices."""
     prices = []
     for raw_price in raw_prices:
         price = _analytics_decimal(raw_price, positive_only=True)
@@ -1469,33 +1469,61 @@ def build_dashboard_price_distribution(raw_prices: Iterable[Any]) -> dict[str, A
     p25 = quantile(Decimal("0.25"))
     p75 = quantile(Decimal("0.75"))
     minimum, maximum = prices[0], prices[-1]
-    span = maximum - minimum
-    if span == 0:
-        bin_count = 1
-        padding = minimum * Decimal("0.05")
-        bin_minimum, bin_maximum = minimum - padding, maximum + padding
-        ranges = [(bin_minimum, bin_maximum)]
-        bin_counts = [count]
-    else:
-        iqr = p75 - p25
-        if iqr > 0:
-            bin_width = Decimal(2) * iqr / Decimal(str(count ** (1 / 3)))
-            estimated_bins = int((span / bin_width).to_integral_value(rounding=ROUND_CEILING))
-        else:
-            estimated_bins = math.ceil(math.log2(count) + 1)
-        bin_count = max(1, min(16, estimated_bins))
-        bin_width = span / Decimal(bin_count)
-        bin_counts = [0] * bin_count
-        for price in prices:
-            index = min(int((price - minimum) / bin_width), bin_count - 1)
-            bin_counts[index] += 1
-        ranges = [
-            (
-                minimum + bin_width * index,
-                maximum if index == bin_count - 1 else minimum + bin_width * (index + 1),
-            )
-            for index in range(bin_count)
-        ]
+    # Central 90% sets readable ranges; under/overflow bins retain the tails.
+    binning_minimum = quantile(Decimal("0.05"))
+    binning_maximum = quantile(Decimal("0.95"))
+    binning_span = binning_maximum - binning_minimum
+
+    def nice_ceiling(value: Decimal) -> Decimal:
+        magnitude = Decimal(10) ** value.adjusted()
+        leading = value / magnitude
+        multiplier = next((item for item in (1, 2, 5, 10) if leading <= item), 10)
+        return magnitude * multiplier
+
+    def nice_step(value: Decimal) -> Decimal:
+        magnitude = Decimal(10) ** value.adjusted()
+        leading = value / magnitude
+        multiplier = (
+            1 if leading < Decimal("1.4")
+            else 2 if leading < Decimal("3.2")
+            else 5 if leading < Decimal("7.1")
+            else 10
+        )
+        return magnitude * multiplier
+
+    boundaries = []
+    if binning_span > 0:
+        log_minimum = binning_minimum.ln()
+        log_span = binning_maximum.ln() - log_minimum
+        for index in range(1, 7):
+            fraction = Decimal(index) / Decimal(7)
+            target = (log_minimum + log_span * fraction).exp()
+            boundary = nice_ceiling(target)
+            if binning_minimum < boundary < binning_maximum and boundary not in boundaries:
+                boundaries.append(boundary)
+
+        if len(boundaries) < 4:
+            step = nice_step(binning_span / Decimal(7))
+            for index in range(1, 7):
+                target = binning_minimum + binning_span * Decimal(index) / Decimal(7)
+                boundary = (target / step).to_integral_value(rounding=ROUND_HALF_UP) * step
+                if binning_minimum < boundary < binning_maximum and boundary not in boundaries:
+                    boundaries.append(boundary)
+        boundaries.sort()
+    elif minimum < maximum:
+        boundary = nice_ceiling(binning_minimum)
+        if binning_minimum < boundary < maximum:
+            boundaries.append(boundary)
+
+    ranges = (
+        [(Decimal(0), boundaries[0])]
+        + list(zip(boundaries, boundaries[1:]))
+        + [(boundaries[-1], maximum)]
+        if boundaries else [(minimum, maximum)]
+    )
+    bin_counts = [0] * len(ranges)
+    for price in prices:
+        bin_counts[bisect_right(boundaries, price)] += 1
 
     return {
         "statistics": {

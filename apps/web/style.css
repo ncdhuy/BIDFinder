@@ -8875,14 +8875,14 @@ body.dashboard-view-active .app-footer {
 .dashboard-price-chart-body {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 4px;
-  padding: 6px 9px 8px;
+  gap: 3px;
+  padding: 4px 9px 7px;
 }
 
 .dashboard-price-stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 4px 8px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 3px 7px;
   min-width: 0;
 }
 
@@ -8890,8 +8890,8 @@ body.dashboard-view-active .app-footer {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 1px;
-  line-height: 1.15;
+  gap: 0;
+  line-height: 1.1;
 }
 
 .dashboard-price-stat span {

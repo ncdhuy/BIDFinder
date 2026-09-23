@@ -14,13 +14,26 @@ from typesense_shadow import (  # noqa: E402
 
 class DashboardPriceDistributionTest(unittest.TestCase):
     def test_histogram_bins_cover_all_valid_observations(self):
-        result = build_dashboard_price_distribution([10, 20, 30, 40, 50, 60, 70, 80])
+        prices = [1_800, 3_900, 5_000, 10_000, 25_000, 50_000, 100_000, 200_000, 500_000, 1_059_376]
+        result = build_dashboard_price_distribution(prices)
 
-        self.assertGreater(len(result["bins"]), 1)
-        self.assertLessEqual(len(result["bins"]), 16)
-        self.assertEqual(8, sum(bucket["count"] for bucket in result["bins"]))
-        self.assertEqual(10, result["bins"][0]["min"])
-        self.assertEqual(80, result["bins"][-1]["max"])
+        self.assertGreaterEqual(len(result["bins"]), 6)
+        self.assertLessEqual(len(result["bins"]), 8)
+        self.assertEqual(len(prices), sum(bucket["count"] for bucket in result["bins"]))
+        self.assertEqual(0, result["bins"][0]["min"])
+        self.assertEqual(1_059_376, result["bins"][-1]["max"])
+        self.assertLess(result["bins"][0]["count"], len(prices))
+        self.assertTrue(all(bucket["count"] for bucket in result["bins"][1:-1]))
+        self.assertEqual(
+            [bucket["max"] for bucket in result["bins"][:-1]],
+            [bucket["min"] for bucket in result["bins"][1:]],
+        )
+
+    def test_extreme_outlier_does_not_stretch_core_price_ranges(self):
+        result = build_dashboard_price_distribution([3_900] * 100 + [1_000_000_000_000])
+
+        self.assertEqual([100, 1], [bucket["count"] for bucket in result["bins"]])
+        self.assertEqual(2, len(result["bins"]))
 
     def test_statistics_use_interpolated_quartiles(self):
         result = build_dashboard_price_distribution([10, 20, 30, 40])
@@ -56,15 +69,17 @@ class DashboardPriceDistributionTest(unittest.TestCase):
         selection = {"product": "Nefopam", "province": "Hà Nội", "investor": "Bệnh viện A"}
         self.assertEqual(3, len(build_dashboard_selection_clauses("medicines", selection)))
 
-        base = aggregate_dashboard_documents({"medicines": documents})["unit_price_distribution"]["statistics"]
+        base = aggregate_dashboard_documents({"medicines": documents})["unit_price_distribution"]
         selected = aggregate_dashboard_documents({
             "medicines": [row for row in documents if row["medicine_name"] == selection["product"]]
-        })["unit_price_distribution"]["statistics"]
+        })["unit_price_distribution"]
 
-        self.assertEqual(3, base["count"])
-        self.assertEqual(2, selected["count"])
-        self.assertEqual(15, selected["mean"])
-        self.assertNotEqual(base["mean"], selected["mean"])
+        self.assertEqual(3, base["statistics"]["count"])
+        self.assertEqual(2, selected["statistics"]["count"])
+        self.assertEqual(15, selected["statistics"]["mean"])
+        self.assertNotEqual(base["statistics"]["mean"], selected["statistics"]["mean"])
+        self.assertEqual(3, sum(bucket["count"] for bucket in base["bins"]))
+        self.assertEqual(2, sum(bucket["count"] for bucket in selected["bins"]))
 
 
 if __name__ == "__main__":

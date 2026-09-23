@@ -6082,6 +6082,16 @@ function formatDashboardPriceAxis(value) {
     return numericValue.toLocaleString('vi-VN', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
+function formatDashboardCompactPrice(value) {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) return '';
+    const format = amount => amount.toLocaleString('vi-VN', { maximumFractionDigits: 1 });
+    if (numericValue >= 1_000_000) return `${format(numericValue / 1_000_000)} triệu`;
+    if (numericValue >= 999_950) return `${format(numericValue / 1_000_000)} triệu`;
+    if (numericValue >= 1_000) return `${format(numericValue / 1_000)} nghìn`;
+    return `${format(numericValue)} đ`;
+}
+
 function formatCurrencyAxis(value) {
     if (value >= 1_000_000_000) {
         return `${(value / 1_000_000_000).toLocaleString('vi-VN', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} tỷ`;
@@ -6529,7 +6539,7 @@ const dashboardPriceDistributionPlugin = {
         if (p25 === null || p75 === null) return;
 
         ctx.save();
-        ctx.fillStyle = 'rgba(22, 119, 232, 0.09)';
+        ctx.fillStyle = 'rgba(22, 119, 232, 0.045)';
         ctx.fillRect(p25, chartArea.top, Math.max(1, p75 - p25), chartArea.bottom - chartArea.top);
         ctx.restore();
     },
@@ -6540,16 +6550,31 @@ const dashboardPriceDistributionPlugin = {
         if (!chartArea || !bins.length || !stats) return;
 
         ctx.save();
-        ctx.strokeStyle = 'rgba(15, 98, 214, 0.72)';
-        ctx.lineWidth = 1.25;
-        ctx.setLineDash([4, 3]);
-        ['p25', 'p75'].forEach(key => {
-            const x = getDashboardPriceMarkerX(chartArea, bins, stats[key]);
+        const markers = [
+            { key: 'p25', label: 'P25', color: '#76a9e8', row: 0 },
+            { key: 'median', label: 'Median', color: '#0f62d6', row: 1 },
+            { key: 'p75', label: 'P75', color: '#76a9e8', row: 2 }
+        ];
+        ctx.font = '600 10px Inter, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        markers.forEach(marker => {
+            const x = getDashboardPriceMarkerX(chartArea, bins, stats[marker.key]);
             if (x === null) return;
+            ctx.strokeStyle = marker.color;
+            ctx.lineWidth = marker.key === 'median' ? 2 : 1;
+            ctx.setLineDash(marker.key === 'median' ? [4, 2] : [3, 3]);
             ctx.beginPath();
             ctx.moveTo(x, chartArea.top);
             ctx.lineTo(x, chartArea.bottom);
             ctx.stroke();
+            const labelWidth = ctx.measureText(marker.label).width + 8;
+            const labelX = Math.max(chartArea.left + labelWidth / 2, Math.min(chartArea.right - labelWidth / 2, x));
+            const labelY = chartArea.top + 7 + marker.row * 12;
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
+            ctx.fillRect(labelX - labelWidth / 2, labelY - 6, labelWidth, 12);
+            ctx.fillStyle = marker.key === 'median' ? '#0f62d6' : '#315d8a';
+            ctx.fillText(marker.label, labelX, labelY);
         });
         ctx.restore();
     }
@@ -6559,19 +6584,25 @@ function renderDashboardPriceStats(statistics) {
     const container = document.getElementById('dashboard-price-stats');
     if (!container) return;
     container.replaceChildren();
+    container.title = '';
+    container.setAttribute('aria-label', 'Thống kê đơn giá');
     if (!statistics) return;
 
+    const minimum = formatDashboardPriceAxis(statistics.min);
+    const maximum = formatDashboardPriceAxis(statistics.max);
+    container.title = `Min: ${minimum} đ · Max: ${maximum} đ`;
+    container.setAttribute('aria-label', `Thống kê đơn giá. Min: ${minimum} đ. Max: ${maximum} đ.`);
+
     [
-        ['Trung bình', 'mean'], ['Trung vị', 'median'], ['P25', 'p25'], ['P75', 'p75'],
-        ['IQR', 'iqr'], ['Min', 'min'], ['Max', 'max']
+        ['Trung bình', 'mean'], ['Trung vị', 'median'], ['P25', 'p25'], ['P75', 'p75'], ['IQR', 'iqr']
     ].forEach(([label, key]) => {
         const item = document.createElement('div');
         item.className = 'dashboard-price-stat';
-        item.title = `${label}: ${formatDashboardPriceAxis(statistics[key])}`;
+        item.title = `${label}: ${formatDashboardPriceAxis(statistics[key])} đ`;
         const name = document.createElement('span');
         name.textContent = label;
         const value = document.createElement('strong');
-        value.textContent = formatDashboardPriceAxis(statistics[key]);
+        value.textContent = formatDashboardCompactPrice(statistics[key]);
         item.append(name, value);
         container.appendChild(item);
     });
@@ -7011,7 +7042,16 @@ async function renderDashboardCharts(timeline = {}, priceDistribution = {}) {
     dashboardChartInstances.price = new window.Chart(canvas.getContext('2d'), {
             type: 'bar',
             data: {
-                labels: priceBins.map(bin => `${formatDashboardPriceAxis(bin.min)} – ${formatDashboardPriceAxis(bin.max)}`),
+                labels: priceBins.map((bin, index) => {
+                    if (priceBins.length === 1) {
+                        return Number(bin.min) === Number(bin.max)
+                            ? formatDashboardCompactPrice(bin.max)
+                            : `${formatDashboardCompactPrice(bin.min)}–${formatDashboardCompactPrice(bin.max)}`;
+                    }
+                    if (index === 0) return `< ${formatDashboardCompactPrice(bin.max)}`;
+                    if (index === priceBins.length - 1) return `> ${formatDashboardCompactPrice(bin.min)}`;
+                    return `${formatDashboardCompactPrice(bin.min)}–${formatDashboardCompactPrice(bin.max)}`;
+                }),
                 datasets: [{
                     label: 'Số quan sát',
                     data: priceBins.map(bin => bin.count),
@@ -7044,7 +7084,7 @@ async function renderDashboardCharts(timeline = {}, priceDistribution = {}) {
                     x: {
                         grid: { display: false },
                         title: { display: true, text: 'Đơn giá trúng thầu', color: CHART_THEME.axis, font: { size: 10, weight: '600' } },
-                        ticks: { maxRotation: 0, minRotation: 0, autoSkip: true, maxTicksLimit: 5, font: { size: 9 } }
+                        ticks: { maxRotation: 0, minRotation: 0, autoSkip: false, maxTicksLimit: 8, font: { size: 9 } }
                     },
                     y: {
                         beginAtZero: true,

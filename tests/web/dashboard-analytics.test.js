@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const vm = require('node:vm');
 
 const script = fs.readFileSync('apps/web/script.js', 'utf8');
 const html = fs.readFileSync('apps/web/index.html', 'utf8');
@@ -57,6 +58,13 @@ assert.match(script, /minimumFractionDigits: 1, maximumFractionDigits: 1/);
 assert.match(script, /function formatDashboardCurrency\(value\)[\s\S]{0,520}minimumFractionDigits: 1, maximumFractionDigits: 1/);
 assert.match(script, /function formatDashboardCount\(value\)[\s\S]{0,180}number\.toLocaleString\('vi-VN'\)/);
 assert.match(script, /function formatDashboardPriceAxis\(value\)[\s\S]{0,180}minimumFractionDigits: 1, maximumFractionDigits: 1/);
+assert.match(script, /function formatDashboardCompactPrice\(value\)[\s\S]{0,360}triệu[\s\S]{0,120}nghìn/);
+const compactPriceFormatterSource = script.match(/function formatDashboardCompactPrice\(value\) \{[\s\S]*?\n\}/)?.[0];
+const formatDashboardCompactPrice = vm.runInNewContext(`(${compactPriceFormatterSource})`);
+assert.equal(formatDashboardCompactPrice(10_000), '10 nghìn');
+assert.equal(formatDashboardCompactPrice(500_000), '500 nghìn');
+assert.equal(formatDashboardCompactPrice(1_000_000), '1 triệu');
+assert.equal(formatDashboardCompactPrice(999_999), '1 triệu');
 assert.match(script, /function formatProvinceScaleValue\(value\)[\s\S]{0,260}minimumFractionDigits: 1, maximumFractionDigits: 1/);
 assert.match(script, /unit_price_distribution/);
 assert.match(script, /type: 'line'/);
@@ -67,6 +75,8 @@ const priceChartSource = script.slice(
 );
 assert.match(priceChartSource, /plugins: \[dashboardPriceDistributionPlugin\]/);
 assert.match(priceChartSource, /type: 'bar'/);
+assert.match(priceChartSource, /formatDashboardCompactPrice\(bin\.max\)/);
+assert.match(priceChartSource, /autoSkip: false, maxTicksLimit: 8/);
 assert.match(priceChartSource, /dashboardPriceDistribution: \{ bins: priceBins, statistics: priceStats \}/);
 assert.match(priceChartSource, /title: items => items\[0\]\?\.label/);
 assert.match(priceChartSource, /Số quan sát:/);
@@ -132,8 +142,10 @@ const selectionResetSource = script.slice(
 assert.doesNotMatch(selectionResetSource, /currentQueryRequest/);
 assert.match(script, /function renderDashboardEmpty\(/);
 assert.match(script, /tension: 0/);
-assert.match(script, /getDashboardPriceMarkerX\(chartArea, bins, stats\.p25\)/);
-assert.match(script, /getDashboardPriceMarkerX\(chartArea, bins, stats\.p75\)/);
+assert.match(script, /key: 'p25', label: 'P25'/);
+assert.match(script, /key: 'median', label: 'Median'/);
+assert.match(script, /key: 'p75', label: 'P75'/);
+assert.match(script, /container\.title = `Min: \$\{minimum\} đ · Max: \$\{maximum\} đ`/);
 assert.match(script, /renderDashboardCharts\(payload\?\.timeline \|\| \{\}, payload\?\.unit_price_distribution \|\| \{\}\)/);
 assert.doesNotMatch(script, /dashboardBidderPriceLabels|truncateDashboardBidderLabel|bidder_unit_price_series/);
 assert.match(script, /dashboard-context-chip-label/);
@@ -167,7 +179,7 @@ assert.match(script, /anchor\.setAttribute\('r', String\(6 \* pixelsToUnits\)\)/
 assert.match(style, /\.dashboard-widget-title[\s\S]{0,180}color: var\(--dashboard-navy\)/);
 assert.match(style, /\.dashboard-widget-title svg[\s\S]{0,180}color: var\(--dashboard-blue\)/);
 assert.match(style, /\.dashboard-widget-head h3[\s\S]{0,120}font-size: 16px/);
-assert.match(style, /\.dashboard-price-stats[\s\S]{0,180}grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/);
+assert.match(style, /\.dashboard-price-stats[\s\S]{0,180}grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)/);
 assert.match(style, /\.dashboard-price-stat strong[\s\S]{0,120}color: var\(--dashboard-navy\)/);
 assert.match(style, /\.vietnam-province-map[\s\S]{0,320}background: transparent/);
 assert.match(style, /\.province-map-feature-label[\s\S]{0,180}pointer-events: none/);
