@@ -447,11 +447,14 @@
                                     </div>
                                     <div class="dashboard-widget-body dashboard-chart-body"><canvas id="dashboard-timeline-chart"></canvas></div>
                                 </article>
-                                <article class="dashboard-widget dashboard-price-widget" data-dashboard-widget="bidder_unit_price_series">
+                                <article class="dashboard-widget dashboard-price-widget" data-dashboard-widget="unit_price_distribution">
                                     <div class="dashboard-widget-head">
-                                        <div><h3 class="dashboard-widget-title"><i data-feather="trending-up" aria-hidden="true"></i><span>Giá trị trúng thầu theo đơn giá</span></h3><p>Top 5 nhà thầu theo tổng giá trị trúng thầu</p></div>
+                                        <div><h3 class="dashboard-widget-title"><i data-feather="bar-chart-2" aria-hidden="true"></i><span>Phân bố đơn giá trúng thầu</span></h3></div>
                                     </div>
-                                    <div class="dashboard-widget-body dashboard-chart-body"><canvas id="dashboard-price-chart"></canvas></div>
+                                    <div class="dashboard-widget-body dashboard-chart-body dashboard-price-chart-body">
+                                        <div id="dashboard-price-stats" class="dashboard-price-stats" aria-label="Thống kê đơn giá"></div>
+                                        <canvas id="dashboard-price-chart"></canvas>
+                                    </div>
                                 </article>
                                 <article class="dashboard-widget dashboard-investors-widget" data-dashboard-widget="top_investors">
                                     <div class="dashboard-widget-head">
@@ -1268,7 +1271,7 @@
     <script src="config.js"></script>
     <script src="auth.js"></script>
     <script src="typesense-search-form.js"></script>
-    <script src="script.js?v=dashboard-bidder-price-inline-labels-20260922"></script>
+    <script src="script.js?v=dashboard-price-distribution-20260923"></script>
     <script src="ai-search-chat.js"></script>
     <script>
         feather.replace();

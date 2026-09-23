@@ -47,7 +47,7 @@ class DashboardBidderPriceSeriesTest(unittest.TestCase):
         self.assertEqual([50, 300], [point["total_awarded_value"] for point in series[0]["points"]])
         self.assertEqual(2, series[0]["points"][1]["occurrence_count"])
         self.assertEqual(2, series[0]["points"][1]["package_count"])
-        self.assertNotIn("unit_price_distribution", result)
+        self.assertEqual(8, result["unit_price_distribution"]["statistics"]["count"])
 
     def test_invalid_or_non_positive_unit_prices_are_excluded(self):
         result = aggregate_dashboard_documents({

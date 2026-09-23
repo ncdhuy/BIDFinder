@@ -19,9 +19,10 @@ assert.doesNotMatch(html, /Số gói thầu có chứa sản phẩm\./);
 assert.match(html, /id="dashboard-timeline-chart"/);
 assert.match(html, /id="dashboard-trend-grain"[\s\S]{0,320}value="year"[\s\S]{0,120}value="quarter"[\s\S]{0,120}value="month"/);
 assert.match(html, /id="dashboard-price-chart"/);
-assert.match(html, /Giá trị trúng thầu theo đơn giá/);
-assert.match(html, /Top 5 nhà thầu theo tổng giá trị trúng thầu/);
-assert.doesNotMatch(html, /Phân bố đơn giá trúng thầu/);
+assert.match(html, /id="dashboard-price-stats"/);
+assert.match(html, /data-dashboard-widget="unit_price_distribution"/);
+assert.match(html, /Phân bố đơn giá trúng thầu/);
+assert.doesNotMatch(html, /Top 5 nhà thầu theo tổng giá trị trúng thầu/);
 assert.match(html, /id="dashboard-top-investors"/);
 assert.match(html, /class="dashboard-widget-title"[\s\S]{0,160}data-feather="map-pin"/);
 assert.match(html, /class="dashboard-widget-title"[\s\S]{0,160}data-feather="bar-chart-2"/);
@@ -57,12 +58,20 @@ assert.match(script, /function formatDashboardCurrency\(value\)[\s\S]{0,520}mini
 assert.match(script, /function formatDashboardCount\(value\)[\s\S]{0,180}number\.toLocaleString\('vi-VN'\)/);
 assert.match(script, /function formatDashboardPriceAxis\(value\)[\s\S]{0,180}minimumFractionDigits: 1, maximumFractionDigits: 1/);
 assert.match(script, /function formatProvinceScaleValue\(value\)[\s\S]{0,260}minimumFractionDigits: 1, maximumFractionDigits: 1/);
-assert.match(script, /bidder_unit_price_series/);
+assert.match(script, /unit_price_distribution/);
 assert.match(script, /type: 'line'/);
-assert.match(script, /type: 'logarithmic'/);
-assert.match(script, /occurrence_count/);
-assert.match(script, /package_count/);
-assert.doesNotMatch(script, /unit_price_distribution|priceBins|build_dashboard_price_histogram/);
+assert.match(script, /const dashboardPriceDistributionPlugin =/);
+const priceChartSource = script.slice(
+  script.indexOf('async function renderDashboardCharts'),
+  script.indexOf('function updateDashboardTimelineChart')
+);
+assert.match(priceChartSource, /plugins: \[dashboardPriceDistributionPlugin\]/);
+assert.match(priceChartSource, /type: 'bar'/);
+assert.match(priceChartSource, /dashboardPriceDistribution: \{ bins: priceBins, statistics: priceStats \}/);
+assert.match(priceChartSource, /title: items => items\[0\]\?\.label/);
+assert.match(priceChartSource, /Số quan sát:/);
+assert.match(priceChartSource, /renderDashboardPriceStats\(hasPriceDistribution \? priceStats : null\)/);
+assert.doesNotMatch(priceChartSource, /bidder_unit_price_series|dashboardBidderPriceLabels|type: 'logarithmic'/);
 assert.match(script, /function formatDashboardTimelinePeriod\(period\)[\s\S]{0,260}`Q\$\{quarter\[2\]\}\/\$\{quarter\[1\]\}`[\s\S]{0,180}`\$\{month\[2\]\}\/\$\{month\[1\]\}`/);
 assert.match(script, /labels: timelinePoints\.map\(point => formatDashboardTimelinePeriod\(point\.period\)\)/);
 assert.match(script, /title: items => formatDashboardTimelinePeriod\(items\[0\]\?\.label \|\| ''\)/);
@@ -123,16 +132,10 @@ const selectionResetSource = script.slice(
 assert.doesNotMatch(selectionResetSource, /currentQueryRequest/);
 assert.match(script, /function renderDashboardEmpty\(/);
 assert.match(script, /tension: 0/);
-assert.match(script, /const dashboardBidderPriceLabelsPlugin =/);
-assert.match(script, /id: 'dashboardBidderPriceLabels'/);
-assert.match(script, /plugins: \[dashboardBidderPriceLabelsPlugin\]/);
-const bidderPriceChartSource = script.slice(
-  script.indexOf('dashboardChartInstances.price ='),
-  script.indexOf('function updateDashboardTimelineChart')
-);
-assert.match(bidderPriceChartSource, /legend: \{ display: false \}/);
-assert.doesNotMatch(bidderPriceChartSource, /position: 'bottom'/);
-assert.doesNotMatch(bidderPriceChartSource, /generateLabels:/);
+assert.match(script, /getDashboardPriceMarkerX\(chartArea, bins, stats\.p25\)/);
+assert.match(script, /getDashboardPriceMarkerX\(chartArea, bins, stats\.p75\)/);
+assert.match(script, /renderDashboardCharts\(payload\?\.timeline \|\| \{\}, payload\?\.unit_price_distribution \|\| \{\}\)/);
+assert.doesNotMatch(script, /dashboardBidderPriceLabels|truncateDashboardBidderLabel|bidder_unit_price_series/);
 assert.match(script, /dashboard-context-chip-label/);
 assert.match(script, /function getDashboardSearchKeyword\(request = \{\}\)/);
 assert.match(script, /const keywordFields = \[/);
@@ -164,6 +167,8 @@ assert.match(script, /anchor\.setAttribute\('r', String\(6 \* pixelsToUnits\)\)/
 assert.match(style, /\.dashboard-widget-title[\s\S]{0,180}color: var\(--dashboard-navy\)/);
 assert.match(style, /\.dashboard-widget-title svg[\s\S]{0,180}color: var\(--dashboard-blue\)/);
 assert.match(style, /\.dashboard-widget-head h3[\s\S]{0,120}font-size: 16px/);
+assert.match(style, /\.dashboard-price-stats[\s\S]{0,180}grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/);
+assert.match(style, /\.dashboard-price-stat strong[\s\S]{0,120}color: var\(--dashboard-navy\)/);
 assert.match(style, /\.vietnam-province-map[\s\S]{0,320}background: transparent/);
 assert.match(style, /\.province-map-feature-label[\s\S]{0,180}pointer-events: none/);
 assert.match(style, /#dashboard-province-map svg[\s\S]{0,180}width: calc\(100% - 196px\)/);

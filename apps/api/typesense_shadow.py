@@ -12,10 +12,11 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_CEILING
 import hashlib
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import random
@@ -1443,6 +1444,77 @@ def build_dashboard_bidder_price_series(
     return series
 
 
+def build_dashboard_price_distribution(raw_prices: Iterable[Any]) -> dict[str, Any]:
+    """Build a compact histogram and descriptive statistics from valid prices."""
+    prices = []
+    for raw_price in raw_prices:
+        price = _analytics_decimal(raw_price, positive_only=True)
+        if price is not None:
+            prices.append(price)
+    prices.sort()
+    if not prices:
+        return {"statistics": None, "bins": []}
+
+    count = len(prices)
+
+    def quantile(fraction: Decimal) -> Decimal:
+        position = Decimal(count - 1) * fraction
+        lower_index = int(position)
+        upper_index = min(lower_index + 1, count - 1)
+        remainder = position - lower_index
+        return prices[lower_index] + (prices[upper_index] - prices[lower_index]) * remainder
+
+    mean = sum(prices, Decimal(0)) / Decimal(count)
+    median = quantile(Decimal("0.5"))
+    p25 = quantile(Decimal("0.25"))
+    p75 = quantile(Decimal("0.75"))
+    minimum, maximum = prices[0], prices[-1]
+    span = maximum - minimum
+    if span == 0:
+        bin_count = 1
+        padding = minimum * Decimal("0.05")
+        bin_minimum, bin_maximum = minimum - padding, maximum + padding
+        ranges = [(bin_minimum, bin_maximum)]
+        bin_counts = [count]
+    else:
+        iqr = p75 - p25
+        if iqr > 0:
+            bin_width = Decimal(2) * iqr / Decimal(str(count ** (1 / 3)))
+            estimated_bins = int((span / bin_width).to_integral_value(rounding=ROUND_CEILING))
+        else:
+            estimated_bins = math.ceil(math.log2(count) + 1)
+        bin_count = max(1, min(16, estimated_bins))
+        bin_width = span / Decimal(bin_count)
+        bin_counts = [0] * bin_count
+        for price in prices:
+            index = min(int((price - minimum) / bin_width), bin_count - 1)
+            bin_counts[index] += 1
+        ranges = [
+            (
+                minimum + bin_width * index,
+                maximum if index == bin_count - 1 else minimum + bin_width * (index + 1),
+            )
+            for index in range(bin_count)
+        ]
+
+    return {
+        "statistics": {
+            "count": count,
+            "mean": _analytics_number(mean),
+            "median": _analytics_number(median),
+            "p25": _analytics_number(p25),
+            "p75": _analytics_number(p75),
+            "iqr": _analytics_number(p75 - p25),
+            "min": _analytics_number(minimum),
+            "max": _analytics_number(maximum),
+        },
+        "bins": [
+            {"min": _analytics_number(lower), "max": _analytics_number(upper), "count": bin_counts[index]}
+            for index, (lower, upper) in enumerate(ranges)
+        ],
+    }
+
+
 def aggregate_dashboard_documents(documents_by_group: Mapping[str, Sequence[Mapping[str, Any]]]) -> dict[str, Any]:
     """Aggregate every matched Typesense document, never a paginated UI page."""
     product_fields = {"goods": "item_name", "medicines": "medicine_name", "traditional_medicine": "item_name"}
@@ -1454,6 +1526,7 @@ def aggregate_dashboard_documents(documents_by_group: Mapping[str, Sequence[Mapp
     bidder_totals: dict[str, Decimal] = {}
     bidder_names: dict[str, str] = {}
     bidder_prices: dict[str, dict[Decimal, dict[str, Any]]] = {}
+    unit_prices: list[Decimal] = []
     dated_values: list[tuple[date, Decimal]] = []
     seen_documents: set[tuple[str, str]] = set()
     matched_observations = 0
@@ -1483,6 +1556,8 @@ def aggregate_dashboard_documents(documents_by_group: Mapping[str, Sequence[Mapp
             bidder_identity_values = _analytics_values(document.get("winning_bidder_id")) or _analytics_values(document.get("winning_bidder_name"))
             bidder_display_values = _analytics_values(document.get("winning_bidder_name")) or bidder_identity_values
             valid_unit_price = _analytics_decimal(document.get("winning_unit_price"), positive_only=True)
+            if valid_unit_price is not None:
+                unit_prices.append(valid_unit_price)
             for index, raw_bidder in enumerate(bidder_identity_values):
                 bidder_key = _analytics_identity(raw_bidder)
                 if not bidder_key:
@@ -1581,6 +1656,7 @@ def aggregate_dashboard_documents(documents_by_group: Mapping[str, Sequence[Mapp
         "geography": geography,
         "top_products": product_rows[:10],
         "timeline": timeline,
+        "unit_price_distribution": build_dashboard_price_distribution(unit_prices),
         "bidder_unit_price_series": build_dashboard_bidder_price_series(bidder_totals, bidder_names, bidder_prices),
         "top_investors": top_investors[:5],
         "meta": {"complete": True, "matched_observations": matched_observations, "groups": sorted(public_group(group) for group in documents_by_group)},

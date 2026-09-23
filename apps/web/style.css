@@ -8872,6 +8872,49 @@ body.dashboard-view-active .app-footer {
   padding: 6px 10px 8px;
 }
 
+.dashboard-price-chart-body {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 4px;
+  padding: 6px 9px 8px;
+}
+
+.dashboard-price-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.dashboard-price-stat {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.15;
+}
+
+.dashboard-price-stat span {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-price-stat strong {
+  overflow: hidden;
+  color: var(--dashboard-navy);
+  font-size: 10px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-price-chart-body canvas {
+  min-height: 0;
+}
+
 .dashboard-trend-widget .dashboard-widget-head {
   align-items: center;
 }

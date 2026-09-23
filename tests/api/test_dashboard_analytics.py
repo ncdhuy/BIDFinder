@@ -82,7 +82,7 @@ class DashboardAnalyticsTest(unittest.TestCase):
         self.assertEqual(["2026-Q1"], [point["period"] for point in result["timeline"]["series"]["quarter"]])
         self.assertEqual(75, result["timeline"]["series"]["year"][0]["total_awarded_value"])
         self.assertIn("bidder_unit_price_series", result)
-        self.assertNotIn("unit_price_distribution", result)
+        self.assertEqual(4, result["unit_price_distribution"]["statistics"]["count"])
         self.assertEqual("Bệnh viện A", result["top_investors"][0]["name"])
 
     def test_request_all_pages_complete_match_universe_beyond_search_caps(self):
