@@ -66,20 +66,49 @@ assert.equal(formatDashboardCompactPrice(500_000), '500 nghìn');
 assert.equal(formatDashboardCompactPrice(1_000_000), '1 triệu');
 assert.equal(formatDashboardCompactPrice(999_999), '1 triệu');
 assert.match(script, /function formatProvinceScaleValue\(value\)[\s\S]{0,260}minimumFractionDigits: 1, maximumFractionDigits: 1/);
+const markerPositionSource = script.match(/function getDashboardPriceMarkerX\(chartArea, bins, value\) \{[\s\S]*?\n\}/)?.[0];
+const getDashboardPriceMarkerX = vm.runInNewContext(`(${markerPositionSource})`);
+const unevenMarkerBins = [
+    { min: 0, max: 10 }, { min: 10, max: 110 }, { min: 110, max: 1_110 },
+    { min: 1_110, max: 11_110 }, { min: 11_110, max: 111_110 },
+    { min: 111_110, max: 1_111_110 }, { min: 1_111_110, max: 11_111_110 }
+];
+assert.equal(getDashboardPriceMarkerX({ left: 100, right: 800 }, unevenMarkerBins, 60), 250);
+const priceLabelHelpers = script.match(/function getDashboardPriceLabelParts\(value\) \{[\s\S]*?\n\}[\s\S]*?function formatDashboardPriceBinLabel\(bin, index, bins\) \{[\s\S]*?\n\}/)?.[0];
+const { formatDashboardPriceBinLabel } = vm.runInNewContext(`(() => { ${priceLabelHelpers}; return { formatDashboardPriceBinLabel }; })()`);
+const readablePriceBins = [
+    { min: 0, max: 50_000 }, { min: 50_000, max: 100_000 }, { min: 100_000, max: 200_000 },
+    { min: 200_000, max: 500_000 }, { min: 500_000, max: 1_000_000 },
+    { min: 1_000_000, max: 2_000_000 }, { min: 2_000_000, max: 4_000_000 }
+];
+assert.equal(readablePriceBins.length, 7);
+assert.equal(formatDashboardPriceBinLabel(readablePriceBins[0], 0, readablePriceBins), '< 50 nghìn');
+assert.equal(JSON.stringify(formatDashboardPriceBinLabel(readablePriceBins[1], 1, readablePriceBins)), JSON.stringify(['50–100', 'nghìn']));
+assert.equal(formatDashboardPriceBinLabel(readablePriceBins[6], 6, readablePriceBins), '> 2 triệu');
 assert.match(script, /unit_price_distribution/);
 assert.match(script, /type: 'line'/);
 assert.match(script, /const dashboardPriceDistributionPlugin =/);
+assert.match(script, /key: 'p25', label: 'P25', color: '#16a34a'/);
+assert.match(script, /key: 'median', label: 'Trung vị', color: '#1677e8'/);
+assert.match(script, /key: 'p75', label: 'P75', color: '#f97316'/);
+assert.match(script, /chart\.getDatasetMeta\(0\)\?\.data\.forEach/);
+const priceStatsRendererSource = script.slice(
+    script.indexOf('function renderDashboardPriceStats'),
+    script.indexOf('function getDashboardTimelinePoints')
+);
+assert.match(priceStatsRendererSource, /\['Mean', 'mean'\], \['Median', 'median'\], \['Min', 'min'\], \['Max', 'max'\]/);
+assert.doesNotMatch(priceStatsRendererSource, /P25|P75|IQR/);
 const priceChartSource = script.slice(
   script.indexOf('async function renderDashboardCharts'),
   script.indexOf('function updateDashboardTimelineChart')
 );
 assert.match(priceChartSource, /plugins: \[dashboardPriceDistributionPlugin\]/);
 assert.match(priceChartSource, /type: 'bar'/);
-assert.match(priceChartSource, /formatDashboardCompactPrice\(bin\.max\)/);
-assert.match(priceChartSource, /autoSkip: false, maxTicksLimit: 8/);
+assert.match(priceChartSource, /priceBinLabels = priceBins\.map/);
+assert.match(priceChartSource, /maxTicksLimit: 7/);
 assert.match(priceChartSource, /dashboardPriceDistribution: \{ bins: priceBins, statistics: priceStats \}/);
 assert.match(priceChartSource, /title: items => items\[0\]\?\.label/);
-assert.match(priceChartSource, /Số quan sát:/);
+assert.match(priceChartSource, /Số gói thầu:/);
 assert.match(priceChartSource, /renderDashboardPriceStats\(hasPriceDistribution \? priceStats : null\)/);
 assert.doesNotMatch(priceChartSource, /bidder_unit_price_series|dashboardBidderPriceLabels|type: 'logarithmic'/);
 assert.match(script, /function formatDashboardTimelinePeriod\(period\)[\s\S]{0,260}`Q\$\{quarter\[2\]\}\/\$\{quarter\[1\]\}`[\s\S]{0,180}`\$\{month\[2\]\}\/\$\{month\[1\]\}`/);
@@ -143,7 +172,7 @@ assert.doesNotMatch(selectionResetSource, /currentQueryRequest/);
 assert.match(script, /function renderDashboardEmpty\(/);
 assert.match(script, /tension: 0/);
 assert.match(script, /key: 'p25', label: 'P25'/);
-assert.match(script, /key: 'median', label: 'Median'/);
+assert.match(script, /key: 'median', label: 'Trung vị', color: '#1677e8'/);
 assert.match(script, /key: 'p75', label: 'P75'/);
 assert.match(script, /container\.title = `Min: \$\{minimum\} đ · Max: \$\{maximum\} đ`/);
 assert.match(script, /renderDashboardCharts\(payload\?\.timeline \|\| \{\}, payload\?\.unit_price_distribution \|\| \{\}\)/);
@@ -179,7 +208,7 @@ assert.match(script, /anchor\.setAttribute\('r', String\(6 \* pixelsToUnits\)\)/
 assert.match(style, /\.dashboard-widget-title[\s\S]{0,180}color: var\(--dashboard-navy\)/);
 assert.match(style, /\.dashboard-widget-title svg[\s\S]{0,180}color: var\(--dashboard-blue\)/);
 assert.match(style, /\.dashboard-widget-head h3[\s\S]{0,120}font-size: 16px/);
-assert.match(style, /\.dashboard-price-stats[\s\S]{0,180}grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)/);
+assert.match(style, /\.dashboard-price-stats[\s\S]{0,180}position: absolute/);
 assert.match(style, /\.dashboard-price-stat strong[\s\S]{0,120}color: var\(--dashboard-navy\)/);
 assert.match(style, /\.vietnam-province-map[\s\S]{0,320}background: transparent/);
 assert.match(style, /\.province-map-feature-label[\s\S]{0,180}pointer-events: none/);

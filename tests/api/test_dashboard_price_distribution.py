@@ -1,3 +1,4 @@
+from decimal import Decimal
 from pathlib import Path
 import sys
 import unittest
@@ -17,23 +18,25 @@ class DashboardPriceDistributionTest(unittest.TestCase):
         prices = [1_800, 3_900, 5_000, 10_000, 25_000, 50_000, 100_000, 200_000, 500_000, 1_059_376]
         result = build_dashboard_price_distribution(prices)
 
-        self.assertGreaterEqual(len(result["bins"]), 6)
-        self.assertLessEqual(len(result["bins"]), 8)
+        self.assertEqual(7, len(result["bins"]))
         self.assertEqual(len(prices), sum(bucket["count"] for bucket in result["bins"]))
         self.assertEqual(0, result["bins"][0]["min"])
-        self.assertEqual(1_059_376, result["bins"][-1]["max"])
-        self.assertLess(result["bins"][0]["count"], len(prices))
-        self.assertTrue(all(bucket["count"] for bucket in result["bins"][1:-1]))
+        self.assertGreaterEqual(result["bins"][-1]["max"], 1_059_376)
         self.assertEqual(
             [bucket["max"] for bucket in result["bins"][:-1]],
             [bucket["min"] for bucket in result["bins"][1:]],
         )
+        cut_points = [bucket["max"] for bucket in result["bins"][:-1]]
+        for cut_point in cut_points:
+            magnitude = Decimal(10) ** (Decimal(str(cut_point)).adjusted())
+            self.assertIn(Decimal(str(cut_point)) / magnitude, {Decimal(1), Decimal(2), Decimal(5)})
 
     def test_extreme_outlier_does_not_stretch_core_price_ranges(self):
         result = build_dashboard_price_distribution([3_900] * 100 + [1_000_000_000_000])
 
-        self.assertEqual([100, 1], [bucket["count"] for bucket in result["bins"]])
-        self.assertEqual(2, len(result["bins"]))
+        self.assertEqual(7, len(result["bins"]))
+        self.assertEqual(1, result["bins"][-1]["count"])
+        self.assertEqual(100, sum(bucket["count"] for bucket in result["bins"][:-1]))
 
     def test_statistics_use_interpolated_quartiles(self):
         result = build_dashboard_price_distribution([10, 20, 30, 40])
@@ -55,7 +58,8 @@ class DashboardPriceDistributionTest(unittest.TestCase):
         self.assertEqual(1, result["statistics"]["count"])
         self.assertEqual(12, result["statistics"]["min"])
         self.assertEqual(12, result["statistics"]["max"])
-        self.assertEqual(1, result["bins"][0]["count"])
+        self.assertEqual(7, len(result["bins"]))
+        self.assertEqual(1, sum(bucket["count"] for bucket in result["bins"]))
 
     def test_empty_distribution_has_no_stats_or_bins(self):
         self.assertEqual({"statistics": None, "bins": []}, build_dashboard_price_distribution([None, 0, -1]))

@@ -8873,24 +8873,36 @@ body.dashboard-view-active .app-footer {
 }
 
 .dashboard-price-chart-body {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 3px;
+  position: relative;
+  display: block;
   padding: 4px 9px 7px;
 }
 
 .dashboard-price-stats {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 3px 7px;
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  right: 12px;
+  display: flex;
+  width: max-content;
+  max-width: 44%;
+  flex-direction: column;
+  gap: 3px;
   min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid #d5e2ee;
+  border-radius: 7px;
+  background: rgba(248, 251, 255, 0.96);
+  box-shadow: 0 2px 7px rgba(18, 46, 90, 0.08);
+  pointer-events: none;
 }
 
 .dashboard-price-stat {
-  display: flex;
+  display: grid;
   min-width: 0;
-  flex-direction: column;
-  gap: 0;
+  grid-template-columns: minmax(48px, 1fr) auto;
+  align-items: baseline;
+  gap: 8px;
   line-height: 1.1;
 }
 
@@ -8905,13 +8917,16 @@ body.dashboard-view-active .app-footer {
 .dashboard-price-stat strong {
   overflow: hidden;
   color: var(--dashboard-navy);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .dashboard-price-chart-body canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
   min-height: 0;
 }
 

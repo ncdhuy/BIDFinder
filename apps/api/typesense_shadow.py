@@ -1445,7 +1445,7 @@ def build_dashboard_bidder_price_series(
 
 
 def build_dashboard_price_distribution(raw_prices: Iterable[Any]) -> dict[str, Any]:
-    """Build descriptive statistics and adaptive rounded bins from valid prices."""
+    """Build descriptive statistics and seven adaptive rounded bins."""
     prices = []
     for raw_price in raw_prices:
         price = _analytics_decimal(raw_price, positive_only=True)
@@ -1469,59 +1469,56 @@ def build_dashboard_price_distribution(raw_prices: Iterable[Any]) -> dict[str, A
     p25 = quantile(Decimal("0.25"))
     p75 = quantile(Decimal("0.75"))
     minimum, maximum = prices[0], prices[-1]
-    # Central 90% sets readable ranges; under/overflow bins retain the tails.
-    binning_minimum = quantile(Decimal("0.05"))
-    binning_maximum = quantile(Decimal("0.95"))
-    binning_span = binning_maximum - binning_minimum
+    # Seven rounded, logarithmically spaced cut points keep wide price ranges
+    # readable while the first and last buckets absorb the long tails.
+    binning_minimum = max(quantile(Decimal("0.05")), Decimal("0.1"))
+    binning_maximum = max(quantile(Decimal("0.95")), binning_minimum)
+    if binning_minimum == binning_maximum:
+        binning_minimum /= 2
+        binning_maximum *= 2
 
-    def nice_ceiling(value: Decimal) -> Decimal:
-        magnitude = Decimal(10) ** value.adjusted()
-        leading = value / magnitude
-        multiplier = next((item for item in (1, 2, 5, 10) if leading <= item), 10)
-        return magnitude * multiplier
-
-    def nice_step(value: Decimal) -> Decimal:
-        magnitude = Decimal(10) ** value.adjusted()
-        leading = value / magnitude
-        multiplier = (
-            1 if leading < Decimal("1.4")
-            else 2 if leading < Decimal("3.2")
-            else 5 if leading < Decimal("7.1")
-            else 10
-        )
-        return magnitude * multiplier
-
-    boundaries = []
-    if binning_span > 0:
+    boundaries: list[Decimal] = []
+    for _ in range(24):
+        candidates = []
+        for exponent in range(
+            binning_minimum.adjusted() - 2,
+            binning_maximum.adjusted() + 3,
+        ):
+            magnitude = Decimal(10) ** exponent
+            candidates.extend(magnitude * multiplier for multiplier in (1, 2, 5))
+        candidates = sorted(set(candidates))
         log_minimum = binning_minimum.ln()
         log_span = binning_maximum.ln() - log_minimum
+        boundaries = []
+        previous = Decimal(0)
         for index in range(1, 7):
-            fraction = Decimal(index) / Decimal(7)
-            target = (log_minimum + log_span * fraction).exp()
-            boundary = nice_ceiling(target)
-            if binning_minimum < boundary < binning_maximum and boundary not in boundaries:
-                boundaries.append(boundary)
-
-        if len(boundaries) < 4:
-            step = nice_step(binning_span / Decimal(7))
-            for index in range(1, 7):
-                target = binning_minimum + binning_span * Decimal(index) / Decimal(7)
-                boundary = (target / step).to_integral_value(rounding=ROUND_HALF_UP) * step
-                if binning_minimum < boundary < binning_maximum and boundary not in boundaries:
-                    boundaries.append(boundary)
-        boundaries.sort()
-    elif minimum < maximum:
-        boundary = nice_ceiling(binning_minimum)
-        if binning_minimum < boundary < maximum:
+            target = log_minimum + log_span * Decimal(index) / Decimal(7)
+            available = [candidate for candidate in candidates if candidate > previous]
+            remaining = 6 - index
+            if len(available) <= remaining:
+                break
+            boundary = min(available, key=lambda candidate: abs(candidate.ln() - target))
             boundaries.append(boundary)
+            previous = boundary
+        if len(boundaries) == 6:
+            break
+        binning_minimum /= 2
+        binning_maximum *= 2
 
-    ranges = (
-        [(Decimal(0), boundaries[0])]
-        + list(zip(boundaries, boundaries[1:]))
-        + [(boundaries[-1], maximum)]
-        if boundaries else [(minimum, maximum)]
-    )
-    bin_counts = [0] * len(ranges)
+    if len(boundaries) != 6:
+        # Decimal logarithms retain enough precision for this fallback to
+        # produce six distinct points even for unusually narrow price ranges.
+        log_minimum = binning_minimum.ln()
+        log_span = binning_maximum.ln() - log_minimum
+        boundaries = [
+            (log_minimum + log_span * Decimal(index) / Decimal(7)).exp()
+            for index in range(1, 7)
+        ]
+
+    final_step = boundaries[-1] - boundaries[-2]
+    edges = [Decimal(0), *boundaries, max(maximum, boundaries[-1] + final_step)]
+    ranges = list(zip(edges, edges[1:]))
+    bin_counts = [0] * 7
     for price in prices:
         bin_counts[bisect_right(boundaries, price)] += 1
 
