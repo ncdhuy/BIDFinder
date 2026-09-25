@@ -121,8 +121,7 @@ install_units() {
     "BIDFINDER_RAM_WARNING_BYTES=2147483648" \
     "BIDFINDER_RAM_CRITICAL_BYTES=1073741824" \
     "BIDFINDER_SWAP_WARNING_BYTES=1073741824" \
-    "BIDFINDER_SNAPSHOT_RETENTION=3" \
-    "BIDFINDER_SCHEDULE_TIMEZONE=Asia/Ho_Chi_Minh"
+    "BIDFINDER_SNAPSHOT_RETENTION=3"
   write_if_missing "$config_dir/backend.env" \
     "BIDFINDER_PROCUREMENT_BACKEND=typesense" \
     "BIDFINDER_PROCUREMENT_FALLBACK_ENABLED=true"
@@ -135,8 +134,10 @@ install_units() {
   done
 
   systemctl --user daemon-reload
-  systemctl --user enable bidfinder-typesense.service bidfinder-api.service \
-    bidfinder-incremental.timer bidfinder-snapshot.timer bidfinder-log-prune.timer
+  systemctl --user enable bidfinder-typesense.service bidfinder-api.service
+  systemctl --user enable --now bidfinder-incremental.timer \
+    bidfinder-incremental-current-day.timer bidfinder-snapshot.timer \
+    bidfinder-log-prune.timer
   if command -v loginctl >/dev/null 2>&1; then
     loginctl enable-linger "$USER" 2>/dev/null || echo "NOTE: enable lingering manually with: sudo loginctl enable-linger $USER" >&2
   fi
@@ -207,7 +208,9 @@ from pathlib import Path
 
 payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 keys = (
-    "result", "last_run_start", "last_run_end", "latest_closed_day", "vietnam_today",
+    "result", "profile", "lookback_days", "last_run_start", "last_run_end",
+    "latest_closed_day", "vietnam_today",
+    "approval_summary_through",
     "current_day_included",
     "coverage_through", "dates_processed", "partitions_processed",
     "records_accepted", "retries", "rejected", "conflicts", "next_expected_date",

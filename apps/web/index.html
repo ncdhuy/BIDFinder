@@ -6,7 +6,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://accounts.google.com https://cdn.jsdelivr.net https://cdn.sheetjs.com https://us-assets.i.posthog.com https://eu-assets.i.posthog.com https://app-assets.i.posthog.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com data:; connect-src 'self' http://127.0.0.1:8002 https://api.bidfinder.vn https://accounts.google.com https://us.i.posthog.com https://eu.i.posthog.com https://app.posthog.com; frame-src https://accounts.google.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self' https://accounts.google.com;">
     <meta name="referrer" content="strict-origin-when-cross-origin">
     <title>BIDFinder - Hệ thống quản lý dữ liệu đấu thầu y tế</title>
-    <link rel="stylesheet" href="style.css?v=dashboard-bidder-price-bands-20260923">
+    <link rel="stylesheet" href="style.css?v=dashboard-table-resize-20260925">
     <link rel="stylesheet" href="auth.css">
     <script src="https://unpkg.com/feather-icons"></script>
 </head>
@@ -142,7 +142,7 @@
                 <div id="data-tab" class="tab-content active">
                     <div class="result-table-tabs toolbar" id="data-view-switcher">
                         <div class="result-table-tab-list toolbar-navigation">
-                            <div class="result-table-tab-choice" role="tablist" aria-label="Chọn miền dữ liệu">
+                            <div class="result-table-tab-choice" role="tablist" aria-label="Chọn bảng dữ liệu hoặc Dashboard">
                                 <button class="scope-btn result-table-tab" type="button" data-view="df2-panel" aria-selected="false" role="tab" title="Hàng hóa">
                                     <span class="tab-plate" aria-hidden="true"></span>
                                     <span class="scope-icon" aria-hidden="true">
@@ -167,12 +167,11 @@
                                     <span class="scope-text">Dược liệu</span>
                                     <span class="scope-count" id="df3-count-switcher">0</span>
                                 </button>
-                            </div>
-                            <div class="dashboard-view-choice" aria-label="Không gian phân tích">
-                                <span class="dashboard-view-label">Phân tích</span>
                                 <button class="scope-btn result-table-tab dashboard-tab" type="button" data-view="dashboard-panel" aria-selected="false" role="tab" title="Dashboard phân tích">
+                                    <span class="tab-plate" aria-hidden="true"></span>
                                     <span class="scope-icon" aria-hidden="true"><i data-feather="bar-chart-2"></i></span>
                                     <span class="scope-text">Dashboard</span>
+                                    <span class="dashboard-status-indicator" aria-hidden="true"></span>
                                 </button>
                             </div>
                         </div>
@@ -193,10 +192,7 @@
                                 <i data-feather="search" aria-hidden="true"></i>
                             </button>
                             <button class="action-btn" id="open-ai-search" type="button" aria-label="Tìm kiếm bằng AI" title="Tìm kiếm bằng AI" aria-controls="ai-search-chat" aria-expanded="false">
-                                <svg class="ai-search-toolbar-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 2l1.7 6.3L20 10l-6.3 1.7L12 18l-1.7-6.3L4 10l6.3-1.7L12 2zm7 13l.7 2.3L22 18l-2.3.7L19 21l-.7-2.3L16 18l2.3-.7L19 15z" fill="currentColor"/></svg>
-                            </button>
-                            <button id="open-insight-drawer" class="btn-meta-simple" type="button" aria-label="Phân tích trực quan" title="Phân tích trực quan" aria-controls="insight-drawer" aria-expanded="false">
-                                <i data-feather="bar-chart-2" aria-hidden="true"></i>
+                                <span class="ai-search-toolbar-label" aria-hidden="true">Ai</span>
                             </button>
                         </div>
                         <div class="workspace-status">
@@ -379,12 +375,6 @@
                                     </div>
                                 </div>
                             </div>
-                            <div class="dashboard-selection-bar" id="dashboard-selection-bar" hidden>
-                                <span class="dashboard-selection-label">Đang khám phá:</span>
-                                <div class="dashboard-selection-chips" id="dashboard-selection-chips"></div>
-                                <button class="dashboard-clear-btn" id="dashboard-clear-selections" type="button">Xóa lựa chọn</button>
-                            </div>
-
                             <div class="dashboard-grid dashboard-kpi-grid">
                                 <article class="dashboard-kpi-card" data-dashboard-widget="summary">
                                     <span class="dashboard-kpi-icon" aria-hidden="true"><i data-feather="dollar-sign"></i></span>
@@ -450,25 +440,46 @@
                                 <article class="dashboard-widget dashboard-price-widget" data-dashboard-widget="bidder_price_bands">
                                     <div class="dashboard-widget-head">
                                         <div>
-                                            <h3 class="dashboard-widget-title"><i data-feather="bar-chart-2" aria-hidden="true"></i><span>Top nhà thầu theo vùng đơn giá trúng phổ biến</span></h3>
-                                            <p>Xếp hạng theo số lần trúng thầu trong vùng giá</p>
+                                            <h3 class="dashboard-widget-title"><i data-feather="bar-chart-2" aria-hidden="true"></i><span>Top nhà thầu trúng thầu</span></h3>
                                         </div>
                                     </div>
                                     <div class="dashboard-widget-body dashboard-investors-wrap dashboard-price-bands-wrap">
-                                        <table class="dashboard-investors-table dashboard-price-band-table">
-                                            <thead><tr><th scope="col">#</th><th scope="col">Tên nhà thầu</th><th scope="col">Vùng đơn giá trúng phổ biến</th><th scope="col">Tổng giá trị tương ứng</th></tr></thead>
+                                        <table class="dashboard-investors-table dashboard-price-band-table dashboard-resizable-table">
+                                            <colgroup>
+                                                <col data-min-width="40" style="width: 10%">
+                                                <col data-min-width="96" style="width: 33%">
+                                                <col data-min-width="92" style="width: 31%">
+                                                <col data-min-width="76" style="width: 26%">
+                                            </colgroup>
+                                            <thead><tr>
+                                                <th scope="col">#</th>
+                                                <th scope="col">Tên nhà thầu<span class="dashboard-column-resizer" data-column-resize="1" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Đổi độ rộng cột Tên nhà thầu"></span></th>
+                                                <th scope="col">Đơn giá phổ biến<span class="dashboard-column-resizer" data-column-resize="2" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Đổi độ rộng cột Đơn giá phổ biến"></span></th>
+                                                <th scope="col">Tổng giá trị</th>
+                                            </tr></thead>
                                             <tbody id="dashboard-bidder-price-bands"></tbody>
                                         </table>
                                     </div>
                                 </article>
                                 <article class="dashboard-widget dashboard-investors-widget" data-dashboard-widget="top_investors">
                                     <div class="dashboard-widget-head">
-                                        <div><h3 class="dashboard-widget-title"><i data-feather="briefcase" aria-hidden="true"></i><span>Top chủ đầu tư</span></h3><p>Xếp theo tổng giá trị trúng thầu.</p></div>
+                                        <div><h3 class="dashboard-widget-title"><i data-feather="briefcase" aria-hidden="true"></i><span>Top chủ đầu tư</span></h3></div>
                                         <button class="dashboard-link-btn" id="dashboard-show-all-investors" type="button" hidden>Xem tất cả</button>
                                     </div>
                                     <div class="dashboard-widget-body dashboard-investors-wrap">
-                                        <table class="dashboard-investors-table">
-                                            <thead><tr><th>#</th><th>Tên chủ đầu tư</th><th>Số gói thầu</th><th>Tổng giá trị</th></tr></thead>
+                                        <table class="dashboard-investors-table dashboard-resizable-table">
+                                            <colgroup>
+                                                <col data-min-width="40" style="width: 10%">
+                                                <col data-min-width="96" style="width: 44%">
+                                                <col data-min-width="70" style="width: 22%">
+                                                <col data-min-width="76" style="width: 24%">
+                                            </colgroup>
+                                            <thead><tr>
+                                                <th scope="col">#</th>
+                                                <th scope="col">Tên chủ đầu tư<span class="dashboard-column-resizer" data-column-resize="1" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Đổi độ rộng cột Tên chủ đầu tư"></span></th>
+                                                <th scope="col">Số gói thầu<span class="dashboard-column-resizer" data-column-resize="2" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Đổi độ rộng cột Số gói thầu"></span></th>
+                                                <th scope="col">Tổng giá trị</th>
+                                            </tr></thead>
                                             <tbody id="dashboard-top-investors"></tbody>
                                         </table>
                                     </div>
@@ -520,76 +531,6 @@
         <footer class="app-footer">
             © 2026 Hệ thống quản lý dữ liệu đấu thầu y tế
         </footer>
-    </div>
-
-    <div id="insight-drawer" class="insight-drawer" aria-hidden="true">
-        <div class="insight-drawer-overlay" data-insight-close></div>
-        <section class="insight-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="insight-drawer-title">
-            <header class="insight-drawer-header">
-                <div class="insight-drawer-title-group">
-                    <span class="insight-drawer-kicker">Phân tích trực quan</span>
-                    <h3 id="insight-drawer-title">Insight từ kết quả tìm kiếm</h3>
-                </div>
-                <button id="close-insight-drawer" class="btn-close window-close-button" type="button" aria-label="Đóng">
-                    <i data-feather="x"></i>
-                </button>
-            </header>
-
-            <div class="insight-drawer-body">
-                <nav class="insight-preview-list" aria-label="Chọn biểu đồ">
-                    <button class="insight-preview-card active" type="button" data-chart-view="province" aria-pressed="true">
-                        <span class="insight-preview-visual insight-preview-visual-map is-data-preview" id="insight-preview-province" aria-hidden="true">
-                            <i data-feather="map" class="insight-preview-icon-simple" aria-hidden="true"></i>
-                        </span>
-                        <span class="insight-preview-copy">
-                            <strong>Theo tỉnh/thành</strong>
-                            <span>Tổng giá trị trúng thầu</span>
-                        </span>
-                    </button>
-                    <button class="insight-preview-card" type="button" data-chart-view="timeline" aria-pressed="false">
-                        <span class="insight-preview-visual insight-preview-visual-line is-data-preview" id="insight-preview-timeline" aria-hidden="true">
-                            <i data-feather="trending-up" class="insight-preview-icon-simple" aria-hidden="true"></i>
-                        </span>
-                        <span class="insight-preview-copy">
-                            <strong>Theo thời gian</strong>
-                            <span>Tổng giá trị trúng thầu</span>
-                        </span>
-                    </button>
-                    <button class="insight-preview-card" type="button" data-chart-view="price" aria-pressed="false">
-                        <span class="insight-preview-visual insight-preview-visual-bars is-data-preview" id="insight-preview-price" aria-hidden="true">
-                            <i data-feather="bar-chart-2" class="insight-preview-icon-simple" aria-hidden="true"></i>
-                        </span>
-                        <span class="insight-preview-copy">
-                            <strong>Phân bố đơn giá</strong>
-                            <span>Xu hướng giá trúng thầu</span>
-                        </span>
-                    </button>
-                </nav>
-
-                <div class="insight-chart-stage">
-                    <article class="chart-block chart-block-province insight-chart-panel active" data-chart-panel="province">
-                        <h3>Tổng giá trị trúng thầu theo tỉnh/thành</h3>
-                        <div class="chart-block-body">
-                            <div id="chart-province-map" class="vietnam-province-map" role="img" aria-label="Bản đồ tổng giá trị trúng thầu theo tỉnh/thành"></div>
-                        </div>
-                    </article>
-
-                    <article class="chart-block chart-block-timeline insight-chart-panel" data-chart-panel="timeline">
-                        <h3>Tổng giá trị trúng thầu theo tháng</h3>
-                        <div class="chart-block-body">
-                            <canvas id="chart-timeline-value"></canvas>
-                        </div>
-                    </article>
-
-                    <article class="chart-block chart-block-price insight-chart-panel" data-chart-panel="price">
-                        <h3>Phân bố đơn giá</h3>
-                        <div class="chart-block-body">
-                            <canvas id="chart-price-histogram"></canvas>
-                        </div>
-                    </article>
-                </div>
-            </div>
-        </section>
     </div>
 
     <div id="auth-modal" class="auth-modal" aria-hidden="true">
@@ -1047,7 +988,7 @@
                         <article class="history-summary-card history-summary-card-goods">
                             <div class="history-summary-heading">
                                 <i data-feather="package"></i>
-                                <span>Hàng hóa có đơn giá cao nhất</span>
+                                <span>Sản phẩm có đơn giá cao nhất</span>
                             </div>
                             <strong id="history-summary-goods-value">—</strong>
                             <span class="history-summary-detail" id="history-summary-goods-detail">Chưa có dữ liệu trong ngày</span>
@@ -1275,8 +1216,8 @@
     <script src="analytics.js"></script>
     <script src="config.js"></script>
     <script src="auth.js"></script>
-    <script src="typesense-search-form.js"></script>
-    <script src="script.js?v=dashboard-bidder-price-bands-20260923"></script>
+    <script src="typesense-search-form.js?v=dashboard-context-labels-20260925"></script>
+<script src="script.js?v=feature-intro-interactive-demo-20260925"></script>
     <script src="ai-search-chat.js"></script>
     <script>
         feather.replace();

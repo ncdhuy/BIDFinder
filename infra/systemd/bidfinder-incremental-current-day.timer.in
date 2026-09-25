@@ -1,0 +1,31 @@
+[Unit]
+Description=BIDFinder current-day incremental schedule
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 07:00:00 Asia/Ho_Chi_Minh
+OnCalendar=Mon..Fri *-*-* 07:30:00 Asia/Ho_Chi_Minh
+OnCalendar=Mon..Fri *-*-* 08:00:00 Asia/Ho_Chi_Minh
+OnCalendar=Mon..Fri *-*-* 08:30:00 Asia/Ho_Chi_Minh
+OnCalendar=Mon..Fri *-*-* 09:00:00 Asia/Ho_Chi_Minh
+OnCalendar=Mon..Fri *-*-* 09:30:00 Asia/Ho_Chi_Minh
+OnCalendar=Mon..Fri *-*-* 10:00:00 Asia/Ho_Chi_Minh
+OnCalendar=Mon..Fri *-*-* 10:30:00 Asia/Ho_Chi_Minh
+OnCalendar=Mon..Fri *-*-* 11:00:00 Asia/Ho_Chi_Minh
+OnCalendar=Mon..Fri *-*-* 11:30:00 Asia/Ho_Chi_Minh
+OnCalendar=Mon..Fri *-*-* 12:00:00 Asia/Ho_Chi_Minh
+OnCalendar=Mon..Fri *-*-* 12:30:00 Asia/Ho_Chi_Minh
+OnCalendar=Mon..Fri *-*-* 13:00:00 Asia/Ho_Chi_Minh
+OnCalendar=Mon..Fri *-*-* 13:30:00 Asia/Ho_Chi_Minh
+OnCalendar=Mon..Fri *-*-* 14:00:00 Asia/Ho_Chi_Minh
+OnCalendar=Mon..Fri *-*-* 14:30:00 Asia/Ho_Chi_Minh
+OnCalendar=Mon..Fri *-*-* 15:00:00 Asia/Ho_Chi_Minh
+OnCalendar=Mon..Fri *-*-* 15:30:00 Asia/Ho_Chi_Minh
+OnCalendar=Mon..Fri *-*-* 16:00:00 Asia/Ho_Chi_Minh
+OnCalendar=Mon..Fri *-*-* 16:30:00 Asia/Ho_Chi_Minh
+OnCalendar=Sat,Sun *-*-* 08:00:00 Asia/Ho_Chi_Minh
+AccuracySec=1m
+Persistent=false
+Unit=bidfinder-incremental-current-day.service
+
+[Install]
+WantedBy=timers.target

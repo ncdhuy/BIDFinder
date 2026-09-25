@@ -1,11 +1,9 @@
 [Unit]
-Description=BIDFinder daily closed-day incremental schedule
+Description=BIDFinder daily reconciliation incremental schedule
 
 [Timer]
-OnCalendar=*-*-* 08:00:00 Asia/Ho_Chi_Minh
-OnCalendar=*-*-* 11:00:00 Asia/Ho_Chi_Minh
 OnCalendar=*-*-* 17:00:00 Asia/Ho_Chi_Minh
-AccuracySec=5m
+AccuracySec=1m
 Persistent=false
 Unit=bidfinder-incremental.service
 

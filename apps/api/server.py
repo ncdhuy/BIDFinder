@@ -6,7 +6,7 @@ import time
 import copy
 import hashlib
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone, time as datetime_time
 import secrets
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -56,8 +56,8 @@ from typesense_shadow import (
     TypesenseSearchRepository,
     TypesenseShadowError,
     aggregate_dashboard_documents,
-    build_dashboard_column_filter_clauses,
     build_dashboard_selection_clauses,
+    filter_dashboard_columns,
     build_bulk_canonical_query,
     build_canonical_query,
     schedule_shadow_autocomplete,
@@ -106,6 +106,7 @@ cache_lock = asyncio.Lock()
 preview_cache: Dict[str, Dict[str, Any]] = {}
 autocomplete_cache: Dict[str, Dict[str, Any]] = {}
 metadata_cache: Dict[str, Dict[str, Any]] = {}
+update_dashboard_cache: Dict[str, Dict[str, Any]] = {}
 SERVING_REPORT_PATH = os.getenv("BIDFINDER_SERVING_REPORT_PATH", "").strip()
 
 
@@ -254,6 +255,7 @@ ALLOWED_HOSTS = CONFIGURED_ALLOWED_HOSTS or (
 )
 RATE_LIMIT_WINDOW_SECONDS = get_env_int("RATE_LIMIT_WINDOW_SECONDS", 60, minimum=10)
 QUERY_RATE_LIMIT_PER_MINUTE = get_env_int("QUERY_RATE_LIMIT_PER_MINUTE", 30, minimum=1)
+DASHBOARD_ANALYTICS_MAX_ROWS = get_env_int("BIDFINDER_DASHBOARD_ANALYTICS_MAX_ROWS", 10000, minimum=1)
 AUTOCOMPLETE_RATE_LIMIT_PER_MINUTE = get_env_int("AUTOCOMPLETE_RATE_LIMIT_PER_MINUTE", 120, minimum=1)
 PREVIEW_RATE_LIMIT_PER_MINUTE = get_env_int("PREVIEW_RATE_LIMIT_PER_MINUTE", 90, minimum=1)
 METADATA_RATE_LIMIT_PER_MINUTE = get_env_int("METADATA_RATE_LIMIT_PER_MINUTE", 20, minimum=1)
@@ -836,6 +838,7 @@ class DashboardSelection(BaseModel):
     product: Optional[str] = None
     province: Optional[str] = None
     investor: Optional[str] = None
+    bidder: Optional[str] = None
 
 
 class DashboardAnalyticsRequest(QueryPreviewRequest):
@@ -3190,6 +3193,77 @@ async def get_optional_authenticated_user(conn: asyncpg.Connection, request: Req
     return await get_authenticated_user(conn, raw_token)
 
 
+FEATURE_INTRO_KEY = "new_features_20260925"
+feature_intro_table_ready = False
+feature_intro_table_lock = asyncio.Lock()
+
+
+async def ensure_feature_intro_table(conn: asyncpg.Connection) -> None:
+    global feature_intro_table_ready
+    if feature_intro_table_ready:
+        return
+    async with feature_intro_table_lock:
+        if not feature_intro_table_ready:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS app_feature_intro_seen (
+                    intro_key TEXT NOT NULL,
+                    identity_key TEXT NOT NULL,
+                    seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (intro_key, identity_key)
+                )
+            """)
+            feature_intro_table_ready = True
+
+
+async def feature_intro_context(conn: asyncpg.Connection, request: Request) -> tuple[list[str], bool]:
+    ip_hash = hashlib.sha256(get_client_ip(request).encode("utf-8")).hexdigest()
+    identities = [f"ip:{ip_hash}"]
+    user = await get_optional_authenticated_user(conn, request)
+    if user and user.get("id") is not None:
+        identities.append(f"user:{user['id']}")
+    return identities, is_feedback_admin(user)
+
+
+@app.get("/api/feature-intro")
+async def get_feature_intro_status(request: Request):
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            identities, is_admin = await feature_intro_context(conn, request)
+            if is_admin:
+                return {"show": True, "repeatable": True}
+            await ensure_feature_intro_table(conn)
+            seen = await conn.fetchval(
+                "SELECT 1 FROM app_feature_intro_seen WHERE intro_key = $1 AND identity_key = ANY($2::text[]) LIMIT 1",
+                FEATURE_INTRO_KEY, identities,
+            )
+        return {"show": not bool(seen)}
+    except Exception as exc:
+        log_server_exception("get_feature_intro_status failed", exc)
+        return internal_error_response()
+
+
+@app.post("/api/feature-intro/claim")
+async def claim_feature_intro(request: Request):
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            identities, is_admin = await feature_intro_context(conn, request)
+            if is_admin:
+                return {"show": True, "repeatable": True}
+            await ensure_feature_intro_table(conn)
+            claimed = await conn.fetch("""
+                INSERT INTO app_feature_intro_seen (intro_key, identity_key)
+                SELECT $1, UNNEST($2::text[])
+                ON CONFLICT DO NOTHING
+                RETURNING identity_key
+            """, FEATURE_INTRO_KEY, identities)
+        return {"show": len(claimed) == len(identities)}
+    except Exception as exc:
+        log_server_exception("claim_feature_intro failed", exc)
+        return internal_error_response()
+
+
 async def build_auth_success_response(
     request: Request,
     *,
@@ -4290,6 +4364,10 @@ async def dashboard_analytics(request: Request, payload: DashboardAnalyticsReque
 
     filters = payload.filters or FilterRequest()
     groups = _query_groups(payload)
+    group_limits = {
+        group: DASHBOARD_ANALYTICS_MAX_ROWS // len(groups) + (index < DASHBOARD_ANALYTICS_MAX_ROWS % len(groups))
+        for index, group in enumerate(groups)
+    }
     selection = payload.dashboardSelection.model_dump(exclude_none=True)
     include_fields_by_group = {
         "medicines": (
@@ -4310,10 +4388,14 @@ async def dashboard_analytics(request: Request, payload: DashboardAnalyticsReque
     }
     include_fields_by_group["traditional_medicine"] = include_fields_by_group["traditional"]
 
-    async with optional_db_connection(request, "full_query") as conn:
-        await enforce_data_access_policy(conn, request, "full_query")
+    # Dashboard is an aggregate projection of the active search/filter state.
+    # It must use the same anonymous preview boundary as search preview instead
+    # of introducing a separate login gate. The capped matching window is
+    # aggregated server-side; raw documents are never returned.
+    async with optional_db_connection(request, "preview") as conn:
+        await enforce_data_access_policy(conn, request, "preview")
 
-        async def fetch_group(group: str) -> tuple[str, list[Mapping[str, Any]]]:
+        async def fetch_group(group: str) -> tuple[str, list[Mapping[str, Any]], bool, int]:
             query = build_canonical_query(
                 group,
                 filters,
@@ -4336,29 +4418,73 @@ async def dashboard_analytics(request: Request, payload: DashboardAnalyticsReque
             scoped_column_filters = payload.columnFilters.get(group) or payload.columnFilters.get(query.group) or {}
             if query.group == "traditional_medicine":
                 scoped_column_filters = scoped_column_filters or payload.columnFilters.get("traditional") or {}
-            clauses = (
-                *build_dashboard_selection_clauses(query.group, selection),
-                *build_dashboard_column_filter_clauses(query.group, scoped_column_filters),
-            )
-            documents = await typesense_search_repository.analytics_documents(
+            filter_dashboard_columns(query.group, (), scoped_column_filters)
+            if any(
+                rule == [] or (isinstance(rule, dict) and rule.get("values") == [])
+                for rule in scoped_column_filters.values()
+            ):
+                return query.group, [], False, 0
+            if group_limits[group] == 0:
+                return query.group, [], True, 0
+            clauses = build_dashboard_selection_clauses(query.group, selection)
+            filter_fields = tuple(canonical_field_for(query.group, name) or name for name in scoped_column_filters)
+            found, documents = await typesense_search_repository.analytics_documents(
                 query,
                 additional_filter_clauses=clauses,
-                include_fields=include_fields_by_group.get(group, include_fields_by_group["goods"]),
+                include_fields=(*include_fields_by_group.get(group, include_fields_by_group["goods"]), *filter_fields),
+                max_documents=group_limits[group],
+                with_found=True,
             )
-            return query.group, documents
+            filtered = await asyncio.to_thread(filter_dashboard_columns, query.group, documents, scoped_column_filters)
+            return query.group, filtered, found > len(documents), len(documents)
 
+        async def wait_for_disconnect() -> None:
+            while not await request.is_disconnected():
+                await asyncio.sleep(0.1)
+
+        group_tasks = [asyncio.create_task(fetch_group(group)) for group in groups]
+        group_task = asyncio.gather(*group_tasks)
+        disconnect_task = asyncio.create_task(wait_for_disconnect())
         try:
-            group_documents = dict(await asyncio.gather(*(fetch_group(group) for group in groups)))
+            done, _ = await asyncio.wait({group_task, disconnect_task}, return_when=asyncio.FIRST_COMPLETED)
+            if disconnect_task in done and group_task not in done:
+                disconnect_task.result()
+                group_task.cancel()
+                await asyncio.gather(group_task, return_exceptions=True)
+                return Response(status_code=499)
+            group_results = await group_task
         except TypesenseShadowError as exc:
             status_code = 503 if exc.code == SHADOW_INFRA_ERROR else 422
             raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+        finally:
+            disconnect_task.cancel()
+            for task in group_tasks:
+                task.cancel()
+            await asyncio.gather(disconnect_task, *group_tasks, return_exceptions=True)
 
-    analytics = aggregate_dashboard_documents(group_documents, selected_product=selection.get("product"))
+    group_documents = {group: documents for group, documents, _truncated, _scanned in group_results}
+    truncated = any(group_truncated for _group, _documents, group_truncated, _scanned in group_results)
+    scanned_count = sum(scanned for _group, _documents, _truncated, scanned in group_results)
+    analytics = await asyncio.to_thread(
+        aggregate_dashboard_documents,
+        group_documents,
+        selected_product=selection.get("product"),
+        selected_bidder=selection.get("bidder"),
+        selected_investor=selection.get("investor"),
+    )
+    analytics["meta"].update({
+        "complete": not truncated,
+        "scan_limit": DASHBOARD_ANALYTICS_MAX_ROWS,
+        "scanned_documents": scanned_count,
+        "scan_limits_by_group": group_limits,
+    })
     return JSONResponse(content={
         "success": True,
         "backend": "typesense",
-        "analytics_complete": True,
-        "result_universe": "all_matching_documents",
+        "analytics_complete": not truncated,
+        "result_universe": "capped_matching_documents" if truncated else "all_matching_documents",
+        "scan_limit": DASHBOARD_ANALYTICS_MAX_ROWS,
+        "scanned_documents": scanned_count,
         **analytics,
     })
 
@@ -4943,8 +5069,255 @@ async def autocomplete(request: Request, payload: AutocompleteRequest):
         return JSONResponse(status_code=500, content={"success": False, "error": SERVER_ERROR_MESSAGE, "data": []})
 
 
+WEEKDAY_UPDATE_SCHEDULE = tuple(
+    (datetime_time(hour=hour, minute=minute), f"{hour:02d}:{minute:02d}")
+    for hour in range(7, 17)
+    for minute in (0, 30)
+) + ((datetime_time(hour=17), "17:00"),)
+WEEKEND_UPDATE_SCHEDULE = (
+    (datetime_time(hour=8), "08:00"),
+    (datetime_time(hour=17), "17:00"),
+)
+
+
+def get_update_schedule(day: date) -> tuple[tuple[datetime_time, str], ...]:
+    return WEEKEND_UPDATE_SCHEDULE if day.weekday() >= 5 else WEEKDAY_UPDATE_SCHEDULE
+
+
+def get_update_snapshot(now: datetime | None = None) -> tuple[date, bool, str]:
+    """Return the dashboard day and latest completed scheduled update time."""
+    if now is None:
+        current = datetime.now(AI_USAGE_TIMEZONE)
+    elif now.tzinfo is None:
+        current = now.replace(tzinfo=AI_USAGE_TIMEZONE)
+    else:
+        current = now.astimezone(AI_USAGE_TIMEZONE)
+    current_time = current.timetz().replace(tzinfo=None)
+    schedule = get_update_schedule(current.date())
+    if current_time < schedule[0][0]:
+        return current.date() - timedelta(days=1), False, schedule[-1][1]
+    for slot, label in reversed(schedule):
+        if current_time >= slot:
+            return current.date(), True, label
+    return current.date() - timedelta(days=1), False, schedule[-1][1]
+
+
+def get_update_display_day(now: datetime | None = None) -> tuple[date, bool]:
+    """Return the Vietnam business day represented by the history dashboard."""
+    display_day, is_current_day, _ = get_update_snapshot(now)
+    return display_day, is_current_day
+
+
+def has_update_summary_data(summary: Mapping[str, Any]) -> bool:
+    return bool(
+        summary.get("approved_package_count")
+        or summary.get("highest_package")
+        or summary.get("highest_goods")
+    )
+
+
+async def fetch_approval_timeline(
+    conn: asyncpg.Connection | None,
+    through_day: date,
+    start_day: date,
+) -> list[dict[str, Any]]:
+    """Read the precomputed daily rollup, with a Typesense transition fallback."""
+    if conn is not None:
+        serving_generation = getattr(typesense_search_repository.config, "serving_generation", None)
+        try:
+            if serving_generation:
+                rows = await conn.fetch(
+                    """
+                    SELECT data_date, approved_package_count
+                    FROM daily_approval_summary
+                    WHERE data_date BETWEEN $1 AND $2
+                      AND serving_generation = $3
+                    ORDER BY data_date
+                    """,
+                    start_day,
+                    through_day,
+                    serving_generation,
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    SELECT data_date, approved_package_count
+                    FROM daily_approval_summary
+                    WHERE data_date BETWEEN $1 AND $2
+                    ORDER BY data_date
+                    """,
+                    start_day,
+                    through_day,
+                )
+        except asyncpg.UndefinedTableError:
+            rows = []
+
+        stored_counts = {
+            row["data_date"]: int(row["approved_package_count"])
+            for row in rows
+        }
+        missing_ranges = []
+        missing_start = None
+        current_day = start_day
+        while current_day <= through_day:
+            if current_day not in stored_counts:
+                if missing_start is None:
+                    missing_start = current_day
+            elif missing_start is not None:
+                missing_ranges.append((missing_start, current_day - timedelta(days=1)))
+                missing_start = None
+            current_day += timedelta(days=1)
+        if missing_start is not None:
+            missing_ranges.append((missing_start, through_day))
+
+        if not missing_ranges:
+            return [
+                {"date": day.isoformat(), "count": stored_counts[day]}
+                for day in sorted(stored_counts)
+            ]
+
+        logger.warning(
+            "daily approval summary incomplete; scanning missing dates in Typesense",
+            extra={
+                "start_day": start_day.isoformat(),
+                "through_day": through_day.isoformat(),
+                "rows": len(rows),
+                "missing_days": sum((end - start).days + 1 for start, end in missing_ranges),
+            },
+        )
+        for missing_start, missing_end in missing_ranges:
+            fallback_rows = await typesense_search_repository.update_timeline(
+                today=missing_end,
+                start_day=missing_start,
+            )
+            for row in fallback_rows:
+                day = date.fromisoformat(row["date"])
+                if missing_start <= day <= missing_end:
+                    stored_counts[day] = int(row["count"])
+        return [
+            {"date": day.isoformat(), "count": stored_counts.get(day, 0)}
+            for day in (start_day + timedelta(days=offset) for offset in range((through_day - start_day).days + 1))
+        ]
+    return await typesense_search_repository.update_timeline(today=through_day, start_day=start_day)
+
+
+async def fetch_update_dashboard(
+    conn: asyncpg.Connection | None,
+    display_day: date,
+    *,
+    is_current_day: bool = True,
+    snapshot_time: str = "08:00",
+) -> dict[str, Any]:
+    async def read_summary(day: date) -> dict[str, Any]:
+        if conn is not None:
+            try:
+                stored = await conn.fetchval(
+                    """
+                    SELECT summary
+                    FROM daily_update_dashboard
+                    WHERE data_date = $1 AND serving_generation = $2
+                    """,
+                    day,
+                    typesense_search_repository.config.serving_generation,
+                )
+            except asyncpg.UndefinedTableError:
+                stored = None
+            if stored is not None:
+                summary = json.loads(stored) if isinstance(stored, str) else dict(stored)
+                if (
+                    "primary_data_available" not in summary
+                    and summary.get("approved_package_count")
+                    and not summary.get("highest_package")
+                    and not summary.get("highest_goods")
+                ):
+                    try:
+                        return await typesense_search_repository.daily_summary(day)
+                    except TypesenseShadowError:
+                        logger.warning("Could not refresh legacy daily dashboard summary for %s", day)
+                return summary
+        return await typesense_search_repository.daily_summary(day)
+
+    data_day = display_day
+    typesense_summary = await read_summary(data_day)
+    if is_current_day and not has_update_summary_data(typesense_summary):
+        fallback_day = display_day - timedelta(days=1)
+        fallback_summary = await read_summary(fallback_day)
+        if has_update_summary_data(fallback_summary):
+            data_day = fallback_day
+            typesense_summary = fallback_summary
+
+    typesense_package = typesense_summary.get("highest_package")
+    highest_goods = typesense_summary.get("highest_goods")
+    typesense_count = int(typesense_summary.get("approved_package_count") or 0)
+    if conn is None:
+        return {
+            "date": display_day.isoformat(),
+            "data_date": data_day.isoformat(),
+            "timezone": "Asia/Ho_Chi_Minh",
+            "cutoff": snapshot_time,
+            "is_current_day": is_current_day,
+            "used_fallback_data": data_day != display_day,
+            "approved_package_count": typesense_count,
+            "highest_package": typesense_package,
+            "highest_goods": highest_goods,
+            "data_available": bool(typesense_count or typesense_package or highest_goods),
+        }
+
+    highest_package = await conn.fetchrow(
+        """
+        WITH parsed AS (
+            SELECT
+                ma_tbmt,
+                chu_dau_tu,
+                ten_goi_thau,
+                NULLIF(regexp_replace(COALESCE(gia_goi_thau, ''), '[^0-9]', '', 'g'), '')::numeric AS value_num
+            FROM package_metadata
+            WHERE ngay_phe_duyet_date = $1
+        )
+        SELECT ma_tbmt, chu_dau_tu, ten_goi_thau, value_num
+        FROM parsed
+        WHERE value_num IS NOT NULL AND value_num > 0
+        ORDER BY value_num DESC, ma_tbmt
+        LIMIT 1
+        """,
+        data_day,
+    )
+    package_payload = None
+    if typesense_package:
+        package_payload = dict(typesense_package)
+    if highest_package and (
+        (package_payload is None and not typesense_summary.get("primary_data_available"))
+        or (package_payload is not None and package_payload.get("bid_invitation_code") == str(highest_package["ma_tbmt"] or "").strip())
+    ):
+        value = highest_package["value_num"]
+        if package_payload is None:
+            package_payload = {
+                "value": int(value) if value == value.to_integral_value() else float(value),
+                "owner": str(highest_package["chu_dau_tu"] or "").strip() or None,
+                "name": str(highest_package["ten_goi_thau"] or "").strip() or None,
+                "bid_invitation_code": str(highest_package["ma_tbmt"] or "").strip() or None,
+                "date": data_day.isoformat(),
+            }
+        else:
+            package_payload["owner"] = str(highest_package["chu_dau_tu"] or "").strip() or package_payload.get("owner")
+            package_payload["name"] = str(highest_package["ten_goi_thau"] or "").strip() or package_payload.get("name")
+
+    return {
+        "date": display_day.isoformat(),
+        "data_date": data_day.isoformat(),
+        "timezone": "Asia/Ho_Chi_Minh",
+        "cutoff": snapshot_time,
+        "is_current_day": is_current_day,
+        "used_fallback_data": data_day != display_day,
+        "approved_package_count": typesense_count,
+        "highest_package": package_payload,
+        "highest_goods": highest_goods,
+        "data_available": bool(typesense_count or package_payload or highest_goods),
+    }
+
+
 @app.get("/api/metadata")
-async def get_metadata(request: Request):
+async def get_metadata(request: Request, history_days: int = 30):
     limited = await enforce_rate_limit(request, "metadata", METADATA_RATE_LIMIT_PER_MINUTE)
     if limited:
         return limited
@@ -4952,18 +5325,50 @@ async def get_metadata(request: Request):
     try:
         async with optional_db_connection(request, "metadata") as conn:
             await enforce_data_access_policy(conn, request, "metadata")
-            cache_key = "metadata:typesense-v1"
+            display_day, is_current_day, snapshot_time = get_update_snapshot()
+            history_days = min(max(int(history_days), 30), 180)
+            start_day = display_day - timedelta(days=history_days - 1)
+            cache_key = f"metadata:typesense-v2:{display_day.isoformat()}:{snapshot_time}:{history_days}"
             cached = await get_cached_payload(metadata_cache, cache_key)
             if cached is not None:
                 return JSONResponse(content=cached)
 
-            update_timeline = await typesense_search_repository.update_timeline()
+            dashboard_cache_key = f"update-dashboard:v1:{display_day.isoformat()}:{snapshot_time}"
+            update_dashboard = await get_cached_payload(update_dashboard_cache, dashboard_cache_key)
+            if update_dashboard is None:
+                if conn is None:
+                    update_timeline, update_dashboard = await asyncio.gather(
+                        fetch_approval_timeline(conn, display_day, start_day),
+                        fetch_update_dashboard(
+                            conn,
+                            display_day,
+                            is_current_day=is_current_day,
+                            snapshot_time=snapshot_time,
+                        ),
+                    )
+                else:
+                    update_timeline = await fetch_approval_timeline(conn, display_day, start_day)
+                    update_dashboard = await fetch_update_dashboard(
+                        conn,
+                        display_day,
+                        is_current_day=is_current_day,
+                        snapshot_time=snapshot_time,
+                    )
+                await set_cached_payload(
+                    update_dashboard_cache,
+                    dashboard_cache_key,
+                    update_dashboard,
+                    METADATA_CACHE_TTL_SECONDS,
+                )
+            else:
+                update_timeline = await fetch_approval_timeline(conn, display_day, start_day)
 
         payload = {
             "success": True,
-            "source": "typesense",
+            "source": "typesense+postgres",
             "history": [],
             "update_timeline": update_timeline,
+            "update_dashboard": update_dashboard,
             "last_run": None,
             "total_runs": 0,
         }

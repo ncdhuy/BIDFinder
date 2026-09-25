@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import CancelledError as FutureCancelledError, ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -46,6 +46,10 @@ from typesense_contract import (
 
 
 logger = logging.getLogger("bidfinder.typesense_shadow")
+
+# A dashboard query can scan every matching document. Share this limit across
+# requests so repeated clicks cannot create an unbounded number of page pools.
+_dashboard_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="dashboard-analytics")
 
 SHADOW_INFRA_ERROR = "SHADOW_INFRA_ERROR"
 QUERY_CONTRACT_FAILURE = "QUERY_CONTRACT_FAILURE"
@@ -1349,7 +1353,9 @@ def build_dashboard_bidder_price_bands(
     valid: list[dict[str, Any]] = []
     for observation in observations:
         price = _analytics_decimal(observation.get("unit_price"), positive_only=True)
-        bidder_key = _analytics_identity(observation.get("bidder_key"))
+        bidder_id_key = _analytics_identity(observation.get("bidder_key"))
+        bidder_name = _analytics_text(observation.get("bidder_name")) or bidder_id_key
+        bidder_key = _analytics_identity(bidder_name) or bidder_id_key
         if price is None or not bidder_key:
             continue
         product_key = _analytics_identity(observation.get("product_key") or observation.get("product"))
@@ -1364,15 +1370,10 @@ def build_dashboard_bidder_price_bands(
             "package_key": str(observation.get("package_key") or observation.get("record_key") or ""),
             "record_key": str(observation.get("record_key") or observation.get("package_key") or ""),
             "awarded_value": _analytics_decimal(observation.get("awarded_value")) or Decimal(0),
-            "bidder_name": _analytics_text(observation.get("bidder_name")) or bidder_key,
+            "bidder_name": bidder_name or bidder_key,
             "unit": _analytics_text(observation.get("unit")),
         })
 
-    contexts = {(item["product_key"], item["unit_key"]) for item in valid}
-    if valid and not selected_product_key and (
-        len(contexts) > 1 or any(not product_key for product_key, _ in contexts)
-    ):
-        return {"requires_product_selection": True, "items": []}
     if selected_product_key:
         valid = [item for item in valid if item["product_key"] == selected_product_key]
 
@@ -1442,7 +1443,7 @@ def build_dashboard_bidder_price_bands(
         band.pop("_product_key", None)
         band.pop("_unit_key", None)
         band.pop("bidder_key", None)
-    return {"requires_product_selection": False, "items": ranked}
+    return {"items": ranked}
 
 
 def _analytics_province(value: Any) -> str | None:
@@ -1466,13 +1467,10 @@ def build_dashboard_selection_clauses(group: str, selection: Mapping[str, Any] |
     clauses: list[str] = []
     product = _analytics_text(selection.get("product"))
     province = _analytics_text(selection.get("province"))
-    investor = _analytics_text(selection.get("investor"))
     if product:
         clauses.append(_exact_clause(product_field, product))
     if province:
         clauses.append(_partial_clause("location", province))
-    if investor:
-        clauses.append(_exact_clause("procuring_entity_name", investor))
     return tuple(clauses)
 
 
@@ -1538,6 +1536,68 @@ def build_dashboard_column_filter_clauses(group: str, column_filters: Mapping[st
     return tuple(clauses)
 
 
+def filter_dashboard_columns(
+    group: str,
+    documents: Sequence[Mapping[str, Any]],
+    column_filters: Mapping[str, Any] | None,
+) -> list[Mapping[str, Any]]:
+    """Apply the table's bounded-set filters to the complete dashboard universe."""
+    if not column_filters:
+        return list(documents)
+    public = public_group(group)
+    contract = {field["name"] for field in get_group_contract(public).get("fields", [])}
+
+    def normalize(value: Any) -> str:
+        return "" if value is None else str(value).strip().lower()
+
+    def condition(operator: str, query: Any):
+        pattern = re.escape(normalize(query)).replace(r"\*", ".*").replace(r"\?", ".")
+        source = {
+            "equals": f"^{pattern}$", "notEquals": f"^{pattern}$",
+            "beginsWith": f"^{pattern}", "endsWith": f"{pattern}$",
+            "contains": pattern, "notContains": pattern,
+        }.get(operator)
+        if source is None:
+            raise TypesenseShadowError(f"dashboard cannot apply table filter operator: {operator}", QUERY_CONTRACT_FAILURE)
+        return re.compile(source), operator in {"notEquals", "notContains"}
+
+    rules = []
+    for raw_name, raw_rule in column_filters.items():
+        field_name = canonical_field_for(public, raw_name) or str(raw_name)
+        if field_name not in contract:
+            raise TypesenseShadowError(f"dashboard cannot apply table filter field: {raw_name}", QUERY_CONTRACT_FAILURE)
+        values = raw_rule if isinstance(raw_rule, list) else raw_rule.get("values") if isinstance(raw_rule, Mapping) else None
+        text_rule = raw_rule.get("text") if isinstance(raw_rule, Mapping) and "text" in raw_rule else (
+            raw_rule if isinstance(raw_rule, Mapping) and raw_rule.get("operator") else None
+        )
+        first = condition(str(text_rule.get("operator") or "equals"), text_rule.get("value") or "") if isinstance(text_rule, Mapping) else None
+        second = condition(str(text_rule.get("secondOperator") or "equals"), text_rule.get("secondValue")) if (
+            isinstance(text_rule, Mapping) and text_rule.get("custom") and str(text_rule.get("secondValue") or "").strip()
+        ) else None
+        rules.append((field_name, {normalize(item) for item in values} if isinstance(values, list) else None, first, second, text_rule.get("logic") if isinstance(text_rule, Mapping) else None))
+
+    def text_matches(value: str, compiled: tuple[Any, bool]) -> bool:
+        pattern, negate = compiled
+        matched = pattern.search(value) is not None
+        return not matched if negate else matched
+
+    def rule_matches(document: Mapping[str, Any], rule: tuple[Any, Any, Any, Any, Any]) -> bool:
+        field_name, values, first, second, logic = rule
+        raw_values = document.get(field_name)
+        candidates = [normalize(value) for value in raw_values] if isinstance(raw_values, list) else [normalize(raw_values)]
+        if values is not None and not any(value in values for value in candidates):
+            return False
+        if first is None:
+            return True
+        first_match = any(text_matches(value, first) for value in candidates)
+        if second is None:
+            return first_match
+        second_match = any(text_matches(value, second) for value in candidates)
+        return first_match or second_match if logic == "or" else first_match and second_match
+
+    return [document for document in documents if all(rule_matches(document, rule) for rule in rules)]
+
+
 def _analytics_date(value: Any) -> date | None:
     text = _analytics_text(value)
     if not text:
@@ -1561,8 +1621,40 @@ def aggregate_dashboard_documents(
     documents_by_group: Mapping[str, Sequence[Mapping[str, Any]]],
     *,
     selected_product: Any = None,
+    selected_bidder: Any = None,
+    selected_investor: Any = None,
 ) -> dict[str, Any]:
-    """Aggregate every matched Typesense document, never a paginated UI page."""
+    """Aggregate the dashboard scan window, never a paginated UI page."""
+    selected_bidder_key = _analytics_identity(selected_bidder)
+    if selected_bidder_key:
+        # Bidder fields are not Typesense-filterable; filter the already-fetched full projection.
+        documents_by_group = {
+            group: [
+                document for document in documents
+                if any(
+                    _analytics_identity(value) == selected_bidder_key
+                    for field in ("winning_bidder_name", "winning_bidder_id")
+                    for value in _analytics_values(document.get(field))
+                )
+            ]
+            for group, documents in documents_by_group.items()
+        }
+
+    selected_investor_key = _analytics_identity(selected_investor)
+    if selected_investor_key:
+        # Match normalized display names after retrieval so capitalization variants
+        # of the same procuring entity remain in the same cross-filter result.
+        documents_by_group = {
+            group: [
+                document for document in documents
+                if any(
+                    _analytics_identity(value) == selected_investor_key
+                    for value in _analytics_values(document.get("procuring_entity_name"))
+                )
+            ]
+            for group, documents in documents_by_group.items()
+        }
+
     product_fields = {"goods": "item_name", "medicines": "medicine_name", "traditional_medicine": "item_name"}
     packages: dict[str, dict[str, Any]] = {}
     products: dict[str, dict[str, Any]] = {}
@@ -1805,12 +1897,11 @@ class TypesenseSearchRepository:
         *,
         additional_filter_clauses: Sequence[str] = (),
         include_fields: Sequence[str] = (),
-    ) -> list[Mapping[str, Any]]:
-        """Fetch complete match universe for server-side analytics.
-
-        This path deliberately does not use standard/full search caps. It transfers
-        only aggregation fields to the API process, never raw analytics rows to the browser.
-        """
+        stop_event: threading.Event | None = None,
+        max_documents: int | None = None,
+        with_found: bool = False,
+    ) -> list[Mapping[str, Any]] | tuple[int, list[Mapping[str, Any]]]:
+        """Fetch a bounded analytics window and retain the full match count."""
         if not self.config.api_key:
             raise TypesenseShadowError("Typesense shadow API key is not configured")
         plan = translate_typesense_query(
@@ -1825,14 +1916,13 @@ class TypesenseSearchRepository:
         request_params = dict(plan.params)
         if include_fields:
             request_params["include_fields"] = ",".join(dict.fromkeys(include_fields))
-        documents: list[Mapping[str, Any]] = []
-        page = 1
         per_page = TYPESENSE_MAX_HITS_PER_PAGE
-        found: int | None = None
 
-        while True:
-            request_params.update({"page": page, "per_page": per_page})
-            url = f"{self.config.base_url}/collections/{quote(plan.collection, safe='')}/documents/search?{urlencode(request_params, doseq=True)}"
+        def fetch_page(page: int) -> tuple[int, list[Mapping[str, Any]]]:
+            if stop_event is not None and stop_event.is_set():
+                raise FutureCancelledError()
+            page_params = {**request_params, "page": page, "per_page": per_page}
+            url = f"{self.config.base_url}/collections/{quote(plan.collection, safe='')}/documents/search?{urlencode(page_params, doseq=True)}"
             request = Request(url, method="GET", headers={
                 "Accept": "application/json",
                 "X-TYPESENSE-API-KEY": self.config.api_key,
@@ -1851,21 +1941,37 @@ class TypesenseSearchRepository:
                 raise TypesenseShadowError("Typesense returned invalid JSON") from exc
             if not isinstance(payload, Mapping) or not isinstance(payload.get("found"), int) or payload["found"] < 0:
                 raise TypesenseShadowError("Typesense returned malformed analytics metadata")
-            found = int(payload["found"]) if found is None else found
             hits = payload.get("hits", [])
             if not isinstance(hits, list):
                 raise TypesenseShadowError("Typesense returned malformed analytics hits")
+            page_documents: list[Mapping[str, Any]] = []
             for hit in hits:
                 if not isinstance(hit, Mapping) or not isinstance(hit.get("document"), Mapping):
                     raise TypesenseShadowError("Typesense returned malformed analytics hit")
                 document = dict(hit["document"])
                 if not isinstance(document.get("id"), str) or not document["id"]:
                     raise TypesenseShadowError("Typesense analytics document has no identity")
-                documents.append(document)
-            if not hits or page * per_page >= found:
-                break
-            page += 1
-        return documents
+                page_documents.append(document)
+            return int(payload["found"]), page_documents
+
+        found, documents = fetch_page(1)
+        target = found if max_documents is None else min(found, max(0, max_documents))
+        documents = documents[:target]
+        last_page = (target + per_page - 1) // per_page
+        if not documents or last_page <= 1:
+            return (found, documents) if with_found else documents
+
+        # The first response reveals the total. Fetch the remaining bounded pages
+        # concurrently while map() keeps document ordering deterministic.
+        with ThreadPoolExecutor(max_workers=min(4, last_page - 1)) as executor:
+            for first_page in range(2, last_page + 1, 4):
+                if stop_event is not None and stop_event.is_set():
+                    raise FutureCancelledError()
+                for _page_found, page_documents in executor.map(
+                    fetch_page, range(first_page, min(first_page + 4, last_page + 1))
+                ):
+                    documents.extend(page_documents[:max(0, target - len(documents))])
+        return (found, documents) if with_found else documents
 
     async def analytics_documents(
         self,
@@ -1873,13 +1979,28 @@ class TypesenseSearchRepository:
         *,
         additional_filter_clauses: Sequence[str] = (),
         include_fields: Sequence[str] = (),
-    ) -> list[Mapping[str, Any]]:
-        return await asyncio.to_thread(
-            self._request_all,
-            query,
-            additional_filter_clauses=additional_filter_clauses,
-            include_fields=include_fields,
-        )
+        max_documents: int | None = None,
+        with_found: bool = False,
+    ) -> list[Mapping[str, Any]] | tuple[int, list[Mapping[str, Any]]]:
+        from functools import partial
+
+        stop_event = threading.Event()
+        try:
+            return await asyncio.get_running_loop().run_in_executor(
+                _dashboard_executor,
+                partial(
+                    self._request_all,
+                    query,
+                    additional_filter_clauses=additional_filter_clauses,
+                    include_fields=include_fields,
+                    stop_event=stop_event,
+                    max_documents=max_documents,
+                    with_found=with_found,
+                ),
+            )
+        except asyncio.CancelledError:
+            stop_event.set()
+            raise
 
     async def search(self, query: ProcurementQuery) -> TypesenseSearchResult:
         try:
@@ -1957,53 +2078,295 @@ class TypesenseSearchRepository:
     async def exact_lookup(self, query: ProcurementQuery) -> TypesenseSearchResult:
         return await asyncio.to_thread(self._exact_lookup, query)
 
-    def _request_update_count(self, logical_group: str, day: date) -> int:
+    def _request_update_package_codes(self, logical_group: str, day: date) -> set[str]:
+        """Return unique tender codes for one serving partition day."""
         if not self.config.api_key:
             raise TypesenseShadowError("Typesense shadow API key is not configured")
 
-        params = {
-            "q": "*",
-            "query_by": "bid_invitation_code,result_posted_at",
-            "page": 1,
-            "per_page": 0,
-            "filter_by": f"result_posted_at:{day.isoformat()}*",
-        }
         collection = physical_collection_name(logical_group, self.config.serving_generation)
-        url = f"{self.config.base_url}/collections/{quote(collection, safe='')}/documents/search?{urlencode(params)}"
-        request = Request(url, method="GET", headers={
-            "Accept": "application/json",
-            "X-TYPESENSE-API-KEY": self.config.api_key,
-        })
-        try:
-            with self._opener(request, timeout=max(self.config.timeout_seconds, 2.0)) as response:
-                raw = response.read()
-        except HTTPError as exc:
-            code = SHADOW_INFRA_ERROR if exc.code in {408, 425, 429} or exc.code >= 500 else QUERY_CONTRACT_FAILURE
-            raise TypesenseShadowError(f"Typesense HTTP {exc.code}", code=code) from exc
-        except (URLError, TimeoutError, OSError) as exc:
-            raise TypesenseShadowError(f"Typesense request failed: {type(exc).__name__}") from exc
-        try:
-            payload = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise TypesenseShadowError("Typesense returned invalid JSON") from exc
-        if not isinstance(payload, Mapping) or not isinstance(payload.get("found"), int) or payload["found"] < 0:
-            raise TypesenseShadowError("Typesense returned malformed update timeline count")
-        return int(payload["found"])
+        package_codes: set[str] = set()
+        page = 1
+        per_page = TYPESENSE_MAX_HITS_PER_PAGE
+        while True:
+            params = {
+                "q": "*",
+                "query_by": "bid_invitation_code",
+                "page": page,
+                "per_page": per_page,
+                "filter_by": f"partition_date:={day.isoformat()}",
+                "include_fields": "bid_invitation_code",
+            }
+            url = f"{self.config.base_url}/collections/{quote(collection, safe='')}/documents/search?{urlencode(params)}"
+            request = Request(url, method="GET", headers={
+                "Accept": "application/json",
+                "X-TYPESENSE-API-KEY": self.config.api_key,
+            })
+            try:
+                with self._opener(request, timeout=max(self.config.timeout_seconds, 2.0)) as response:
+                    raw = response.read()
+            except HTTPError as exc:
+                code = SHADOW_INFRA_ERROR if exc.code in {408, 425, 429} or exc.code >= 500 else QUERY_CONTRACT_FAILURE
+                raise TypesenseShadowError(f"Typesense HTTP {exc.code}", code=code) from exc
+            except (URLError, TimeoutError, OSError) as exc:
+                raise TypesenseShadowError(f"Typesense request failed: {type(exc).__name__}") from exc
+            try:
+                payload = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise TypesenseShadowError("Typesense returned invalid JSON") from exc
+            if not isinstance(payload, Mapping) or not isinstance(payload.get("found"), int) or payload["found"] < 0:
+                raise TypesenseShadowError("Typesense returned malformed update timeline count")
+            hits = payload.get("hits", [])
+            if not isinstance(hits, list):
+                raise TypesenseShadowError("Typesense returned malformed update timeline hits")
+            for hit in hits:
+                if not isinstance(hit, Mapping) or not isinstance(hit.get("document"), Mapping):
+                    continue
+                package_code = str(hit["document"].get("bid_invitation_code") or "").strip()
+                if package_code:
+                    package_codes.add(package_code)
+            found = int(payload["found"])
+            if page * per_page >= found or len(hits) < per_page:
+                break
+            page += 1
+        return package_codes
 
-    def _request_update_timeline(self, *, today: date | None = None) -> list[dict[str, Any]]:
+    def _request_update_timeline(
+        self,
+        *,
+        today: date | None = None,
+        start_day: date | None = None,
+    ) -> list[dict[str, Any]]:
         end_date = today or date.today()
-        start_date = end_date - timedelta(days=365)
-        days = [start_date + timedelta(days=offset) for offset in range((end_date - start_date).days + 1)]
+        start_date = start_day or (end_date - timedelta(days=365))
+        if start_date > end_date:
+            start_date = end_date
+        days = [
+            start_date + timedelta(days=offset)
+            for offset in range((end_date - start_date).days + 1)
+        ]
         tasks = [(logical_group, day) for logical_group in LOGICAL_GROUPS for day in days]
         with ThreadPoolExecutor(max_workers=24) as executor:
-            counts = list(executor.map(lambda task: self._request_update_count(*task), tasks))
-        by_day: Counter[str] = Counter()
-        for (_, day), count in zip(tasks, counts):
-            by_day[day.isoformat()] += count
-        return [{"date": day, "count": by_day[day]} for day in sorted(by_day) if by_day[day] > 0]
+            codes_by_group = list(executor.map(lambda task: self._request_update_package_codes(*task), tasks))
+        # A tender can have many product rows and can appear in more than one
+        # serving group; merge codes before counting so the result is packages.
+        by_day: dict[str, set[str]] = {}
+        for (_, day), package_codes in zip(tasks, codes_by_group):
+            by_day.setdefault(day.isoformat(), set()).update(package_codes)
+        return [
+            {"date": day, "count": len(package_codes)}
+            for day, package_codes in sorted(by_day.items())
+            if package_codes
+        ]
 
-    async def update_timeline(self) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(self._request_update_timeline)
+    async def update_timeline(
+        self,
+        *,
+        today: date | None = None,
+        start_day: date | None = None,
+    ) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._request_update_timeline, today=today, start_day=start_day)
+
+    @staticmethod
+    def _daily_value_number(value: Any) -> Decimal | None:
+        """Parse a Typesense numeric field without allowing malformed rows through."""
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            parsed = Decimal(str(value).strip().replace(",", ""))
+        except (ArithmeticError, TypeError, ValueError):
+            return None
+        if not parsed.is_finite() or parsed <= 0:
+            return None
+        return parsed
+
+    def _request_daily_group_summary(self, logical_group: str, day: date) -> dict[str, Any]:
+        if not self.config.api_key:
+            raise TypesenseShadowError("Typesense shadow API key is not configured")
+
+        schema_group = logical_group
+        query_by = {
+            "goods": "item_name",
+            "medicines": "medicine_name",
+            "traditional_medicine": "item_name",
+        }[schema_group]
+        name_field = query_by
+        collection = physical_collection_name(schema_group, self.config.serving_generation)
+        include_fields = ",".join((
+            "id", "quantity", "winning_unit_price", name_field,
+            "procuring_entity_name", "bid_invitation_code", "source_tab",
+        ))
+        best: dict[str, Any] | None = None
+        fallback_best: dict[str, Any] | None = None
+        packages: dict[str, dict[str, Any]] = {}
+        fallback_packages: dict[str, dict[str, Any]] = {}
+        package_codes: set[str] = set()
+        has_primary_data = False
+        page = 1
+        per_page = TYPESENSE_MAX_HITS_PER_PAGE
+
+        while True:
+            filter_parts = [f"partition_date:={day.isoformat()}"]
+            params = {
+                "q": "*",
+                "query_by": query_by,
+                "page": page,
+                "per_page": per_page,
+                "filter_by": " && ".join(filter_parts),
+                "include_fields": include_fields,
+            }
+            url = f"{self.config.base_url}/collections/{quote(collection, safe='')}/documents/search?{urlencode(params)}"
+            request = Request(url, method="GET", headers={
+                "Accept": "application/json",
+                "X-TYPESENSE-API-KEY": self.config.api_key,
+            })
+            try:
+                with self._opener(request, timeout=max(self.config.timeout_seconds, 2.0)) as response:
+                    raw = response.read()
+            except HTTPError as exc:
+                code = SHADOW_INFRA_ERROR if exc.code in {408, 425, 429} or exc.code >= 500 else QUERY_CONTRACT_FAILURE
+                raise TypesenseShadowError(f"Typesense HTTP {exc.code}", code=code) from exc
+            except (URLError, TimeoutError, OSError) as exc:
+                raise TypesenseShadowError(f"Typesense request failed: {type(exc).__name__}") from exc
+
+            try:
+                payload = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise TypesenseShadowError("Typesense returned invalid JSON") from exc
+            if not isinstance(payload, Mapping) or not isinstance(payload.get("found"), int) or payload["found"] < 0:
+                raise TypesenseShadowError("Typesense returned malformed daily value metadata")
+            hits = payload.get("hits", [])
+            if not isinstance(hits, list):
+                raise TypesenseShadowError("Typesense returned malformed daily value hits")
+
+            for hit in hits:
+                if not isinstance(hit, Mapping) or not isinstance(hit.get("document"), Mapping):
+                    continue
+                document = hit["document"]
+                owner = document.get("procuring_entity_name")
+                if isinstance(owner, (list, tuple)):
+                    owner = ", ".join(str(item).strip() for item in owner if str(item).strip())
+                owner = str(owner or "").strip() or None
+                item_name = str(document.get(name_field) or "").strip() or None
+                package_code = str(document.get("bid_invitation_code") or "").strip() or None
+                if package_code:
+                    package_codes.add(package_code)
+
+                source_tab = str(document.get("source_tab") or "").strip()
+                if logical_group == "goods" and source_tab not in {"THIET_BI_VAT_TU_Y_TE", "HANG_HOA"}:
+                    continue
+                is_general_goods = logical_group == "goods" and source_tab == "HANG_HOA"
+                if not is_general_goods:
+                    has_primary_data = True
+                target_packages = fallback_packages if is_general_goods else packages
+
+                if package_code:
+                    target_packages.setdefault(package_code, {
+                        "_value": Decimal(0),
+                        "value": 0,
+                        "name": None,
+                        "owner": owner,
+                        "bid_invitation_code": package_code,
+                        "date": day.isoformat(),
+                    })
+                unit_price = self._daily_value_number(document.get("winning_unit_price"))
+                quantity = self._daily_value_number(document.get("quantity"))
+                if unit_price is None:
+                    continue
+                if package_code and quantity is not None:
+                    value = quantity * unit_price
+                    package = target_packages[package_code]
+                    package["_value"] += value
+                    package["value"] = (
+                        int(package["_value"])
+                        if package["_value"] == package["_value"].to_integral_value()
+                        else float(package["_value"])
+                    )
+                    if not package.get("owner") and owner:
+                        package["owner"] = owner
+                current_best = fallback_best if is_general_goods else best
+                if current_best is not None and unit_price <= current_best["_value"]:
+                    continue
+                candidate = {
+                    "value": int(unit_price) if unit_price == unit_price.to_integral_value() else float(unit_price),
+                    "_value": unit_price,
+                    "name": item_name,
+                    "owner": owner,
+                    "bid_invitation_code": package_code,
+                    "group": logical_group,
+                    "date": day.isoformat(),
+                }
+                if is_general_goods:
+                    fallback_best = candidate
+                else:
+                    best = candidate
+
+            found = int(payload["found"])
+            if page * per_page >= found or len(hits) < per_page:
+                break
+            page += 1
+
+        for candidate in (best, fallback_best):
+            if candidate is not None:
+                candidate.pop("_value", None)
+        for package in (*packages.values(), *fallback_packages.values()):
+            package.pop("_value", None)
+        return {
+            "highest_item": best,
+            "packages": packages,
+            "fallback_highest_item": fallback_best,
+            "fallback_packages": fallback_packages,
+            "package_codes": package_codes,
+            "has_primary_data": has_primary_data,
+        }
+
+    def _request_daily_summary(self, day: date) -> dict[str, Any]:
+        with ThreadPoolExecutor(max_workers=len(LOGICAL_GROUPS)) as executor:
+            summaries = list(executor.map(lambda group: self._request_daily_group_summary(group, day), LOGICAL_GROUPS))
+
+        packages: dict[str, dict[str, Any]] = {}
+        package_codes: set[str] = set()
+        candidates = []
+        has_primary_data = any(summary.get("has_primary_data") for summary in summaries)
+        item_key = "highest_item" if has_primary_data else "fallback_highest_item"
+        packages_key = "packages" if has_primary_data else "fallback_packages"
+        for summary in summaries:
+            package_codes.update(summary.get("package_codes", set()))
+            candidate = summary.get(item_key)
+            if candidate is not None:
+                candidates.append(candidate)
+            for code, source_package in summary.get(packages_key, {}).items():
+                if code not in packages:
+                    packages[code] = dict(source_package)
+                    continue
+                package = packages[code]
+                package["value"] = float(package.get("value") or 0) + float(source_package.get("value") or 0)
+                if float(package["value"]).is_integer():
+                    package["value"] = int(package["value"])
+                if not package.get("owner") and source_package.get("owner"):
+                    package["owner"] = source_package["owner"]
+
+        highest_package = max(
+            (package for package in packages.values() if float(package.get("value") or 0) > 0),
+            key=lambda package: Decimal(str(package["value"])),
+            default=None,
+        )
+
+        return {
+            "approved_package_count": len(package_codes),
+            "primary_data_available": has_primary_data,
+            "highest_package": highest_package,
+            "highest_goods": max(
+                candidates,
+                key=lambda candidate: Decimal(str(candidate["value"])),
+                default=None,
+            ),
+        }
+
+    async def daily_summary(self, day: date) -> dict[str, Any]:
+        return await asyncio.to_thread(self._request_daily_summary, day)
+
+    async def daily_highest_item(self, day: date) -> dict[str, Any] | None:
+        return (await self.daily_summary(day)).get("highest_goods")
 
     def _suggest(self, query: AutocompleteQuery) -> tuple[str, ...]:
         started = time.perf_counter()

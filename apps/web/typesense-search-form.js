@@ -186,6 +186,7 @@
             this._autocompleteCache = new Map();
             this._autocompleteIndex = -1;
             this._previewState = { idle: true };
+            this._keywordDrafts = new Map();
             this._handleDropdownRootClick = event => {
                 const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
                 const insideDropdown = path.some(node => node?.classList?.contains?.('filter-dropdown'));
@@ -214,7 +215,7 @@
                 group: 'medicines',
                 sourceTypes: [],
                 criteria: {},
-                activeField: '',
+                activeField: 'active_ingredient_or_herbal_component',
                 page: 1,
                 limit: 50,
                 loading: false,
@@ -272,28 +273,24 @@
 
                 .search-form { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; overflow-x: hidden; color: var(--c-text); }
 
-                .active-filters-topbar {
+                .search-conditions {
                     display: flex;
-                    align-items: flex-start;
-                    gap: 12px;
                     flex: 0 0 auto;
-                    min-height: 72px;
-                    height: clamp(72px, 8vh, 84px);
-                    max-height: 84px;
-                    margin-bottom: 5px;
-                    padding: 6px 10px;
-                    overflow: hidden;
+                    flex-direction: column;
+                    gap: 8px;
+                    margin-top: 16px;
+                    padding: 12px 14px;
                     background: var(--c-surface);
-                    border: 1px solid var(--c-border);
+                    border: 1px solid var(--c-border-strong);
                     border-radius: var(--radius-sm);
                     box-shadow: var(--shadow-sm);
                 }
-                .active-filters-title { flex-shrink: 0; padding-top: 0; color: var(--c-sub); font-size: 13px; font-weight: 700; line-height: 1.35; white-space: nowrap; }
-                .active-filters-list { display: block; flex: 1; min-width: 0; max-height: 68px; padding: 0 4px 4px 0; overflow-y: auto; text-align: left; }
-                .active-filters-topbar.empty { align-items: baseline; }
-                .active-filters-topbar.empty .active-filters-list { display: contents; }
-                .active-filters-list::-webkit-scrollbar { width: 6px; }
-                .active-filters-list::-webkit-scrollbar-thumb { background: #d5dbe7; border-radius: var(--radius-sm); }
+                .search-conditions.empty { background: var(--c-surface); border-style: dashed; }
+                .search-conditions-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+                .search-conditions-title { margin: 0; color: var(--c-primary-hover); font-size: 14px; font-weight: 800; line-height: 1.35; }
+                .search-conditions-list { min-width: 0; min-height: 40px; max-height: 96px; overflow-y: auto; text-align: left; }
+                .search-conditions-list::-webkit-scrollbar { width: 6px; }
+                .search-conditions-list::-webkit-scrollbar-thumb { background: #d5dbe7; border-radius: var(--radius-sm); }
                 .filter-chip {
                     display: inline-flex;
                     align-items: flex-start;
@@ -315,12 +312,12 @@
                 .filter-chip .chip-select { text-align: left; }
                 .filter-chip .chip-remove { margin-left: 4px; padding-left: 6px; border-left: 1px solid rgba(18, 116, 149, 0.20); opacity: 0.58; font-size: 14px; line-height: 1; }
                 .filter-chip .chip-remove:hover { opacity: 1; color: var(--c-accent); }
-                .empty-filters { display: block; padding-top: 0; color: var(--c-muted); font-size: 12px; line-height: 1.35; }
+                .empty-filters { display: flex; min-height: 40px; align-items: center; color: var(--c-muted); font-size: 14px; line-height: 1.4; }
 
                 .filter-layout {
                     display: grid;
-                    grid-template-columns: clamp(130px, 9vw, 150px) minmax(400px, 460px) clamp(430px, 32vw, 520px);
-                    justify-content: start;
+                    grid-template-columns: clamp(130px, 9vw, 150px) minmax(400px, 460px) minmax(0, 1fr);
+                    justify-content: stretch;
                     flex: 1 1 auto;
                     align-items: stretch;
                     gap: 5px;
@@ -329,7 +326,6 @@
                     padding: 4px;
                     overflow: hidden;
                     background: var(--c-surface);
-                    border: 1px solid var(--c-border);
                     border-radius: var(--radius-sm);
                     box-shadow: var(--shadow-md);
                 }
@@ -411,7 +407,7 @@
                 .field select[multiple] option { padding: 5px 7px; }
                 .field select[multiple] option:checked { background: var(--c-primary); color: #fff; }
                 .field input:hover, .field select:hover { border-color: var(--c-border-strong); }
-                .field input:focus, .field select:focus { outline: none; border-color: var(--c-primary-hover); box-shadow: 0 0 0 3px rgba(18, 116, 149, 0.10); }
+                .field input:focus, .field select:focus { outline: none; border-color: var(--c-primary-hover); }
                 .field input::placeholder { color: var(--c-muted); opacity: 1; }
                 .filter-dropdown { position: relative; width: 100%; }
                 .filter-dropdown-trigger {
@@ -471,7 +467,7 @@
                     border-radius: var(--radius-sm);
                     background: var(--c-surface);
                 }
-                .token-input-container:focus-within { border-color: var(--c-primary-hover); box-shadow: 0 0 0 3px rgba(18, 116, 149, 0.10); }
+                .token-input-container:focus-within { border-color: var(--c-primary-hover); }
                 .field .token-input-container input {
                     width: auto;
                     min-width: 180px;
@@ -530,11 +526,23 @@
                     font-weight: 750;
                 }
                 .range-row { gap: 20px; }
-                .pane-help { margin: 16px 0 0; padding: 0; border: 0; background: transparent; color: var(--c-sub); font-size: 14px; line-height: 1.55; }
-                .pane-help p { margin: 0 0 7px; }
-                .pane-help p:last-child { margin-bottom: 0; }
-                .pane-help-link { padding: 0; border: 0; background: transparent; color: var(--c-primary-hover); font: inherit; text-decoration: underline; cursor: pointer; }
-                .pane-help-link:hover, .pane-help-link:focus-visible { color: var(--c-accent); }
+                .editor-meta-row { display: flex; min-height: 44px; align-items: center; justify-content: space-between; gap: 12px; margin-top: 7px; }
+                .editor-meta-row .preview-estimate { flex: 1 1 auto; margin-top: 0; }
+                .search-tips { position: relative; flex: 0 0 auto; margin-left: auto; }
+                .search-tips-toggle { display: inline-flex; min-height: 44px; align-items: center; gap: 8px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--c-primary); cursor: pointer; font: inherit; font-size: 13px; font-weight: 800; line-height: 24px; }
+                .search-tips-toggle::after { content: ''; width: 7px; height: 7px; flex: 0 0 7px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg) translateY(-2px); transition: transform 0.18s ease; }
+                .search-tips-toggle[aria-expanded="true"] { background: transparent; color: var(--c-primary-hover); }
+                .search-tips-toggle[aria-expanded="true"]::after { transform: rotate(225deg) translateY(-2px); }
+                .search-tips-toggle:hover { background: transparent; color: var(--c-primary-hover); }
+                .search-tips-toggle:focus-visible { outline: 2px solid rgba(18, 116, 149, 0.28); outline-offset: 2px; }
+                .search-tips-tooltip { position: absolute; top: calc(100% + 8px); right: 0; z-index: 5; width: min(430px, calc(100vw - 48px)); max-height: min(360px, 60dvh); overflow-y: auto; padding: 12px 14px; border: 1px solid var(--c-border-strong); border-radius: var(--radius-sm); background: var(--c-surface); box-shadow: 0 14px 28px rgba(16, 34, 48, 0.16); color: var(--c-sub); font-size: 13px; line-height: 1.5; }
+                .search-tips-tooltip[hidden] { display: none; }
+                .search-tips-steps { margin: 0; padding-left: 20px; }
+                .search-tips-steps li { padding-left: 3px; }
+                .search-tips-logic { margin-top: 8px; padding: 8px 10px; border-left: 3px solid var(--c-primary); background: var(--c-primary-light); }
+                .search-tips-logic p { margin: 0 0 5px; }
+                .search-tips-logic p:last-child { margin-bottom: 0; }
+                .search-tips-logic strong { color: var(--c-primary-hover); }
                 .editor-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: auto; padding-top: 16px; }
                 .btn { display: inline-flex; align-items: center; justify-content: center; min-width: 120px; min-height: 40px; padding: 10px 16px; border-radius: var(--radius-sm); font-size: 13.5px; font-weight: 650; cursor: pointer; transition: all 0.18s ease; }
                 .btn-primary { border: 0; background: var(--c-primary); color: #fff; box-shadow: 0 6px 16px rgba(10, 97, 123, 0.16); }
@@ -544,26 +552,28 @@
                 .btn-secondary:hover:not(:disabled) { background: var(--c-surface-2); border-color: var(--c-border-strong); }
                 .btn:focus-visible { outline: 2px solid rgba(18, 116, 149, 0.28); outline-offset: 2px; }
                 .btn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
-                .preview-estimate { min-height: 24px; margin-top: 7px; color: var(--c-text); font-size: 13px; font-weight: 800; line-height: 24px; }
+                .preview-estimate { min-height: 24px; margin-top: 7px; color: var(--c-primary); font-size: 13px; font-weight: 800; line-height: 24px; }
                 .preview-estimate.loading { color: var(--c-primary); }
                 .preview-estimate.zero-result { color: #b42318; }
                 .preview-estimate.error { color: #a63d3d; }
 
                 @keyframes fadeIn { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } }
                 @media (min-width: 981px) and (max-width: 1199px) {
-                    .filter-layout { grid-template-columns: 130px minmax(400px, 450px) minmax(380px, 430px); }
+                    .filter-layout { grid-template-columns: 130px minmax(400px, 450px) minmax(0, 1fr); }
                 }
                 @media (max-width: 980px) {
-                    .active-filters-topbar { min-height: 72px; height: 72px; flex-direction: column; gap: 3px; }
-                    .active-filters-topbar.empty { flex-direction: row; }
-                    .active-filters-list { width: 100%; max-height: 68px; }
                     .filter-layout { display: flex; height: auto; max-height: calc(100dvh - 220px); flex-direction: column; padding: 0; }
                     .filter-sidebar { display: contents; }
                     .category-panel, .condition-panel, .filter-content { width: 100%; min-width: 0; max-width: none; grid-column: auto; }
                     .category-panel { max-height: 160px; }
                     .condition-panel { max-height: 285px; }
                     .filter-content { min-height: 250px; padding: 12px 16px 16px 14px; }
+                    .search-conditions-list { max-height: 120px; }
                     .editor-actions .btn { flex: 1; }
+                }
+                @media (max-width: 600px) {
+                    .fields-row, .range-row { flex-wrap: wrap; gap: 10px; }
+                    .fields-row .field, .range-row > div { flex-basis: 100%; }
                 }
             `;
         }
@@ -572,7 +582,11 @@
             const byName = new Map((this.groupContract()?.fields || []).map(field => [field.name, field]));
             return (FIELD_ORDER[this.state.group] || []).map(name => byName.get(name)).filter(Boolean);
         }
-        fieldLabel(name) { return FIELD_LABELS[this.state.group]?.[name] || name; }
+        fieldLabelForGroup(group, name) {
+            if (name === 'procuring_entity_name') return 'Tên chủ đầu tư';
+            return FIELD_LABELS[group]?.[name] || name;
+        }
+        fieldLabel(name) { return this.fieldLabelForGroup(this.state.group, name); }
         fieldHint(name) { return GROUP_FIELD_HINTS[this.state.group]?.[name] || FIELD_HINTS[name] || 'VD: chọn hoặc nhập giá trị'; }
         fieldMeta(name) { return this.fields().find(field => field.name === name) || null; }
         ensureActiveField() { if (!this.fieldMeta(this.state.activeField)) this.state.activeField = this.fields()[0]?.name || ''; }
@@ -589,23 +603,49 @@
             ].map(([className, title, iconName, sectionFields]) => `<section class="condition-section ${className}"><div class="sidebar-group">${icon(iconName)}<span>${title}</span></div>${sectionFields.map(field => this.renderFieldButton(field)).join('')}</section>`).join('');
         }
         renderEditorHelp() {
-            return `<div class="pane-help"><p>1. Gõ từ khóa</p><p>2. Nhấn Enter để tạo một thẻ từ khóa</p><p>3. Nếu có nhiều điều kiện, lặp lại bước 1 và 2</p><p>4. Điều chỉnh bằng cách click OR AND NOT để tạo điều kiện</p><p>5. Lưu ý vùng <strong>"Điều kiện tìm kiếm"</strong> ở trên cùng để quản lý điều kiện tìm kiếm</p><p><span class="pane-help-prefix">Xem </span><button class="pane-help-link" type="button" data-open-filter-help>Mẹo tìm kiếm</button></p></div>`;
+            return `<div class="search-tips"><button type="button" class="search-tips-toggle" data-action="toggle-search-tips" aria-expanded="false" aria-controls="search-tips-content">Mẹo tìm kiếm</button><div id="search-tips-content" class="search-tips-tooltip" role="tooltip" hidden><ol class="search-tips-steps"><li>Gõ từ khóa</li><li>Nhấn Enter để tạo một thẻ từ khóa</li><li>Nếu có nhiều điều kiện, lặp lại bước 1 và 2</li><li>Điều chỉnh bằng cách click <strong>OR</strong>, <strong>AND</strong> hoặc <strong>NOT</strong> để tạo điều kiện</li></ol><div class="search-tips-logic"><p><strong>OR:</strong> Hiển thị kết quả chứa ít nhất một trong hai từ khóa.</p><p><strong>AND:</strong> Hiển thị kết quả phải chứa cả hai từ khóa.</p><p><strong>NOT:</strong> Loại bỏ kết quả chứa từ khóa đứng sau NOT.</p></div></div></div>`;
         }
         render() {
             if (!this.state.contract) return;
             this.ensureActiveField();
             this.cancelAutocomplete();
             const groupButtons = Object.keys(GROUP_LABELS).map(key => `<button type="button" class="sidebar-item group-choice ${key === this.state.group ? 'active' : ''}" data-group="${key}" aria-pressed="${key === this.state.group}">${icon(key === 'goods' ? 'package' : key === 'medicines' ? 'pill' : 'leaf')}<span class="group-choice-label">${GROUP_LABELS[key]}</span></button>`).join('');
-            this._contentRoot.innerHTML = `<section class="search-form" aria-label="Tìm kiếm nâng cao">${this.renderSummary()}<div class="filter-layout"><aside class="filter-sidebar"><div class="sidebar-column category-panel" aria-label="Danh mục"><div class="sidebar-panel-title">Danh mục</div>${groupButtons}</div><div class="sidebar-column condition-panel" aria-label="Điều kiện"><div class="sidebar-panel-title">Điều kiện</div>${this.renderVariableSections()}</div></aside><div class="filter-content">${this.renderEditor()}</div></div></section>`;
+            this._contentRoot.innerHTML = `<section class="search-form" aria-label="Tìm kiếm nâng cao"><div class="filter-layout"><aside class="filter-sidebar"><div class="sidebar-column category-panel" aria-label="Danh mục"><div class="sidebar-panel-title">Danh mục</div>${groupButtons}</div><div class="sidebar-column condition-panel" aria-label="Điều kiện"><div class="sidebar-panel-title">Điều kiện</div>${this.renderVariableSections()}</div></aside><div class="filter-content">${this.renderEditor()}</div></div></section>`;
             this.setPreviewResult(this._previewState);
             this.bindEvents();
         }
+        selectField(name, { focus = true } = {}) {
+            if (!this.fieldMeta(name)) return;
+            if (this.state.activeField === name && this.shadowRoot?.querySelector('.filter-content')) {
+                if (focus) this.focusActiveField();
+                return;
+            }
+            const previousInput = this.shadowRoot?.querySelector('#criterion-keyword');
+            if (previousInput) this._keywordDrafts.set(this.state.activeField, previousInput.value);
+            this.state.activeField = name;
+            if (!this.state.contract) return;
+            const root = this.shadowRoot;
+            const editor = root?.querySelector('.filter-content');
+            if (!editor) { this.render(); if (focus) this.focusActiveField(); return; }
+            this.cancelAutocomplete();
+            root.querySelectorAll('[data-field]').forEach(button => {
+                const active = button.dataset.field === name;
+                button.classList.toggle('active', active);
+                button.setAttribute('aria-current', String(active));
+            });
+            editor.innerHTML = this.renderEditor();
+            const keywordInput = editor.querySelector('#criterion-keyword');
+            if (keywordInput) keywordInput.value = this._keywordDrafts.get(name) || '';
+            this.setPreviewResult(this._previewState);
+            this.bindEditorEvents();
+            if (focus) this.focusActiveField();
+        }
         renderSummary() {
             const chips = this.renderSummaryChips();
-            return `<div class="active-filters-topbar${chips ? '' : ' empty'}"><div class="active-filters-title">Điều kiện tìm kiếm:</div><div class="active-filters-list">${chips || '<span class="empty-filters">Chưa có điều kiện tìm kiếm nào</span>'}</div></div>`;
+            return `<section class="search-conditions${chips ? '' : ' empty'}" aria-labelledby="search-conditions-title"><div class="search-conditions-heading"><h4 class="search-conditions-title" id="search-conditions-title">Từ khóa</h4></div><div class="search-conditions-list" aria-live="polite">${chips || '<span class="empty-filters">Chưa có từ khóa</span>'}</div></section>`;
         }
-        renderSummaryChips() {
-            return Object.entries(this.state.criteria).map(([name, criterion]) => {
+        summaryEntries(criteria = this.state.criteria, group = this.state.group) {
+            return Object.entries(criteria || {}).map(([name, criterion]) => {
                 const display = criterion.kind === 'date-range'
                     ? [criterion.from ? `Từ ${this.formatVietnameseDate(criterion.from)}` : '', criterion.to ? `Đến ${this.formatVietnameseDate(criterion.to)}` : ''].filter(Boolean).join(' · ')
                     : criterion.kind === 'range'
@@ -613,8 +653,11 @@
                     : criterion.kind === 'tokens'
                         ? this.criterionTokens(criterion).map((token, index) => `${index ? `(${token.op}) ` : ''}${this.optionLabel(name, token.value)}`).join(' ')
                         : (criterion.values || []).map(value => this.optionLabel(name, value)).join(', ');
-                return `<span class="filter-chip"><button type="button" class="chip-select" data-chip-field="${name}"><strong>${html(this.fieldLabel(name))}:</strong> ${html(display)}</button><button type="button" class="chip-remove" data-remove-field="${name}" aria-label="Bỏ điều kiện ${html(this.fieldLabel(name))}">×</button></span>`;
-            }).join('');
+                return { name, label: this.fieldLabelForGroup(group, name), display };
+            });
+        }
+        renderSummaryChips() {
+            return this.summaryEntries().map(({ name, label, display }) => `<span class="filter-chip"><button type="button" class="chip-select" data-chip-field="${name}"><strong>${html(label)}:</strong> ${html(display)}</button><button type="button" class="chip-remove" data-remove-field="${name}" aria-label="Bỏ điều kiện ${html(label)}">×</button></span>`).join('');
         }
         isDateField(name) { return name === 'result_posted_at' || name === 'decision_issued_at'; }
         dropdownOptions(name) {
@@ -663,14 +706,18 @@
         }
         refreshCriteriaUI() {
             const root = this.shadowRoot;
-            const chips = this.renderSummaryChips();
-            const topbar = root.querySelector('.active-filters-topbar');
-            const list = root.querySelector('.active-filters-list');
-            if (list) list.innerHTML = chips || '<span class="empty-filters">Chưa có điều kiện tìm kiếm nào</span>';
-            topbar?.classList.toggle('empty', !chips);
-            this.bindSummaryEvents();
+            this.refreshSummary();
             root.querySelector(`[data-field="${this.state.activeField}"]`)?.classList.toggle('has-value', Boolean(this.state.criteria[this.state.activeField]));
             this.syncEditorActions();
+        }
+        refreshSummary() {
+            const summary = this.shadowRoot?.querySelector('.search-conditions');
+            if (!summary) return;
+            const chips = this.renderSummaryChips();
+            const list = summary.querySelector('.search-conditions-list');
+            if (list) list.innerHTML = chips || '<span class="empty-filters">Chưa có điều kiện tìm kiếm nào</span>';
+            summary.classList.toggle('empty', !chips);
+            this.bindSummaryEvents();
         }
         syncDropdownField(name) {
             const values = Array.from(this.shadowRoot.querySelectorAll('[data-dropdown-option]'))
@@ -680,7 +727,7 @@
             this.state.page = 1;
             this.updateDropdownLabel(name, values);
             this.refreshCriteriaUI();
-            this.requestPreview();
+            this.invalidatePreview();
         }
         updateDropdownLabel(name, values) {
             const label = this.shadowRoot.querySelector(`[data-dropdown-label="${name}"]`);
@@ -723,11 +770,17 @@
             // second endpoint before sending a preview request; otherwise the
             // API receives an incomplete range and reports an estimation error.
             if (Boolean(from) !== Boolean(to)) return;
-            if (!from && !to) delete this.state.criteria[field.name];
-            else this.state.criteria[field.name] = { kind: 'date-range', from, to };
+            const previous = this.state.criteria[field.name];
+            if (!from && !to) {
+                if (!previous) return;
+                delete this.state.criteria[field.name];
+            } else {
+                if (previous?.kind === 'date-range' && previous.from === from && previous.to === to) return;
+                this.state.criteria[field.name] = { kind: 'date-range', from, to };
+            }
             this.state.page = 1;
             this.refreshCriteriaUI();
-            this.requestPreview();
+            this.invalidatePreview();
         }
         criterionTokens(criterion) {
             if (criterion?.kind === 'tokens') return (criterion.tokens || []).map((token, index) => ({ value: String(token.value || '').trim(), op: index ? (['OR', 'AND', 'NOT'].includes(token.op) ? token.op : 'OR') : 'OR' })).filter(token => token.value);
@@ -750,7 +803,12 @@
             const resetButton = this.shadowRoot?.querySelector('[data-action="reset"]');
             const applyButton = this.shadowRoot?.querySelector('[data-action="apply"]');
             if (resetButton) resetButton.disabled = !hasCriteria;
-            if (applyButton) applyButton.disabled = !hasCriteria || Boolean(this.state.loading);
+            if (applyButton) applyButton.disabled = !hasCriteria || Boolean(this.state.loading) || this.hasZeroPreviewResult();
+        }
+        hasZeroPreviewResult() {
+            const preview = this._previewState;
+            return !preview.idle && !preview.loading && !preview.error
+                && preview.total !== null && Number(preview.total) === 0;
         }
         renderEditor() {
             const field = this.fieldMeta(this.state.activeField);
@@ -767,17 +825,31 @@
             } else {
                 control = this.renderTokenEditor(criterion);
             }
-            return `<div class="filter-pane active" data-editor-field="${field.name}"><h3>${html(this.fieldLabel(field.name))}</h3><div class="field">${control}</div><div class="preview-estimate" role="status" aria-live="polite"></div>${this.renderEditorHelp()}<div class="editor-actions"><button type="button" class="btn btn-secondary" data-action="reset" ${hasCriteria ? '' : 'disabled'}>Đặt lại</button><button type="button" class="btn btn-primary" data-action="apply" ${this.state.loading || !hasCriteria ? 'disabled' : ''}>${this.state.loading ? 'Đang tìm kiếm…' : 'Tìm kiếm nâng cao'}</button></div></div>`;
+            return `<div class="filter-pane active" data-editor-field="${field.name}"><h3>${html(this.fieldLabel(field.name))}</h3><div class="field">${control}</div><div class="editor-meta-row"><div class="preview-estimate" role="status" aria-live="polite"></div>${this.renderEditorHelp()}</div>${this.renderSummary()}<div class="editor-actions"><button type="button" class="btn btn-secondary" data-action="reset" ${hasCriteria ? '' : 'disabled'}>Đặt lại</button><button type="button" class="btn btn-primary" data-action="apply" ${this.state.loading || !hasCriteria || this.hasZeroPreviewResult() ? 'disabled' : ''}>${this.state.loading ? 'Đang tìm kiếm…' : 'Tìm kiếm nâng cao'}</button></div></div>`;
         }
         bindEvents() {
             const root = this.shadowRoot;
             root.querySelectorAll('[data-group]').forEach(button => button.addEventListener('click', () => {
+                this.cancelPreview();
+                this._keywordDrafts.clear();
                 this.state.group = button.dataset.group; this.state.sourceTypes = []; this.state.criteria = {}; this.state.activeField = ''; this.state.page = 1; this._previewState = { idle: true }; this.render();
             }));
-            root.querySelectorAll('[data-field]').forEach(button => button.addEventListener('click', () => { this.state.activeField = button.dataset.field; this.render(); this.focusActiveField(); }));
-            root.querySelectorAll('[data-open-filter-help]').forEach(link => link.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); this.dispatchEvent(new CustomEvent('bidfinder:open-filter-help', { bubbles: true, composed: true })); }));
+            root.querySelectorAll('[data-field]').forEach(button => button.addEventListener('click', () => {
+                this.selectField(button.dataset.field);
+            }));
+            this.bindEditorEvents();
+        }
+        bindEditorEvents() {
+            const root = this.shadowRoot;
             root.querySelector('[data-action="reset"]')?.addEventListener('click', () => this.resetAllFilters());
             root.querySelector('[data-action="apply"]')?.addEventListener('click', () => this.submit());
+            const tipsButton = root.querySelector('[data-action="toggle-search-tips"]');
+            const tipsTooltip = root.querySelector('.search-tips-tooltip');
+            tipsButton?.addEventListener('click', () => {
+                const isOpen = tipsButton.getAttribute('aria-expanded') === 'true';
+                tipsButton.setAttribute('aria-expanded', String(!isOpen));
+                if (tipsTooltip) tipsTooltip.hidden = isOpen;
+            });
             root.querySelectorAll('[data-dropdown-toggle]').forEach(button => button.addEventListener('click', event => { event.preventDefault(); this.toggleDropdown(button.dataset.dropdownToggle); }));
             root.querySelectorAll('[data-dropdown-option]').forEach(input => input.addEventListener('change', () => this.syncDropdownField(input.dataset.dropdownOption)));
             root.querySelectorAll('[data-open-date-picker]').forEach(field => field.addEventListener('click', () => this.openDatePicker(field)));
@@ -796,8 +868,10 @@
         }
         bindSummaryEvents() {
             const root = this.shadowRoot;
-            root.querySelectorAll('[data-chip-field]').forEach(button => button.addEventListener('click', () => { this.state.activeField = button.dataset.chipField; this.render(); this.focusActiveField(); }));
-            root.querySelectorAll('[data-remove-field]').forEach(button => button.addEventListener('click', () => { delete this.state.criteria[button.dataset.removeField]; this.render(); this.requestPreview(); }));
+            root.querySelectorAll('[data-chip-field]').forEach(button => button.addEventListener('click', () => {
+                this.selectField(button.dataset.chipField);
+            }));
+            root.querySelectorAll('[data-remove-field]').forEach(button => button.addEventListener('click', () => { delete this.state.criteria[button.dataset.removeField]; this.render(); this.invalidatePreview(); }));
         }
         isAutocompleteField(field) {
             return Boolean(field?.autocomplete);
@@ -958,8 +1032,8 @@
                 if (event.key === 'Enter' && !event.shiftKey) {
                     event.preventDefault();
                     const active = this.autocompleteItems(scope)[this._autocompleteIndex];
-                    if (active?.dataset?.autocompleteValue) this.appendValueToken(active.dataset.autocompleteValue);
-                    else this.appendValueToken(keywordInput.value);
+                    if (active?.dataset?.autocompleteValue) this.appendValueToken(active.dataset.autocompleteValue, true);
+                    else this.appendValueToken(keywordInput.value, true);
                 } else if (this.handleAutocompleteKey(event, scope)) {
                     return;
                 }
@@ -983,23 +1057,20 @@
             const input = container.querySelector('#criterion-keyword');
             if (input) { input.value = editValue; input.focus(); input.setSelectionRange?.(editValue.length, editValue.length); }
 
-            const chips = this.renderSummaryChips();
-            const topbar = root.querySelector('.active-filters-topbar');
-            const list = root.querySelector('.active-filters-list');
-            if (list) list.innerHTML = chips || '<span class="empty-filters">Chưa có điều kiện tìm kiếm nào</span>';
-            topbar?.classList.toggle('empty', !chips);
-            this.bindSummaryEvents();
+            this.refreshSummary();
             root.querySelector(`[data-field="${this.state.activeField}"]`)?.classList.toggle('has-value', Boolean(this.state.criteria[this.state.activeField]));
             this.syncEditorActions();
         }
         // State-based port of legacy AdvancedFilterManager's token behavior.
-        appendValueToken(rawValue) {
+        appendValueToken(rawValue, estimate = false) {
             const value = String(rawValue || '').trim();
             if (!value || !this.state.activeField) return;
+            this._keywordDrafts.delete(this.state.activeField);
             const tokens = this.criterionTokens(this.state.criteria[this.state.activeField]);
             tokens.push({ value, op: tokens.length ? 'OR' : 'OR' });
             this.state.criteria[this.state.activeField] = { kind: 'tokens', tokens };
-            this.state.page = 1; this.refreshTokenCriterion(); this.requestPreview();
+            this.state.page = 1; this.refreshTokenCriterion();
+            if (estimate) this.requestPreview(); else this.invalidatePreview();
         }
         cycleTokenOperator(index) {
             const tokens = this.criterionTokens(this.state.criteria[this.state.activeField]);
@@ -1007,7 +1078,7 @@
             const operators = ['OR', 'AND', 'NOT'];
             tokens[index].op = operators[(operators.indexOf(tokens[index].op) + 1) % operators.length];
             this.state.criteria[this.state.activeField] = { kind: 'tokens', tokens };
-            this.refreshTokenCriterion(); this.requestPreview();
+            this.refreshTokenCriterion(); this.invalidatePreview();
         }
         removeValueToken(index) {
             const tokens = this.criterionTokens(this.state.criteria[this.state.activeField]);
@@ -1015,7 +1086,7 @@
             tokens.splice(index, 1);
             if (tokens[0]) tokens[0].op = 'OR';
             if (tokens.length) this.state.criteria[this.state.activeField] = { kind: 'tokens', tokens }; else delete this.state.criteria[this.state.activeField];
-            this.state.page = 1; this.refreshTokenCriterion(); this.requestPreview();
+            this.state.page = 1; this.refreshTokenCriterion(); this.invalidatePreview();
         }
         moveValueTokenToInputForEditing(index) {
             const tokens = this.criterionTokens(this.state.criteria[this.state.activeField]);
@@ -1024,7 +1095,7 @@
             if (tokens[0]) tokens[0].op = 'OR';
             if (tokens.length) this.state.criteria[this.state.activeField] = { kind: 'tokens', tokens }; else delete this.state.criteria[this.state.activeField];
             this.refreshTokenCriterion(value);
-            this.requestPreview();
+            this.invalidatePreview();
         }
         saveActiveCriterion() {
             const field = this.fieldMeta(this.state.activeField);
@@ -1040,7 +1111,7 @@
                 const values = input?.multiple ? Array.from(input.selectedOptions).map(option => option.value).filter(Boolean) : splitValues(input?.value);
                 if (values.length) this.state.criteria[field.name] = { kind: 'values', values }; else delete this.state.criteria[field.name];
             }
-            this.state.page = 1; this.render(); this.requestPreview();
+            this.state.page = 1; this.render(); this.invalidatePreview();
         }
         collectFilterPayload() {
             const filters = {}, structuredFilters = {}, ranges = {};
@@ -1092,6 +1163,11 @@
                 sourceTypes: crossGroupSearch ? [] : [...this.state.sourceTypes],
                 crossGroupSearch,
                 crossGroupSearchFields,
+                uiState: {
+                    group: this.state.group,
+                    activeField: this.state.activeField,
+                    criteria: JSON.parse(JSON.stringify(this.state.criteria))
+                },
                 text: textValues.join(' '), searchFields: textFields, filters, structuredFilters, ranges, dateRanges,
                 exactIdentifiers: {}, sort: [], page: this.state.page, limit: this.state.limit, queryMode: 'search'
             };
@@ -1102,17 +1178,40 @@
             this.setPreviewResult({ loading: true });
             this.previewTimer = setTimeout(() => this.dispatchEvent(new CustomEvent('preview-filters', { detail: this.collectFilterPayload(), bubbles: true, composed: true })), 300);
         }
-        activeSummary() { const count = Object.keys(this.state.criteria).length; return count ? `${count} điều kiện đang chọn` : ''; }
+        invalidatePreview() {
+            this.cancelPreview();
+            this.setPreviewResult({ idle: true });
+        }
         submit() {
-            if (!Object.keys(this.state.criteria).length) return;
+            if (!Object.keys(this.state.criteria).length || this.hasZeroPreviewResult()) return;
+            this.cancelPreview();
             const request = this.collectFilterPayload();
             this.setApplyLoading(true);
             this.dispatchEvent(new CustomEvent('apply-filters', { detail: request, bubbles: true, composed: true }));
         }
-        resetAllFilters() { this.state.criteria = {}; this.state.sourceTypes = []; this.state.page = 1; this.state.loading = false; this._previewState = { idle: true }; this.render(); this.dispatchEvent(new CustomEvent('reset-filters', { bubbles: true, composed: true })); }
+        resetAllFilters() { this.cancelPreview(); this._keywordDrafts.clear(); this.state.criteria = {}; this.state.sourceTypes = []; this.state.page = 1; this.state.loading = false; this._previewState = { idle: true }; this.render(); this.dispatchEvent(new CustomEvent('reset-filters', { bubbles: true, composed: true })); }
         applyPayload(payload = {}) {
             const next = payload || {};
+            if (next.uiState && GROUP_LABELS[next.uiState.group] && next.uiState.criteria && typeof next.uiState.criteria === 'object') {
+                this.state.group = next.uiState.group;
+                this.state.activeField = next.uiState.activeField || '';
+                this.state.criteria = Object.fromEntries(
+                    Object.entries(next.uiState.criteria).filter(([name]) => this.fieldMeta(name))
+                );
+                this.state.sourceTypes = Array.isArray(next.sourceTypes) ? [...next.sourceTypes] : [];
+                this.state.page = Math.max(1, Number(next.page || 1));
+                this.state.limit = Math.min(1000, Math.max(25, Number(next.limit || 50)));
+                this.state.pendingPayload = null;
+                this._previewState = { idle: true };
+                this.ensureActiveField();
+                return;
+            }
+            const originalCrossField = (next.crossGroupSearchFields || []).find(name =>
+                name === 'medicine_name' || name === 'active_ingredient_or_herbal_component' || name === 'item_name'
+            );
             if (next.group) this.state.group = next.group === 'traditional_medicine' ? 'traditional' : next.group === 'medicine' ? 'medicines' : next.group;
+            else if (next.crossGroupSearch && originalCrossField) this.state.group = originalCrossField === 'item_name' ? 'traditional' : 'medicines';
+            if (originalCrossField) this.state.activeField = originalCrossField;
             this._previewState = { idle: true };
             this.state.pendingPayload = null; this.state.sourceTypes = Array.isArray(next.sourceTypes) ? [...next.sourceTypes] : []; this.state.criteria = {};
             Object.entries(next.structuredFilters || {}).forEach(([name, value]) => { const values = value?.in || (value?.eq !== undefined ? [value.eq] : []); if (values.length) this.state.criteria[name] = { kind: 'values', values }; });
@@ -1122,9 +1221,18 @@
             if (next.filters?.place?.length) this.state.criteria.location = { kind: 'values', values: next.filters.place };
             if (next.filters?.drugGroup?.length) this.state.criteria[this.state.group === 'traditional' ? 'technical_group' : 'medicine_group'] = { kind: 'values', values: next.filters.drugGroup };
             Object.entries(LEGACY_TOKEN_FILTER_KEYS[this.state.group] || {}).forEach(([name, filterKey]) => {
+                if (filterKey === 'crossGroupProductKeyword' && originalCrossField && name !== originalCrossField) return;
                 const tokens = next.filters?.[filterKey]?.tokens;
                 if (Array.isArray(tokens) && tokens.length) this.state.criteria[name] = { kind: 'tokens', tokens: tokens.map((token, index) => ({ value: token.value, op: index ? token.op : 'OR' })) };
             });
+            if (originalCrossField && !this.state.criteria[originalCrossField] && typeof next.text === 'string') {
+                const phrase = next.text.trim();
+                if (/^"(?:\\.|[^"\\])*"$/.test(phrase)) {
+                    try {
+                        this.state.criteria[originalCrossField] = { kind: 'tokens', tokens: [{ value: JSON.parse(phrase), op: 'OR' }] };
+                    } catch (_) { /* Leave malformed legacy text out of the editor. */ }
+                }
+            }
             this.state.page = Math.max(1, Number(next.page || 1)); this.state.limit = Math.min(1000, Math.max(25, Number(next.limit || 50))); this.ensureActiveField();
         }
         setFilterPayload(payload = {}) { if (!this.state.contract) this.state.pendingPayload = payload; else { this.applyPayload(payload); this.render(); } }
@@ -1152,11 +1260,22 @@
                 status.textContent = isOverThreshold ? 'Có 100+ kết quả' : !hasCount || count <= 0 ? 'Có 0 kết quả' : `Có ${count} kết quả`;
                 status.classList.toggle('zero-result', !isOverThreshold && (!hasCount || count <= 0));
             }
+            status.hidden = !status.textContent;
+            this.syncEditorActions();
         }
-        showStatus(message, error = false) { const status = this.shadowRoot?.querySelector('.preview-estimate'); if (status) { status.textContent = message; status.classList.toggle('error', error); } }
+        showStatus(message, error = false) { const status = this.shadowRoot?.querySelector('.preview-estimate'); if (status) { status.textContent = message; status.hidden = !message; status.classList.toggle('error', error); } }
         showError(message) { this.renderShell(message); this.shadowRoot.querySelector('.ts-loading')?.classList.add('ts-error'); }
-        hasVisiblePreviewEstimate() { return /Có\s+(?:100\+|\d+)\s+kết quả/.test(this.shadowRoot?.querySelector('.preview-estimate')?.textContent || ''); }
-        activatePane(pane = '', { focus = false } = {}) { if (this.fieldMeta(pane)) this.state.activeField = pane; if (this.state.contract) this.render(); if (focus) this.focusActiveField(); }
+        hasVisiblePreviewEstimate() { return Boolean(this._previewState.total !== null && !this._previewState.loading && !this._previewState.error); }
+        hasPendingPreview() { return Boolean(this._previewState.loading); }
+        cancelPreview() {
+            clearTimeout(this.previewTimer);
+            this.previewTimer = null;
+            this.dispatchEvent(new CustomEvent('cancel-preview', { bubbles: true, composed: true }));
+        }
+        prepareForOpen() {
+            if (this.state.contract && !this.shadowRoot?.querySelector('.filter-content')) this.render();
+        }
+        activatePane(pane = '', { focus = false } = {}) { this.selectField(pane, { focus }); }
         getPreferredPaneForOpen() { return this.state.activeField || this.fields()[0]?.name || ''; }
         focusActiveField() { this.shadowRoot?.querySelector('#criterion-keyword,[data-date-text="from"],[data-dropdown-toggle],#criterion-min,#criterion-max')?.focus(); }
     }

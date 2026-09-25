@@ -93,6 +93,24 @@ class DashboardBidderPriceBandsTest(unittest.TestCase):
         self.assertEqual(3, band["corresponding_awarded_value"])
         self.assertEqual(20_000, band["price_min"])
 
+    def test_case_variant_bidder_names_with_different_ids_are_one_cross_filter_row(self):
+        rows = [
+            make_row("upper", bidder="vendor-1", bidder_name="CÔNG TY CỔ PHẦN DƯỢC A", package="P1", price=980, value=100),
+            make_row("mixed", bidder="vendor-2", bidder_name="Công ty cổ phần dược a", package="P2", price=1_005, value=200),
+        ]
+
+        result = aggregate_dashboard_documents(
+            {"medicines": rows},
+            selected_bidder="Công ty cổ phần Dược A",
+        )
+        items = result["bidder_price_band_analysis"]["items"]
+
+        self.assertEqual(1, len(items))
+        self.assertEqual(2, items[0]["distinct_win_count"])
+        self.assertEqual(300, items[0]["corresponding_awarded_value"])
+        self.assertEqual(980, items[0]["price_min"])
+        self.assertEqual(1_005, items[0]["price_max"])
+
     def test_top_five_rank_by_band_win_count_then_value_then_name(self):
         rows = []
         for bidder, count, value in [
@@ -122,21 +140,25 @@ class DashboardBidderPriceBandsTest(unittest.TestCase):
         items = aggregate_dashboard_documents({"medicines": rows}, selected_product="Sản phẩm A")["bidder_price_band_analysis"]["items"]
         self.assertEqual(["Zulu", "Alpha"], [item["bidder_name"] for item in items])
 
-    def test_same_product_with_incompatible_units_requires_selection_then_stays_separate(self):
+    def test_incompatible_units_stay_separate_without_requiring_product_selection(self):
         rows = [
-            make_row("tablet", unit="viên", value=100),
-            make_row("box", unit="hộp", value=900),
+            make_row("tablet", unit="viên", price=1_000, value=100),
+            make_row("box", unit="hộp", price=1_001, value=900),
         ]
         mixed = aggregate_dashboard_documents({"medicines": rows})["bidder_price_band_analysis"]
-        self.assertTrue(mixed["requires_product_selection"])
-        selected = aggregate_dashboard_documents({"medicines": rows}, selected_product="Sản phẩm A")["bidder_price_band_analysis"]
-        self.assertEqual(1, selected["items"][0]["distinct_win_count"])
-        self.assertEqual(900, selected["items"][0]["corresponding_awarded_value"])
-        self.assertEqual("hộp", selected["items"][0]["unit"])
+        self.assertNotIn("requires_product_selection", mixed)
+        self.assertEqual(1, len(mixed["items"]))
+        self.assertEqual(1, mixed["items"][0]["distinct_win_count"])
+        self.assertEqual(1_001, mixed["items"][0]["price_min"])
+        self.assertEqual(900, mixed["items"][0]["corresponding_awarded_value"])
+        self.assertEqual("hộp", mixed["items"][0]["unit"])
 
-    def test_mixed_products_are_gated_and_selected_product_filters_context(self):
+    def test_mixed_products_show_best_band_and_selected_product_still_filters(self):
         rows = [make_row("a", product="Sản phẩm A"), make_row("b", product="Sản phẩm B", price=2_000)]
-        self.assertTrue(aggregate_dashboard_documents({"medicines": rows})["bidder_price_band_analysis"]["requires_product_selection"])
+        mixed = aggregate_dashboard_documents({"medicines": rows})["bidder_price_band_analysis"]
+        self.assertNotIn("requires_product_selection", mixed)
+        self.assertEqual(1, len(mixed["items"]))
+        self.assertEqual(1_000, mixed["items"][0]["price_min"])
         selected = aggregate_dashboard_documents({"medicines": rows}, selected_product="Sản phẩm B")["bidder_price_band_analysis"]
         self.assertEqual(1, len(selected["items"]))
         self.assertEqual(2_000, selected["items"][0]["price_min"])

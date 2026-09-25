@@ -639,7 +639,7 @@ class TestAdapter(unittest.IsolatedAsyncioTestCase):
         self.assertIn("bidfinder_goods_v1_serving_v1_20260901", opener.request.full_url)
         self.assertEqual("server-only", opener.request.headers["X-typesense-api-key"])
 
-    async def test_update_count_uses_result_posted_at_prefix_and_zero_hit_page(self):
+    async def test_update_count_uses_partition_date_and_unique_package_codes(self):
         class Response:
             def __enter__(self):
                 return self
@@ -648,7 +648,13 @@ class TestAdapter(unittest.IsolatedAsyncioTestCase):
                 return False
 
             def read(self):
-                return json.dumps({"found": 17, "hits": []}).encode()
+                return json.dumps({
+                    "found": 2,
+                    "hits": [
+                        {"document": {"bid_invitation_code": "IB1"}},
+                        {"document": {"bid_invitation_code": "IB1"}},
+                    ],
+                }).encode()
 
         class Opener:
             def __init__(self):
@@ -662,9 +668,60 @@ class TestAdapter(unittest.IsolatedAsyncioTestCase):
         config = TypesenseShadowConfig(api_key="server-only", serving_generation="serving_v1_20260901")
         repo = TypesenseSearchRepository(config, opener=opener)
 
-        self.assertEqual(17, repo._request_update_count("goods", date(2026, 8, 28)))
-        self.assertIn("result_posted_at%3A2026-08-28%2A", opener.request.full_url)
-        self.assertIn("per_page=0", opener.request.full_url)
+        self.assertEqual({"IB1"}, repo._request_update_package_codes("goods", date(2026, 8, 28)))
+        self.assertIn("partition_date%3A%3D2026-08-28", opener.request.full_url)
+        self.assertIn("per_page=250", opener.request.full_url)
+        self.assertIn("include_fields=bid_invitation_code", opener.request.full_url)
+
+    async def test_daily_goods_summary_counts_all_goods_but_excludes_general_goods_from_value_blocks(self):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self):
+                return json.dumps({
+                    "found": 2,
+                    "hits": [
+                        {"document": {
+                            "bid_invitation_code": "IB1",
+                            "source_tab": "THIET_BI_VAT_TU_Y_TE",
+                            "quantity": 10,
+                            "winning_unit_price": 100,
+                            "item_name": "Giá thấp, số lượng lớn",
+                            "procuring_entity_name": "Bệnh viện A",
+                        }},
+                        {"document": {
+                            "bid_invitation_code": "IB2",
+                            "source_tab": "HANG_HOA",
+                            "quantity": 1,
+                            "winning_unit_price": 900,
+                            "item_name": "Hàng hóa ngoài y tế",
+                            "procuring_entity_name": "Bệnh viện B",
+                        }},
+                    ],
+                }).encode()
+
+        class Opener:
+            def __init__(self):
+                self.request = None
+
+            def __call__(self, request, **kwargs):
+                self.request = request
+                return Response()
+
+        opener = Opener()
+        config = TypesenseShadowConfig(api_key="server-only", serving_generation="serving_v1_20260901")
+        repo = TypesenseSearchRepository(config, opener=opener)
+
+        summary = repo._request_daily_group_summary("goods", date(2026, 8, 28))
+
+        self.assertEqual(100, summary["highest_item"]["value"])
+        self.assertEqual("Giá thấp, số lượng lớn", summary["highest_item"]["name"])
+        self.assertEqual({"IB1", "IB2"}, summary["package_codes"])
+        self.assertIn("include_fields=id%2Cquantity%2Cwinning_unit_price%2Citem_name%2Cprocuring_entity_name%2Cbid_invitation_code%2Csource_tab", opener.request.full_url)
 
     async def test_adapter_returns_ordered_hits_without_global_facets(self):
         class Response:

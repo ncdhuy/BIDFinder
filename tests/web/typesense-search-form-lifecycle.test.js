@@ -19,6 +19,7 @@ class FakeNode {
         this.listeners = {};
         this.dataset = {};
         this.classList = new FakeClassList();
+        this.hidden = false;
         this.textContent = '';
         this.value = '';
         this._innerHTML = '';
@@ -32,6 +33,7 @@ class FakeNode {
     click() { this.listeners.click?.(); }
     keydown(key, options = {}) { this.listeners.keydown?.({ key, shiftKey: false, preventDefault() {}, ...options }); }
     focus() {}
+    getAttribute(name) { return this.attributes?.[name] ?? null; }
     setSelectionRange() {}
     getElementById(id) { return this.querySelector(`#${id}`); }
     querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
@@ -66,8 +68,13 @@ class FakeNode {
     }
 }
 
-class FakeSummaryNode extends FakeNode {
-    constructor(owner) { super('div'); this.owner = owner; }
+class FakeConditionsNode extends FakeNode {
+    constructor(owner) {
+        super('section');
+        this.owner = owner;
+        this.list = new FakeNode('div');
+        this.count = new FakeNode('span');
+    }
     set innerHTML(value) {
         super.innerHTML = value;
         this.owner.cache.delete('[data-chip-field]');
@@ -75,11 +82,16 @@ class FakeSummaryNode extends FakeNode {
         this.owner.cache.delete('[data-field],[data-chip-field]');
     }
     get innerHTML() { return this._innerHTML; }
+    querySelector(selector) {
+        if (selector === '.search-conditions-list') return this.list;
+        if (selector === '.search-conditions-count') return this.count;
+        return super.querySelector(selector);
+    }
 }
 
 class FakeContentRoot extends FakeNode {
-    constructor() { super('div'); this.className = 'search-form-root'; this.renderCount = 0; this.summaryList = null; this.topbar = null; this.tokenEditor = null; }
-    set innerHTML(value) { super.innerHTML = value; this.renderCount += 1; this.summaryList = null; this.topbar = null; this.tokenEditor = null; }
+    constructor() { super('div'); this.className = 'search-form-root'; this.renderCount = 0; this.conditions = null; this.tipsButton = null; this.tipsTooltip = null; this.tokenEditor = null; }
+    set innerHTML(value) { super.innerHTML = value; this.renderCount += 1; this.conditions = null; this.tipsButton = null; this.tipsTooltip = null; this.tokenEditor = null; }
     get innerHTML() { return this._innerHTML; }
     querySelectorAll(selector) {
         if (this.cache.has(selector)) return this.cache.get(selector);
@@ -94,7 +106,7 @@ class FakeContentRoot extends FakeNode {
             return result;
         }
         if (selector === '[data-field],[data-chip-field]') {
-            const source = `${this._innerHTML}${this.summaryList?.innerHTML || ''}`;
+            const source = `${this._innerHTML}${this.conditions?.list.innerHTML || ''}`;
             result = [...source.matchAll(/<button[^>]*data-(field|chip-field)="([^"]+)"[^>]*>/g)].map(match => {
                 const node = new FakeNode('button');
                 if (match[1] === 'field') node.dataset.field = match[2]; else node.dataset.chipField = match[2];
@@ -113,20 +125,24 @@ class FakeContentRoot extends FakeNode {
         if (selector === '[data-chip-field]' || selector === '[data-remove-field]') {
             const attr = selector.slice(1, -1);
             const dataKey = attr.replace(/^data-/, '').replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
-            const source = this.summaryList?.innerHTML || this._innerHTML;
+            const source = this.conditions?.list.innerHTML || this._innerHTML;
             result = [...source.matchAll(new RegExp(`<button[^>]*${attr}="([^"]+)"[^>]*>`, 'g'))].map(match => {
                 const node = new FakeNode('button'); node.dataset[dataKey] = match[1]; return node;
             });
             this.cache.set(selector, result);
             return result;
         }
-        if (selector === '.active-filters-topbar') {
-            if (!this.topbar) this.topbar = new FakeNode('div');
-            return [this.topbar];
+        if (selector === '.search-conditions') {
+            if (!this.conditions) this.conditions = new FakeConditionsNode(this);
+            return [this.conditions];
         }
-        if (selector === '.active-filters-list') {
-            if (!this.summaryList) this.summaryList = new FakeSummaryNode(this);
-            return [this.summaryList];
+        if (selector === '[data-action="toggle-search-tips"]') {
+            if (!this.tipsButton) this.tipsButton = new FakeNode('button');
+            return [this.tipsButton];
+        }
+        if (selector === '.search-tips-tooltip') {
+            if (!this.tipsTooltip) { this.tipsTooltip = new FakeNode('div'); this.tipsTooltip.hidden = true; }
+            return [this.tipsTooltip];
         }
         if (selector === '[data-token-editor]') {
             if (!this.tokenEditor && this._innerHTML.includes('data-token-editor')) {
@@ -273,22 +289,32 @@ async function run() {
         assert.ok(contentRoot.innerHTML.includes('condition-panel'), `${label}: condition panel`);
         assert.ok(!contentRoot.innerHTML.includes('ai-search-panel'), `${label}: embedded AI panel removed`);
         assert.ok(contentRoot.innerHTML.indexOf('class="field"') < contentRoot.innerHTML.indexOf('class="preview-estimate"'), `${label}: estimate follows editor`);
-        assert.ok(contentRoot.innerHTML.indexOf('class="preview-estimate"') < contentRoot.innerHTML.indexOf('class="pane-help"'), `${label}: help follows estimate`);
-        assert.ok(contentRoot.innerHTML.indexOf('class="pane-help"') < contentRoot.innerHTML.indexOf('class="editor-actions"'), `${label}: actions follow help`);
+        assert.ok(contentRoot.innerHTML.indexOf('class="preview-estimate"') < contentRoot.innerHTML.indexOf('class="search-tips"'), `${label}: tips follow estimate`);
+        assert.ok(contentRoot.innerHTML.indexOf('class="search-tips"') < contentRoot.innerHTML.indexOf('class="search-conditions'), `${label}: conditions follow tips`);
+        assert.ok(contentRoot.innerHTML.indexOf('class="search-conditions') < contentRoot.innerHTML.indexOf('class="editor-actions"'), `${label}: actions follow conditions`);
         assert.ok(!contentRoot.innerHTML.includes('class="ts-footer"'), `${label}: no full-width footer`);
         assert.ok(contentRoot.innerHTML.includes('class="sidebar-panel-title">Danh mục</div>'), `${label}: category title`);
         assert.ok(contentRoot.innerHTML.includes('class="sidebar-panel-title">Điều kiện</div>'), `${label}: condition title`);
         assert.equal((contentRoot.innerHTML.match(/class="condition-section /g) || []).length, 2, `${label}: two condition sections`);
         assert.ok(contentRoot.innerHTML.includes('Tính chất sản phẩm'), `${label}: product section`);
         assert.ok(contentRoot.innerHTML.includes('Thông tin thầu'), `${label}: tender section`);
+        assert.equal(contentRoot.querySelector('.preview-estimate').textContent, 'Chưa có từ khóa', `${label}: idle estimate explains empty state`);
         for (const field of expectedFields) assert.match(contentRoot.innerHTML, new RegExp(`data-field="${field}"`), `${label}: field ${field}`);
         for (const instruction of [
-            '1. Gõ từ khóa',
-            '2. Nhấn Enter để tạo một thẻ từ khóa',
-            '3. Nếu có nhiều điều kiện, lặp lại bước 1 và 2',
-            '4. Điều chỉnh bằng cách click OR AND NOT để tạo điều kiện',
-            '5. Lưu ý vùng <strong>"Điều kiện tìm kiếm"</strong> ở trên cùng để quản lý điều kiện tìm kiếm',
-            'Mẹo tìm kiếm'
+            'class="search-tips"',
+            'Mẹo tìm kiếm',
+            'data-action="toggle-search-tips"',
+            'role="tooltip" hidden',
+            '<ol class="search-tips-steps">',
+            '<li>Gõ từ khóa</li>',
+            '<li>Nhấn Enter để tạo một thẻ từ khóa</li>',
+            '<li>Nếu có nhiều điều kiện, lặp lại bước 1 và 2</li>',
+            'Điều chỉnh bằng cách click',
+            '<strong>OR:</strong>',
+            '<strong>AND:</strong>',
+            '<strong>NOT:</strong>',
+            'class="search-conditions',
+            'Điều kiện tìm kiếm'
         ]) assert.ok(contentRoot.innerHTML.includes(instruction), `${label}: instruction ${instruction}`);
         for (const forbidden of ['Nhóm dữ liệu', 'Mã nguồn MSC', 'Loại nguồn', 'Sắp xếp', 'Phân trang']) assert.ok(!contentRoot.innerHTML.includes(forbidden), `${label}: forbidden ${forbidden}`);
         for (const excluded of ['quantity', 'winning_unit_price', 'winning_bidder_id', 'procuring_entity_id', 'bidder_count']) assert.ok(!contentRoot.innerHTML.includes(`data-field="${excluded}"`), `${label}: excluded filter ${excluded}`);
@@ -301,6 +327,14 @@ async function run() {
         traditional: ['item_name', 'technical_group']
     };
     assertLegacyStructure('initial', representativeFields.medicines);
+    const tipsButton = contentRoot.querySelector('[data-action="toggle-search-tips"]');
+    const tipsTooltip = contentRoot.querySelector('.search-tips-tooltip');
+    tipsButton.click();
+    assert.equal(tipsButton.getAttribute('aria-expanded'), 'true', 'tips button opens tooltip');
+    assert.equal(tipsTooltip.hidden, false, 'tips tooltip opens without changing layout flow');
+    tipsButton.click();
+    assert.equal(tipsButton.getAttribute('aria-expanded'), 'false', 'tips button closes tooltip');
+    assert.equal(tipsTooltip.hidden, true, 'tips tooltip closes on second click');
 
     const goodsGroup = contentRoot.querySelectorAll('[data-group]').find(button => button.dataset.group === 'goods');
     goodsGroup.click();
@@ -334,6 +368,7 @@ async function run() {
     autocompleteInput.keydown('ArrowDown');
     autocompleteInput.keydown('Enter');
     assert.equal(form.state.criteria.active_ingredient_or_herbal_component.tokens[0].value, 'Nefopam hydrochloride', 'Enter selects the active suggestion as a token');
+    assert.equal(contentRoot.querySelector('.search-conditions').querySelector('.search-conditions-count').textContent, '1', 'summary count updates in place');
 
     const longSuggestion = 'Tên thiết bị y tế chuyên dụng dành cho bệnh viện và phòng khám - máy điện tim - phiên bản màn hình màu cảm ứng độ phân giải cao';
     form.renderAutocompleteSuggestions([longSuggestion], 'máy điện tim', form.shadowRoot);
@@ -353,7 +388,7 @@ async function run() {
 
     const buttons = [...contentRoot.innerHTML.matchAll(/<button\b[^>]*>/g)].map(match => match[0]);
     assert.ok(buttons.length > 0, 'component has controls');
-    assert.ok(buttons.every(button => /class="[^"]*(sidebar-item|btn|pane-help-link|chip-select|chip-remove|token-operator|tag-text|token-remove|ai-condition-remove)[^"]*"/.test(button)), 'no raw button cloud');
+    assert.ok(buttons.every(button => /class="[^"]*(sidebar-item|btn|search-tips-toggle|chip-select|chip-remove|token-operator|tag-text|token-remove|ai-condition-remove)[^"]*"/.test(button)), 'no raw button cloud');
     assert.match(contentRoot.innerHTML, /class="sidebar-item group-choice active"/);
     assert.match(contentRoot.innerHTML, /class="sidebar-item [^"]*active[^"]*" data-field=/);
     assert.equal(form.shadowRoot.children[0], styleNode, 'style is persistent shadow child');

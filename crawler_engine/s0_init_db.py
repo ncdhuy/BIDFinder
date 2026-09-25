@@ -121,6 +121,26 @@ class DatabaseMigrator:
                 ADD COLUMN IF NOT EXISTS url_goi_thau_con TEXT
             """)
 
+            # Serving-level daily rollup for the approval timeline.  This table
+            # is intentionally separate from user/account data and stores one
+            # row for every calendar day, including zero-count days.
+            self.cursor.execute("""
+                CREATE TABLE IF NOT EXISTS daily_approval_summary (
+                    data_date DATE PRIMARY KEY,
+                    approved_package_count INTEGER NOT NULL CHECK (approved_package_count >= 0),
+                    serving_generation TEXT NOT NULL,
+                    computed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            self.cursor.execute("""
+                CREATE TABLE IF NOT EXISTS daily_update_dashboard (
+                    data_date DATE PRIMARY KEY,
+                    summary JSONB NOT NULL,
+                    serving_generation TEXT NOT NULL,
+                    computed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
             # Legacy cleanup: KHLCNT is metadata/scan context, not package artifact identity.
             self.cursor.execute("""
                 ALTER TABLE packages
@@ -180,6 +200,14 @@ class DatabaseMigrator:
             self.cursor.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_app_users_google_sub
                 ON app_users (google_sub)
+            """)
+            self.cursor.execute("""
+                CREATE TABLE IF NOT EXISTS app_feature_intro_seen (
+                    intro_key TEXT NOT NULL,
+                    identity_key TEXT NOT NULL,
+                    seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (intro_key, identity_key)
+                )
             """)
             self.cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_app_users_auth_provider

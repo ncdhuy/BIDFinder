@@ -693,7 +693,7 @@ class TypesenseUiContractTest(unittest.TestCase):
 
     def test_legacy_surface_has_compact_responsive_controls(self):
         style_source = (ROOT / "apps/web/style.css").read_text(encoding="utf-8")
-        self.assertIn(".active-filters-topbar", self.form_source)
+        self.assertIn(".search-conditions", self.form_source)
         self.assertIn(".filter-layout", self.form_source)
         self.assertIn(".filter-sidebar", self.form_source)
         self.assertIn(".filter-content", self.form_source)
@@ -716,7 +716,11 @@ class TypesenseUiContractTest(unittest.TestCase):
             'class="sidebar-item ${field.name',
             'class="filter-chip"',
             ".search-form",
-            ".active-filters-topbar",
+            ".search-conditions",
+            ".search-tips",
+            ".search-tips-toggle",
+            ".search-tips-tooltip",
+            ".search-tips-logic",
             ".filter-layout",
             ".filter-sidebar",
             ".sidebar-column",
@@ -727,6 +731,7 @@ class TypesenseUiContractTest(unittest.TestCase):
             ".filter-chip .chip-remove",
             ".filter-content",
             ".filter-pane.active",
+            ".editor-meta-row",
             ".field input",
             ".field select",
             ".btn-primary",
@@ -736,11 +741,21 @@ class TypesenseUiContractTest(unittest.TestCase):
             self.assertIn(token, self.form_source if token.startswith("class=") else component_css)
 
         self.assertNotIn('class="active-filter-chip', self.form_source)
-        self.assertIn("grid-template-columns: clamp(130px, 9vw, 150px) minmax(400px, 460px) clamp(430px, 32vw, 520px);", component_css)
+        self.assertIn("grid-template-columns: clamp(130px, 9vw, 150px) minmax(400px, 460px) minmax(0, 1fr);", component_css)
+        self.assertIn("justify-content: stretch;", component_css)
         self.assertIn("grid-column: 3;", component_css)
         self.assertIn("grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);", component_css)
         self.assertIn("background: #eaf5ed;", component_css)
         self.assertIn("background: #eef7fb;", component_css)
+        layout_start = component_css.index(".filter-layout {")
+        layout_end = component_css.index(".filter-sidebar", layout_start)
+        self.assertNotIn("border:", component_css[layout_start:layout_end])
+        self.assertRegex(component_css, r"\.search-tips-toggle\s*\{[^}]*border:\s*0;")
+        self.assertRegex(component_css, r"\.search-tips-toggle\s*\{[^}]*background:\s*transparent;")
+        self.assertRegex(component_css, r"\.search-tips-toggle\s*\{[^}]*color:\s*var\(--c-primary\);")
+        self.assertRegex(component_css, r"\.preview-estimate\s*\{[^}]*color:\s*var\(--c-primary\);")
+        self.assertNotIn("box-shadow: 0 0 0 3px rgba(18, 116, 149, 0.10);", component_css)
+        self.assertIn("margin-left: auto;", component_css)
         self.assertIn("width: min(1180px, calc(100vw - 24px));", style_source)
         self.assertIn("padding: clamp(6px, 0.9vh, 10px);", style_source)
 
@@ -776,14 +791,19 @@ class TypesenseUiContractTest(unittest.TestCase):
             self.assertIn(repr(field), self.form_source)
         self.assertNotIn('class="ts-footer"', self.form_source)
         self.assertIn('class="preview-estimate"', self.form_source)
-        self.assertIn("active-filters-topbar${chips ? '' : ' empty'}", self.form_source)
+        self.assertIn("search-conditions${chips ? '' : ' empty'}", self.form_source)
         self.assertIn("@media (max-width: 980px)", self.form_source)
         self.assertIn("@media (min-width: 981px) and (max-width: 1199px)", self.form_source)
-        self.assertIn("height: clamp(72px, 8vh, 84px);", self.form_source)
-        self.assertIn("max-height: 84px;", self.form_source)
         self.assertIn("margin-top: auto;", self.form_source)
-        self.assertIn("clamp(430px, 32vw, 520px)", self.form_source)
+        self.assertIn("minmax(0, 1fr)", self.form_source)
+        self.assertIn("class=\"search-tips\"", self.form_source)
+        self.assertIn('data-action=\"toggle-search-tips\"', self.form_source)
+        self.assertIn('role=\"tooltip\" hidden', self.form_source)
+        self.assertIn("class=\"search-conditions", self.form_source)
         self.assertIn("min-height: 24px;", self.form_source)
+        self.assertIn("'Chưa có từ khóa'", self.form_source)
+        self.assertIn("min-height: 40px;", self.form_source)
+        self.assertIn("font-size: 14px;", self.form_source)
         self.assertIn(".preview-estimate.zero-result", self.form_source)
         self.assertIn("'Có 0 kết quả'", self.form_source)
         self.assertIn("'Có 100+ kết quả'", self.form_source)
@@ -791,9 +811,11 @@ class TypesenseUiContractTest(unittest.TestCase):
         field_position = render_editor_source.index('<div class="field">')
         estimate_position = render_editor_source.index('<div class="preview-estimate"')
         help_position = render_editor_source.index('this.renderEditorHelp()')
+        conditions_position = render_editor_source.index('this.renderSummary()')
         actions_position = render_editor_source.index('class="editor-actions"')
         self.assertLess(field_position, estimate_position)
         self.assertLess(estimate_position, help_position)
+        self.assertLess(help_position, conditions_position)
         self.assertLess(help_position, actions_position)
 
     def test_advanced_search_reuses_legacy_keyword_tokens(self):
@@ -894,7 +916,7 @@ class TypesenseUiContractTest(unittest.TestCase):
         ):
             self.assertIn(token, self.form_source)
 
-    def test_advanced_search_has_legacy_panel_architecture_and_help(self):
+    def test_advanced_search_has_panel_architecture_and_inline_help(self):
         for token in (
             'category-panel',
             'condition-panel',
@@ -904,14 +926,20 @@ class TypesenseUiContractTest(unittest.TestCase):
             'Thông tin thầu',
             "renderVariableSections()",
             "renderEditorHelp()",
-            "1. Gõ từ khóa",
-            "2. Nhấn Enter để tạo một thẻ từ khóa",
-            "3. Nếu có nhiều điều kiện, lặp lại bước 1 và 2",
-            "4. Điều chỉnh bằng cách click OR AND NOT để tạo điều kiện",
-            '5. Lưu ý vùng <strong>\"Điều kiện tìm kiếm\"</strong> ở trên cùng để quản lý điều kiện tìm kiếm',
-            'data-open-filter-help',
+            'class="search-tips"',
+            'class="search-conditions',
+            '<ol class="search-tips-steps">',
+            "<li>Gõ từ khóa</li>",
+            "<li>Nhấn Enter để tạo một thẻ từ khóa</li>",
+            "<li>Nếu có nhiều điều kiện, lặp lại bước 1 và 2</li>",
+            "Điều chỉnh bằng cách click",
+            "<strong>OR:</strong>",
+            "<strong>AND:</strong>",
+            "<strong>NOT:</strong>",
         ):
             self.assertIn(token, self.form_source)
+        self.assertNotIn('data-open-filter-help', self.form_source)
+        self.assertNotIn('active-filters-topbar', self.form_source)
         for forbidden in ("Nhóm dữ liệu", "Mã nguồn MSC", "Loại nguồn", "Sắp xếp", "Phân trang"):
             self.assertNotIn(forbidden, self.form_source)
         self.assertNotIn("Phạm vi tra cứu", self.form_source)
@@ -936,7 +964,7 @@ class TypesenseUiContractTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
     def test_advanced_search_uses_only_approved_groups_and_fields(self):
-        for label in ("Hàng hóa", "Thuốc", "Dược liệu", "Điều kiện tìm kiếm:"):
+        for label in ("Hàng hóa", "Thuốc", "Dược liệu", "Điều kiện tìm kiếm"):
             self.assertIn(label, self.form_source)
         for hidden_label in ("Nhóm dữ liệu", "Mã nguồn MSC", "Loại nguồn", "Sắp xếp và phân trang"):
             self.assertNotIn(hidden_label, self.form_source)
@@ -988,16 +1016,45 @@ class TypesenseUiContractTest(unittest.TestCase):
             actual = {key: sum(bool(field[key]) for field in fields) for key in counts}
             self.assertEqual(counts, actual, group)
 
-    def test_history_uses_typesense_update_timeline_contract(self):
+    def test_history_uses_approval_dashboard_contract(self):
         self.assertIn("metadata?.update_timeline", self.script_source)
         self.assertNotIn("metadata?.approval_timeline", self.script_source)
-        self.assertIn("đăng tải KQLCNT", self.index_source)
-        self.assertIn('"source": "typesense"', self.api_source)
+        self.assertIn("function showHistoryModal()", self.script_source)
+        self.assertIn("if (!metadata?.update_dashboard?.date) {", self.script_source)
+        self.assertIn("void loadMetadata(activeHistoryRangeDays).then(() => {", self.script_source)
+        self.assertIn("/api/metadata?history_days=${requestedHistoryDays}", self.script_source)
+        self.assertIn("được phê duyệt theo ngày", self.index_source)
+        self.assertIn("Hàng hóa có đơn giá cao nhất", self.index_source)
+        self.assertIn('"source": "typesense+postgres"', self.api_source)
+        self.assertIn("metadata:typesense-v2:{display_day.isoformat()}:{snapshot_time}:{history_days}", self.api_source)
         metadata_start = self.api_source.index('@app.get("/api/metadata")')
         metadata_source = self.api_source[metadata_start:metadata_start + 5000]
-        self.assertIn("typesense_search_repository.update_timeline()", metadata_source)
+        self.assertIn("fetch_approval_timeline(conn, display_day, start_day)", metadata_source)
+        self.assertIn("fetch_update_dashboard", metadata_source)
         self.assertNotIn("run_sessions", metadata_source)
-        self.assertNotIn("package_metadata", metadata_source)
+        self.assertIn("package_metadata", self.api_source)
+        self.assertIn("formatHistorySummaryPeriod", self.script_source)
+        self.assertIn("return 'Số liệu trong ngày';", self.script_source)
+        self.assertIn("return `Dữ liệu tạm tính đến ${cutoff}, ${dateLabel}`;", self.script_source)
+        self.assertIn("historyMetadataCache", self.script_source)
+        self.assertIn("historyMetadataRequests", self.script_source)
+        self.assertIn('id="history-summary-period"', self.index_source)
+        self.assertIn('id="history-summary-approved-detail"', self.index_source)
+        self.assertNotIn('id="history-summary-date"', self.index_source)
+        self.assertIn("formatHistorySummaryDetail('Chủ đầu tư', highestPackage.owner)", self.script_source)
+        self.assertNotIn("Mã TBMT: ${highestPackage.bid_invitation_code || 'Chưa rõ'}", self.script_source)
+        self.assertIn("formatHistorySummaryDetail('Tên hàng hóa', highestGoods.name)", self.script_source)
+        self.assertIn('history-summary-card-package', self.index_source)
+        self.assertIn('history-summary-card-goods', self.index_source)
+        self.assertIn("const HISTORY_AUTO_OPEN_SESSION_KEY = 'bidfinder:history-auto-opened-date';", self.script_source)
+        self.assertIn('requestHistoryAutoOpen();', self.script_source)
+        self.assertIn('maybeAutoOpenHistoryAfterEntry();', self.script_source)
+        self.assertIn("timeZone: 'Asia/Ho_Chi_Minh'", self.script_source)
+        style_source = (ROOT / "apps/web/style.css").read_text(encoding="utf-8")
+        self.assertIn('color: #111827;', style_source)
+        self.assertIn('font-weight: 400;', style_source)
+        self.assertIn('white-space: nowrap;', style_source)
+        self.assertNotIn('#history-modal .history-summary-card::before', style_source)
 
 
 if __name__ == "__main__":

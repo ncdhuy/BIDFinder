@@ -1022,13 +1022,30 @@ function formatLocationDisplayValue(value) {
     return value.split(';').map(reorderLocationDisplayEntry).filter(Boolean).join('; ');
 }
 
+const SELECTION_METHOD_DISPLAY_LABELS = new Map([
+    ['DTRR', 'Đấu thầu rộng rãi'], ['LCNT_DB', 'Đấu thầu rộng rãi'],
+    ['DTHC', 'Đấu thầu hạn chế'], ['LCNT_HC', 'Đấu thầu hạn chế'],
+    ['CDT', 'Chỉ định thầu'], ['CDTRG', 'Chào hàng cạnh tranh'],
+    ['MSTT', 'Mua sắm trực tiếp'], ['TTH', 'Tự thực hiện']
+]);
+
+function formatColumnDisplayValue(columnName, value) {
+    const canonicalName = RESULT_COLUMN_ALIASES[columnName] || columnName;
+    if (canonicalName !== 'selection_method') return value;
+    if (Array.isArray(value)) {
+        return value.map(entry => formatColumnDisplayValue(columnName, entry));
+    }
+    const code = String(value ?? '').trim().toLocaleUpperCase('vi');
+    return SELECTION_METHOD_DISPLAY_LABELS.get(code) || value;
+}
+
 function mapField(item, colName, fieldMappers) {
     const canonicalName = RESULT_COLUMN_ALIASES[colName] || colName;
     const formatter = fieldMappers[canonicalName] || fieldMappers[colName];
     const rawValue = getRawColumnValue(item, colName);
     const displayValue = canonicalName === 'location'
         ? formatLocationDisplayValue(rawValue)
-        : rawValue;
+        : formatColumnDisplayValue(canonicalName, rawValue);
     const value = formatter ? formatter(displayValue) : (displayValue ?? '');
     return Array.isArray(value) ? value.join(', ') : value;
 }
@@ -2019,6 +2036,7 @@ let currentQueryRequest = {
 };
 let currentAppliedPreview = null;
 let latestFilterPreview = null;
+let pendingAuthSearch = null;
 
 function getAppliedWorkingSetLimit(tableId = null) {
     const responseLimit = Number(currentQueryMeta.appliedLimitPerScope || 0);
@@ -2086,7 +2104,7 @@ function buildQueryRequest(baseRequest = {}, overrides = {}) {
     };
     [
         'group', 'sourceTypes', 'text', 'searchFields', 'structuredFilters',
-        'ranges', 'dateRanges', 'exactIdentifiers', 'columnFilters', 'sort', 'page', 'limit', 'queryMode', 'crossGroupSearch', 'crossGroupSearchFields'
+        'ranges', 'dateRanges', 'exactIdentifiers', 'columnFilters', 'sort', 'page', 'limit', 'queryMode', 'crossGroupSearch', 'crossGroupSearchFields', 'uiState'
     ].forEach(key => {
         if (Object.prototype.hasOwnProperty.call(safeBase, key) && !Object.prototype.hasOwnProperty.call(overrides, key)) {
             request[key] = safeBase[key];
@@ -2264,7 +2282,9 @@ async function fetchQueryResults(
     await window.BIDFinderAuth?.whenReady?.();
 
     if (!requireAuthenticatedSession('login', 'full_query')) {
-        throw new Error(window.BIDFinderAuth?.getFullQueryGateMessage?.() || 'Bạn cần đăng nhập để tìm kiếm dữ liệu.');
+        const error = new Error(window.BIDFinderAuth?.getFullQueryGateMessage?.() || 'Bạn cần đăng nhập để tìm kiếm dữ liệu.');
+        error.authRequired = true;
+        throw error;
     }
 
     const searchMode = options?.searchMode === 'full' ? 'full' : 'standard';
@@ -2307,7 +2327,9 @@ async function fetchQueryResults(
     if (!response.ok || payload?.success === false) {
         let message = `HTTP ${response.status}`;
         message = payload?.message || payload?.error || message;
-        throw new Error(message);
+        const error = new Error(message);
+        error.authRequired = response.status === 401;
+        throw error;
     }
 
     if (payload?.auth) {
@@ -2596,7 +2618,7 @@ function handleQuerySuccess(result, options = {}) {
         resetScroll: options.resetScroll !== false,
         redrawCharts: true
     });
-    selectResultViewWithMostRows();
+    if (!options.preserveResultView) selectResultViewWithMostRows();
     document.dispatchEvent(new CustomEvent('bidfinder:query-result', {
         detail: { result, query: currentQueryRequest }
     }));
@@ -2628,13 +2650,15 @@ async function applyFilters(payload, options = {}) {
                 requestKey: stableStringify(currentQueryRequest),
                 payload: getPreviewPayloadForRequest(currentQueryRequest, result)
             };
+            pendingAuthSearch = null;
+            getProcurementSearchForm()?.setPreviewResult?.(currentAppliedPreview.payload);
             return result;
         } else {
             throw new Error(result.error || 'Query failed');
         }
     } catch (err) {
-        const authRequired = document.getElementById('auth-modal')?.classList.contains('show') &&
-            /đăng nhập/i.test(err?.message || '');
+        const authRequired = err?.authRequired === true;
+        if (authRequired) pendingAuthSearch = { request: payload, options };
         (authRequired ? console.info : console.error)('Filter failed:', err);
         document.dispatchEvent(new CustomEvent('bidfinder:query-error', {
             detail: { message: err?.message || 'Không tải được kết quả.' }
@@ -2643,10 +2667,12 @@ async function applyFilters(payload, options = {}) {
             search_mode: 'standard',
             error: err?.message || 'unknown'
         });
-        resetQueryResultMeta();
-        updateResults([], [], { resetMiniFilters: true });
-        hideLimitWarning();
-        if (err?.message && !authRequired) {
+        if (!authRequired) {
+            resetQueryResultMeta();
+            updateResults([], [], { resetMiniFilters: true });
+            hideLimitWarning();
+        }
+        if (err?.message && !authRequired && !options.silent) {
             alert(err.message);
         }
         return null;
@@ -2831,11 +2857,6 @@ function refreshRenderedTables({ resetScroll = true, redrawCharts = true } = {})
     }
 
     if (redrawCharts) {
-        insightChartsDirty = true;
-        if (isInsightDrawerOpen()) {
-            const chartData = getInsightChartDataSets();
-            void drawCharts(chartData.df1, chartData.df2, chartData.df3);
-        }
         if (isDashboardActive()) {
             void refreshDashboardAnalytics();
         }
@@ -2903,8 +2924,16 @@ function updateScopeSwitcherCounts(df1Count, df2Count, df3Count = 0) {
     updateTabCountElement(df2CountEl, 'df2-panel');
     updateTabCountElement(df3CountEl, 'df3-panel');
 
+    const dashboardHasData = Object.values(counts).some(count => count > 0)
+        || Number(currentQueryMeta.totalCount || 0) > 0;
     document.querySelectorAll('.scope-btn').forEach(button => {
         const view = button.getAttribute('data-view');
+        if (view === 'dashboard-panel') {
+            button.classList.toggle('has-results', dashboardHasData);
+            button.classList.toggle('is-empty', !dashboardHasData);
+            button.setAttribute('aria-label', `Dashboard: ${dashboardHasData ? 'có dữ liệu' : 'chưa có dữ liệu'}`);
+            return;
+        }
         const count = counts[view] || 0;
         const countLabel = tabTotalCounts[view] || String(count);
         button.classList.toggle('has-results', count > 0);
@@ -2953,7 +2982,7 @@ function updateResults(df1, df2, df3 = [], options = {}) {
         redrawCharts: options.redrawCharts !== false
     });
 
-    selectResultViewWithMostRows();
+    if (!options.preserveResultView) selectResultViewWithMostRows();
 }
 
 function updateDuplicateWarning(df1Rows, df2Rows, df3Rows = []) {
@@ -3057,12 +3086,7 @@ function showPanel(panelId) {
 
     if (panelId === 'filter-panel') {
         const searchForm = getProcurementSearchForm();
-        if (typeof searchForm?.activatePane === 'function') {
-            const paneKey = typeof searchForm.getPreferredPaneForOpen === 'function'
-                ? searchForm.getPreferredPaneForOpen()
-                : 'active-ing';
-            searchForm.activatePane(paneKey || 'active-ing', { focus: false });
-        }
+        searchForm?.prepareForOpen?.();
         restoreAppliedFilterPreview(searchForm);
 
         requestAnimationFrame(() => {
@@ -3103,9 +3127,12 @@ function getPreviewPayloadForRequest(queryRequest, fallbackResult = null) {
 function restoreAppliedFilterPreview(searchForm) {
     if (!searchForm || typeof searchForm.setPreviewResult !== 'function') return;
     if (typeof searchForm.collectFilterPayload !== 'function') return;
+    if (searchForm.hasPendingPreview?.()) return;
 
     const formRequest = buildQueryRequest(searchForm.collectFilterPayload());
     const appliedRequest = buildQueryRequest(currentQueryRequest);
+    delete formRequest.uiState;
+    delete appliedRequest.uiState;
     const sameFilters = stableStringify(formRequest) === stableStringify(appliedRequest);
     const previewPayload = sameFilters ? getAppliedPreviewPayload() : null;
 
@@ -3122,9 +3149,9 @@ function hideAllPanels() {
 
 function closeTransientUi() {
     hideAllPanels();
-    closeInsightDrawer();
     closeFloatingTableUi();
-    ['history-modal', 'readme-modal', 'contact-modal'].forEach(id => {
+    void closeHistoryModal();
+    ['readme-modal', 'contact-modal'].forEach(id => {
         document.getElementById(id)?.classList.remove('show');
     });
 }
@@ -3234,7 +3261,6 @@ function initLandingShell() {
     };
 
     const goLanding = () => {
-        if (isInsightDrawerOpen()) closeInsightDrawer();
         syncLandingView('landing');
         window.BIDFinderAnalytics?.page?.({ view: 'landing' });
         landingShell.scrollTo({ top: 0, behavior: 'smooth' });
@@ -3271,7 +3297,7 @@ function initLandingShell() {
         }
     });
 
-    window.addEventListener('bidfinder:auth-changed', (event) => {
+    window.addEventListener('bidfinder:auth-changed', async (event) => {
         const authed = Boolean(event.detail?.authenticated);
         const intent = event.detail?.intent;
         const reason = event.detail?.reason;
@@ -3284,12 +3310,18 @@ function initLandingShell() {
             }
 
             if ((sessionStorage.getItem('bidfinder:view') || 'landing') === 'app' || intent === 'enter-app') {
-                initializeAppData();
+                await initializeAppData({ restoreUrlQuery: !pendingAuthSearch });
+            }
+            if (pendingAuthSearch) {
+                const pending = pendingAuthSearch;
+                pendingAuthSearch = null;
+                await applyFilters(pending.request, pending.options);
             }
             return;
         }
 
         if (reason === 'logout') {
+            pendingAuthSearch = null;
             metadata = null;
             appDataInitialized = false;
             currentQueryRequest = { scope: 'all', filters: {} };
@@ -3297,10 +3329,12 @@ function initLandingShell() {
             resetQueryResultMeta();
             hideLimitWarning();
             updateResults([], [], { resetMiniFilters: true });
-            initEmptyCharts();
+            updateInsightEntryPoint();
             syncLandingView('landing');
             return;
         }
+
+        if (reason === 'login_required' || reason === 'expired') return;
 
         if (!mustLogin) {
             metadata = null;
@@ -3317,7 +3351,7 @@ function initLandingShell() {
         resetQueryResultMeta();
         hideLimitWarning();
         updateResults([], [], { resetMiniFilters: true });
-        initEmptyCharts();
+        updateInsightEntryPoint();
         syncLandingView('landing');
     });
 }
@@ -3707,16 +3741,28 @@ function positionFloatingLayer(wrapper, anchor, floating) {
 
     const wrapperRect = wrapper.getBoundingClientRect();
     const anchorRect = anchor.getBoundingClientRect();
+    const isColumnMenu = floating.classList.contains('column-menu-popover');
     const floatingWidth = floating.offsetWidth || 260;
     const maxLeft = Math.max(12, wrapper.clientWidth - floatingWidth - 12);
-    const columnHeaderRect = floating.classList.contains('column-menu-popover')
+    const columnHeaderRect = isColumnMenu
         ? anchor.closest('th')?.getBoundingClientRect()
         : null;
     const preferredLeft = columnHeaderRect
         ? columnHeaderRect.left - wrapperRect.left
         : anchorRect.right - wrapperRect.left - floatingWidth;
     const left = Math.max(12, Math.min(preferredLeft, maxLeft));
-    const top = Math.max(54, anchorRect.bottom - wrapperRect.top + 8);
+    let openAbove = false;
+    if (isColumnMenu) {
+        floating.style.maxHeight = '';
+        const spaceBelow = window.innerHeight - anchorRect.bottom - 12;
+        const spaceAbove = anchorRect.top - 12;
+        const naturalHeight = floating.scrollHeight || floating.offsetHeight;
+        openAbove = spaceBelow < naturalHeight && spaceAbove > spaceBelow;
+        floating.style.maxHeight = `${Math.max(96, openAbove ? spaceAbove : spaceBelow)}px`;
+    }
+    const top = isColumnMenu && openAbove
+        ? anchorRect.top - wrapperRect.top - floating.offsetHeight - 8
+        : Math.max(54, anchorRect.bottom - wrapperRect.top + 8);
 
     floating.style.left = `${left}px`;
     floating.style.top = `${top}px`;
@@ -3799,7 +3845,8 @@ async function applyActiveSortRule({ preserveMiniFilters = true } = {}) {
         if (result.success) {
             handleQuerySuccess(result, {
                 resetMiniFilters: !preserveMiniFilters,
-                resetScroll: false
+                resetScroll: false,
+                preserveResultView: true
             });
         } else {
             throw new Error(result.error || 'Sort failed');
@@ -4223,18 +4270,20 @@ function clearColumnTextFilter(tableId, columnName) {
 
 const MAX_COLUMN_VALUES_RENDERED = 250;
 
-function getMatchingColumnValueOptions(facetOptions, searchTerm = '') {
+function getMatchingColumnValueOptions(facetOptions, searchTerm = '', columnName = '') {
     const normalizedSearch = String(searchTerm || '').trim().toLocaleLowerCase('vi');
     return facetOptions.filter(option => (
         !normalizedSearch
-        || String(option.value || '(Trống)').toLocaleLowerCase('vi').includes(normalizedSearch)
+        || [option.value, formatColumnDisplayValue(columnName, option.value)]
+            .some(value => String(value || '(Trống)').toLocaleLowerCase('vi').includes(normalizedSearch))
     ));
 }
 
 function renderColumnValueOptions(valueList, facetOptions, draft, searchTerm = '') {
     valueList.replaceChildren();
     const normalizedSearch = String(searchTerm || '').trim().toLocaleLowerCase('vi');
-    const matchingOptions = getMatchingColumnValueOptions(facetOptions, searchTerm);
+    const columnName = valueList.dataset.columnName || '';
+    const matchingOptions = getMatchingColumnValueOptions(facetOptions, searchTerm, columnName);
     const visibleOptions = matchingOptions.slice(0, MAX_COLUMN_VALUES_RENDERED);
 
     const selectAll = document.createElement('label');
@@ -4259,7 +4308,7 @@ function renderColumnValueOptions(valueList, facetOptions, draft, searchTerm = '
         checkbox.dataset.value = encodeColumnName(value);
         checkbox.checked = draft.selectedKeys.has(normalizeColumnFilterValue(value));
         const label = document.createElement('span');
-        label.textContent = value || '(Trống)';
+        label.textContent = formatColumnDisplayValue(columnName, value) || '(Trống)';
         label.title = label.textContent;
         const countLabel = document.createElement('small');
         countLabel.className = 'column-value-count';
@@ -4281,7 +4330,7 @@ function renderColumnValueOptions(valueList, facetOptions, draft, searchTerm = '
     }
 }
 
-function renderColumnMenuShell(tableId, columnName) {
+function renderColumnMenuShell(tableId, columnName, { actionsOpen } = {}) {
     const sortState = getSortStateForColumn(tableId, columnName);
     const isWrapped = wrappedColumnsState[tableId]?.has(columnName);
     const isPinned = frozenColumnsState[tableId]?.has(columnName);
@@ -4292,6 +4341,14 @@ function renderColumnMenuShell(tableId, columnName) {
     title.className = 'column-menu-title';
     title.textContent = displayLabel;
     fragment.appendChild(title);
+
+    const actionsDisclosure = document.createElement('details');
+    actionsDisclosure.className = 'column-menu-actions';
+    actionsDisclosure.open = actionsOpen ?? !window.matchMedia('(max-width: 700px)').matches;
+    const actionsSummary = document.createElement('summary');
+    actionsSummary.className = 'column-menu-actions-summary';
+    actionsSummary.textContent = 'Thao tác cột';
+    actionsDisclosure.appendChild(actionsSummary);
 
     const primarySection = document.createElement('div');
     primarySection.className = 'column-menu-section';
@@ -4322,11 +4379,11 @@ function renderColumnMenuShell(tableId, columnName) {
             isSecondary: true
         }));
     }
-    fragment.appendChild(primarySection);
+    actionsDisclosure.appendChild(primarySection);
 
     const divider = document.createElement('hr');
     divider.className = 'column-menu-divider';
-    fragment.appendChild(divider);
+    actionsDisclosure.appendChild(divider);
 
     const secondarySection = document.createElement('div');
     secondarySection.className = 'column-menu-section';
@@ -4361,11 +4418,11 @@ function renderColumnMenuShell(tableId, columnName) {
         label: 'Ẩn cột',
         isDanger: true
     }));
-    fragment.appendChild(secondarySection);
+    actionsDisclosure.appendChild(secondarySection);
 
     const textFilterDivider = document.createElement('hr');
     textFilterDivider.className = 'column-menu-divider';
-    fragment.appendChild(textFilterDivider);
+    actionsDisclosure.appendChild(textFilterDivider);
 
     const textFilterSection = document.createElement('div');
     textFilterSection.className = 'column-text-filter-section';
@@ -4382,7 +4439,8 @@ function renderColumnMenuShell(tableId, columnName) {
     textFilterButton.appendChild(createFeatherIconElement('chevron-right', 'column-menu-submenu-icon'));
     textFilterSection.appendChild(textFilterButton);
     textFilterSection.appendChild(createColumnTextFilterPanel(tableId, columnName));
-    fragment.appendChild(textFilterSection);
+    actionsDisclosure.appendChild(textFilterSection);
+    fragment.appendChild(actionsDisclosure);
 
     const filterDivider = document.createElement('hr');
     filterDivider.className = 'column-menu-divider';
@@ -4414,6 +4472,7 @@ function renderColumnMenuShell(tableId, columnName) {
     const selectedValues = getColumnValueFilter(tableId, columnName);
     const valueList = document.createElement('div');
     valueList.className = 'column-value-list';
+    valueList.dataset.columnName = columnName;
 
     const selectAll = document.createElement('label');
     selectAll.className = 'column-value-option is-select-all';
@@ -4483,8 +4542,8 @@ function renderColumnMenuShell(tableId, columnName) {
     return fragment;
 }
 
-function renderColumnMenu(tableId, columnName) {
-    const fragment = renderColumnMenuShell(tableId, columnName);
+function renderColumnMenu(tableId, columnName, options = {}) {
+    const fragment = renderColumnMenuShell(tableId, columnName, options);
     const valueList = fragment.querySelector('.column-value-list');
     if (!valueList) return fragment;
 
@@ -4507,7 +4566,7 @@ function renderColumnMenu(tableId, columnName) {
     const rerenderValueOptions = ({ syncSelection = false } = {}) => {
         const searchTerm = searchInput?.value || '';
         if (syncSelection) {
-            const matchingOptions = getMatchingColumnValueOptions(draft.facetOptions, searchTerm);
+            const matchingOptions = getMatchingColumnValueOptions(draft.facetOptions, searchTerm, columnName);
             draft.selectedKeys = searchTerm.trim()
                 ? new Set(matchingOptions.map(({ value }) => normalizeColumnFilterValue(value)))
                 : new Set(draft.valuesByKey.keys());
@@ -4532,6 +4591,7 @@ function rerenderActiveColumnMenu() {
     if (!activeColumnMenuState) return;
 
     const { tableId, columnName, menu, wrapper } = activeColumnMenuState;
+    const actionsOpen = menu.querySelector('.column-menu-actions')?.open;
     const trigger = getColumnMenuTrigger(tableId, columnName);
     if (!trigger || !wrapper?.isConnected || !menu?.isConnected) {
         closeColumnMenu();
@@ -4539,7 +4599,7 @@ function rerenderActiveColumnMenu() {
     }
 
     activeColumnMenuState.trigger = trigger;
-    menu.replaceChildren(renderColumnMenu(tableId, columnName));
+    menu.replaceChildren(renderColumnMenu(tableId, columnName, { actionsOpen }));
     finalizeDynamicMarkup(menu);
     trigger.classList.add('is-open');
     trigger.setAttribute('aria-expanded', 'true');
@@ -4962,12 +5022,62 @@ const lastProvinceMapDataByContainer = new Map();
 let dashboardAnalyticsController = null;
 let dashboardAnalyticsVersion = 0;
 let dashboardAnalyticsData = null;
+let dashboardAnalyticsRefreshTimer = null;
 let dashboardTimelineGrain = 'year';
+let dashboardFitFrame = 0;
+let dashboardFitObserver = null;
 const dashboardSelection = {
     product: null,
     province: null,
-    investor: null
+    investor: null,
+    bidder: null
 };
+const dashboardSelectionSourceFields = {
+    product: 'top_products',
+    province: 'geography',
+    investor: 'top_investors',
+    bidder: 'bidder_price_band_analysis'
+};
+const dashboardSelectionVisualData = Object.create(null);
+
+function captureDashboardSelectionVisual(key, payload = {}) {
+    const field = dashboardSelectionSourceFields[key];
+    const value = payload[field];
+    if (field === 'bidder_price_band_analysis') {
+        return {
+            ...(value || {}),
+            items: (Array.isArray(value?.items) ? value.items : []).slice(0, 5).map(item => ({ ...item }))
+        };
+    }
+    const limit = key === 'product' ? 10 : key === 'investor' ? 5 : Infinity;
+    return Array.isArray(value) ? value.slice(0, limit).map(item => ({ ...item })) : value;
+}
+
+function normalizeDashboardIdentity(value) {
+    return String(value ?? '')
+        .normalize('NFKC')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .toLocaleLowerCase('vi');
+}
+
+function sameDashboardIdentity(left, right) {
+    const leftKey = normalizeDashboardIdentity(left);
+    return Boolean(leftKey) && leftKey === normalizeDashboardIdentity(right);
+}
+
+function mergeDashboardTopRows(baseRows = [], filteredRows = [], identityField, limit = Infinity) {
+    const filteredIdentities = new Set(filteredRows
+        .filter(row => row && row[identityField] != null)
+        .map(row => normalizeDashboardIdentity(row[identityField])));
+    return baseRows
+        .filter(row => row && row[identityField] != null)
+        .slice(0, limit)
+        .map(row => ({
+            ...row,
+            _dashboardFilterMatch: filteredIdentities.has(normalizeDashboardIdentity(row[identityField]))
+        }));
+}
 
 const CHART_THEME = {
     primary: '#127495',
@@ -5233,61 +5343,102 @@ function getProvinceValueEntries(data) {
 }
 
 function formatProvinceScaleValue(value) {
-    const amount = Number(value) || 0;
-    const format = divisor => {
-        const compact = amount / divisor;
-        return compact.toLocaleString('vi-VN', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-    };
-
-    if (amount >= 1_000_000_000) return `${format(1_000_000_000)} tỷ`;
-    if (amount >= 1_000_000) return `${format(1_000_000)} triệu`;
-    if (amount >= 1_000) return `${format(1_000)} nghìn`;
-    return amount.toLocaleString('vi-VN', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    let remaining = Math.round(Number(value) || 0);
+    const parts = [];
+    for (const [divisor, unit] of [[1_000_000_000, 'tỷ'], [1_000_000, 'triệu'], [1_000, 'nghìn']]) {
+        const count = Math.floor(remaining / divisor);
+        if (count > 0) {
+            parts.push(`${count.toLocaleString('vi-VN')} ${unit}`);
+            remaining %= divisor;
+        }
+    }
+    if (remaining > 0 || !parts.length) {
+        parts.push(`${remaining.toLocaleString('vi-VN')} đ`);
+    }
+    return parts.join(' ');
 }
 
-function getNiceProvinceScaleStep(maxValue, targetBucketCount = 7) {
-    const rawStep = maxValue / targetBucketCount;
-    if (!Number.isFinite(rawStep) || rawStep <= 0) return 1;
-
-    const magnitude = 10 ** Math.floor(Math.log10(rawStep));
-    const normalized = rawStep / magnitude;
-    const multiplier = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
-    return multiplier * magnitude;
+function getNiceProvinceScaleBoundary(lower, upper) {
+    for (let exponent = Math.floor(Math.log10(upper)); exponent >= 0; exponent -= 1) {
+        for (const multiplier of [5, 2, 1]) {
+            const step = multiplier * 10 ** exponent;
+            const boundary = Math.ceil(lower / step) * step;
+            if (boundary >= lower && boundary < upper) return boundary;
+        }
+    }
+    return lower;
 }
 
-function buildProvinceMapColorBuckets(values = []) {
+function buildProvinceMapColorBuckets(values = [], formatSingleValue = formatProvinceScaleValue) {
     const positiveValues = values
         .map(value => Number(value))
         .filter(value => Number.isFinite(value) && value > 0)
         .sort((left, right) => left - right);
     if (!positiveValues.length) return [];
 
-    const numericMax = positiveValues[positiveValues.length - 1];
-    const targetBucketCount = Math.min(PROVINCE_MAP_BUCKET_COLORS.length, positiveValues.length);
-    const roundingStep = getNiceProvinceScaleStep(numericMax, targetBucketCount * 10);
-    const roundedUpperBounds = [];
-
-    for (let index = 1; index <= targetBucketCount; index += 1) {
-        const quantileIndex = Math.min(
-            positiveValues.length - 1,
-            Math.ceil((index * positiveValues.length) / targetBucketCount) - 1
-        );
-        const rawUpper = index === targetBucketCount ? numericMax : positiveValues[quantileIndex];
-        const roundedUpper = Math.ceil(rawUpper / roundingStep) * roundingStep;
-        if (roundedUpper > (roundedUpperBounds.at(-1) || 0)) {
-            roundedUpperBounds.push(roundedUpper);
-        }
+    const distinctValues = [];
+    positiveValues.forEach(value => {
+        const last = distinctValues.at(-1);
+        if (last?.value === value) last.count += 1;
+        else distinctValues.push({ value, count: 1 });
+    });
+    const bucketCount = Math.min(PROVINCE_MAP_BUCKET_COLORS.length, distinctValues.length);
+    if (bucketCount === 1) {
+        return [
+            { min: 0, color: PROVINCE_MAP_BUCKET_COLORS[0], label: formatSingleValue(distinctValues[0].value) },
+            { noData: true, color: CHART_THEME.mapNoData, label: 'Không có dữ liệu' }
+        ];
     }
 
-    const buckets = roundedUpperBounds.reverse().map((upper, index, bounds) => {
-        const lower = index === bounds.length - 1 ? 0 : bounds[index + 1];
-        const label = lower === 0
-            ? `${bounds.length === 1 ? '≤' : '<'} ${formatProvinceScaleValue(upper)}`
-            : `${formatProvinceScaleValue(lower)} - ${formatProvinceScaleValue(upper)}`;
+    const cumulativeCounts = [0];
+    distinctValues.forEach(item => cumulativeCounts.push(cumulativeCounts.at(-1) + item.count));
+    const boundaries = [];
+    let previousCut = 0;
+    for (let group = 1; group < bucketCount; group += 1) {
+        const targetCount = positiveValues.length * group / bucketCount;
+        const lastPossibleCut = distinctValues.length - (bucketCount - group);
+        let bestCut = previousCut + 1;
+        let bestWholeBillionCut = null;
+        let bestWholeBillionBoundary = null;
+        for (let cut = bestCut + 1; cut <= lastPossibleCut; cut += 1) {
+            if (Math.abs(cumulativeCounts[cut] - targetCount) < Math.abs(cumulativeCounts[bestCut] - targetCount)) {
+                bestCut = cut;
+            }
+        }
+        const preferredBoundary = getNiceProvinceScaleBoundary(distinctValues[bestCut - 1].value, distinctValues[bestCut].value);
+        for (let cut = previousCut + 1; cut <= lastPossibleCut; cut += 1) {
+            const boundary = getNiceProvinceScaleBoundary(distinctValues[cut - 1].value, distinctValues[cut].value);
+            if (boundary < 1_000_000_000 || boundary % 1_000_000_000 !== 0) continue;
+            if (bestWholeBillionCut === null
+                || Math.abs(cumulativeCounts[cut] - targetCount) < Math.abs(cumulativeCounts[bestWholeBillionCut] - targetCount)
+                || (Math.abs(cumulativeCounts[cut] - targetCount) === Math.abs(cumulativeCounts[bestWholeBillionCut] - targetCount)
+                    && Math.abs(boundary - preferredBoundary)
+                        < Math.abs(bestWholeBillionBoundary - preferredBoundary))) {
+                bestWholeBillionCut = cut;
+                bestWholeBillionBoundary = boundary;
+            }
+        }
+        const acceptableDeviation = positiveValues.length / bucketCount / 2;
+        if (bestWholeBillionCut !== null
+            && Math.abs(cumulativeCounts[bestWholeBillionCut] - targetCount)
+                <= Math.abs(cumulativeCounts[bestCut] - targetCount) + acceptableDeviation) {
+            bestCut = bestWholeBillionCut;
+        }
+        boundaries.push(getNiceProvinceScaleBoundary(distinctValues[bestCut - 1].value, distinctValues[bestCut].value));
+        previousCut = bestCut;
+    }
 
+    const buckets = Array.from({ length: bucketCount }, (_, index) => {
+        const ascendingIndex = bucketCount - index - 1;
+        const lower = ascendingIndex === 0 ? 0 : boundaries[ascendingIndex - 1];
+        const label = ascendingIndex === 0
+            ? `≤ ${formatProvinceScaleValue(boundaries[0])}`
+            : ascendingIndex === bucketCount - 1
+                ? `> ${formatProvinceScaleValue(lower)}`
+                : `${formatProvinceScaleValue(lower)} – ${formatProvinceScaleValue(boundaries[ascendingIndex])}`;
         return {
             min: lower,
-            color: PROVINCE_MAP_BUCKET_COLORS[Math.min(index, PROVINCE_MAP_BUCKET_COLORS.length - 1)],
+            color: PROVINCE_MAP_BUCKET_COLORS[Math.round(index * (PROVINCE_MAP_BUCKET_COLORS.length - 1) / (bucketCount - 1))],
             label
         };
     });
@@ -5298,7 +5449,7 @@ function buildProvinceMapColorBuckets(values = []) {
 
 function getProvinceFill(value, colorBuckets) {
     if (!value) return CHART_THEME.mapNoData;
-    return colorBuckets.find(bucket => !bucket.noData && value >= bucket.min)?.color
+    return colorBuckets.find(bucket => !bucket.noData && value > bucket.min)?.color
         || CHART_THEME.mapNoData;
 }
 
@@ -5428,8 +5579,9 @@ function appendFeaturedProvinceLabels(svg, valueByProvince, options = {}) {
     const renderedWidth = svg.getBoundingClientRect().width;
     const pixelsPerUnit = renderedWidth > 0 ? renderedWidth / viewBoxWidth : 1;
     const pixelsToUnits = pixelsPerUnit > 0 ? 1 / pixelsPerUnit : 1;
-    const titleSize = 18 * pixelsToUnits;
-    const valueSize = 18 * pixelsToUnits;
+    const labelSize = Number(options.featuredLabelSize) || 18;
+    const titleSize = labelSize * pixelsToUnits;
+    const valueSize = labelSize * pixelsToUnits;
     const horizontalPadding = 11 * pixelsToUnits;
     const verticalPadding = 8 * pixelsToUnits;
     const lineGap = 6 * pixelsToUnits;
@@ -5466,6 +5618,8 @@ function appendFeaturedProvinceLabels(svg, valueByProvince, options = {}) {
         const valueText = value ? formatValue(value) : 'Không có dữ liệu';
         const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         group.classList.add('province-map-feature-label');
+        group.dataset.province = path.dataset.province;
+        group.classList.toggle('is-dimmed', Boolean(options.selectedProvince) && getProvinceMapKey(options.selectedProvince) !== path.dataset.adminKey);
 
         const connector = document.createElementNS('http://www.w3.org/2000/svg', 'line');
         connector.setAttribute('x1', String(anchorX));
@@ -5623,7 +5777,7 @@ function renderProvinceValueMap(data = [], options = {}) {
         return;
     }
 
-    const colorBuckets = buildProvinceMapColorBuckets(values);
+    const colorBuckets = buildProvinceMapColorBuckets(values, formatValue);
     hideNoDataMessage(containerId);
     container.replaceChildren();
     const tooltip = getOrCreateProvinceMapTooltip(container);
@@ -5689,7 +5843,11 @@ function renderProvinceValueMap(data = [], options = {}) {
         path.setAttribute('tabindex', '0');
         path.setAttribute('role', 'button');
         path.setAttribute('aria-label', `${displayName}: ${valueText}`);
-        path.classList.toggle('is-selected', getProvinceMapKey(options.selectedProvince || '') === provinceKey);
+        const selectedProvinceKey = getProvinceMapKey(options.selectedProvince || '');
+        const isSelected = Boolean(selectedProvinceKey) && selectedProvinceKey === provinceKey;
+        path.classList.toggle('is-selected', isSelected);
+        path.classList.toggle('is-dimmed', Boolean(selectedProvinceKey) && !isSelected);
+        path.setAttribute('aria-pressed', String(isSelected));
 
         path.addEventListener('pointerenter', (event) => {
             if (activeProvincePath && activeProvincePath !== path) {
@@ -6200,31 +6358,24 @@ function isDataDockContextAllowed() {
     return dataTabActive && !document.body.classList.contains('landing-active');
 }
 
-function scheduleInsightEntryPointUpdate(totalRecords = null) {
-    pendingInsightTotalRecords = totalRecords;
+function scheduleInsightEntryPointUpdate() {
     if (insightEntryPointUpdateFrame !== null) return;
 
     insightEntryPointUpdateFrame = requestAnimationFrame(() => {
-        const nextTotalRecords = pendingInsightTotalRecords;
-        pendingInsightTotalRecords = null;
         insightEntryPointUpdateFrame = null;
-        updateInsightEntryPoint(nextTotalRecords ?? getInsightResultCounts().total);
+        updateInsightEntryPoint();
     });
 }
 
-function updateInsightEntryPoint(totalRecords = getInsightResultCounts().total) {
+function updateInsightEntryPoint() {
     const dockFullSearchButton = document.getElementById('insight-full-search');
     const dockFullSearchLabel = document.getElementById('insight-full-search-label');
-    const openButton = document.getElementById('open-insight-drawer');
-    if (!dockFullSearchButton && !openButton) return;
+    if (!dockFullSearchButton) return;
 
     if (!isDataDockContextAllowed()) {
-        if (isInsightDrawerOpen()) closeInsightDrawer();
         return;
     }
 
-    const counts = getInsightResultCounts();
-    const hasData = Number(totalRecords || counts.total) > 0;
     const quota = getFullSearchQuotaState();
 
     if (dockFullSearchButton) {
@@ -6233,14 +6384,6 @@ function updateInsightEntryPoint(totalRecords = getInsightResultCounts().total) 
         if (dockFullSearchLabel) dockFullSearchLabel.textContent = Number(quota.remaining || 0).toLocaleString('vi-VN');
         const quotaText = formatDockQuotaLine(quota);
         setActionTooltip(dockFullSearchButton, `Tìm kiếm mở rộng. ${quotaText}`);
-    }
-    if (openButton) {
-        openButton.disabled = false;
-        openButton.classList.toggle('is-empty', !hasData);
-        openButton.classList.toggle('is-open', isInsightDrawerOpen());
-        setActionTooltip(openButton, hasData
-            ? 'Phân tích trực quan'
-            : 'Phân tích trực quan');
     }
 }
 
@@ -6333,28 +6476,9 @@ function isInsightDrawerOpen() {
     return Boolean(drawer?.classList.contains('show') || drawer?.classList.contains('is-closing'));
 }
 
-function initInsightDrawerEvents() {
-    document.getElementById('open-insight-drawer')?.addEventListener('click', () => {
-        if (isInsightDrawerOpen()) {
-            closeInsightDrawer();
-        } else {
-            openInsightDrawer();
-        }
-    });
-    document.querySelector('[data-insight-close]')?.addEventListener('click', closeInsightDrawer);
-    document.getElementById('close-insight-drawer')?.addEventListener('click', closeInsightDrawer);
+function initFullSearchDockEvents() {
     document.getElementById('insight-full-search')?.addEventListener('click', () => {
         void triggerFullSearch();
-    });
-
-    document.querySelectorAll('[data-chart-view]').forEach(button => {
-        button.addEventListener('click', () => setActiveInsightChart(button.dataset.chartView, { redraw: true }));
-    });
-
-    document.addEventListener('keydown', event => {
-        if (event.key === 'Escape' && document.getElementById('insight-drawer')?.classList.contains('show')) {
-            closeInsightDrawer();
-        }
     });
 
     const dockVisibilityObserver = new MutationObserver(() => scheduleInsightEntryPointUpdate());
@@ -6369,8 +6493,7 @@ function initInsightDrawerEvents() {
         });
     });
 
-    setActiveInsightChart(activeInsightChart);
-    updateInsightEntryPoint(0);
+    updateInsightEntryPoint();
 }
 
 function initEmptyCharts() {
@@ -6464,7 +6587,7 @@ function getDashboardTrendUnit(values = []) {
 
 function formatDashboardTrendLabel(value, unit) {
     const scaled = Number(value) / (unit?.factor || 1);
-    return scaled.toLocaleString('vi-VN', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    return scaled.toLocaleString('vi-VN', { maximumFractionDigits: 1 });
 }
 
 function formatDashboardTimelinePeriod(period) {
@@ -6481,18 +6604,19 @@ const dashboardTimelineLabelsPlugin = {
     afterDatasetsDraw(chart) {
         const dataset = chart.data.datasets[0];
         const points = chart.getDatasetMeta(0)?.data || [];
-        const { ctx, chartArea } = chart;
+        const { ctx } = chart;
         const unit = chart.options.plugins.dashboardTimelineLabels?.unit || getDashboardTrendUnit(dataset.data);
         ctx.save();
         ctx.fillStyle = '#1268d3';
-        ctx.font = `700 10px ${getComputedStyle(document.body).fontFamily}`;
+        ctx.font = `700 12px ${getComputedStyle(document.body).fontFamily}`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
         const labelStep = Math.max(1, Math.ceil(points.length / 6));
         points.forEach((point, index) => {
             const value = Number(dataset.data[index]);
             if (!Number.isFinite(value) || (index % labelStep !== 0 && index !== points.length - 1)) return;
-            ctx.fillText(formatDashboardTrendLabel(value, unit), point.x, Math.max(chartArea.top + 10, point.y - 9));
+            const labelY = Math.max(12, point.y - 12);
+            ctx.fillText(formatDashboardTrendLabel(value, unit), point.x, labelY);
         });
         ctx.restore();
     }
@@ -6601,27 +6725,27 @@ function formatDashboardCount(value) {
 
 function getDashboardSearchKeyword(request = {}) {
     const searchForm = getProcurementSearchForm();
-    const keywordFields = [
-        'medicine_name', 'item_name', 'active_ingredient_or_herbal_component',
-        'scientific_name', 'model_mark', 'brand', 'technical_specification'
-    ];
-    const stateField = keywordFields.find(field => searchForm?.state?.criteria?.[field]);
-    const requestField = [...(request.crossGroupSearchFields || []), ...(request.searchFields || [])]
-        .find(field => keywordFields.includes(field));
-    const fieldName = stateField || requestField;
-    const label = fieldName && typeof searchForm?.fieldLabel === 'function'
-        ? searchForm.fieldLabel(fieldName)
-        : 'Điều kiện tìm kiếm';
-    const formPayload = typeof searchForm?.collectFilterPayload === 'function'
-        ? searchForm.collectFilterPayload()
-        : {};
-    const keywordValues = ['crossGroupProductKeyword', 'goodsKeyword']
-        .map(key => formPayload?.filters?.[key] || request.filters?.[key])
-        .flatMap(filter => Array.isArray(filter?.tokens) ? filter.tokens : [])
+    const requestGroup = request.uiState?.group || request.group || searchForm?.state?.group;
+    const group = requestGroup === 'medicine' ? 'medicines' : requestGroup;
+    const legacyTokenFilter = Object.entries(request.filters || {})
+        .find(([, filter]) => Array.isArray(filter?.tokens) && filter.tokens.length);
+    const legacyTokenFields = {
+        investor: 'procuring_entity_name',
+        winner: 'winning_bidder_name',
+        unit: 'unit'
+    };
+    const fieldName = Object.keys(request.uiState?.criteria || {})[0]
+        || request.crossGroupSearchFields?.[0]
+        || legacyTokenFields[legacyTokenFilter?.[0]]
+        || request.searchFields?.[0];
+    const label = fieldName && typeof searchForm?.fieldLabelForGroup === 'function'
+        ? searchForm.fieldLabelForGroup(group, fieldName)
+        : 'Tìm kiếm chung';
+    const keywordValues = (legacyTokenFilter?.[1]?.tokens || [])
         .map(token => typeof token === 'string' ? token : token?.value)
         .filter(value => typeof value === 'string' && value.trim())
         .join(' ');
-    const text = [formPayload?.text, keywordValues, request.text]
+    const text = [keywordValues, request.text]
         .find(value => typeof value === 'string' && value.trim())
         ?.trim()
         .replace(/^(["'])(.*)\1$/, '$2') || '';
@@ -6629,8 +6753,15 @@ function getDashboardSearchKeyword(request = {}) {
 }
 
 function collectDashboardContextParts(request = {}) {
+    const searchForm = getProcurementSearchForm();
+    const uiState = request.uiState;
+    if (uiState?.criteria && typeof searchForm?.summaryEntries === 'function') {
+        const entries = searchForm.summaryEntries(uiState.criteria, uiState.group)
+            .filter(({ display }) => display);
+        if (entries.length) return entries;
+    }
     const { label, text } = getDashboardSearchKeyword(request);
-    return text ? [`${label}: ${text}`] : [];
+    return text ? [{ label, display: text }] : [];
 }
 
 function renderDashboardBaseContext() {
@@ -6639,74 +6770,59 @@ function renderDashboardBaseContext() {
     container.replaceChildren();
     const request = currentQueryRequest || {};
     const parts = collectDashboardContextParts(request);
-    const appendChip = (className, text, title = text) => {
+    const appendChip = ({ label, display }) => {
         const chip = document.createElement('span');
-        chip.className = className;
-        chip.title = title;
-        const label = document.createElement('span');
-        label.className = 'dashboard-context-chip-label';
-        label.textContent = text;
-        chip.appendChild(label);
+        chip.className = 'dashboard-context-chip';
+        chip.title = `${label}: ${display}`;
+        const caption = document.createElement('span');
+        caption.className = 'dashboard-context-chip-label';
+        const fieldName = document.createElement('strong');
+        fieldName.textContent = `${label}: `;
+        caption.append(fieldName, document.createTextNode(display));
+        chip.appendChild(caption);
         container.appendChild(chip);
     };
-    parts.slice(0, 3).forEach(text => {
-        appendChip('dashboard-context-chip', text);
-    });
-    if (parts.length > 3) {
-        appendChip('dashboard-context-chip is-more', `+${parts.length - 3} bộ lọc`, parts.slice(3).join('\n'));
-    }
+    parts.forEach(appendChip);
     if (!parts.length) {
         const empty = document.createElement('span');
         empty.className = 'dashboard-context-empty';
         empty.textContent = 'Không có bộ lọc bổ sung';
         container.appendChild(empty);
     }
-}
-
-function renderDashboardSelections() {
-    const bar = document.getElementById('dashboard-selection-bar');
-    const chips = document.getElementById('dashboard-selection-chips');
-    const clear = document.getElementById('dashboard-clear-selections');
-    if (!bar || !chips) return;
-    chips.replaceChildren();
-    const labels = { product: 'Sản phẩm', province: 'Tỉnh/thành', investor: 'Chủ đầu tư' };
-    Object.entries(dashboardSelection).forEach(([key, value]) => {
-        if (!value) return;
-        const chip = document.createElement('span');
-        chip.className = 'dashboard-selection-chip';
-        const label = document.createElement('span');
-        label.className = 'dashboard-selection-chip-label';
-        label.textContent = `${labels[key]}: ${value}`;
-        label.title = label.textContent;
-        const remove = document.createElement('button');
-        remove.type = 'button';
-        remove.textContent = '×';
-        remove.setAttribute('aria-label', `Bỏ chọn ${labels[key]}`);
-        remove.title = `Bỏ chọn ${labels[key]}`;
-        remove.addEventListener('click', () => setDashboardSelection(key, null));
-        chip.append(label, remove);
-        chips.appendChild(chip);
-    });
-    const hasSelection = Object.values(dashboardSelection).some(Boolean);
-    bar.hidden = !hasSelection;
-    if (clear) clear.hidden = !hasSelection;
-    syncDashboardSelectionVisuals();
+    scheduleDashboardFit();
 }
 
 function syncDashboardSelectionVisuals() {
+    const selectedProduct = dashboardSelection.product || '';
     document.querySelectorAll('.dashboard-product-row[data-dashboard-product]').forEach(row => {
-        const isSelected = row.dataset.dashboardProduct === (dashboardSelection.product || '');
+        const isSelected = sameDashboardIdentity(row.dataset.dashboardProduct, selectedProduct);
         row.classList.toggle('is-selected', isSelected);
+        row.classList.toggle('is-dimmed', Boolean(selectedProduct) && row.dataset.dashboardFilterMatch === 'false' && !isSelected);
         row.querySelector('.dashboard-product-bar')?.setAttribute('aria-pressed', String(isSelected));
     });
 
     const selectedProvinceKey = getProvinceMapKey(dashboardSelection.province || '');
-    document.querySelectorAll('#dashboard-province-map path[data-province]').forEach(path => {
-        path.classList.toggle('is-selected', getProvinceMapKey(path.dataset.province || '') === selectedProvinceKey && Boolean(selectedProvinceKey));
+    document.querySelectorAll('#dashboard-province-map path[data-province], #dashboard-province-map .province-map-feature-label[data-province]').forEach(region => {
+        const isSelected = Boolean(selectedProvinceKey) && getProvinceMapKey(region.dataset.province || '') === selectedProvinceKey;
+        region.classList.toggle('is-selected', isSelected);
+        region.classList.toggle('is-dimmed', Boolean(selectedProvinceKey) && !isSelected);
+        if (region.matches('path[data-province]')) region.setAttribute('aria-pressed', String(isSelected));
     });
 
+    const selectedInvestor = dashboardSelection.investor || '';
     document.querySelectorAll('.dashboard-investor-row[data-dashboard-investor]').forEach(row => {
-        row.classList.toggle('is-selected', row.dataset.dashboardInvestor === (dashboardSelection.investor || ''));
+        const isSelected = sameDashboardIdentity(row.dataset.dashboardInvestor, selectedInvestor);
+        row.classList.toggle('is-selected', isSelected);
+        row.classList.toggle('is-dimmed', Boolean(selectedInvestor) && row.dataset.dashboardFilterMatch === 'false' && !isSelected);
+        row.querySelector('.dashboard-investor-link')?.setAttribute('aria-pressed', String(isSelected));
+    });
+
+    const selectedBidder = dashboardSelection.bidder || '';
+    document.querySelectorAll('.dashboard-price-band-row[data-dashboard-bidder]').forEach(row => {
+        const isSelected = sameDashboardIdentity(row.dataset.dashboardBidder, selectedBidder);
+        row.classList.toggle('is-selected', isSelected);
+        row.classList.toggle('is-dimmed', Boolean(selectedBidder) && row.dataset.dashboardFilterMatch === 'false' && !isSelected);
+        row.querySelector('.dashboard-investor-link')?.setAttribute('aria-pressed', String(isSelected));
     });
 }
 
@@ -6714,17 +6830,29 @@ function resetDashboardSelection() {
     dashboardSelection.product = null;
     dashboardSelection.province = null;
     dashboardSelection.investor = null;
-    renderDashboardSelections();
+    dashboardSelection.bidder = null;
+    Object.keys(dashboardSelectionVisualData).forEach(key => delete dashboardSelectionVisualData[key]);
+    syncDashboardSelectionVisuals();
 }
 
 function setDashboardSelection(key, value) {
     if (!Object.prototype.hasOwnProperty.call(dashboardSelection, key)) return;
     const nextValue = value ? String(value).trim() : '';
-    dashboardSelection[key] = nextValue && dashboardSelection[key] === nextValue
-        ? null
-        : (nextValue || null);
-    renderDashboardSelections();
-    if (isDashboardActive()) void refreshDashboardAnalytics({ force: true });
+    const isDeselecting = Boolean(nextValue) && sameDashboardIdentity(dashboardSelection[key], nextValue);
+    if (!isDeselecting && nextValue && dashboardSelectionVisualData[key] === undefined && dashboardAnalyticsData) {
+        dashboardSelectionVisualData[key] = captureDashboardSelectionVisual(key, dashboardAnalyticsData);
+    }
+    dashboardSelection[key] = isDeselecting || !nextValue ? null : nextValue;
+    syncDashboardSelectionVisuals();
+    if (isDashboardActive()) {
+        dashboardAnalyticsController?.abort();
+        dashboardAnalyticsVersion += 1;
+        clearTimeout(dashboardAnalyticsRefreshTimer);
+        dashboardAnalyticsRefreshTimer = setTimeout(() => {
+            dashboardAnalyticsRefreshTimer = null;
+            void refreshDashboardAnalytics({ force: true });
+        }, 180);
+    }
 }
 
 function getDashboardBaseRequest(request = currentQueryRequest) {
@@ -6753,7 +6881,8 @@ function buildDashboardAnalyticsRequest(request = currentQueryRequest, selection
         dashboardSelection: {
             product: selection?.product || null,
             province: selection?.province || null,
-            investor: selection?.investor || null
+            investor: selection?.investor || null,
+            bidder: selection?.bidder || null
         }
     };
 }
@@ -6801,7 +6930,10 @@ function renderDashboardMap(geography = []) {
         formatCount: formatDashboardCount,
         onProvinceSelect: province => setDashboardSelection('province', province),
         onMapLoading: () => setDashboardWidgetState('geography', 'Đang tải bản đồ Việt Nam…', 'loading'),
-        onMapReady: () => clearDashboardWidgetState('geography'),
+        onMapReady: () => {
+            clearDashboardWidgetState('geography');
+            syncDashboardSelectionVisuals();
+        },
         onMapError: () => setDashboardWidgetState('geography', 'Không tải được bản đồ Việt Nam.', 'error')
     });
 }
@@ -6826,11 +6958,12 @@ function renderDashboardProducts(products = []) {
         const row = document.createElement('div');
         row.className = 'dashboard-product-row';
         row.dataset.dashboardProduct = product.name;
-        row.classList.toggle('is-selected', dashboardSelection.product === product.name);
+        row.dataset.dashboardFilterMatch = String(product._dashboardFilterMatch !== false);
+        row.classList.toggle('is-selected', sameDashboardIdentity(dashboardSelection.product, product.name));
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'dashboard-product-bar';
-        button.setAttribute('aria-pressed', String(dashboardSelection.product === product.name));
+        button.setAttribute('aria-pressed', String(sameDashboardIdentity(dashboardSelection.product, product.name)));
         button.title = product.name;
         const rank = document.createElement('span');
         rank.className = 'dashboard-product-rank';
@@ -6908,12 +7041,12 @@ async function renderDashboardCharts(timeline = {}) {
                     }
                 },
                 scales: {
-                    x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 8 } },
+                    x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 8, color: CHART_THEME.axis, font: { size: 12 } } },
                     y: {
                         beginAtZero: true,
                         grid: { color: CHART_THEME.grid },
-                        title: { display: true, text: trendUnit.label, color: CHART_THEME.axis, font: { size: 10, weight: '600' } },
-                        ticks: { callback: value => formatDashboardTrendLabel(value, trendUnit) }
+                        title: { display: true, text: trendUnit.label, color: CHART_THEME.axis, font: { size: 12, weight: '600' } },
+                        ticks: { callback: value => formatDashboardTrendLabel(value, trendUnit), color: CHART_THEME.axis, font: { size: 12 } }
                     }
                 }
             }
@@ -6952,32 +7085,38 @@ function renderDashboardInvestors(investors = []) {
         const row = document.createElement('tr');
         row.className = 'dashboard-investor-row';
         row.dataset.dashboardInvestor = investor.name;
-        row.classList.toggle('is-selected', dashboardSelection.investor === investor.name);
+        row.dataset.dashboardFilterMatch = String(investor._dashboardFilterMatch !== false);
+        row.classList.toggle('is-selected', sameDashboardIdentity(dashboardSelection.investor, investor.name));
         const rankCell = document.createElement('td');
         rankCell.className = 'dashboard-investor-rank';
-        rankCell.textContent = String(index + 1);
+        const rankBadge = document.createElement('span');
+        rankBadge.className = 'dashboard-rank-badge';
+        rankBadge.textContent = String(index + 1);
+        rankCell.appendChild(rankBadge);
         const nameCell = document.createElement('td');
         const name = document.createElement('button');
         name.type = 'button';
         name.className = 'dashboard-investor-link';
         name.textContent = investor.name;
         name.title = investor.name;
+        name.setAttribute('aria-pressed', String(sameDashboardIdentity(dashboardSelection.investor, investor.name)));
         name.addEventListener('click', () => setDashboardSelection('investor', investor.name));
         nameCell.appendChild(name);
         const packageCell = document.createElement('td');
         packageCell.textContent = formatDashboardCount(investor.package_count);
+        packageCell.title = packageCell.textContent;
         const valueCell = document.createElement('td');
         valueCell.textContent = formatDashboardCurrencyTooltip(Number(investor.total_awarded_value || 0));
+        valueCell.title = valueCell.textContent;
         row.append(rankCell, nameCell, packageCell, valueCell);
         body.appendChild(row);
     });
 }
 
-function formatDashboardBandPrice(value, unit) {
+function formatDashboardBandPrice(value) {
     const number = Number(value);
     if (!Number.isFinite(number) || number <= 0) return '—';
-    const amount = number.toLocaleString('vi-VN', { maximumFractionDigits: 1 });
-    return `${amount} đ${unit ? `/${unit}` : ''}`;
+    return number.toLocaleString('vi-VN', { maximumFractionDigits: 1 });
 }
 
 function renderDashboardBidderPriceBands(analysis = {}) {
@@ -6985,10 +7124,6 @@ function renderDashboardBidderPriceBands(analysis = {}) {
     if (!body) return;
     body.replaceChildren();
 
-    if (analysis.requires_product_selection) {
-        setDashboardWidgetState('bidder_price_bands', 'Chọn một sản phẩm trong Top 10 để phân tích vùng đơn giá trúng phổ biến.', 'empty');
-        return;
-    }
     const items = Array.isArray(analysis.items) ? analysis.items.slice(0, 5) : [];
     if (!items.length) {
         setDashboardWidgetState('bidder_price_bands', 'Không có vùng đơn giá trúng phổ biến phù hợp.', 'empty');
@@ -6999,37 +7134,41 @@ function renderDashboardBidderPriceBands(analysis = {}) {
     items.forEach((band, index) => {
         const row = document.createElement('tr');
         row.className = 'dashboard-investor-row dashboard-price-band-row';
+        row.dataset.dashboardBidder = band.bidder_name || '';
+        row.dataset.dashboardFilterMatch = String(band._dashboardFilterMatch !== false);
         const rank = document.createElement('td');
         rank.className = 'dashboard-investor-rank';
-        rank.textContent = String(index + 1);
+        const rankBadge = document.createElement('span');
+        rankBadge.className = 'dashboard-rank-badge';
+        rankBadge.textContent = String(index + 1);
+        rank.appendChild(rankBadge);
 
         const bidderCell = document.createElement('td');
-        const bidder = document.createElement('span');
-        bidder.className = 'dashboard-price-band-bidder';
-        bidder.textContent = band.bidder_name || '—';
-        bidder.title = band.bidder_name || '';
+        const bidderName = band.bidder_name || '';
+        const bidder = document.createElement('button');
+        bidder.type = 'button';
+        bidder.className = 'dashboard-investor-link';
+        bidder.textContent = bidderName || '—';
+        bidder.title = bidderName;
+        bidder.setAttribute('aria-label', `Lọc Dashboard theo nhà thầu ${bidderName}`);
+        bidder.setAttribute('aria-pressed', String(sameDashboardIdentity(dashboardSelection.bidder, bidderName)));
+        bidder.addEventListener('click', () => setDashboardSelection('bidder', bidderName));
         bidderCell.appendChild(bidder);
 
         const priceCell = document.createElement('td');
         const min = Number(band.price_min);
         const max = Number(band.price_max);
-        const median = Number(band.median_price);
         const priceRange = Number.isFinite(min) && Number.isFinite(max)
             ? min === max
-                ? formatDashboardBandPrice(min, band.unit)
-                : `${min.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}–${max.toLocaleString('vi-VN', { maximumFractionDigits: 1 })} đ${band.unit ? `/${band.unit}` : ''}`
+                ? `${formatDashboardBandPrice(min)} đ`
+                : `${formatDashboardBandPrice(min)}–${formatDashboardBandPrice(max)} đ`
             : '—';
-        const main = document.createElement('span');
-        main.className = 'dashboard-price-band-primary';
-        main.textContent = priceRange;
-        const detail = document.createElement('span');
-        detail.className = 'dashboard-price-band-secondary';
-        detail.textContent = `${formatDashboardCount(band.distinct_win_count)} lần trúng · trung vị ${formatDashboardBandPrice(median, band.unit)}`;
-        priceCell.title = `${priceRange}; ${detail.textContent}`;
-        priceCell.append(main, detail);
+        const unit = String(band.unit || '').trim();
+        const displayedPrice = unit && priceRange !== '—' ? `${priceRange}/${unit}` : priceRange;
+        priceCell.textContent = displayedPrice;
+        priceCell.title = displayedPrice;
 
         const totalCell = document.createElement('td');
-        totalCell.className = 'dashboard-price-band-total';
         totalCell.textContent = formatDashboardCurrencyTooltip(Number(band.corresponding_awarded_value || 0));
         totalCell.title = totalCell.textContent;
         row.append(rank, bidderCell, priceCell, totalCell);
@@ -7039,39 +7178,79 @@ function renderDashboardBidderPriceBands(analysis = {}) {
 
 function renderDashboardAnalytics(payload) {
     dashboardAnalyticsData = payload;
+    const displayPayload = { ...payload };
+    if (!Object.values(dashboardSelection).some(Boolean)) {
+        Object.keys(dashboardSelectionVisualData).forEach(key => delete dashboardSelectionVisualData[key]);
+    } else {
+        Object.entries(dashboardSelectionSourceFields).forEach(([key, field]) => {
+            if (!dashboardSelection[key] || dashboardSelectionVisualData[key] === undefined) return;
+            const sourceData = dashboardSelectionVisualData[key];
+            if (key === 'product') {
+                displayPayload.top_products = mergeDashboardTopRows(sourceData, payload?.top_products || [], 'name', 10);
+            } else if (key === 'investor') {
+                displayPayload.top_investors = mergeDashboardTopRows(sourceData, payload?.top_investors || [], 'name', 5);
+            } else if (key === 'bidder') {
+                displayPayload.bidder_price_band_analysis = {
+                    ...(sourceData || {}),
+                    ...(payload?.bidder_price_band_analysis || {}),
+                    items: mergeDashboardTopRows(
+                        sourceData?.items || [],
+                        payload?.bidder_price_band_analysis?.items || [],
+                        'bidder_name',
+                        5
+                    )
+                };
+            } else {
+                displayPayload[field] = sourceData;
+            }
+        });
+    }
     renderDashboardSummary(payload?.summary || {});
     renderDashboardBaseContext();
-    renderDashboardSelections();
-    renderDashboardMap(payload?.geography || []);
-    renderDashboardProducts(payload?.top_products || []);
-    renderDashboardInvestors(payload?.top_investors || []);
-    renderDashboardBidderPriceBands(payload?.bidder_price_band_analysis || {});
-    void renderDashboardCharts(payload?.timeline || {});
+    renderDashboardMap(displayPayload?.geography || []);
+    renderDashboardProducts(displayPayload?.top_products || []);
+    renderDashboardInvestors(displayPayload?.top_investors || []);
+    renderDashboardBidderPriceBands(displayPayload?.bidder_price_band_analysis || {});
+    syncDashboardSelectionVisuals();
+    updateDashboardTimelineChart(payload?.timeline || {});
+    scheduleDashboardFit();
 }
 
 function renderDashboardEmpty(message = 'Thực hiện tìm kiếm để xem phân tích.') {
     dashboardAnalyticsData = null;
     resetDashboardCharts();
+    ['dashboard-province-map', 'dashboard-top-products', 'dashboard-bidder-price-bands', 'dashboard-top-investors']
+        .forEach(id => document.getElementById(id)?.replaceChildren());
     renderDashboardSummary({});
     renderDashboardBaseContext();
     ['geography', 'top_products', 'timeline', 'bidder_price_bands', 'top_investors'].forEach(key => setDashboardWidgetState(key, message, 'empty'));
+    scheduleDashboardFit();
 }
 
 async function refreshDashboardAnalytics({ force = false } = {}) {
+    clearTimeout(dashboardAnalyticsRefreshTimer);
+    dashboardAnalyticsRefreshTimer = null;
     if (!isDashboardActive()) return;
     const baseRequest = getDashboardBaseRequest(currentQueryRequest);
     const baseKey = stableStringify(baseRequest);
-    if (refreshDashboardAnalytics.lastBaseKey && refreshDashboardAnalytics.lastBaseKey !== baseKey) {
+    const baseChanged = Boolean(refreshDashboardAnalytics.lastBaseKey && refreshDashboardAnalytics.lastBaseKey !== baseKey);
+    if (baseChanged) {
         resetDashboardSelection();
+        dashboardAnalyticsData = null;
     }
     refreshDashboardAnalytics.lastBaseKey = baseKey;
     renderDashboardBaseContext();
-    renderDashboardSelections();
+    syncDashboardSelectionVisuals();
 
     // An untouched dashboard must not issue an unbounded "match all" request.
     // Once the user has searched (including a valid zero-result search), the
     // backend owns the complete-universe aggregation.
-    if (!hasActiveQueryFilters(currentQueryRequest) && Number(currentQueryMeta?.totalCount || 0) <= 0) {
+    const hasAppliedDashboardQuery = hasActiveQueryFilters({
+        ...currentQueryRequest,
+        group: null,
+        sourceTypes: []
+    });
+    if (!hasAppliedDashboardQuery && Number(currentQueryMeta?.totalCount || 0) <= 0) {
         dashboardAnalyticsController?.abort();
         dashboardAnalyticsController = null;
         dashboardAnalyticsVersion += 1;
@@ -7086,12 +7265,13 @@ async function refreshDashboardAnalytics({ force = false } = {}) {
     if (!force && refreshDashboardAnalytics.lastRequestKey === requestKey && dashboardAnalyticsData) return;
     refreshDashboardAnalytics.lastRequestKey = requestKey;
 
-    dashboardAnalyticsData = null;
     dashboardAnalyticsController?.abort();
     const controller = new AbortController();
     dashboardAnalyticsController = controller;
     const version = ++dashboardAnalyticsVersion;
-    ['geography', 'top_products', 'timeline', 'bidder_price_bands', 'top_investors'].forEach(key => setDashboardWidgetState(key, 'Đang tải dữ liệu…', 'loading'));
+    if (!dashboardAnalyticsData) {
+        ['geography', 'top_products', 'timeline', 'bidder_price_bands', 'top_investors'].forEach(key => setDashboardWidgetState(key, 'Đang tải dữ liệu…', 'loading'));
+    }
     try {
         await window.BIDFinderAuth?.whenReady?.();
         const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/dashboard-analytics`, {
@@ -7106,15 +7286,121 @@ async function refreshDashboardAnalytics({ force = false } = {}) {
         renderDashboardAnalytics(payload);
     } catch (error) {
         if (error?.name === 'AbortError' || version !== dashboardAnalyticsVersion) return;
+        dashboardAnalyticsData = null;
         ['geography', 'top_products', 'timeline', 'bidder_price_bands', 'top_investors'].forEach(key => setDashboardWidgetState(key, 'Không tải được dữ liệu phân tích.', 'error'));
     }
 }
 
-function initDashboardEvents() {
-    document.getElementById('dashboard-clear-selections')?.addEventListener('click', () => {
-        resetDashboardSelection();
-        void refreshDashboardAnalytics({ force: true });
+function resizeDashboardTableColumns(table, columnIndex, deltaPx, initialWidths = null) {
+    const columns = table.querySelectorAll('colgroup col');
+    const column = columns[columnIndex];
+    if (!column || columnIndex === 0 || columnIndex === columns.length - 1) return;
+
+    const widths = initialWidths?.columns || Array.from(columns, col => col.getBoundingClientRect().width);
+    const tableWidth = initialWidths?.table || table.getBoundingClientRect().width;
+    if (tableWidth <= 0) return;
+    const baseWidth = Number(table.dataset.resizeBaseWidth) || tableWidth;
+    table.dataset.resizeBaseWidth = String(baseWidth);
+    const minWidth = Number(column.dataset.minWidth) || 40;
+    widths[columnIndex] = Math.max(minWidth, widths[columnIndex] + deltaPx);
+    const totalWidth = widths.reduce((sum, width) => sum + width, 0);
+    if (totalWidth < baseWidth) widths[widths.length - 1] += baseWidth - totalWidth;
+    columns.forEach((col, index) => { col.style.width = `${widths[index]}px`; });
+    table.style.width = `${Math.max(baseWidth, totalWidth)}px`;
+
+    const handle = table.querySelector(`[data-column-resize="${columnIndex}"]`);
+    if (handle) {
+        handle.setAttribute('aria-valuemin', String(minWidth));
+        handle.setAttribute('aria-valuemax', String(Math.ceil(table.getBoundingClientRect().width)));
+        handle.setAttribute('aria-valuenow', String(Math.round(widths[columnIndex])));
+    }
+}
+
+function initDashboardTableResizing() {
+    document.querySelectorAll('.dashboard-resizable-table').forEach(table => {
+        if (table.dataset.columnResizeReady) return;
+        table.dataset.columnResizeReady = 'true';
+        table.style.minWidth = `${Array.from(table.querySelectorAll('colgroup col')).reduce((sum, column) => sum + (Number(column.dataset.minWidth) || 40), 0)}px`;
+
+        table.querySelectorAll('.dashboard-column-resizer').forEach(handle => {
+            const columnIndex = Number(handle.dataset.columnResize);
+            const columns = table.querySelectorAll('colgroup col');
+            if (!Number.isInteger(columnIndex) || columnIndex === 0 || !columns[columnIndex + 1]) return;
+
+            handle.addEventListener('keydown', event => {
+                const delta = event.key === 'ArrowRight' ? 12 : event.key === 'ArrowLeft' ? -12 : 0;
+                if (!delta) return;
+                event.preventDefault();
+                resizeDashboardTableColumns(table, columnIndex, delta);
+            });
+            handle.addEventListener('focus', () => resizeDashboardTableColumns(table, columnIndex, 0));
+
+            handle.addEventListener('pointerdown', event => {
+                if (event.button !== 0) return;
+                event.preventDefault();
+                const widths = Array.from(columns, column => column.getBoundingClientRect().width);
+                const tableWidth = table.getBoundingClientRect().width;
+                const startX = event.clientX;
+                const onMove = moveEvent => {
+                    if (moveEvent.pointerId !== event.pointerId) return;
+                    resizeDashboardTableColumns(table, columnIndex, moveEvent.clientX - startX, { columns: [...widths], table: tableWidth });
+                };
+                const onStop = stopEvent => {
+                    if (stopEvent.pointerId !== event.pointerId) return;
+                    window.removeEventListener('pointermove', onMove);
+                    window.removeEventListener('pointerup', onStop);
+                    window.removeEventListener('pointercancel', onStop);
+                };
+                window.addEventListener('pointermove', onMove);
+                window.addEventListener('pointerup', onStop);
+                window.addEventListener('pointercancel', onStop);
+            });
+        });
     });
+}
+
+function scheduleDashboardFit() {
+    if (dashboardFitFrame) return;
+    dashboardFitFrame = requestAnimationFrame(() => {
+        dashboardFitFrame = 0;
+        if (!document.body.classList.contains('dashboard-view-active')) return;
+        const panel = document.getElementById('dashboard-panel');
+        const shell = panel?.querySelector('.dashboard-shell-card');
+        if (!panel?.classList.contains('active') || !shell) return;
+
+        panel.classList.add('dashboard-fit');
+        const width = panel.clientWidth;
+        const availableHeight = Math.max(1, panel.clientHeight);
+        if (width <= 0) return;
+
+        let scale = 1;
+        let naturalHeight = 0;
+        for (let attempt = 0; attempt < 8; attempt += 1) {
+            panel.style.setProperty('--dashboard-fit-content-width', `${width / scale}px`);
+            panel.style.setProperty('--dashboard-fit-scale', String(scale));
+            naturalHeight = Math.max(shell.scrollHeight, shell.offsetHeight);
+            if (!naturalHeight) return;
+            const nextScale = Math.min(1, availableHeight / naturalHeight);
+            if (Math.abs(nextScale - scale) < 0.002) break;
+            scale = nextScale;
+        }
+        panel.style.setProperty('--dashboard-fit-content-width', `${width / scale}px`);
+        panel.style.setProperty('--dashboard-fit-scale', String(scale));
+        dashboardChartInstances.timeline?.resize();
+    });
+}
+
+function initDashboardEvents() {
+    initDashboardTableResizing();
+    window.addEventListener('resize', scheduleDashboardFit, { passive: true });
+    document.fonts?.ready.then(scheduleDashboardFit);
+    if (typeof ResizeObserver !== 'undefined') {
+        dashboardFitObserver = new ResizeObserver(scheduleDashboardFit);
+        ['.app-header', '.result-table-tabs'].forEach(selector => {
+            const element = document.querySelector(selector);
+            if (element) dashboardFitObserver.observe(element);
+        });
+    }
     document.getElementById('dashboard-trend-grain')?.addEventListener('change', event => {
         const grain = event.target.value;
         if (!['year', 'quarter', 'month'].includes(grain)) return;
@@ -7127,7 +7413,7 @@ function initDashboardEvents() {
             updateDashboardTimelineChart(dashboardAnalyticsData.timeline || {});
         }
     });
-    renderDashboardSelections();
+    syncDashboardSelectionVisuals();
     renderDashboardEmpty();
 }
 
@@ -7411,7 +7697,7 @@ function renderHistoryDashboard(summary) {
     if (highestGoods) {
         goodsDetailNode.innerHTML = [
             formatHistorySummaryDetail('Chủ đầu tư', highestGoods.owner),
-            formatHistorySummaryDetail('Tên hàng hóa', highestGoods.name)
+            formatHistorySummaryDetail('Tên sản phẩm', highestGoods.name)
         ].join('<br>');
     } else {
         goodsDetailNode.textContent = 'Chưa có dữ liệu trong ngày';
@@ -7659,6 +7945,7 @@ function showHistoryModal() {
     
     modal.classList.add('show');
     feather.replace();
+    prepareFeatureIntro();
 
     if (hasData) {
         void ensureChartJsLoaded()
@@ -8369,16 +8656,14 @@ function initStorageAndElements() {
 function initModalEvents() {
     const modalEvents = {
         'open-run-history': () => showHistoryModal(),
-        'close-history': () => document.getElementById('history-modal').classList.remove('show')
+        'close-history': closeHistoryModal
     };
     
     Object.entries(modalEvents).forEach(([id, handler]) => {
         document.getElementById(id)?.addEventListener('click', handler);
     });
     
-    document.querySelector('.history-overlay')?.addEventListener('click', () => {
-        document.getElementById('history-modal').classList.remove('show');
-    });
+    document.querySelector('.history-overlay')?.addEventListener('click', closeHistoryModal);
 
     document.querySelectorAll('[data-history-range]').forEach((btn) => {
         btn.addEventListener('click', () => {
@@ -10243,7 +10528,10 @@ function activateResultView(targetId) {
 
     if (activeButton === button) {
         updateLegacyPagination();
-        if (targetId === 'dashboard-panel') void refreshDashboardAnalytics();
+        if (targetId === 'dashboard-panel') {
+            scheduleDashboardFit();
+            void refreshDashboardAnalytics();
+        }
         return;
     }
 
@@ -10265,7 +10553,10 @@ function activateResultView(targetId) {
     resultPanels.forEach(panel => panel.classList.remove('active'));
     targetPanel.classList.add('active');
     updateLegacyPagination();
-    if (targetId === 'dashboard-panel') void refreshDashboardAnalytics();
+    if (targetId === 'dashboard-panel') {
+        scheduleDashboardFit();
+        void refreshDashboardAnalytics();
+    }
 }
 
 function syncScopeSwitcherSlider() {
@@ -10390,24 +10681,23 @@ function initSearchFormEvents() {
     if (!searchForm) return;
     let previewRequestId = 0;
     let previewAbortController = null;
+
+    searchForm.addEventListener('cancel-preview', () => {
+        previewRequestId += 1;
+        previewAbortController?.abort();
+        previewAbortController = null;
+    });
     
     searchForm.addEventListener('apply-filters', async (e) => {
         previewRequestId += 1;
         previewAbortController?.abort();
         previewAbortController = null;
 
-        const stopConnectionMessageTimer = startConnectionMessageTimer(searchForm);
-        let appliedResult = null;
         try {
             await waitForWarmupWithUi(searchForm);
-            appliedResult = await applyFilters(e.detail);
+            await applyFilters(e.detail);
         } finally {
-            stopConnectionMessageTimer();
             searchForm.setApplyLoading?.(false);
-        }
-
-        if (appliedResult?.success) {
-            searchForm.setPreviewResult?.(getPreviewPayloadForRequest(e.detail, appliedResult));
         }
 
         const filterPanel = document.getElementById('filter-panel');
@@ -10417,12 +10707,22 @@ function initSearchFormEvents() {
     });
     
     searchForm.addEventListener('reset-filters', () => {
+        pendingAuthSearch = null;
         const dataset = getLegacyDatasetRequest();
         currentQueryRequest = { ...dataset, filters: {}, columnFilters: {}, page: 1 };
         enableLegacyDatasetSearch();
         clearFilterUrlState();
         resetQueryResultMeta();
-        updateResults([], [], [], { resetMiniFilters: true });
+        updateResults([], [], [], { resetMiniFilters: true, redrawCharts: false });
+        clearTimeout(dashboardAnalyticsRefreshTimer);
+        dashboardAnalyticsRefreshTimer = null;
+        dashboardAnalyticsController?.abort();
+        dashboardAnalyticsController = null;
+        dashboardAnalyticsVersion += 1;
+        refreshDashboardAnalytics.lastBaseKey = '';
+        refreshDashboardAnalytics.lastRequestKey = '';
+        resetDashboardSelection();
+        renderDashboardEmpty();
         document.dispatchEvent(new CustomEvent('bidfinder:query-reset'));
         hideLimitWarning();
     });
@@ -10533,6 +10833,98 @@ function initFilterUrlEvents() {
 // PRODUCT JOURNEY
 // ==============================
 const PRODUCT_JOURNEY_STORAGE_KEY = 'bidfinder:product_journey_seen';
+let featureIntroPreparation = null;
+let featureIntroClosing = false;
+let featureIntroRepeatable = false;
+
+function isFeatureIntroSampleRequest(request) {
+    const field = 'active_ingredient_or_herbal_component';
+    const criteria = request?.uiState?.criteria || {};
+    const tokens = criteria[field]?.tokens || [];
+    return request?.uiState?.group === 'medicines'
+        && Object.keys(criteria).length === 1
+        && tokens.length === 1
+        && String(tokens[0].value || '').toLowerCase() === 'acyclovir'
+        && !Object.keys(request?.columnFilters || {}).length
+        && (!Array.isArray(request?.sort) || request.sort.length === 0);
+}
+
+function canShowFeatureIntro() {
+    if (document.body.classList.contains('landing-active') || productJourneyState) return false;
+    if (isFeatureIntroSampleRequest(currentQueryRequest)) return true;
+    if (hasActiveQueryFilters(readFilterUrlState())) return false;
+    return !hasActiveQueryFilters({ ...currentQueryRequest, group: null, sourceTypes: [] })
+        && Number(currentQueryMeta?.totalCount || 0) === 0;
+}
+
+function getFeatureIntroSampleRequest() {
+    const field = 'active_ingredient_or_herbal_component';
+    const token = { value: 'Acyclovir', op: 'OR' };
+    return {
+        scope: 'all', group: null, sourceTypes: [], crossGroupSearch: true,
+        crossGroupSearchFields: [field],
+        uiState: { group: 'medicines', activeField: field, criteria: { [field]: { kind: 'tokens', tokens: [token] } } },
+        text: '', searchFields: [], filters: { crossGroupProductKeyword: { tokens: [token] } },
+        structuredFilters: {}, ranges: {}, dateRanges: {}, exactIdentifiers: {},
+        sort: [], page: 1, limit: 50, queryMode: 'search'
+    };
+}
+
+function prepareFeatureIntro() {
+    if (featureIntroPreparation || document.body.classList.contains('landing-active') || productJourneyState) return;
+    featureIntroPreparation = (async () => {
+        try {
+            await window.BIDFinderAuth?.whenReady?.();
+            const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/feature-intro`);
+            if (!response.ok) return false;
+            const status = await response.json();
+            if (!status.show || (status.repeatable !== true && !canShowFeatureIntro())) return false;
+            featureIntroRepeatable = status.repeatable === true;
+            const request = getFeatureIntroSampleRequest();
+            resetDashboardSelection();
+            const result = await applyFilters(request, { silent: true });
+            if (!result?.success) return false;
+            getProcurementSearchForm()?.setFilterPayload?.(request);
+            activateResultView('df2-panel');
+            return true;
+        } catch (error) {
+            console.warn('Feature introduction unavailable:', error);
+            return false;
+        }
+    })();
+}
+
+async function closeHistoryModal() {
+    const modal = document.getElementById('history-modal');
+    if (!modal?.classList.contains('show')) return;
+    modal.classList.remove('show');
+    if (!featureIntroPreparation) prepareFeatureIntro();
+    if (!featureIntroPreparation || featureIntroClosing) return;
+    featureIntroClosing = true;
+    if (!(await featureIntroPreparation) || productJourneyState) {
+        featureIntroPreparation = null;
+        featureIntroClosing = false;
+        return;
+    }
+    if (modal.classList.contains('show')) {
+        featureIntroClosing = false;
+        return;
+    }
+    try {
+        const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/feature-intro/claim`, { method: 'POST' });
+        if (response.ok && (await response.json()).show) {
+            startProductJourney({ steps: getFeatureIntroSteps(), kind: 'feature_intro' });
+        } else {
+            featureIntroPreparation = null;
+            featureIntroClosing = false;
+        }
+    } catch (error) {
+        console.warn('Feature introduction unavailable:', error);
+        featureIntroPreparation = null;
+        featureIntroClosing = false;
+    }
+}
+
 const PRODUCT_JOURNEY_TIMING = {
     clickStartDelay: 760,
     cursorPressDelay: 520,
@@ -10589,6 +10981,7 @@ function markJourneySurface(element) {
 
 function closeJourneySurfaces() {
     closeFloatingTableUi();
+    closeLegacyRowDetail({ restoreFocus: false });
     setJourneyTableToolsVisible(false);
     hideAllPanels();
     closeBulkSearchModal();
@@ -10663,7 +11056,7 @@ function getProductJourneySteps() {
         },
         {
             title: 'Cụm chức năng chính',
-            body: 'Xem lịch sử cập nhật, tìm kiếm hàng loạt từ file Excel, tìm kiếm nâng cao hoặc phân tích trực quan',
+            body: 'Xem lịch sử cập nhật, tìm kiếm hàng loạt từ file Excel và tìm kiếm nâng cao.',
             selector: '.workspace-actions',
             placement: 'bottom',
             before: closeJourneySurfaces
@@ -10795,6 +11188,75 @@ function getProductJourneySteps() {
     ];
 }
 
+function getFeatureIntroSteps() {
+    return [
+        {
+            title: 'Tính năng mới',
+            body: 'BIDFinder v2.0.0 bổ sung một số tính năng mới.',
+            selector: '#df2-panel', placement: 'center', dialogOnly: true,
+            before: () => activateResultView('df2-panel')
+        },
+        {
+            title: 'Xem chi tiết nội dung',
+            body: 'Nhấp đúp vào bất kỳ giá trị nào trong hàng để xem đầy đủ thông tin của hàng đó.',
+            getElement: () => document.querySelector('#extended-table tbody tr[data-row-index="0"] td:nth-child(2)')
+                || document.querySelector('#df2-panel .table-wrapper'),
+            placement: 'top', doubleClick: true,
+            focusAfterSelector: '#legacy-row-detail .legacy-detail-dialog',
+            before: () => {
+                closeLegacyRowDetail({ restoreFocus: false });
+                activateResultView('df2-panel');
+            },
+            afterClick: () => productJourneyState?.activeTarget
+                ?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+        },
+        {
+            title: 'Tìm kiếm toàn bộ',
+            body: 'Kết quả thông thường sẽ giới hạn ở 1000 dòng. Chức năng này cho phép mở rộng phạm vi tìm kiếm.',
+            selector: '#insight-full-search', placement: 'bottom', before: closeJourneySurfaces
+        },
+        {
+            title: 'Dashboard',
+            body: 'Dashboard phân tích tổng quan, xu hướng và các giá trị nổi bật của kết quả tìm kiếm.',
+            selector: '.scope-btn[data-view="dashboard-panel"]', placement: 'bottom',
+            focusAfterSelector: '#dashboard-panel .dashboard-shell-card',
+            afterClick: () => activateResultView('dashboard-panel')
+        },
+        {
+            title: 'Khám phá bằng cross-filtering',
+            body: 'Chọn một giá trị để kích hoạt cross-filtering, các biểu đồ còn lại sẽ lọc theo lựa chọn. Chọn lại để hủy thao tác.',
+            getElement: () => document.querySelector('#dashboard-top-products .dashboard-product-bar')
+                || document.querySelector('.dashboard-products-widget'),
+            placement: 'top',
+            before: () => activateResultView('dashboard-panel'),
+            waitForTarget: waitForDashboardProductForJourney,
+            afterClick: () => {
+                const product = productJourneyState?.activeTarget
+                    ?.closest('.dashboard-product-row')?.dataset.dashboardProduct;
+                if (product) setDashboardSelection('product', product);
+            }
+        }
+    ];
+}
+
+function waitForDashboardProductForJourney() {
+    const container = document.getElementById('dashboard-top-products');
+    const readySelector = '.dashboard-product-bar, .dashboard-widget-state.is-empty, .dashboard-widget-state.is-error';
+    if (!container || container.querySelector(readySelector)) return Promise.resolve();
+    return new Promise(resolve => {
+        const observer = new MutationObserver(() => {
+            if (container.querySelector(readySelector)) finish();
+        });
+        const timeout = window.setTimeout(finish, 20000);
+        function finish() {
+            observer.disconnect();
+            window.clearTimeout(timeout);
+            resolve();
+        }
+        observer.observe(container, { childList: true, subtree: true });
+    });
+}
+
 function createProductJourneyDom() {
     if (document.getElementById('product-journey-root')) return;
 
@@ -10851,11 +11313,21 @@ function simulateJourneyClick(target, onClick) {
         cursor.classList.add('is-pressing');
     }, PRODUCT_JOURNEY_TIMING.cursorPressDelay));
 
+    const doubleClick = state.steps[state.index]?.doubleClick;
+    if (doubleClick) {
+        state.animationTimers.push(window.setTimeout(() => {
+            cursor.classList.remove('is-pressing');
+        }, PRODUCT_JOURNEY_TIMING.cursorPressDelay + 110));
+        state.animationTimers.push(window.setTimeout(() => {
+            cursor.classList.add('is-pressing');
+        }, PRODUCT_JOURNEY_TIMING.cursorPressDelay + 240));
+    }
+
     state.animationTimers.push(window.setTimeout(() => {
         state.pendingClickComplete?.();
         onClick?.();
         cursor.classList.remove('is-pressing');
-    }, PRODUCT_JOURNEY_TIMING.surfaceOpenDelay));
+    }, PRODUCT_JOURNEY_TIMING.surfaceOpenDelay + (doubleClick ? 170 : 0)));
 
     state.animationTimers.push(window.setTimeout(() => {
         cursor.classList.remove('is-visible');
@@ -10889,9 +11361,8 @@ function finishJourneyClickStep(step) {
     if (step.afterBody) {
         state.root.querySelector('p').textContent = step.afterBody;
     }
-    const nextTarget = step.focusAfterSelector
-        ? document.querySelector(step.focusAfterSelector)
-        : resolveJourneyElement(step);
+    const nextTarget = (step.focusAfterSelector && document.querySelector(step.focusAfterSelector))
+        || resolveJourneyElement(step);
     if (nextTarget) {
         state.activeTarget = nextTarget;
         setTimeout(() => {
@@ -10999,7 +11470,9 @@ function renderProductJourneyStep() {
     state.pendingClickComplete = null;
     step.before?.();
 
-    requestAnimationFrame(() => {
+    const stepIndex = state.index;
+    const renderTarget = () => requestAnimationFrame(() => {
+        if (productJourneyState !== state || state.index !== stepIndex) return;
         const target = resolveJourneyElement(step);
         if (!target) {
             nextProductJourneyStep();
@@ -11029,9 +11502,16 @@ function renderProductJourneyStep() {
         }
         window.BIDFinderAnalytics?.track?.('product_journey_step_viewed', {
             step_index: state.index + 1,
-            step_title: step.title
+            step_title: step.title,
+            kind: state.kind
         });
     });
+    if (step.waitForTarget) {
+        setJourneyCardVisible(false);
+        Promise.resolve(step.waitForTarget()).then(renderTarget);
+    } else {
+        renderTarget();
+    }
 }
 
 function nextProductJourneyStep() {
@@ -11050,18 +11530,23 @@ function previousProductJourneyStep() {
 
 function endProductJourney({ completed = false } = {}) {
     if (!productJourneyState) return;
-    const { root } = productJourneyState;
+    const { root, kind } = productJourneyState;
     root.hidden = true;
     clearJourneyAnimationTimers();
     document.body.classList.remove('product-journey-active');
     closeJourneySurfaces();
     productJourneyState = null;
-    try {
-        localStorage.setItem(PRODUCT_JOURNEY_STORAGE_KEY, '1');
-    } catch (error) {
-        // Ignore storage failures.
+    if (kind === 'product_journey') {
+        try {
+            localStorage.setItem(PRODUCT_JOURNEY_STORAGE_KEY, '1');
+        } catch (error) {
+            // Ignore storage failures.
+        }
+    } else if (kind === 'feature_intro' && featureIntroRepeatable) {
+        featureIntroPreparation = null;
+        featureIntroClosing = false;
     }
-    window.BIDFinderAnalytics?.track?.('product_journey_closed', { completed });
+    window.BIDFinderAnalytics?.track?.('product_journey_closed', { completed, kind });
 }
 
 function handleProductJourneyKeydown(event) {
@@ -11108,18 +11593,23 @@ function handleProductJourneyClick(event) {
     nextProductJourneyStep();
 }
 
-function startProductJourney() {
+function startProductJourney({ steps = getProductJourneySteps(), kind = 'product_journey' } = {}) {
+    if (productJourneyState) return;
     createProductJourneyDom();
     productJourneyState = {
         root: document.getElementById('product-journey-root'),
-        steps: getProductJourneySteps(),
+        steps,
+        kind,
         index: 0,
         activeTarget: null,
         animationTimers: [],
         pendingClickComplete: null
     };
+    productJourneyState.root.querySelector('.product-journey-card')?.setAttribute(
+        'aria-label', kind === 'feature_intro' ? 'Giới thiệu tính năng mới của BIDFinder' : 'Hướng dẫn sử dụng BIDFinder'
+    );
     renderProductJourneyStep();
-    window.BIDFinderAnalytics?.track?.('product_journey_started');
+    window.BIDFinderAnalytics?.track?.('product_journey_started', { kind });
 }
 
 function initProductJourney() {
@@ -11250,11 +11740,11 @@ function initActionTooltips() {
     document.addEventListener?.('visibilitychange', hideActiveActionTooltip);
 }
 
-async function initializeAppData() {
+async function initializeAppData({ restoreUrlQuery = true } = {}) {
     if (window.BIDFinderAuth?.requiresDataAuth?.() && !window.BIDFinderAuth?.isAuthenticated()) {
         appDataInitialized = false;
         metadata = null;
-        initEmptyCharts();
+        updateInsightEntryPoint();
         return;
     }
 
@@ -11272,8 +11762,8 @@ async function initializeAppData() {
             });
         }
         await loadMetadata();
-        initEmptyCharts();
-        await restoreFilterUrlState();
+        updateInsightEntryPoint();
+        if (restoreUrlQuery) await restoreFilterUrlState();
         maybeAutoOpenHistoryAfterEntry();
         
         console.log('✅ App initialized - Ready for filtering from database');
@@ -11283,7 +11773,7 @@ async function initializeAppData() {
         console.error('❌ Error initializing app:', err);
         console.error('⚠️ Server có thể đang khởi động, vui lòng đợi 30s và refresh lại');
         await loadMetadata();
-        initEmptyCharts();
+        updateInsightEntryPoint();
         maybeAutoOpenHistoryAfterEntry();
     }
 }
@@ -11308,7 +11798,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initModalEvents();
     initBulkSearchEvents();
     initFeedbackModalEvents();
-    initInsightDrawerEvents();
+    initFullSearchDockEvents();
     initDashboardEvents();
     initProductJourney();
     initResultViewSwitching();
@@ -11337,6 +11827,5 @@ window.addEventListener('resize', () => {
     syncScopeSwitcherSlider();
     rerenderActiveColumnMenu();
     rerenderColumnsPopover();
-    Object.values(chartInstances || {}).forEach(chart => chart?.resize?.());
     historyTimelineChart?.resize?.();
 });

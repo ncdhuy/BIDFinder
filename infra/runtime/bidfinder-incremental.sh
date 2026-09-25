@@ -9,26 +9,32 @@ python_bin="${BIDFINDER_PYTHON:-python3}"
 status_path="${BIDFINDER_INCREMENTAL_STATUS_PATH:-$BIDFINDER_TYPESENSE_ROOT/reports/incremental-status.json}"
 request_delay="${BIDFINDER_MSC_REQUEST_DELAY_SECONDS:-1.0}"
 timeout_seconds="${BIDFINDER_MSC_TIMEOUT_SECONDS:-30.0}"
+profile="${BIDFINDER_INCREMENTAL_PROFILE:-reconciliation}"
+lookback_days="${BIDFINDER_LOOKBACK_DAYS:-3}"
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 write_status() {
-  local result="$1" ended_at="$2" exit_code="$3" cli_output="${4:-}"
+  local result="$1" ended_at="$2" exit_code="$3" cli_output="${4:-}" summary_through="${5:-}"
   "$python_bin" - "$status_path" "$started_at" "$ended_at" "$result" "$exit_code" \
-    "$BIDFINDER_SERVING_GENERATION" "$BIDFINDER_SERVING_REPORT_PATH" "$cli_output" <<'PY'
+    "$BIDFINDER_SERVING_GENERATION" "$BIDFINDER_SERVING_REPORT_PATH" "$cli_output" "$profile" "$lookback_days" "$summary_through" <<'PY'
 import json
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-path, started, ended, result, exit_code, generation, report_path, cli_output = sys.argv[1:]
+path, started, ended, result, exit_code, generation, report_path, cli_output, profile, lookback_days, summary_through = sys.argv[1:]
 payload = {
     "last_run_start": started,
     "last_run_end": ended,
     "result": result,
     "exit_code": int(exit_code),
     "serving_generation": generation,
+    "profile": profile,
+    "lookback_days": int(lookback_days),
 }
+if summary_through:
+    payload["approval_summary_through"] = summary_through
 try:
     vietnam_today = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date()
     payload["latest_closed_day"] = (vietnam_today - timedelta(days=1)).isoformat()
@@ -112,7 +118,7 @@ set +e
   --provenance "$BIDFINDER_TYPESENSE_PROVENANCE" \
   --base-manifest-fingerprint "$base_fingerprint" \
   --include-current-day \
-  --lookback "$BIDFINDER_LOOKBACK_DAYS" \
+  --lookback "$lookback_days" \
   --resume \
   --max-partitions "$BIDFINDER_MAX_PARTITIONS" \
   --request-delay "$request_delay" \
@@ -123,7 +129,46 @@ exit_code=$?
 set -e
 ended_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 if (( exit_code == 0 )); then
-  write_status PASS "$ended_at" "$exit_code" "$cli_output"
+  summary_today="$("$python_bin" - <<'PY'
+from datetime import datetime
+from zoneinfo import ZoneInfo
+print(datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date().isoformat())
+PY
+  )"
+  summary_from="$("$python_bin" - "$summary_today" "$lookback_days" <<'PY'
+from datetime import date, timedelta
+import sys
+today = date.fromisoformat(sys.argv[1])
+lookback = max(0, int(sys.argv[2]))
+print((today - timedelta(days=lookback)).isoformat())
+PY
+  )"
+  summary_output="$(mktemp "$BIDFINDER_RUNTIME_ROOT/.daily-approval-summary.XXXXXX")"
+  set +e
+  "$python_bin" -m crawler_engine.sync_daily_approval_summary \
+    --from "$summary_from" \
+    --to "$summary_today" \
+    --generation "$BIDFINDER_SERVING_GENERATION" \
+    --incremental-report "$cli_output" \
+    --repair-history-days 180 \
+    --workers "${BIDFINDER_DAILY_SUMMARY_WORKERS:-24}" \
+    --timeout "${BIDFINDER_DAILY_SUMMARY_TIMEOUT_SECONDS:-30}" >"$summary_output"
+  summary_exit_code=$?
+  set -e
+  if (( summary_exit_code != 0 )); then
+    echo "ERROR: daily approval summary sync failed; the API will use its Typesense fallback" >&2
+    cat "$summary_output" >&2
+    exit_code="$summary_exit_code"
+  else
+    cat "$summary_output"
+  fi
+  rm -f -- "$summary_output"
+  ended_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if (( exit_code == 0 )); then
+    write_status PASS "$ended_at" "$exit_code" "$cli_output" "$summary_today"
+  else
+    write_status FAILED "$ended_at" "$exit_code" "$cli_output"
+  fi
 else
   write_status FAILED "$ended_at" "$exit_code" "$cli_output"
 fi

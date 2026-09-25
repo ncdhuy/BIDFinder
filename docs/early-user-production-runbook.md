@@ -39,18 +39,21 @@ and bounded graceful waits; no SIGKILL fallback is configured.
 
 ## Daily ingestion and freshness
 
-The installed timer runs daily at **08:00, 11:00, and 17:00 Asia/Ho_Chi_Minh**.
-It re-crawls the current Vietnam day at each run and revalidates the previous
-three fully closed days. The open-day checkpoint stays `VALIDATED` until a run
-after midnight closes it. The timer uses the active `serving_v1_20260901`
-generation and holds:
+The installed timers use Asia/Ho_Chi_Minh. Monday through Friday, the
+current-day profile runs every 30 minutes from **07:00 through 16:30**; on
+Saturday and Sunday, it runs at **08:00**. Reconciliation runs at **17:00**
+every day.
+The current-day profile re-crawls only the open Vietnam day. The reconciliation
+profile revalidates the previous three fully closed days as well. The open-day
+checkpoint stays `VALIDATED` until a run after midnight closes it. Both profiles
+use the active `serving_v1_20260901` generation and share:
 
 ```text
 ~/.local/share/bidfinder/runtime/locks/serving-maintenance.lock
 ```
 
 If another run owns the lock, the new invocation exits safely with
-`already running`. A manual equivalent is:
+`already running`. A manual reconciliation run is:
 
 ```bash
 bash infra/runtime/bidfinder-install.sh catch-up
