@@ -2288,10 +2288,12 @@ async function fetchQueryResults(
     }
 
     const searchMode = options?.searchMode === 'full' ? 'full' : 'standard';
-    window.BIDFinderAnalytics?.trackSearchSubmitted?.(queryRequest, { searchMode });
-    document.dispatchEvent(new CustomEvent('bidfinder:query-start', {
-        detail: { query: queryRequest, searchMode }
-    }));
+    if (!options.background) {
+        window.BIDFinderAnalytics?.trackSearchSubmitted?.(queryRequest, { searchMode });
+        document.dispatchEvent(new CustomEvent('bidfinder:query-start', {
+            detail: { query: queryRequest, searchMode }
+        }));
+    }
     const requestBody = {
         scope: queryRequest?.scope || 'all',
         group: queryRequest?.group,
@@ -2319,7 +2321,8 @@ async function fetchQueryResults(
     const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify(requestBody),
+        signal: options.signal
     });
 
     const payload = await response.json();
@@ -2337,7 +2340,7 @@ async function fetchQueryResults(
     }
 
     markDatabaseWarm();
-    window.BIDFinderAnalytics?.trackSearchCompleted?.(payload);
+    if (!options.background) window.BIDFinderAnalytics?.trackSearchCompleted?.(payload);
     return payload;
 }
 
@@ -10833,9 +10836,36 @@ function initFilterUrlEvents() {
 // PRODUCT JOURNEY
 // ==============================
 const PRODUCT_JOURNEY_STORAGE_KEY = 'bidfinder:product_journey_seen';
+const FEATURE_INTRO_STORAGE_KEY = 'bidfinder:feature_intro_seen:new_features_20260925';
 let featureIntroPreparation = null;
+let featureIntroPrepared = null;
 let featureIntroClosing = false;
 let featureIntroRepeatable = false;
+let featureIntroUserInteracted = false;
+
+function hasSeenFeatureIntroLocally() {
+    try {
+        return localStorage.getItem(FEATURE_INTRO_STORAGE_KEY) === '1';
+    } catch (error) {
+        return false;
+    }
+}
+
+function markFeatureIntroSeenLocally() {
+    try {
+        localStorage.setItem(FEATURE_INTRO_STORAGE_KEY, '1');
+    } catch (error) {
+        // The backend still records the IP or account when storage is unavailable.
+    }
+}
+
+function markFeatureIntroUserInteraction(event) {
+    if (!featureIntroPreparation || productJourneyState || document.body.classList.contains('landing-active')) return;
+    if (event.type === 'pointerdown' && event.composedPath().some(node =>
+        node?.id === 'history-modal' || node?.id === 'open-run-history'
+    )) return;
+    featureIntroUserInteracted = true;
+}
 
 function isFeatureIntroSampleRequest(request) {
     const field = 'active_ingredient_or_herbal_component';
@@ -10850,7 +10880,8 @@ function isFeatureIntroSampleRequest(request) {
 }
 
 function canShowFeatureIntro() {
-    if (document.body.classList.contains('landing-active') || productJourneyState) return false;
+    if (document.body.classList.contains('landing-active') || productJourneyState || featureIntroUserInteracted
+        || (!featureIntroRepeatable && hasSeenFeatureIntroLocally())) return false;
     if (isFeatureIntroSampleRequest(currentQueryRequest)) return true;
     if (hasActiveQueryFilters(readFilterUrlState())) return false;
     return !hasActiveQueryFilters({ ...currentQueryRequest, group: null, sourceTypes: [] })
@@ -10872,24 +10903,31 @@ function getFeatureIntroSampleRequest() {
 
 function prepareFeatureIntro() {
     if (featureIntroPreparation || document.body.classList.contains('landing-active') || productJourneyState) return;
+    featureIntroUserInteracted = false;
+    featureIntroPrepared = null;
+    featureIntroRepeatable = false;
     featureIntroPreparation = (async () => {
         try {
             await window.BIDFinderAuth?.whenReady?.();
+            if (!window.BIDFinderAuth?.isAuthenticated?.() && hasSeenFeatureIntroLocally()) return null;
             const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/feature-intro`);
-            if (!response.ok) return false;
+            if (!response.ok) return null;
             const status = await response.json();
-            if (!status.show || (status.repeatable !== true && !canShowFeatureIntro())) return false;
+            if (!status.show) {
+                if (status.repeatable !== true) markFeatureIntroSeenLocally();
+                return null;
+            }
             featureIntroRepeatable = status.repeatable === true;
+            if (!canShowFeatureIntro()) return null;
             const request = getFeatureIntroSampleRequest();
-            resetDashboardSelection();
-            const result = await applyFilters(request, { silent: true });
-            if (!result?.success) return false;
-            getProcurementSearchForm()?.setFilterPayload?.(request);
-            activateResultView('df2-panel');
-            return true;
+            const queryRequest = enrichLegacyQueryRequest(request);
+            const result = await fetchQueryResults(queryRequest, null, { background: true });
+            if (!result?.success || !result?.df2?.data?.length) return null;
+            featureIntroPrepared = { request, queryRequest, result };
+            return featureIntroPrepared;
         } catch (error) {
             console.warn('Feature introduction unavailable:', error);
-            return false;
+            return null;
         }
     })();
 }
@@ -10899,28 +10937,33 @@ async function closeHistoryModal() {
     if (!modal?.classList.contains('show')) return;
     modal.classList.remove('show');
     if (!featureIntroPreparation) prepareFeatureIntro();
-    if (!featureIntroPreparation || featureIntroClosing) return;
+    const prepared = featureIntroPrepared;
+    if (!prepared || featureIntroClosing || !canShowFeatureIntro()) return;
     featureIntroClosing = true;
-    if (!(await featureIntroPreparation) || productJourneyState) {
-        featureIntroPreparation = null;
-        featureIntroClosing = false;
-        return;
-    }
-    if (modal.classList.contains('show')) {
-        featureIntroClosing = false;
-        return;
-    }
     try {
         const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/feature-intro/claim`, { method: 'POST' });
-        if (response.ok && (await response.json()).show) {
+        const claimed = response.ok && (await response.json()).show;
+        const eligible = claimed && !modal.classList.contains('show') && canShowFeatureIntro();
+        if (!featureIntroRepeatable && response.ok) markFeatureIntroSeenLocally();
+        if (eligible) {
+            resetDashboardSelection();
+            currentQueryRequest = prepared.queryRequest;
+            closeFloatingTableUi();
+            handleQuerySuccess(prepared.result);
+            setFilterUrlState(currentQueryRequest);
+            currentAppliedPreview = {
+                requestKey: stableStringify(currentQueryRequest),
+                payload: getPreviewPayloadForRequest(currentQueryRequest, prepared.result)
+            };
+            getProcurementSearchForm()?.setFilterPayload?.(prepared.request);
+            getProcurementSearchForm()?.setPreviewResult?.(currentAppliedPreview.payload);
+            activateResultView('df2-panel');
             startProductJourney({ steps: getFeatureIntroSteps(), kind: 'feature_intro' });
         } else {
-            featureIntroPreparation = null;
             featureIntroClosing = false;
         }
     } catch (error) {
         console.warn('Feature introduction unavailable:', error);
-        featureIntroPreparation = null;
         featureIntroClosing = false;
     }
 }
@@ -11544,6 +11587,7 @@ function endProductJourney({ completed = false } = {}) {
         }
     } else if (kind === 'feature_intro' && featureIntroRepeatable) {
         featureIntroPreparation = null;
+        featureIntroPrepared = null;
         featureIntroClosing = false;
     }
     window.BIDFinderAnalytics?.track?.('product_journey_closed', { completed, kind });
@@ -11621,6 +11665,8 @@ function initProductJourney() {
 
     document.addEventListener('keydown', handleProductJourneyKeydown, true);
     document.addEventListener('click', handleProductJourneyClick, true);
+    document.addEventListener('input', markFeatureIntroUserInteraction, true);
+    document.addEventListener('pointerdown', markFeatureIntroUserInteraction, true);
     window.addEventListener('resize', () => {
         if (!productJourneyState) return;
         const step = productJourneyState.steps[productJourneyState.index];
@@ -11747,6 +11793,8 @@ async function initializeAppData({ restoreUrlQuery = true } = {}) {
         updateInsightEntryPoint();
         return;
     }
+
+    if (!document.body.classList.contains('landing-active')) prepareFeatureIntro();
 
     if (appDataInitialized) {
         maybeAutoOpenHistoryAfterEntry();

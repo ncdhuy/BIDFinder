@@ -1181,8 +1181,8 @@ async def optional_db_connection(
     request: Request,
     requirement: Literal["preview", "full_query", "autocomplete", "metadata"],
 ):
-    # Typesense-primary anonymous reads do not need a control-plane DB connection.
-    if not extract_session_token(request) and anonymous_access_allows(requirement):
+    # History metadata reads its daily rollups from Postgres for every visitor.
+    if requirement != "metadata" and not extract_session_token(request) and anonymous_access_allows(requirement):
         yield None
         return
     pool = await ensure_db_pool()
