@@ -85,6 +85,9 @@
   function cacheElements() {
     const ids = [
       'auth-modal',
+      'search-login-notice',
+      'search-login-notice-later',
+      'search-login-notice-continue',
       'auth-alert',
       'auth-close-btn',
       'auth-guest-view',
@@ -802,6 +805,18 @@
     focusMap[activePanel]?.focus();
   }
 
+  function showSearchLoginNotice() {
+    const notice = els['search-login-notice'];
+    if (notice?.open || els['auth-modal']?.classList.contains('show')) return;
+    if (typeof notice?.showModal === 'function') {
+      notice.showModal();
+      els['search-login-notice-continue']?.focus();
+      return;
+    }
+    window.alert('Bạn cần đăng nhập để tiếp tục tìm kiếm');
+    openAuthModal('login');
+  }
+
   function openAuthModal(mode = 'register') {
     if (!els['auth-modal']) return;
 
@@ -883,16 +898,25 @@
       let message = '';
       try {
         const payload = await parseResponseBody(response.clone());
-        message = payload?.message || payload?.error || '';
+        message = payload?.message || payload?.detail || payload?.error || '';
       } catch (err) {}
 
-      clearSession({
-        openLogin: true,
-        reason: isAuthenticated() ? 'expired' : 'login_required',
-        alertMessage: message || (isAuthenticated()
-          ? 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.'
-          : 'Vui lòng đăng nhập để tiếp tục.')
-      });
+      if (!state.token && !isAuthenticated() && new URL(url, window.location.href).pathname === '/api/query') {
+        applyAuthConfig({
+          require_auth_for_full_query: true,
+          anonymous_full_query_login_required: true,
+          anonymous_full_query_daily_remaining: 0
+        });
+        showSearchLoginNotice();
+      } else {
+        clearSession({
+          openLogin: true,
+          reason: isAuthenticated() ? 'expired' : 'login_required',
+          alertMessage: message || (isAuthenticated()
+            ? 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.'
+            : 'Vui lòng đăng nhập để tiếp tục.')
+        });
+      }
     }
 
     return response;
@@ -1379,6 +1403,11 @@
     els['open-login-hero']?.addEventListener('click', openLogin);
     els['open-register-nav']?.addEventListener('click', openRegister);
     els['open-account-nav']?.addEventListener('click', openAccount);
+    els['search-login-notice-later']?.addEventListener('click', () => els['search-login-notice']?.close());
+    els['search-login-notice-continue']?.addEventListener('click', () => {
+      els['search-login-notice']?.close();
+      openAuthModal('login');
+    });
     els['auth-close-btn']?.addEventListener('click', () => closeAuthModal());
     els.overlay?.addEventListener('click', () => closeAuthModal());
 
@@ -1517,6 +1546,7 @@
     getConfig: () => state.config,
     applyAuthConfig,
     openAuthModal,
+    showSearchLoginNotice,
     closeAuthModal,
     requestIntent(intent) {
       state.pendingIntent = intent || null;

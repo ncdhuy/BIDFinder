@@ -326,7 +326,7 @@ function initAdvancedContractControls() {
     loadAdvancedSearchContract();
 }
 
-function requireAuthenticatedSession(mode = 'login', requirement = 'preview') {
+function requireAuthenticatedSession(mode = 'login', requirement = 'preview', { silent = false } = {}) {
     const auth = window.BIDFinderAuth;
     if (!auth) return true;
     if (auth.isAuthenticated?.()) return true;
@@ -335,6 +335,11 @@ function requireAuthenticatedSession(mode = 'login', requirement = 'preview') {
 
     if (requirement === 'full_query') {
         if (!config.require_auth_for_full_query) return true;
+        if (silent) return false;
+        if (config.anonymous_full_query_login_required) {
+            auth.showSearchLoginNotice?.();
+            return false;
+        }
         return auth.ensureAuthenticated(mode);
     }
 
@@ -2281,7 +2286,7 @@ async function fetchQueryResults(
 ) {
     await window.BIDFinderAuth?.whenReady?.();
 
-    if (!requireAuthenticatedSession('login', 'full_query')) {
+    if (!requireAuthenticatedSession('login', 'full_query', { silent: options.background === true })) {
         const error = new Error(window.BIDFinderAuth?.getFullQueryGateMessage?.() || 'Bạn cần đăng nhập để tìm kiếm dữ liệu.');
         error.authRequired = true;
         throw error;
@@ -2323,7 +2328,7 @@ async function fetchQueryResults(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
         signal: options.signal
-    });
+    }, { handleUnauthorized: options.background !== true });
 
     const payload = await response.json();
 
