@@ -11104,7 +11104,7 @@ function getProductJourneySteps() {
     return [
         {
             title: 'Làm quen với BIDFinder',
-            body: '2 phút khám phá các chức năng chính của BIDFinder.',
+            body: 'Khám phá các chức năng tra cứu và phân tích dữ liệu của BIDFinder.',
             selector: '.main-content',
             placement: 'center',
             dialogOnly: true,
@@ -11150,6 +11150,13 @@ function getProductJourneySteps() {
             afterClick: openFilterForJourney
         },
         {
+            title: 'Tìm kiếm toàn bộ',
+            body: 'Mở rộng phạm vi kết quả ngoài giới hạn tìm kiếm thông thường. Số lượt còn lại được hiển thị trên nút.',
+            selector: '#insight-full-search',
+            placement: 'bottom',
+            before: closeJourneySurfaces
+        },
+        {
             title: 'Ba nhóm dữ liệu',
             body: 'Kết quả tìm kiếm được phân loại theo ba nhóm: Hàng hóa, Thuốc và Dược liệu / Vị thuốc cổ truyền.',
             selector: '#data-view-switcher .result-table-tab-list',
@@ -11165,6 +11172,26 @@ function getProductJourneySteps() {
             getElement: getActiveTableWrapperForJourney,
             placement: 'top',
             before: closeJourneySurfaces
+        },
+        {
+            title: 'Xem chi tiết nội dung',
+            body: 'Nhấp đúp vào bất kỳ giá trị nào trong hàng để xem đầy đủ thông tin của hàng đó.',
+            getElement: () => document.querySelector('.result-panel.active tbody tr[data-row-index="0"] td:nth-child(2)')
+                || getActiveTableWrapperForJourney(),
+            placement: 'top',
+            doubleClick: true,
+            focusAfterSelector: '#legacy-row-detail .legacy-detail-dialog',
+            before: () => {
+                closeJourneySurfaces();
+                if (!document.querySelector('.result-panel.active tbody tr[data-row-index]')) {
+                    const panel = document.querySelector('.result-panel tbody tr[data-row-index]')?.closest('.result-panel');
+                    if (panel) activateResultView(panel.id);
+                }
+            },
+            afterClick: () => {
+                const cell = productJourneyState?.activeTarget;
+                if (cell?.matches('td')) cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+            }
         },
         {
             title: 'Thao tác trên từng cột',
@@ -11218,6 +11245,29 @@ function getProductJourneySteps() {
                 setJourneyTableToolsVisible(true);
             },
             afterClick: () => setJourneyTableToolsVisible(true)
+        },
+        {
+            title: 'Dashboard',
+            body: 'Xem tổng quan kết quả tìm kiếm, phân bố theo tỉnh/thành, xu hướng theo thời gian và các sản phẩm, nhà thầu, chủ đầu tư nổi bật.',
+            selector: '.scope-btn[data-view="dashboard-panel"]',
+            placement: 'bottom',
+            before: closeJourneySurfaces,
+            focusAfterSelector: '#dashboard-panel .dashboard-shell-card',
+            afterClick: () => activateResultView('dashboard-panel')
+        },
+        {
+            title: 'Khám phá bằng cross-filtering',
+            body: 'Khi có dữ liệu, chọn một giá trị trên Dashboard để lọc các phần phân tích liên quan. Chọn lại giá trị đó để bỏ lọc.',
+            getElement: () => document.querySelector('#dashboard-top-products .dashboard-product-bar')
+                || document.querySelector('.dashboard-products-widget'),
+            placement: 'top',
+            before: () => activateResultView('dashboard-panel'),
+            waitForTarget: waitForDashboardProductForJourney,
+            afterClick: () => {
+                const product = productJourneyState?.activeTarget
+                    ?.closest('.dashboard-product-row')?.dataset.dashboardProduct;
+                if (product) setDashboardSelection('product', product);
+            }
         },
         {
             title: 'Hướng dẫn, thông báo và tài khoản',
@@ -11672,68 +11722,11 @@ function startProductJourney({ steps = getProductJourneySteps(), kind = 'product
     window.BIDFinderAnalytics?.track?.('product_journey_started', { kind });
 }
 
-function setHelpMenuOpen(open) {
-    const menu = document.getElementById('help-menu');
-    const trigger = document.getElementById('open-product-journey');
-    if (!menu || !trigger) return;
-    menu.hidden = !open;
-    trigger.setAttribute('aria-expanded', String(open));
-    if (open) {
-        const rect = trigger.getBoundingClientRect();
-        menu.style.left = `${Math.max(8, Math.min(rect.right - 240, window.innerWidth - 248))}px`;
-        menu.style.top = `${Math.min(rect.bottom + 6, window.innerHeight - 100)}px`;
-    }
-}
-
-async function replayFeatureIntro(button) {
-    if (productJourneyState || button.disabled) return;
-    button.disabled = true;
-    button.textContent = 'Đang mở giới thiệu…';
-    try {
-        const prepared = featureIntroPrepared || await loadFeatureIntroSample();
-        if (!prepared) throw new Error('Không có dữ liệu ví dụ');
-        if (productJourneyState || document.getElementById('help-menu')?.hidden) return;
-        featureIntroPrepared = prepared;
-        featureIntroUserInteracted = true;
-        setHelpMenuOpen(false);
-        showFeatureIntro(prepared);
-        if (!featureIntroRepeatable) markFeatureIntroSeenLocally();
-        void getAuthorizedFetch()(`${API_BASE_URL}/api/feature-intro/claim`, { method: 'POST' })
-            .catch(error => console.warn('Unable to record feature introduction:', error));
-    } catch (error) {
-        console.warn('Unable to replay feature introduction:', error);
-        button.textContent = 'Không tải được ví dụ. Thử lại';
-        return;
-    } finally {
-        button.disabled = false;
-        if (button.textContent === 'Đang mở giới thiệu…') button.textContent = 'Xem lại tính năng mới';
-    }
-}
-
 function initProductJourney() {
     createProductJourneyDom();
     document.getElementById('open-product-journey')?.addEventListener('click', (event) => {
         event.preventDefault();
-        setHelpMenuOpen(document.getElementById('help-menu')?.hidden !== false);
-    });
-    document.getElementById('help-menu')?.addEventListener('click', (event) => {
-        const button = event.target.closest('[data-help-action]');
-        if (!button) return;
-        if (button.dataset.helpAction === 'guide') {
-            setHelpMenuOpen(false);
-            startProductJourney();
-        } else if (button.dataset.helpAction === 'features') {
-            void replayFeatureIntro(button);
-        }
-    });
-    document.addEventListener('pointerdown', (event) => {
-        if (event.target.closest('#help-menu, #open-product-journey')) return;
-        setHelpMenuOpen(false);
-    });
-    document.addEventListener('keydown', (event) => {
-        if (event.key !== 'Escape' || document.getElementById('help-menu')?.hidden !== false) return;
-        setHelpMenuOpen(false);
-        document.getElementById('open-product-journey')?.focus();
+        startProductJourney();
     });
 
     document.addEventListener('keydown', handleProductJourneyKeydown, true);
