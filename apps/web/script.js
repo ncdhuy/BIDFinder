@@ -3762,15 +3762,20 @@ function positionFloatingLayer(wrapper, anchor, floating) {
     let openAbove = false;
     if (isColumnMenu) {
         floating.style.maxHeight = '';
-        const spaceBelow = window.innerHeight - anchorRect.bottom - 12;
-        const spaceAbove = anchorRect.top - 12;
+        const cardRect = wrapper.closest('.data-card')?.getBoundingClientRect();
+        const visibleTop = Math.max(8, cardRect?.top ?? 8);
+        const visibleBottom = Math.min(window.innerHeight - 8, cardRect?.bottom ?? window.innerHeight - 8);
+        const spaceBelow = Math.max(0, visibleBottom - anchorRect.bottom - 8);
+        const spaceAbove = Math.max(0, anchorRect.top - visibleTop - 8);
         const naturalHeight = floating.scrollHeight || floating.offsetHeight;
         openAbove = spaceBelow < naturalHeight && spaceAbove > spaceBelow;
-        floating.style.maxHeight = `${Math.max(96, openAbove ? spaceAbove : spaceBelow)}px`;
+        floating.style.maxHeight = `${openAbove ? spaceAbove : spaceBelow}px`;
     }
     const top = isColumnMenu && openAbove
         ? anchorRect.top - wrapperRect.top - floating.offsetHeight - 8
-        : Math.max(54, anchorRect.bottom - wrapperRect.top + 8);
+        : isColumnMenu
+            ? anchorRect.bottom - wrapperRect.top + 8
+            : Math.max(54, anchorRect.bottom - wrapperRect.top + 8);
 
     floating.style.left = `${left}px`;
     floating.style.top = `${top}px`;
@@ -4171,12 +4176,7 @@ function toggleColumnTextFilterPanel() {
     trigger.setAttribute('aria-expanded', String(!panel.hidden));
     if (!panel.hidden) {
         showColumnTextFilterOptions(panel);
-        requestAnimationFrame(() => {
-            const rect = panel.getBoundingClientRect();
-            const opensLeft = rect.right > window.innerWidth - 12;
-            panel.style.left = opensLeft ? 'auto' : 'calc(100% + 6px)';
-            panel.style.right = opensLeft ? 'calc(100% + 6px)' : 'auto';
-        });
+        requestAnimationFrame(() => panel.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
     }
 }
 
@@ -4352,7 +4352,7 @@ function renderColumnMenuShell(tableId, columnName, { actionsOpen } = {}) {
 
     const actionsDisclosure = document.createElement('details');
     actionsDisclosure.className = 'column-menu-actions';
-    actionsDisclosure.open = actionsOpen ?? !window.matchMedia('(max-width: 700px)').matches;
+    actionsDisclosure.open = actionsOpen ?? !window.matchMedia('(max-width: 700px), (max-height: 760px)').matches;
     const actionsSummary = document.createElement('summary');
     actionsSummary.className = 'column-menu-actions-summary';
     actionsSummary.textContent = 'Thao tác cột';
@@ -4545,7 +4545,10 @@ function renderColumnMenuShell(tableId, columnName, { actionsOpen } = {}) {
     applyButton.dataset.columnName = encodeColumnName(columnName);
     applyButton.textContent = 'OK';
     footer.append(cancelButton, applyButton);
-    fragment.appendChild(footer);
+    const body = document.createElement('div');
+    body.className = 'column-menu-body';
+    while (fragment.firstChild) body.appendChild(fragment.firstChild);
+    fragment.append(body, footer);
 
     return fragment;
 }
