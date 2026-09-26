@@ -7460,6 +7460,10 @@ body {
 .product-journey-card {
   position: fixed;
   width: min(360px, calc(100vw - 24px));
+  box-sizing: border-box;
+  max-height: calc(100dvh - 24px);
+  display: flex;
+  flex-direction: column;
   padding: 16px;
   border-radius: 8px;
   background: #ffffff;
@@ -7502,6 +7506,8 @@ body {
   color: var(--color-text-secondary);
   font-size: 13.5px;
   line-height: 1.5;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .product-journey-footer {
@@ -7513,6 +7519,7 @@ body {
   margin-top: 16px;
   padding-top: 12px;
   border-top: 1px solid rgba(209, 219, 226, 0.72);
+  flex-shrink: 0;
 }
 
 .product-journey-hint {
@@ -7619,7 +7626,12 @@ body {
 }
 
 body.product-journey-active {
-  cursor: pointer;
+  cursor: default;
+}
+
+.product-journey-actions button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
 }
 
 body.product-journey-active .history-modal.show,

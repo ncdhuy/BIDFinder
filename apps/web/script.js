@@ -11100,199 +11100,132 @@ function ensureAppViewForJourney() {
     }
 }
 
+function prepareJourneyTableView() {
+    closeJourneySurfaces();
+    const current = document.querySelector('.result-panel.active');
+    const preferred = document.getElementById(productJourneyState?.initialView);
+    const populated = document.querySelector('.result-panel tbody tr[data-row-index]')?.closest('.result-panel');
+    const panel = (current?.querySelector('.table-wrapper') && current)
+        || (preferred?.querySelector('.table-wrapper') && preferred)
+        || populated || document.getElementById('df2-panel');
+    if (panel) activateResultView(panel.id);
+}
+
+function getJourneyDetailCell() {
+    return document.querySelector('.result-panel.active tbody tr[data-row-index] td:nth-child(2)');
+}
+
 function getProductJourneySteps() {
     return [
         {
             title: 'Làm quen với BIDFinder',
-            body: 'Khám phá các chức năng tra cứu và phân tích dữ liệu của BIDFinder.',
-            selector: '.main-content',
-            placement: 'center',
-            dialogOnly: true,
-            before: () => {
-                ensureAppViewForJourney();
-                closeJourneySurfaces();
-            }
-        },
-        {
-            title: 'Cụm chức năng chính',
-            body: 'Xem lịch sử cập nhật, tìm kiếm hàng loạt từ file Excel và tìm kiếm nâng cao.',
-            selector: '.workspace-actions',
-            placement: 'bottom',
-            before: closeJourneySurfaces
-        },
-        {
-            title: 'Lịch sử cập nhật',
-            body: 'Theo dõi số gói thầu được phê duyệt theo thời gian.',
-            afterTitle: 'Lịch sử cập nhật',
-            afterBody: 'Theo dõi số gói thầu được phê duyệt theo thời gian.',
-            selector: '#open-run-history',
-            focusAfterSelector: '#history-modal .history-content',
-            afterClick: openHistoryForJourney
-        },
-        {
-            title: 'Tìm kiếm hàng loạt',
-            body: 'Tìm kiếm hàng loạt sản phẩm từ file Excel.',
-            afterTitle: 'Tìm kiếm hàng loạt',
-            afterBody: 'Tìm kiếm dựa trên file Excel có danh sách sản phẩm cần tìm kiếm. BIDFinder không lưu trữ file này.',
-            selector: '#open-bulk-search-modal',
-            focusAfterSelector: '#bulk-search-modal .bulk-search-dialog',
-            before: closeJourneySurfaces,
-            afterClick: openBulkForJourney
+            body: 'Đi từ tìm kiếm đến xem dữ liệu và phân tích trên Dashboard. Dùng Tiếp hoặc Quay lại để đổi bước; bạn có thể đóng hướng dẫn bất cứ lúc nào.',
+            selector: '.main-content', placement: 'center', dialogOnly: true,
+            before: () => { ensureAppViewForJourney(); closeJourneySurfaces(); }
         },
         {
             title: 'Tìm kiếm nâng cao',
-            body: 'Tìm kiếm với bộ lọc nâng cao.',
-            afterTitle: 'Tìm kiếm nâng cao',
-            afterBody: 'Tìm kiếm với bộ lọc nâng cao.',
-            selector: '#open-filter-panel',
-            focusAfterSelector: '#filter-panel',
-            before: closeJourneySurfaces,
-            afterClick: openFilterForJourney
+            body: 'Chọn nhóm dữ liệu và trường cần tìm, nhập từ khóa rồi nhấn Enter để xem ước tính. Bấm Tìm kiếm để xem kết quả.',
+            selector: '#open-filter-panel', placement: 'left',
+            before: closeJourneySurfaces, afterClick: openFilterForJourney,
+            focusAfterSelector: '#filter-panel'
+        },
+        {
+            title: 'Tìm kiếm bằng AI',
+            body: 'Dùng nút Ai để diễn đạt nhu cầu bằng ngôn ngữ tự nhiên. Kiểm tra lại các điều kiện được đề xuất trước khi tìm kiếm.',
+            selector: '#open-ai-search', placement: 'bottom', before: closeJourneySurfaces
+        },
+        {
+            title: 'Tìm kiếm hàng loạt',
+            body: 'Có sẵn danh sách sản phẩm? Nhập file Excel tại đây để tra cứu hàng loạt. BIDFinder không lưu trữ file này.',
+            selector: '#open-bulk-search-modal', placement: 'left',
+            before: closeJourneySurfaces, afterClick: openBulkForJourney,
+            focusAfterSelector: '#bulk-search-modal .bulk-search-dialog'
         },
         {
             title: 'Tìm kiếm toàn bộ',
-            body: 'Mở rộng phạm vi kết quả ngoài giới hạn tìm kiếm thông thường. Số lượt còn lại được hiển thị trên nút.',
-            selector: '#insight-full-search',
-            placement: 'bottom',
-            before: closeJourneySurfaces
+            body: 'Sau khi tìm kiếm, dùng nút này để mở rộng phạm vi kết quả ngoài giới hạn thông thường. Số lượt còn lại hiển thị trên nút.',
+            selector: '#insight-full-search', placement: 'bottom', before: closeJourneySurfaces
         },
         {
             title: 'Ba nhóm dữ liệu',
-            body: 'Kết quả tìm kiếm được phân loại theo ba nhóm: Hàng hóa, Thuốc và Dược liệu / Vị thuốc cổ truyền.',
-            selector: '#data-view-switcher .result-table-tab-list',
-            placement: 'bottom',
-            before: () => {
-                closeJourneySurfaces();
-                activateResultView('df1-panel');
-            }
+            body: 'Chuyển giữa Hàng hóa, Thuốc và Dược liệu / Vị thuốc cổ truyền để xem kết quả tương ứng. Số trên mỗi tab cho biết số kết quả của nhóm.',
+            selector: '#data-view-switcher .result-table-tab-list', placement: 'bottom',
+            before: prepareJourneyTableView
         },
         {
-            title: 'Không gian bảng dữ liệu',
-            body: 'Bảng hỗ trợ thao tác tương tự làm việc với spreadsheet.',
-            getElement: getActiveTableWrapperForJourney,
-            placement: 'top',
-            before: closeJourneySurfaces
+            title: 'Làm việc với bảng dữ liệu',
+            body: 'Chọn ô hoặc kéo chọn một vùng rồi sao chép như spreadsheet. Kéo mép cột để đổi độ rộng, kéo tiêu đề để đổi vị trí cột.',
+            getElement: getActiveTableWrapperForJourney, placement: 'top', before: prepareJourneyTableView
         },
         {
             title: 'Xem chi tiết nội dung',
-            body: 'Nhấp đúp vào bất kỳ giá trị nào trong hàng để xem đầy đủ thông tin của hàng đó.',
-            getElement: () => document.querySelector('.result-panel.active tbody tr[data-row-index="0"] td:nth-child(2)')
-                || getActiveTableWrapperForJourney(),
-            placement: 'top',
-            doubleClick: true,
+            body: 'Nhấp đúp vào một giá trị để mở đầy đủ thông tin của hàng. Đây là minh họa trên một hàng trong kết quả hiện tại.',
+            unavailableBody: 'Sau khi có kết quả, nhấp đúp vào một giá trị bất kỳ để xem đầy đủ thông tin của hàng, kể cả các cột đang ẩn.',
+            getElement: () => getJourneyDetailCell() || getActiveTableWrapperForJourney(),
+            canDemonstrate: () => Boolean(getJourneyDetailCell()),
+            placement: 'top', doubleClick: true, before: prepareJourneyTableView,
             focusAfterSelector: '#legacy-row-detail .legacy-detail-dialog',
-            before: () => {
-                closeJourneySurfaces();
-                if (!document.querySelector('.result-panel.active tbody tr[data-row-index]')) {
-                    const panel = document.querySelector('.result-panel tbody tr[data-row-index]')?.closest('.result-panel');
-                    if (panel) activateResultView(panel.id);
-                }
-            },
-            afterClick: () => {
-                const cell = productJourneyState?.activeTarget;
-                if (cell?.matches('td')) cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
-            }
+            afterClick: () => getJourneyDetailCell()?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
         },
         {
-            title: 'Thao tác trên từng cột',
-            body: 'Mở menu cột để sắp xếp, tự căn độ rộng, ngắt dòng, ghim hoặc ẩn cột đang xem, tìm kiếm nhanh.',
+            title: 'Lọc và sắp xếp từng cột',
+            body: 'Menu cột có sắp xếp, bộ lọc, tự căn độ rộng, ngắt dòng, ghim và ẩn cột. Các nút Hủy / OK nằm ở cuối menu.',
             getElement: () => document.querySelector('.column-menu-popover') || getFirstColumnMenuTriggerForJourney(),
             placement: 'right',
-            before: openColumnMenuForJourney
-        },
-        {
-            title: 'Cụm chức năng trên bảng',
-            body: 'Các chức năng ẩn/hiện cột, tải Excel và chế độ toàn màn hình.',
-            getElement: getVisibleTableControlsForJourney,
-            before: () => {
-                closeJourneySurfaces();
-                setJourneyTableToolsVisible(true);
-            }
+            before: () => { prepareJourneyTableView(); openColumnMenuForJourney(); }
         },
         {
             title: 'Ẩn/hiện cột',
-            body: 'Tùy chỉnh trên danh sách cột.',
-            afterTitle: 'Ẩn/hiện cột',
-            afterBody: 'Tùy chỉnh trên danh sách cột.',
+            body: 'Chọn những cột cần hiển thị để tập trung vào thông tin bạn quan tâm.',
             getElement: () => getVisibleTableToolButtonForJourney('toggle-columns'),
-            focusAfterSelector: '.table-columns-popover:not([hidden])',
-            before: () => {
-                closeJourneySurfaces();
-                setJourneyTableToolsVisible(true);
-            },
-            afterClick: openColumnsPopoverForJourney
+            placement: 'left', before: () => { prepareJourneyTableView(); setJourneyTableToolsVisible(true); },
+            afterClick: openColumnsPopoverForJourney,
+            focusAfterSelector: '.table-columns-popover:not([hidden])'
         },
         {
-            title: 'Tải Excel',
-            body: 'Tải dữ liệu đang hiển thị.',
-            afterTitle: 'Tải Excel',
-            afterBody: 'Tải dữ liệu đang hiển thị.',
-            getElement: () => getVisibleTableToolButtonForJourney('download'),
-            before: () => {
-                closeJourneySurfaces();
-                setJourneyTableToolsVisible(true);
-            },
-            afterClick: () => setJourneyTableToolsVisible(true)
-        },
-        {
-            title: 'Toàn màn hình',
-            body: 'Mở rộng không gian hiển thị bảng dữ liệu.',
-            afterTitle: 'Toàn màn hình',
-            afterBody: 'Mở rộng không gian hiển thị bảng dữ liệu.',
-            getElement: () => getVisibleTableToolButtonForJourney('fullscreen'),
-            before: () => {
-                closeJourneySurfaces();
-                setJourneyTableToolsVisible(true);
-            },
-            afterClick: () => setJourneyTableToolsVisible(true)
+            title: 'Tải Excel và toàn màn hình',
+            body: 'Dùng nút tải để xuất dữ liệu đang hiển thị ra Excel. Nút toàn màn hình bên cạnh giúp mở rộng không gian làm việc với bảng.',
+            getElement: getVisibleTableControlsForJourney, placement: 'bottom',
+            before: () => { prepareJourneyTableView(); setJourneyTableToolsVisible(true); }
         },
         {
             title: 'Dashboard',
-            body: 'Xem tổng quan kết quả tìm kiếm, phân bố theo tỉnh/thành, xu hướng theo thời gian và các sản phẩm, nhà thầu, chủ đầu tư nổi bật.',
-            selector: '.scope-btn[data-view="dashboard-panel"]',
-            placement: 'bottom',
-            before: closeJourneySurfaces,
-            focusAfterSelector: '#dashboard-panel .dashboard-shell-card',
-            afterClick: () => activateResultView('dashboard-panel')
+            body: 'Dashboard phân tích kết quả tìm kiếm hiện tại: tổng quan, phân bố tỉnh/thành, xu hướng thời gian, sản phẩm, nhà thầu và chủ đầu tư.',
+            selector: '.scope-btn[data-view="dashboard-panel"]', placement: 'bottom',
+            before: closeJourneySurfaces, afterClick: () => activateResultView('dashboard-panel'),
+            focusAfterSelector: '#dashboard-panel .dashboard-shell-card'
         },
         {
             title: 'Khám phá bằng cross-filtering',
-            body: 'Khi có dữ liệu, chọn một giá trị trên Dashboard để lọc các phần phân tích liên quan. Chọn lại giá trị đó để bỏ lọc.',
+            body: 'Minh họa: chọn một sản phẩm để lọc các phần phân tích liên quan. Chọn lại giá trị đó để bỏ lọc. Lựa chọn trước hướng dẫn sẽ được khôi phục khi bạn thoát.',
+            unavailableBody: 'Khi Dashboard có dữ liệu, chọn một sản phẩm, tỉnh/thành, nhà thầu hoặc chủ đầu tư để lọc các phần phân tích liên quan. Chọn lại để bỏ lọc.',
             getElement: () => document.querySelector('#dashboard-top-products .dashboard-product-bar')
                 || document.querySelector('.dashboard-products-widget'),
-            placement: 'top',
-            before: () => activateResultView('dashboard-panel'),
+            placement: 'top', before: () => { closeJourneySurfaces(); activateResultView('dashboard-panel'); },
             waitForTarget: waitForDashboardProductForJourney,
+            canDemonstrate: () => Boolean(document.querySelector('#dashboard-top-products .dashboard-product-bar')),
             afterClick: () => {
-                const product = productJourneyState?.activeTarget
-                    ?.closest('.dashboard-product-row')?.dataset.dashboardProduct;
-                if (product) setDashboardSelection('product', product);
+                const product = productJourneyState?.activeTarget?.closest('.dashboard-product-row')?.dataset.dashboardProduct;
+                if (product && !sameDashboardIdentity(dashboardSelection.product, product)) setDashboardSelection('product', product);
             }
         },
         {
-            title: 'Hướng dẫn, thông báo và tài khoản',
-            body: 'Xem hướng dẫn sử dụng, theo dõi thông báo từ BIDFinder và quản lý tài khoản.',
-            selector: '.app-header-links',
-            placement: 'bottom',
-            before: closeJourneySurfaces
+            title: 'Lịch sử cập nhật',
+            body: 'Theo dõi số gói thầu được phê duyệt theo ngày, gói thầu có giá trị cao nhất và sản phẩm có đơn giá cao nhất trong ngày. Chọn 30, 90 hoặc 180 ngày để xem xu hướng.',
+            selector: '#open-run-history', placement: 'left', before: closeJourneySurfaces,
+            afterClick: openHistoryForJourney, focusAfterSelector: '#history-modal .history-content'
         },
         {
-            title: 'Thông báo',
-            body: 'Nơi theo dõi thông báo, cập nhật và trao đổi thông tin trong lĩnh vực đấu thầu.',
-            afterTitle: 'Thông báo',
-            afterBody: 'Bạn có thể theo dõi thông báo và cập nhật mới nhất trong lĩnh vực đấu thầu.',
-            selector: '#open-feedback-modal',
-            focusAfterSelector: '#feedback-modal .feedback-dialog',
-            before: closeJourneySurfaces,
-            afterClick: openFeedbackForJourney
+            title: 'Thông báo và tài khoản',
+            body: 'Nút chuông mở thông báo, cập nhật và trao đổi. Nút tài khoản bên cạnh dùng để đăng nhập và quản lý tài khoản.',
+            selector: '#open-feedback-modal', placement: 'left', before: closeJourneySurfaces,
+            afterClick: openFeedbackForJourney, focusAfterSelector: '#feedback-modal .feedback-dialog'
         },
         {
             title: 'Sẵn sàng tìm kiếm',
-            body: 'Bạn đã đi qua các chức năng chính của BIDFinder. Chúc bạn một ngày làm việc hiệu quả.',
-            selector: '#open-filter-panel',
-            placement: 'center',
-            dialogOnly: true,
-            before: closeJourneySurfaces
+            body: 'Bạn có thể mở lại hướng dẫn bất cứ lúc nào từ nút dấu hỏi. Bấm Hoàn tất để trở về tab và lựa chọn trước khi xem hướng dẫn.',
+            selector: '.main-content', placement: 'center', dialogOnly: true, before: closeJourneySurfaces
         }
     ];
 }
@@ -11348,21 +11281,24 @@ function getFeatureIntroSteps() {
     ];
 }
 
-function waitForDashboardProductForJourney() {
+function waitForDashboardProductForJourney(signal) {
     const container = document.getElementById('dashboard-top-products');
     const readySelector = '.dashboard-product-bar, .dashboard-widget-state.is-empty, .dashboard-widget-state.is-error';
-    if (!container || container.querySelector(readySelector)) return Promise.resolve();
+    if (!container || container.querySelector(readySelector) || signal?.aborted
+        || Number(currentQueryMeta?.totalCount || 0) <= 0) return Promise.resolve();
     return new Promise(resolve => {
         const observer = new MutationObserver(() => {
             if (container.querySelector(readySelector)) finish();
         });
-        const timeout = window.setTimeout(finish, 20000);
+        const timeout = window.setTimeout(finish, 3000);
         function finish() {
             observer.disconnect();
             window.clearTimeout(timeout);
+            signal?.removeEventListener('abort', finish);
             resolve();
         }
         observer.observe(container, { childList: true, subtree: true });
+        signal?.addEventListener('abort', finish, { once: true });
     });
 }
 
@@ -11377,12 +11313,12 @@ function createProductJourneyDom() {
         <div class="product-journey-dim"></div>
         <div class="product-journey-highlight" aria-hidden="true"></div>
         <div class="product-journey-cursor" aria-hidden="true"></div>
-        <section class="product-journey-card" role="dialog" aria-live="polite" aria-label="Hướng dẫn sử dụng BIDFinder">
+        <section class="product-journey-card" role="dialog" aria-modal="true" aria-live="polite" aria-labelledby="product-journey-title">
             <div class="product-journey-kicker"></div>
-            <h3></h3>
+            <h3 id="product-journey-title"></h3>
             <p></p>
             <div class="product-journey-footer">
-                <span class="product-journey-hint">Nhấn phím bất kỳ để tiếp tục.</span>
+                <span class="product-journey-hint">← → đổi bước · Esc đóng</span>
                 <div class="product-journey-actions">
                     <button type="button" data-journey-action="prev" aria-label="Quay lại" title="Quay lại"></button>
                     <button type="button" data-journey-action="next" aria-label="Tiếp" title="Tiếp"></button>
@@ -11394,22 +11330,41 @@ function createProductJourneyDom() {
     document.body.appendChild(root);
 }
 
+function isJourneyTargetVisible(target) {
+    const rect = target?.getBoundingClientRect?.();
+    return Boolean(rect && rect.width > 0 && rect.height > 0 && target.isConnected !== false);
+}
+
+function scheduleJourneyTask(callback, delay) {
+    const state = productJourneyState;
+    if (!state) return;
+    const version = state.stepVersion;
+    state.animationTimers.push(window.setTimeout(() => {
+        if (productJourneyState === state && state.stepVersion === version) callback();
+    }, delay));
+}
+
 function getJourneyTargetPoint(target) {
     const rect = target?.getBoundingClientRect?.();
     if (!rect) return null;
+    const wrapperRect = target.closest?.('.table-wrapper')?.getBoundingClientRect?.();
+    const left = Math.max(8, rect.left, wrapperRect?.left ?? 0);
+    const right = Math.min(window.innerWidth - 8, rect.right, wrapperRect?.right ?? window.innerWidth);
+    const top = Math.max(8, rect.top, wrapperRect?.top ?? 0);
+    const bottom = Math.min(window.innerHeight - 8, rect.bottom, wrapperRect?.bottom ?? window.innerHeight);
+    if (right <= left || bottom <= top) return null;
     return {
-        x: rect.left + rect.width / 2,
-        y: rect.top + rect.height / 2
+        x: (left + right) / 2,
+        y: (top + bottom) / 2
     };
 }
 
-function simulateJourneyClick(target, onClick) {
+function simulateJourneyClick(target) {
     const state = productJourneyState;
     const cursor = state?.root?.querySelector('.product-journey-cursor');
     const point = getJourneyTargetPoint(target);
     if (!cursor || !point) {
-        productJourneyState?.pendingClickComplete?.();
-        onClick?.();
+        if (state) { state.pendingClickComplete = null; state.isAnimating = false; }
         return;
     }
 
@@ -11418,29 +11373,28 @@ function simulateJourneyClick(target, onClick) {
     cursor.classList.add('is-visible');
     cursor.classList.remove('is-pressing');
 
-    state.animationTimers.push(window.setTimeout(() => {
+    scheduleJourneyTask(() => {
         cursor.classList.add('is-pressing');
-    }, PRODUCT_JOURNEY_TIMING.cursorPressDelay));
+    }, PRODUCT_JOURNEY_TIMING.cursorPressDelay);
 
     const doubleClick = state.steps[state.index]?.doubleClick;
     if (doubleClick) {
-        state.animationTimers.push(window.setTimeout(() => {
+        scheduleJourneyTask(() => {
             cursor.classList.remove('is-pressing');
-        }, PRODUCT_JOURNEY_TIMING.cursorPressDelay + 110));
-        state.animationTimers.push(window.setTimeout(() => {
+        }, PRODUCT_JOURNEY_TIMING.cursorPressDelay + 110);
+        scheduleJourneyTask(() => {
             cursor.classList.add('is-pressing');
-        }, PRODUCT_JOURNEY_TIMING.cursorPressDelay + 240));
+        }, PRODUCT_JOURNEY_TIMING.cursorPressDelay + 240);
     }
 
-    state.animationTimers.push(window.setTimeout(() => {
+    scheduleJourneyTask(() => {
         state.pendingClickComplete?.();
-        onClick?.();
         cursor.classList.remove('is-pressing');
-    }, PRODUCT_JOURNEY_TIMING.surfaceOpenDelay + (doubleClick ? 170 : 0)));
+    }, PRODUCT_JOURNEY_TIMING.surfaceOpenDelay + (doubleClick ? 170 : 0));
 
-    state.animationTimers.push(window.setTimeout(() => {
+    scheduleJourneyTask(() => {
         cursor.classList.remove('is-visible');
-    }, PRODUCT_JOURNEY_TIMING.cursorHideDelay));
+    }, PRODUCT_JOURNEY_TIMING.cursorHideDelay);
 }
 
 function clearJourneyAnimationTimers() {
@@ -11449,37 +11403,29 @@ function clearJourneyAnimationTimers() {
     productJourneyState.animationTimers = [];
 }
 
-function completeJourneyClickAnimation() {
-    const state = productJourneyState;
-    if (!state?.isAnimating) return false;
-    clearJourneyAnimationTimers();
-    state.root?.querySelector('.product-journey-cursor')?.classList.remove('is-visible', 'is-pressing');
-    state.pendingClickComplete?.();
-    return true;
-}
-
 function finishJourneyClickStep(step) {
     const state = productJourneyState;
-    if (!state) return;
+    if (!state || state.steps[state.index] !== step) return;
 
     state.pendingClickComplete = null;
-    step.afterClick?.();
+    try { step.afterClick?.(); } catch (error) { console.warn('Unable to demonstrate guide step:', error); }
     if (step.afterTitle) {
         state.root.querySelector('h3').textContent = step.afterTitle;
     }
     if (step.afterBody) {
         state.root.querySelector('p').textContent = step.afterBody;
     }
-    const nextTarget = (step.focusAfterSelector && document.querySelector(step.focusAfterSelector))
-        || resolveJourneyElement(step);
-    if (nextTarget) {
+    const surface = step.focusAfterSelector && document.querySelector(step.focusAfterSelector);
+    const nextTarget = isJourneyTargetVisible(surface) ? surface : resolveJourneyElement(step);
+    if (isJourneyTargetVisible(nextTarget)) {
         state.activeTarget = nextTarget;
-        setTimeout(() => {
+        scheduleJourneyTask(() => {
             setJourneyCardVisible(true);
             positionProductJourney(step, nextTarget);
         }, PRODUCT_JOURNEY_TIMING.repositionDelay);
     }
     state.isAnimating = false;
+    state.root.querySelector('[data-journey-action="next"]')?.focus({ preventScroll: true });
 }
 
 function resolveJourneyElement(step) {
@@ -11496,7 +11442,7 @@ function positionProductJourney(step, target) {
     const highlight = state.root.querySelector('.product-journey-highlight');
     const card = state.root.querySelector('.product-journey-card');
 
-    if (step.dialogOnly) {
+    if (step.dialogOnly || state.dialogOnly) {
         highlight.hidden = true;
         const cardRect = card.getBoundingClientRect();
         card.style.left = `${Math.max(12, (window.innerWidth - cardRect.width) / 2)}px`;
@@ -11506,17 +11452,26 @@ function positionProductJourney(step, target) {
 
     highlight.hidden = false;
     const margin = 8;
+    const wrapperRect = target.closest?.('.table-wrapper')?.getBoundingClientRect?.();
+    const leftEdge = Math.max(8, rect.left - margin, wrapperRect?.left ?? 0);
+    const topEdge = Math.max(8, rect.top - margin, wrapperRect?.top ?? 0);
     const highlightRect = {
-        left: Math.max(8, rect.left - margin),
-        top: Math.max(8, rect.top - margin),
-        width: Math.min(window.innerWidth - 16, rect.width + margin * 2),
-        height: Math.min(window.innerHeight - 16, rect.height + margin * 2)
+        left: leftEdge,
+        top: topEdge,
+        width: Math.max(0, Math.min(window.innerWidth - 8, rect.right + margin, wrapperRect?.right ?? window.innerWidth) - leftEdge),
+        height: Math.max(0, Math.min(window.innerHeight - 8, rect.bottom + margin, wrapperRect?.bottom ?? window.innerHeight) - topEdge)
     };
+    if (!highlightRect.width || !highlightRect.height) {
+        highlight.hidden = true;
+        card.style.left = `${Math.max(12, (window.innerWidth - card.getBoundingClientRect().width) / 2)}px`;
+        card.style.top = '12px';
+        return;
+    }
 
     highlight.style.left = `${highlightRect.left}px`;
     highlight.style.top = `${highlightRect.top}px`;
-    highlight.style.width = `${Math.max(44, highlightRect.width)}px`;
-    highlight.style.height = `${Math.max(36, highlightRect.height)}px`;
+    highlight.style.width = `${highlightRect.width}px`;
+    highlight.style.height = `${highlightRect.height}px`;
 
     const cardRect = card.getBoundingClientRect();
     const gap = 16;
@@ -11542,7 +11497,7 @@ function positionProductJourney(step, target) {
         const preferredOrder = window.innerWidth < 920
             ? ['bottom', 'top', 'right', 'left']
             : ['right', 'left', 'bottom', 'top'];
-        const placement = preferredOrder.find(side => canFit[side])
+        const placement = (canFit[step.placement] && step.placement) || preferredOrder.find(side => canFit[side])
             || preferredOrder.sort((a, b) => spaces[b] - spaces[a])[0];
 
         if (placement === 'left') {
@@ -11566,66 +11521,71 @@ function positionProductJourney(step, target) {
 function renderProductJourneyStep() {
     const state = productJourneyState;
     if (!state) return;
+    const step = state.steps[state.index];
+    if (!step) { endProductJourney({ completed: true }); return; }
 
-    const steps = state.steps;
-    const step = steps[state.index];
-    if (!step) {
-        endProductJourney({ completed: true });
-        return;
-    }
-
-    state.isAnimating = false;
     clearJourneyAnimationTimers();
+    state.waitController?.abort();
+    state.waitController = new AbortController();
+    state.stepVersion += 1;
+    state.isAnimating = false;
     state.pendingClickComplete = null;
-    step.before?.();
+    state.root.querySelector('.product-journey-cursor')?.classList.remove('is-visible', 'is-pressing');
+    try { step.before?.(); } catch (error) { console.warn('Unable to prepare guide step:', error); }
 
-    const stepIndex = state.index;
-    const renderTarget = () => requestAnimationFrame(() => {
-        if (productJourneyState !== state || state.index !== stepIndex) return;
-        const target = resolveJourneyElement(step);
-        if (!target) {
-            nextProductJourneyStep();
-            return;
-        }
-
-        target.scrollIntoView?.({ block: 'center', inline: 'center', behavior: 'smooth' });
+    const version = state.stepVersion;
+    const isCurrent = () => productJourneyState === state && state.stepVersion === version;
+    const showTarget = (demonstrate = false) => {
+        if (!isCurrent()) return;
+        const resolved = resolveJourneyElement(step);
+        const visible = isJourneyTargetVisible(resolved);
+        const target = visible ? resolved : document.querySelector('.main-content');
+        state.dialogOnly = Boolean(step.dialogOnly || !visible);
+        state.root.classList.toggle('is-dialog-only', state.dialogOnly);
         state.activeTarget = target;
-        state.root.hidden = false;
-        state.root.classList.toggle('is-dialog-only', Boolean(step.dialogOnly));
-        document.body.classList.add('product-journey-active');
-        setJourneyCardVisible(typeof step.afterClick !== 'function');
-
-        state.root.querySelector('.product-journey-kicker').textContent = `${state.index + 1}/${steps.length}`;
-        state.root.querySelector('h3').textContent = step.title;
-        state.root.querySelector('p').textContent = step.body;
-        state.root.querySelector('[data-journey-action="prev"]').disabled = state.index === 0;
-        state.root.querySelector('[data-journey-action="next"]').classList.toggle('is-final', state.index === steps.length - 1);
-
-        setTimeout(() => positionProductJourney(step, target), 80);
-        if (typeof step.afterClick === 'function') {
+        target?.scrollIntoView?.({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
+        const canDemonstrate = visible && typeof step.afterClick === 'function'
+            && (!step.canDemonstrate || step.canDemonstrate());
+        state.root.querySelector('p').textContent = !canDemonstrate && step.unavailableBody
+            ? step.unavailableBody : step.body;
+        scheduleJourneyTask(() => positionProductJourney(step, target), 80);
+        if (demonstrate && canDemonstrate) {
             state.isAnimating = true;
             state.pendingClickComplete = () => finishJourneyClickStep(step);
-            state.animationTimers.push(window.setTimeout(() => {
-                simulateJourneyClick(target);
-            }, PRODUCT_JOURNEY_TIMING.clickStartDelay));
+            scheduleJourneyTask(() => simulateJourneyClick(target), PRODUCT_JOURNEY_TIMING.clickStartDelay);
         }
-        window.BIDFinderAnalytics?.track?.('product_journey_step_viewed', {
-            step_index: state.index + 1,
-            step_title: step.title,
-            kind: state.kind
-        });
-    });
+    };
+
+    state.root.hidden = false;
+    document.body.classList.add('product-journey-active');
+    setJourneyCardVisible(true);
+    state.root.querySelector('.product-journey-kicker').textContent = `${state.index + 1}/${state.steps.length}`;
+    state.root.querySelector('h3').textContent = step.title;
+    state.root.querySelector('[data-journey-action="prev"]').disabled = state.index === 0;
+    const next = state.root.querySelector('[data-journey-action="next"]');
+    const finalStep = state.index === state.steps.length - 1;
+    next.classList.toggle('is-final', finalStep);
+    next.setAttribute('aria-label', finalStep ? 'Hoàn tất' : 'Tiếp');
+    next.setAttribute('title', finalStep ? 'Hoàn tất' : 'Tiếp');
+    next.focus({ preventScroll: true });
+    showTarget(!step.waitForTarget);
+
     if (step.waitForTarget) {
-        setJourneyCardVisible(false);
-        Promise.resolve(step.waitForTarget()).then(renderTarget);
-    } else {
-        renderTarget();
+        try {
+            Promise.resolve(step.waitForTarget(state.waitController.signal)).then(() => showTarget(true))
+                .catch(error => { if (isCurrent()) { console.warn('Guide target unavailable:', error); showTarget(false); } });
+        } catch (error) {
+            console.warn('Guide target unavailable:', error);
+            showTarget(false);
+        }
     }
+    window.BIDFinderAnalytics?.track?.('product_journey_step_viewed', {
+        step_index: state.index + 1, step_title: step.title, kind: state.kind
+    });
 }
 
 function nextProductJourneyStep() {
     if (!productJourneyState) return;
-    if (completeJourneyClickAnimation()) return;
     productJourneyState.index += 1;
     renderProductJourneyStep();
 }
@@ -11639,12 +11599,32 @@ function previousProductJourneyStep() {
 
 function endProductJourney({ completed = false } = {}) {
     if (!productJourneyState) return;
-    const { root, kind } = productJourneyState;
+    const state = productJourneyState;
+    const { root, kind } = state;
     root.hidden = true;
     clearJourneyAnimationTimers();
+    state.waitController?.abort();
     document.body.classList.remove('product-journey-active');
     closeJourneySurfaces();
     productJourneyState = null;
+    const selectionChanged = Object.keys(dashboardSelection).some(key => dashboardSelection[key] !== state.initialDashboardSelection[key]);
+    Object.assign(dashboardSelection, state.initialDashboardSelection);
+    Object.keys(dashboardSelectionVisualData).forEach(key => delete dashboardSelectionVisualData[key]);
+    Object.assign(dashboardSelectionVisualData, state.initialDashboardVisualData);
+    if (selectionChanged) {
+        dashboardAnalyticsController?.abort();
+        dashboardAnalyticsVersion += 1;
+        clearTimeout(dashboardAnalyticsRefreshTimer);
+        dashboardAnalyticsRefreshTimer = null;
+        refreshDashboardAnalytics.lastRequestKey = '';
+        dashboardAnalyticsData = state.initialDashboardAnalyticsData;
+        if (dashboardAnalyticsData) renderDashboardAnalytics(dashboardAnalyticsData);
+    }
+    syncDashboardSelectionVisuals();
+    if (state.initialView) activateResultView(state.initialView);
+    state.tableScroll.forEach(({ node, top, left }) => { node.scrollTop = top; node.scrollLeft = left; });
+    window.scrollTo(state.initialScroll.x, state.initialScroll.y);
+    if (state.initialFocus?.isConnected) state.initialFocus.focus({ preventScroll: true });
     if (kind === 'product_journey') {
         try {
             localStorage.setItem(PRODUCT_JOURNEY_STORAGE_KEY, '1');
@@ -11661,14 +11641,20 @@ function endProductJourney({ completed = false } = {}) {
 
 function handleProductJourneyKeydown(event) {
     if (!productJourneyState) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.key === 'Escape') {
-        endProductJourney({ completed: false });
+    event.stopImmediatePropagation();
+    if (event.key === 'Tab') {
+        const buttons = Array.from(productJourneyState.root.querySelectorAll('[data-journey-action]'))
+            .filter(button => !button.disabled);
+        const index = buttons.indexOf(document.activeElement);
+        const next = event.shiftKey ? (index <= 0 ? buttons.length - 1 : index - 1) : (index + 1) % buttons.length;
+        event.preventDefault();
+        buttons[next]?.focus({ preventScroll: true });
         return;
     }
-    if (productJourneyState.isAnimating) {
-        completeJourneyClickAnimation();
+    if ((event.key === 'Enter' || event.key === ' ') && event.target.closest?.('[data-journey-action]')) return;
+    event.preventDefault();
+    if (event.key === 'Escape') {
+        endProductJourney({ completed: false });
         return;
     }
     if (event.key === 'ArrowLeft') {
@@ -11679,19 +11665,16 @@ function handleProductJourneyKeydown(event) {
         nextProductJourneyStep();
         return;
     }
-    nextProductJourneyStep();
 }
 
 function handleProductJourneyClick(event) {
     if (!productJourneyState) return;
     event.preventDefault();
-    event.stopPropagation();
+    event.stopImmediatePropagation();
 
     const action = event.target.closest('[data-journey-action]')?.dataset.journeyAction;
-    if (productJourneyState.isAnimating && action !== 'skip') {
-        if (action === 'next' || !action) completeJourneyClickAnimation();
-        return;
-    }
+    if (!action) return;
+    if (event.target.closest('[data-journey-action]')?.disabled) return;
     if (action === 'prev') {
         previousProductJourneyStep();
         return;
@@ -11700,7 +11683,7 @@ function handleProductJourneyClick(event) {
         endProductJourney({ completed: false });
         return;
     }
-    nextProductJourneyStep();
+    if (action === 'next') nextProductJourneyStep();
 }
 
 function startProductJourney({ steps = getProductJourneySteps(), kind = 'product_journey' } = {}) {
@@ -11711,6 +11694,14 @@ function startProductJourney({ steps = getProductJourneySteps(), kind = 'product
         steps,
         kind,
         index: 0,
+        stepVersion: 0,
+        initialView: document.querySelector('.result-panel.active')?.id,
+        initialFocus: document.activeElement,
+        initialScroll: { x: window.scrollX, y: window.scrollY },
+        tableScroll: Array.from(document.querySelectorAll('.table-wrapper')).map(node => ({ node, top: node.scrollTop, left: node.scrollLeft })),
+        initialDashboardSelection: { ...dashboardSelection },
+        initialDashboardVisualData: { ...dashboardSelectionVisualData },
+        initialDashboardAnalyticsData: dashboardAnalyticsData,
         activeTarget: null,
         animationTimers: [],
         pendingClickComplete: null
