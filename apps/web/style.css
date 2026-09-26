@@ -937,6 +937,37 @@ body.landing-active .page-container {
   margin-left: auto;
   flex-shrink: 0;
 }
+
+.help-menu {
+  position: fixed;
+  z-index: 1200;
+  display: grid;
+  gap: 2px;
+  width: min(240px, calc(100vw - 16px));
+  padding: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 12px 30px rgba(16, 47, 72, 0.16);
+}
+
+.help-menu[hidden] { display: none; }
+
+.help-menu button {
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-primary-dark);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.help-menu button:hover,
+.help-menu button:focus-visible { background: #edf5ff; }
+.help-menu button:disabled { cursor: wait; opacity: 0.65; }
 /* =========================
    HEADER LOGO & TITLE
    ========================= */

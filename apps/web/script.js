@@ -7956,6 +7956,7 @@ function showHistoryModal() {
     
     modal.classList.add('show');
     feather.replace();
+    prepareFeatureIntro();
 
     if (hasData) {
         void ensureChartJsLoaded()
@@ -10843,10 +10844,144 @@ function initFilterUrlEvents() {
 // PRODUCT JOURNEY
 // ==============================
 const PRODUCT_JOURNEY_STORAGE_KEY = 'bidfinder:product_journey_seen';
-function closeHistoryModal() {
+const FEATURE_INTRO_STORAGE_KEY = 'bidfinder:feature_intro_seen:new_features_20260925';
+let featureIntroPreparation = null;
+let featureIntroPrepared = null;
+let featureIntroClosing = false;
+let featureIntroRepeatable = false;
+let featureIntroUserInteracted = false;
+
+function hasSeenFeatureIntroLocally() {
+    try {
+        return localStorage.getItem(FEATURE_INTRO_STORAGE_KEY) === '1';
+    } catch (error) {
+        return false;
+    }
+}
+
+function markFeatureIntroSeenLocally() {
+    try {
+        localStorage.setItem(FEATURE_INTRO_STORAGE_KEY, '1');
+    } catch (error) {
+        // The backend still records the IP or account when storage is unavailable.
+    }
+}
+
+function markFeatureIntroUserInteraction(event) {
+    if (!featureIntroPreparation || productJourneyState || document.body.classList.contains('landing-active')) return;
+    if (event.type === 'pointerdown' && event.composedPath().some(node =>
+        node?.id === 'history-modal' || node?.id === 'open-run-history'
+    )) return;
+    featureIntroUserInteracted = true;
+}
+
+function isFeatureIntroSampleRequest(request) {
+    const field = 'active_ingredient_or_herbal_component';
+    const criteria = request?.uiState?.criteria || {};
+    const tokens = criteria[field]?.tokens || [];
+    return request?.uiState?.group === 'medicines'
+        && Object.keys(criteria).length === 1
+        && tokens.length === 1
+        && String(tokens[0].value || '').toLowerCase() === 'acyclovir'
+        && !Object.keys(request?.columnFilters || {}).length
+        && (!Array.isArray(request?.sort) || request.sort.length === 0);
+}
+
+function canShowFeatureIntro() {
+    if (document.body.classList.contains('landing-active') || productJourneyState || featureIntroUserInteracted
+        || (!featureIntroRepeatable && hasSeenFeatureIntroLocally())) return false;
+    if (isFeatureIntroSampleRequest(currentQueryRequest)) return true;
+    if (hasActiveQueryFilters(readFilterUrlState())) return false;
+    return !hasActiveQueryFilters({ ...currentQueryRequest, group: null, sourceTypes: [] })
+        && Number(currentQueryMeta?.totalCount || 0) === 0;
+}
+
+function getFeatureIntroSampleRequest() {
+    const field = 'active_ingredient_or_herbal_component';
+    const token = { value: 'Acyclovir', op: 'OR' };
+    return {
+        scope: 'all', group: null, sourceTypes: [], crossGroupSearch: true,
+        crossGroupSearchFields: [field],
+        uiState: { group: 'medicines', activeField: field, criteria: { [field]: { kind: 'tokens', tokens: [token] } } },
+        text: '', searchFields: [], filters: { crossGroupProductKeyword: { tokens: [token] } },
+        structuredFilters: {}, ranges: {}, dateRanges: {}, exactIdentifiers: {},
+        sort: [], page: 1, limit: 50, queryMode: 'search'
+    };
+}
+
+async function loadFeatureIntroSample() {
+    const request = getFeatureIntroSampleRequest();
+    const queryRequest = enrichLegacyQueryRequest(request);
+    const result = await fetchQueryResults(queryRequest, null, { background: true });
+    if (!result?.success || !result?.df2?.data?.length) return null;
+    return { request, queryRequest, result };
+}
+
+function showFeatureIntro(prepared) {
+    resetDashboardSelection();
+    currentQueryRequest = prepared.queryRequest;
+    closeFloatingTableUi();
+    handleQuerySuccess(prepared.result);
+    setFilterUrlState(currentQueryRequest);
+    currentAppliedPreview = {
+        requestKey: stableStringify(currentQueryRequest),
+        payload: getPreviewPayloadForRequest(currentQueryRequest, prepared.result)
+    };
+    getProcurementSearchForm()?.setFilterPayload?.(prepared.request);
+    getProcurementSearchForm()?.setPreviewResult?.(currentAppliedPreview.payload);
+    activateResultView('df2-panel');
+    startProductJourney({ steps: getFeatureIntroSteps(), kind: 'feature_intro' });
+}
+
+function prepareFeatureIntro() {
+    if (featureIntroPreparation || document.body.classList.contains('landing-active') || productJourneyState) return;
+    featureIntroUserInteracted = false;
+    featureIntroPrepared = null;
+    featureIntroRepeatable = false;
+    featureIntroPreparation = (async () => {
+        try {
+            await window.BIDFinderAuth?.whenReady?.();
+            if (!window.BIDFinderAuth?.isAuthenticated?.() && hasSeenFeatureIntroLocally()) return null;
+            const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/feature-intro`);
+            if (!response.ok) return null;
+            const status = await response.json();
+            if (!status.show) {
+                if (status.repeatable !== true) markFeatureIntroSeenLocally();
+                return null;
+            }
+            featureIntroRepeatable = status.repeatable === true;
+            if (!canShowFeatureIntro()) return null;
+            featureIntroPrepared = await loadFeatureIntroSample();
+            return featureIntroPrepared;
+        } catch (error) {
+            console.warn('Feature introduction unavailable:', error);
+            return null;
+        }
+    })();
+}
+
+async function closeHistoryModal() {
     const modal = document.getElementById('history-modal');
     if (!modal?.classList.contains('show')) return;
     modal.classList.remove('show');
+    if (!featureIntroPreparation) prepareFeatureIntro();
+    const prepared = featureIntroPrepared;
+    if (!prepared || featureIntroClosing || !canShowFeatureIntro()) return;
+    featureIntroClosing = true;
+    try {
+        const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/feature-intro/claim`, { method: 'POST' });
+        const claimed = response.ok && (await response.json()).show;
+        const eligible = claimed && !modal.classList.contains('show') && canShowFeatureIntro();
+        if (!featureIntroRepeatable && response.ok) markFeatureIntroSeenLocally();
+        if (eligible) {
+            showFeatureIntro(prepared);
+        } else {
+            featureIntroClosing = false;
+        }
+    } catch (error) {
+        console.warn('Feature introduction unavailable:', error);
+        featureIntroClosing = false;
+    }
 }
 
 const PRODUCT_JOURNEY_TIMING = {
@@ -10969,7 +11104,7 @@ function getProductJourneySteps() {
     return [
         {
             title: 'Làm quen với BIDFinder',
-            body: 'Khám phá các chức năng chính và những cách mới để tìm hiểu dữ liệu trên BIDFinder.',
+            body: '2 phút khám phá các chức năng chính của BIDFinder.',
             selector: '.main-content',
             placement: 'center',
             dialogOnly: true,
@@ -11032,14 +11167,6 @@ function getProductJourneySteps() {
             before: closeJourneySurfaces
         },
         {
-            title: 'Xem chi tiết nội dung của một hàng',
-            body: 'Khi có kết quả, nhấp đúp vào một giá trị bất kỳ trong hàng để xem đầy đủ thông tin của hàng đó.',
-            getElement: () => document.querySelector('.result-panel.active tbody tr[data-row-index="0"] td:nth-child(2)')
-                || getActiveTableWrapperForJourney(),
-            placement: 'top',
-            before: closeJourneySurfaces
-        },
-        {
             title: 'Thao tác trên từng cột',
             body: 'Mở menu cột để sắp xếp, tự căn độ rộng, ngắt dòng, ghim hoặc ẩn cột đang xem, tìm kiếm nhanh.',
             getElement: () => document.querySelector('.column-menu-popover') || getFirstColumnMenuTriggerForJourney(),
@@ -11093,30 +11220,6 @@ function getProductJourneySteps() {
             afterClick: () => setJourneyTableToolsVisible(true)
         },
         {
-            title: 'Tìm kiếm toàn bộ',
-            body: 'Khi cần xem nhiều kết quả hơn giới hạn thông thường, dùng Tìm kiếm toàn bộ. Số lượt còn lại hiển thị ngay trên nút.',
-            selector: '#insight-full-search',
-            placement: 'bottom',
-            before: closeJourneySurfaces
-        },
-        {
-            title: 'Dashboard',
-            body: 'Mở Dashboard để xem tổng quan, xu hướng và các giá trị nổi bật của kết quả tìm kiếm hiện tại.',
-            selector: '.scope-btn[data-view="dashboard-panel"]',
-            placement: 'bottom',
-            before: closeJourneySurfaces,
-            focusAfterSelector: '#dashboard-panel .dashboard-shell-card',
-            afterClick: () => activateResultView('dashboard-panel')
-        },
-        {
-            title: 'Khám phá bằng lọc liên kết',
-            body: 'Khi Dashboard có dữ liệu, chọn một giá trị trên biểu đồ để lọc các phần còn lại. Chọn lại giá trị đó để bỏ lọc.',
-            getElement: () => document.querySelector('#dashboard-top-products .dashboard-product-bar')
-                || document.querySelector('.dashboard-products-widget'),
-            placement: 'top',
-            before: () => activateResultView('dashboard-panel')
-        },
-        {
             title: 'Hướng dẫn, thông báo và tài khoản',
             body: 'Xem hướng dẫn sử dụng, theo dõi thông báo từ BIDFinder và quản lý tài khoản.',
             selector: '.app-header-links',
@@ -11142,6 +11245,75 @@ function getProductJourneySteps() {
             before: closeJourneySurfaces
         }
     ];
+}
+
+function getFeatureIntroSteps() {
+    return [
+        {
+            title: 'Tính năng mới',
+            body: 'BIDFinder v2.0.0 bổ sung một số tính năng mới.',
+            selector: '#df2-panel', placement: 'center', dialogOnly: true,
+            before: () => activateResultView('df2-panel')
+        },
+        {
+            title: 'Xem chi tiết nội dung',
+            body: 'Nhấp đúp vào bất kỳ giá trị nào trong hàng để xem đầy đủ thông tin của hàng đó.',
+            getElement: () => document.querySelector('#extended-table tbody tr[data-row-index="0"] td:nth-child(2)')
+                || document.querySelector('#df2-panel .table-wrapper'),
+            placement: 'top', doubleClick: true,
+            focusAfterSelector: '#legacy-row-detail .legacy-detail-dialog',
+            before: () => {
+                closeLegacyRowDetail({ restoreFocus: false });
+                activateResultView('df2-panel');
+            },
+            afterClick: () => productJourneyState?.activeTarget
+                ?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+        },
+        {
+            title: 'Tìm kiếm toàn bộ',
+            body: 'Kết quả thông thường sẽ giới hạn ở 1000 dòng. Chức năng này cho phép mở rộng phạm vi tìm kiếm.',
+            selector: '#insight-full-search', placement: 'bottom', before: closeJourneySurfaces
+        },
+        {
+            title: 'Dashboard',
+            body: 'Dashboard phân tích tổng quan, xu hướng và các giá trị nổi bật của kết quả tìm kiếm.',
+            selector: '.scope-btn[data-view="dashboard-panel"]', placement: 'bottom',
+            focusAfterSelector: '#dashboard-panel .dashboard-shell-card',
+            afterClick: () => activateResultView('dashboard-panel')
+        },
+        {
+            title: 'Khám phá bằng cross-filtering',
+            body: 'Chọn một giá trị để kích hoạt cross-filtering, các biểu đồ còn lại sẽ lọc theo lựa chọn. Chọn lại để hủy thao tác.',
+            getElement: () => document.querySelector('#dashboard-top-products .dashboard-product-bar')
+                || document.querySelector('.dashboard-products-widget'),
+            placement: 'top',
+            before: () => activateResultView('dashboard-panel'),
+            waitForTarget: waitForDashboardProductForJourney,
+            afterClick: () => {
+                const product = productJourneyState?.activeTarget
+                    ?.closest('.dashboard-product-row')?.dataset.dashboardProduct;
+                if (product) setDashboardSelection('product', product);
+            }
+        }
+    ];
+}
+
+function waitForDashboardProductForJourney() {
+    const container = document.getElementById('dashboard-top-products');
+    const readySelector = '.dashboard-product-bar, .dashboard-widget-state.is-empty, .dashboard-widget-state.is-error';
+    if (!container || container.querySelector(readySelector)) return Promise.resolve();
+    return new Promise(resolve => {
+        const observer = new MutationObserver(() => {
+            if (container.querySelector(readySelector)) finish();
+        });
+        const timeout = window.setTimeout(finish, 20000);
+        function finish() {
+            observer.disconnect();
+            window.clearTimeout(timeout);
+            resolve();
+        }
+        observer.observe(container, { childList: true, subtree: true });
+    });
 }
 
 function createProductJourneyDom() {
@@ -11429,6 +11601,10 @@ function endProductJourney({ completed = false } = {}) {
         } catch (error) {
             // Ignore storage failures.
         }
+    } else if (kind === 'feature_intro' && featureIntroRepeatable) {
+        featureIntroPreparation = null;
+        featureIntroPrepared = null;
+        featureIntroClosing = false;
     }
     window.BIDFinderAnalytics?.track?.('product_journey_closed', { completed, kind });
 }
@@ -11489,20 +11665,81 @@ function startProductJourney({ steps = getProductJourneySteps(), kind = 'product
         animationTimers: [],
         pendingClickComplete: null
     };
-    productJourneyState.root.querySelector('.product-journey-card')?.setAttribute('aria-label', 'Hướng dẫn sử dụng BIDFinder');
+    productJourneyState.root.querySelector('.product-journey-card')?.setAttribute(
+        'aria-label', kind === 'feature_intro' ? 'Giới thiệu tính năng mới của BIDFinder' : 'Hướng dẫn sử dụng BIDFinder'
+    );
     renderProductJourneyStep();
     window.BIDFinderAnalytics?.track?.('product_journey_started', { kind });
+}
+
+function setHelpMenuOpen(open) {
+    const menu = document.getElementById('help-menu');
+    const trigger = document.getElementById('open-product-journey');
+    if (!menu || !trigger) return;
+    menu.hidden = !open;
+    trigger.setAttribute('aria-expanded', String(open));
+    if (open) {
+        const rect = trigger.getBoundingClientRect();
+        menu.style.left = `${Math.max(8, Math.min(rect.right - 240, window.innerWidth - 248))}px`;
+        menu.style.top = `${Math.min(rect.bottom + 6, window.innerHeight - 100)}px`;
+    }
+}
+
+async function replayFeatureIntro(button) {
+    if (productJourneyState || button.disabled) return;
+    button.disabled = true;
+    button.textContent = 'Đang mở giới thiệu…';
+    try {
+        const prepared = featureIntroPrepared || await loadFeatureIntroSample();
+        if (!prepared) throw new Error('Không có dữ liệu ví dụ');
+        if (productJourneyState || document.getElementById('help-menu')?.hidden) return;
+        featureIntroPrepared = prepared;
+        featureIntroUserInteracted = true;
+        setHelpMenuOpen(false);
+        showFeatureIntro(prepared);
+        if (!featureIntroRepeatable) markFeatureIntroSeenLocally();
+        void getAuthorizedFetch()(`${API_BASE_URL}/api/feature-intro/claim`, { method: 'POST' })
+            .catch(error => console.warn('Unable to record feature introduction:', error));
+    } catch (error) {
+        console.warn('Unable to replay feature introduction:', error);
+        button.textContent = 'Không tải được ví dụ. Thử lại';
+        return;
+    } finally {
+        button.disabled = false;
+        if (button.textContent === 'Đang mở giới thiệu…') button.textContent = 'Xem lại tính năng mới';
+    }
 }
 
 function initProductJourney() {
     createProductJourneyDom();
     document.getElementById('open-product-journey')?.addEventListener('click', (event) => {
         event.preventDefault();
-        startProductJourney();
+        setHelpMenuOpen(document.getElementById('help-menu')?.hidden !== false);
+    });
+    document.getElementById('help-menu')?.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-help-action]');
+        if (!button) return;
+        if (button.dataset.helpAction === 'guide') {
+            setHelpMenuOpen(false);
+            startProductJourney();
+        } else if (button.dataset.helpAction === 'features') {
+            void replayFeatureIntro(button);
+        }
+    });
+    document.addEventListener('pointerdown', (event) => {
+        if (event.target.closest('#help-menu, #open-product-journey')) return;
+        setHelpMenuOpen(false);
+    });
+    document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape' || document.getElementById('help-menu')?.hidden !== false) return;
+        setHelpMenuOpen(false);
+        document.getElementById('open-product-journey')?.focus();
     });
 
     document.addEventListener('keydown', handleProductJourneyKeydown, true);
     document.addEventListener('click', handleProductJourneyClick, true);
+    document.addEventListener('input', markFeatureIntroUserInteraction, true);
+    document.addEventListener('pointerdown', markFeatureIntroUserInteraction, true);
     window.addEventListener('resize', () => {
         if (!productJourneyState) return;
         const step = productJourneyState.steps[productJourneyState.index];
@@ -11629,6 +11866,8 @@ async function initializeAppData({ restoreUrlQuery = true } = {}) {
         updateInsightEntryPoint();
         return;
     }
+
+    if (!document.body.classList.contains('landing-active')) prepareFeatureIntro();
 
     if (appDataInitialized) {
         maybeAutoOpenHistoryAfterEntry();
