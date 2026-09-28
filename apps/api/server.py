@@ -5136,7 +5136,7 @@ async def fetch_approval_timeline(
                     """,
                     start_day,
                     through_day,
-                    serving_generation,
+                    serving_generation + ":decision_date",
                 )
             else:
                 rows = await conn.fetch(
@@ -5218,7 +5218,7 @@ async def fetch_update_dashboard(
                     WHERE data_date = $1 AND serving_generation = $2
                     """,
                     day,
-                    typesense_search_repository.config.serving_generation,
+                    typesense_search_repository.config.serving_generation + ":decision_date",
                 )
             except asyncpg.UndefinedTableError:
                 stored = None

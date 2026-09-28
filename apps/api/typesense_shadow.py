@@ -1730,7 +1730,7 @@ def aggregate_dashboard_documents(
                 entry["packages"].add(package_key)
 
             if row_value > 0:
-                result_date = _analytics_date(document.get("result_posted_at")) or _analytics_date(document.get("decision_issued_at"))
+                result_date = _analytics_date(document.get("decision_issued_at"))
                 if result_date:
                     dated_values.append((result_date, row_value))
 
@@ -2093,7 +2093,7 @@ class TypesenseSearchRepository:
                 "query_by": "bid_invitation_code",
                 "page": page,
                 "per_page": per_page,
-                "filter_by": f"partition_date:={day.isoformat()}",
+                "filter_by": f"decision_date:={day.isoformat()}",
                 "include_fields": "bid_invitation_code",
             }
             url = f"{self.config.base_url}/collections/{quote(collection, safe='')}/documents/search?{urlencode(params)}"
@@ -2205,7 +2205,7 @@ class TypesenseSearchRepository:
         per_page = TYPESENSE_MAX_HITS_PER_PAGE
 
         while True:
-            filter_parts = [f"partition_date:={day.isoformat()}"]
+            filter_parts = [f"decision_date:={day.isoformat()}"]
             params = {
                 "q": "*",
                 "query_by": query_by,

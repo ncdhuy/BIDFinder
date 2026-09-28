@@ -52,6 +52,7 @@ TYPESENSE_MAX_HITS_PER_PAGE = 250
 DEFAULT_WORKERS = 24
 DEFAULT_TIMEOUT_SECONDS = 30.0
 VIETNAM_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+ROLLUP_BASIS_SUFFIX = ":decision_date"
 
 SUMMARY_TABLE_DDL = """
 CREATE TABLE IF NOT EXISTS daily_approval_summary (
@@ -182,7 +183,7 @@ def _fetch_package_codes(
             "query_by": "bid_invitation_code",
             "page": page,
             "per_page": per_page,
-            "filter_by": f"partition_date:={day.isoformat()}",
+            "filter_by": f"decision_date:={day.isoformat()}",
             "include_fields": "bid_invitation_code",
         }
         request = Request(
@@ -305,29 +306,11 @@ async def plan_refresh_days(
     repair_history_days: int,
     changed_days: Iterable[date] = (),
 ) -> list[date]:
-    """Refresh the requested window and repair missing chart days after outages."""
-    database_url = os.getenv("DATABASE_URL")
-    if not database_url:
-        raise ValueError("DATABASE_URL is not configured")
+    """Refresh every displayed decision day, regardless of crawl partition dates."""
     repair_start = end_day - timedelta(days=repair_history_days - 1)
-    connection = await asyncpg.connect(database_url)
-    try:
-        table = await connection.fetchval("SELECT to_regclass('daily_approval_summary')")
-        rows = [] if table is None else await connection.fetch(
-            """
-            SELECT data_date
-            FROM daily_approval_summary
-            WHERE data_date BETWEEN $1 AND $2 AND serving_generation = $3
-            """,
-            repair_start,
-            end_day,
-            generation,
-        )
-    finally:
-        await connection.close()
-    stored_days = {row["data_date"] for row in rows}
-    missing_days = set(_date_range(repair_start, end_day)) - stored_days
-    selected = set(_date_range(start_day, end_day)) | missing_days | set(changed_days)
+    # A changed crawl partition can contain decisions issued on different days.
+    # Recompute the displayed history so those days cannot retain stale counts.
+    selected = set(_date_range(start_day, end_day)) | set(_date_range(repair_start, end_day))
     return sorted(day for day in selected if day <= end_day)
 
 
@@ -357,7 +340,7 @@ async def write_daily_counts(
                     serving_generation = EXCLUDED.serving_generation,
                     computed_at = EXCLUDED.computed_at
                 """,
-                ((data_day, count, generation) for data_day, count in rows),
+                ((data_day, count, generation + ROLLUP_BASIS_SUFFIX) for data_day, count in rows),
             )
             await connection.executemany(
                 """
@@ -370,7 +353,7 @@ async def write_daily_counts(
                     serving_generation = EXCLUDED.serving_generation,
                     computed_at = EXCLUDED.computed_at
                 """,
-                ((day, json.dumps(summary, ensure_ascii=False), generation) for day, summary in dashboard_rows),
+                ((day, json.dumps(summary, ensure_ascii=False), generation + ROLLUP_BASIS_SUFFIX) for day, summary in dashboard_rows),
             )
     finally:
         await connection.close()
@@ -385,6 +368,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--incremental-report", type=Path, help="successful incremental output for changed partition dates")
     parser.add_argument("--repair-history-days", type=int, default=180, help="check this many recent chart days for missing rows")
+    parser.add_argument("--dashboard-history-days", type=int, default=2, help="materialize this many latest KPI days")
     parser.add_argument("--dry-run", action="store_true", help="scan Typesense without writing Neon")
     return parser
 
@@ -392,8 +376,8 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     _load_environment()
     args = _build_parser().parse_args()
-    if args.workers <= 0 or args.timeout <= 0 or args.repair_history_days <= 0:
-        raise SystemExit("--workers, --timeout and --repair-history-days must be positive")
+    if args.workers <= 0 or args.timeout <= 0 or args.repair_history_days <= 0 or args.dashboard_history_days <= 0:
+        raise SystemExit("--workers, --timeout and history-day values must be positive")
 
     generation = _resolve_generation(args.generation)
     changed_days = _changed_days_from_report(args.incremental_report, generation)
@@ -403,7 +387,7 @@ def main() -> None:
         repair_history_days=args.repair_history_days,
         changed_days=changed_days,
     ))
-    dashboard_days = [day for day in days if day >= args.end_day - timedelta(days=1)]
+    dashboard_days = [day for day in days if day >= args.end_day - timedelta(days=args.dashboard_history_days - 1)]
     dashboard_rows = collect_dashboard_summaries(
         dashboard_days, generation=generation, timeout_seconds=args.timeout,
     )

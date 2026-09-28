@@ -36,6 +36,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from crawler_engine.msc.config import TypesenseConfig  # noqa: E402
+from crawler_engine.msc.normalize import decision_date as normalize_decision_date  # noqa: E402
 from crawler_engine.msc.exception_ledger import (  # noqa: E402
     ensure_exception_ledger,
     exception_count,
@@ -117,13 +118,17 @@ def _schema_contract_issues(
     source_schema: Mapping[str, Any],
     *,
     source_generation: str | None = None,
+    add_decision_date: bool = False,
 ) -> list[str]:
     expected = {field["name"]: field for field in schema_for_group(group)["fields"]}
     actual = {field["name"]: field for field in source_schema.get("fields", []) if isinstance(field, Mapping) and field.get("name")}
     expected_names = set(expected) - {IMPLICIT_ID}
     actual_names = set(actual) - {IMPLICIT_ID}
     issues: list[str] = []
-    for name in sorted(expected_names - actual_names):
+    missing = expected_names - actual_names
+    if add_decision_date:
+        missing.discard("decision_date")
+    for name in sorted(missing):
         issues.append(f"missing field: {name}")
     for name in sorted(actual_names - expected_names):
         issues.append(f"unexpected field: {name}")
@@ -146,7 +151,7 @@ def _schema_contract_issues(
     return issues
 
 
-def _final_schema(group: str, generation: str, source_schema: Mapping[str, Any]) -> dict[str, Any]:
+def _final_schema(group: str, generation: str, source_schema: Mapping[str, Any], *, add_decision_date: bool = False) -> dict[str, Any]:
     """Copy production settings and apply only approved legacy type migrations."""
 
     target_name = physical_collection_name(group, generation)
@@ -161,6 +166,9 @@ def _final_schema(group: str, generation: str, source_schema: Mapping[str, Any])
     for expected_field in expected_schema["fields"]:
         name = str(expected_field["name"])
         source_field = source_fields.get(name)
+        if source_field is None and add_decision_date and name == "decision_date":
+            fields.append(deepcopy(expected_field))
+            continue
         if source_field is None and name == IMPLICIT_ID:
             continue
         if source_field is None:
@@ -193,10 +201,16 @@ def _final_schema(group: str, generation: str, source_schema: Mapping[str, Any])
     return schema
 
 
-def _migrate_legacy_document(group: str, document: Mapping[str, Any]) -> dict[str, Any]:
+def _migrate_legacy_document(group: str, document: Mapping[str, Any], *, add_decision_date: bool = False) -> dict[str, Any]:
     """Adapt known legacy numeric fields without changing their represented value."""
 
     migrated = dict(document)
+    if add_decision_date:
+        value = normalize_decision_date(migrated.get("decision_issued_at"))
+        if value is None:
+            migrated.pop("decision_date", None)
+        else:
+            migrated["decision_date"] = value
     if group == "goods" and "production_year" in migrated:
         value = migrated["production_year"]
         if value is not None and not isinstance(value, str):
@@ -385,6 +399,7 @@ def _import_group(
     progress_every: int,
     operation_id: str | None = None,
     source_generation: str | None = None,
+    add_decision_date: bool = False,
 ) -> dict[str, Any]:
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     ledger_path = checkpoint_dir / "exception-ledger.sqlite3"
@@ -398,12 +413,12 @@ def _import_group(
     if source_schema is None:
         raise RuntimeError(f"source collection is missing: {source_name}")
     contract_issues = _schema_contract_issues(
-        group, source_schema, source_generation=source_generation
+        group, source_schema, source_generation=source_generation, add_decision_date=add_decision_date
     )
     if contract_issues:
         raise RuntimeError(f"source schema drift for {group}: {'; '.join(contract_issues[:12])}")
     source_count = int(source_schema.get("num_documents", 0))
-    final_schema = _final_schema(group, generation, source_schema)
+    final_schema = _final_schema(group, generation, source_schema, add_decision_date=add_decision_date)
     target = client.get_collection(target_name)
     action = "existing"
     if target is None:
@@ -454,7 +469,7 @@ def _import_group(
         if source_offset <= offset:
             continue
         try:
-            batch.append(_migrate_legacy_document(group, document))
+            batch.append(_migrate_legacy_document(group, document, add_decision_date=add_decision_date))
         except Exception as exc:
             _record_exception_documents(
                 ledger_path,
@@ -616,7 +631,7 @@ def _filter_and_facet(client: TypesenseClient, group: str, source_name: str, tar
     return {"filter": filter_by, "source_found": source_found, "target_found": target_found, "facet_count_groups": len(facet_counts), "pass": True}
 
 
-def verify_group(client: TypesenseClient, group: str, source_name: str, target_name: str) -> dict[str, Any]:
+def verify_group(client: TypesenseClient, group: str, source_name: str, target_name: str, *, add_decision_date: bool = False) -> dict[str, Any]:
     source = client.get_collection(source_name)
     target = client.get_collection(target_name)
     if source is None or target is None:
@@ -633,7 +648,7 @@ def verify_group(client: TypesenseClient, group: str, source_name: str, target_n
         raise RuntimeError(f"source has no sample documents: {source_name}")
     for sample in samples:
         document_id = str(sample.get("id", ""))
-        expected_sample = _migrate_legacy_document(group, sample)
+        expected_sample = _migrate_legacy_document(group, sample, add_decision_date=add_decision_date)
         if client.get_document(target_name, document_id) != expected_sample:
             raise RuntimeError(f"sample document mismatch for {group}: {document_id}")
     search = _search_regression(client, group, source_name, target_name, samples)
@@ -887,7 +902,11 @@ def migrate(args: argparse.Namespace) -> dict[str, Any]:
     if args.source_generation == args.target_generation:
         raise ValueError("source and target generations must be different")
     config = TypesenseConfig.from_env()
-    config = TypesenseConfig(**{**config.__dict__, "batch_size": args.batch_size})
+    config = TypesenseConfig(**{
+        **config.__dict__,
+        "batch_size": args.batch_size,
+        "timeout_seconds": args.verify_timeout_seconds,
+    })
     client = TypesenseClient(config)
     runtime_env = Path(args.runtime_env).expanduser()
     checkpoint_dir = Path(args.checkpoint_dir).expanduser()
@@ -947,8 +966,9 @@ def migrate(args: argparse.Namespace) -> dict[str, Any]:
             progress_every=args.progress_every,
             operation_id=operation_id,
             source_generation=args.source_generation,
+            add_decision_date=args.add_decision_date,
         )
-        verified = verify_group(client, group, source_name, target_name)
+        verified = verify_group(client, group, source_name, target_name, add_decision_date=args.add_decision_date)
         report["groups"][group] = {"import": imported, "verify": verified}
         print(f"{group}: PASS source={verified['source_documents']} target={verified['target_documents']}", flush=True)
     report["status"] = "PRE_CUTOVER_PASS"
@@ -1019,15 +1039,17 @@ def main() -> int:
     parser.add_argument("--progress-every", type=int, default=10000)
     parser.add_argument("--health-timeout-seconds", type=float, default=1800.0)
     parser.add_argument("--operation-timeout-seconds", type=float, default=3600.0)
+    parser.add_argument("--verify-timeout-seconds", type=float, default=120.0)
     parser.add_argument("--api-url", default=DEFAULT_API_URL)
     parser.add_argument("--smoke-cookie-env", default="BIDFINDER_SMOKE_COOKIE")
+    parser.add_argument("--add-decision-date", action="store_true", help="derive decision_date from decision_issued_at while rebuilding")
     parser.add_argument("--apply", action="store_true", help="execute the single rebuild flow; default is audit only")
     parser.add_argument("--cleanup-stale", action="store_true", help="delete only stale non-source partial/temp collections after audit")
     parser.add_argument("--cutover", action="store_true", help="update runtime generation and restart bidfinder-api.service after verification")
     parser.add_argument("--cleanup", action="store_true", help="delete all non-target BIDFinder collections after successful cutover proof")
     args = parser.parse_args()
-    if args.batch_size <= 0 or args.progress_every <= 0:
-        raise SystemExit("batch and progress values must be positive")
+    if args.batch_size <= 0 or args.progress_every <= 0 or args.verify_timeout_seconds <= 0:
+        raise SystemExit("batch, progress and verification timeout values must be positive")
     if args.cleanup_stale and not args.apply:
         raise SystemExit("--cleanup-stale requires --apply")
     if args.cutover and not args.apply:

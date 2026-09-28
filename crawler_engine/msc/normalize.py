@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from datetime import date, datetime
 from math import isfinite
 from typing import Any, Sequence
 
@@ -195,6 +196,20 @@ def _normalize_value(canonical_key: str, value: Any) -> Any:
     return normalize_text(value)
 
 
+def decision_date(value: Any) -> str | None:
+    """Calendar day of the approval decision; invalid or absent dates stay absent."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    try:
+        return date.fromisoformat(text[:10]).isoformat()
+    except ValueError:
+        try:
+            return datetime.strptime(text[:10], "%d/%m/%Y").date().isoformat()
+        except ValueError:
+            return None
+
+
 def normalize_record(contract: SourceContract, raw: RawRecord, partition_date: str) -> CanonicalRecord:
     if not isinstance(raw, dict):
         raise NormalizationError("source record must be an object")
@@ -211,6 +226,7 @@ def normalize_record(contract: SourceContract, raw: RawRecord, partition_date: s
     }
     for mapping in contract.canonical_mapping:
         record[mapping.canonical_key] = _normalize_value(mapping.canonical_key, raw.get(mapping.source_field))
+    record["decision_date"] = decision_date(record.get("decision_issued_at"))
     return record
 
 

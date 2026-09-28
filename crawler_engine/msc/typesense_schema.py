@@ -19,7 +19,7 @@ INTERNAL_CANONICAL_FIELDS = frozenset({"source_key"})
 FILTERABLE_TEXT_FIELDS = frozenset({"production_year"})
 VIETNAMESE_LOCALE = "vi"
 _LOCALE_EXEMPT_FIELDS = frozenset({
-    "id", "data_group", "source_tab", "source_tab_label", "partition_date",
+    "id", "data_group", "source_tab", "source_tab_label", "partition_date", "decision_date",
 })
 # Locale belongs only on fields sent through Typesense query_by.  Facet-only,
 # sort-only, provenance, date, and identifier strings stay on default tokenization.
@@ -80,6 +80,7 @@ _COMMON_FIELDS = (
     _field("source_tab", "string", optional=False, facet=True),
     _field("source_tab_label", "string", optional=False, facet=True),
     _field("partition_date", "string", optional=False, facet=True, sort=True),
+    _field("decision_date", "string", facet=True, sort=True),
 )
 
 _GROUP_FIELDS: Mapping[str, tuple[dict[str, Any], ...]] = {
