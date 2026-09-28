@@ -36,6 +36,10 @@ runtime generation and deploy API/ingestion code together, then resume both
 incremental timers. If an environment uses Typesense aliases, point all three
 to the verified target in the same cutover. If the copy fails, the old
 generation remains live; rerun with the same target and checkpoint paths.
+Update the `serving_generation` fallback in `typesense-search-contract.json`
+for local API processes that do not set runtime generation variables. Restart
+those processes after updating the artifact; otherwise they continue querying
+the previous generation, which has no `decision_date` field.
 
 ## Initial migration and full backfill
 
