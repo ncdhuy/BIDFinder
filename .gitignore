@@ -5,6 +5,8 @@ crawler_engine/tmp_storage/
 crawler_engine/reports/
 tools/load-tests/*.docx
 crawler_engine/qlt_realtime/
+crawler_engine/vss_data/*
+!crawler_engine/vss_data/.gitkeep
 
 # 2. Chặn các file môi trường chứa thông tin bảo mật (DATABASE_URL, API_KEY)
 .env
