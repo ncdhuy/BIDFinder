@@ -159,7 +159,7 @@
 .ingredient-lookup-suggestions li:hover,
 .ingredient-lookup-suggestions li[aria-selected="true"] { background: var(--color-surface-2); color: var(--color-primary-dark); }
 .ingredient-lookup-suggestions strong { color: var(--color-primary-dark); background: var(--color-primary-heavy-light); }
-.ingredient-lookup-filters input:focus-visible,
+.ingredient-lookup-filters input:focus { border: 2px solid #1680e3; outline: none; }
 .ingredient-lookup-panel button:focus-visible { outline: 2px solid #1680e3; outline-offset: 2px; }
 .ingredient-lookup-actions {
   grid-column: 1 / -1;
