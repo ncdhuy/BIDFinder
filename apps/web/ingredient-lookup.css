@@ -64,16 +64,12 @@
 
 #data-tab > .ingredient-lookup-panel.active {
   box-sizing: border-box;
-  align-self: start;
   gap: 14px;
-  height: auto !important;
-  min-height: 0;
-  overflow: visible;
   padding: 16px;
   background: var(--color-surface);
 }
 
-#data-tab:has(.ingredient-lookup-panel.active) + .legacy-pagination { display: none; }
+#data-tab:has(.ingredient-lookup-panel.active) + .legacy-pagination { visibility: hidden; }
 
 .ingredient-lookup-header {
   display: flex;
@@ -191,7 +187,14 @@
   color: #fff;
 }
 .ingredient-lookup-panel button svg { width: 15px; height: 15px; }
-.ingredient-lookup-results { min-width: 0; overflow: hidden; }
+.ingredient-lookup-results {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
 .ingredient-lookup-results-head {
   display: flex;
   align-items: center;
@@ -208,7 +211,7 @@
   font-size: 18px;
 }
 .ingredient-lookup-results-head h3 svg { width: 20px; height: 20px; color: #0872d9; }
-.ingredient-lookup-table-wrap { overflow-x: auto; }
+.ingredient-lookup-table-wrap { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .ingredient-lookup-results table {
   width: 100%;
   min-width: 1030px;
