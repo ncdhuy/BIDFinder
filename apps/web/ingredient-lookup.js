@@ -7,7 +7,7 @@
     const exportButton = document.getElementById('ingredient-lookup-export');
     const countFormat = new Intl.NumberFormat('vi-VN');
     const percentFormat = new Intl.NumberFormat('vi-VN', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-    const pageSize = 11;
+    const pageSize = 10;
     const headers = ['Mã hoạt chất', 'Tên hoạt chất', 'Tên thuốc', 'Số đăng ký', 'Đường dùng', 'Năm công bố', 'Số lần xuất hiện', 'Tỷ lệ (%)'];
     const fields = ['ma', 'hoatchat', 'ten', 'sodk', 'duongdung', 'nam_congbo'];
     let filters = {};
