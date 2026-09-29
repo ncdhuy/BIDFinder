@@ -65,12 +65,20 @@
 #data-tab > .ingredient-lookup-panel.active {
   box-sizing: border-box;
   gap: 14px;
-  height: auto;
-  min-height: calc(100dvh - 140px);
+  height: auto !important;
+  min-height: 0;
   overflow: visible;
   padding: 16px;
   background: var(--color-surface);
 }
+
+#data-tab.tab-content.active:has(> .ingredient-lookup-panel.active) {
+  grid-template-rows: auto auto;
+  height: auto !important;
+  overflow: visible !important;
+}
+
+.main-content:has(#ingredient-lookup-panel.active) { overflow-y: auto; }
 
 #data-tab:has(.ingredient-lookup-panel.active) + .legacy-pagination { display: none; }
 
@@ -110,8 +118,11 @@
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px 14px;
   padding: 16px;
+  position: relative;
+  z-index: 2;
 }
 .ingredient-lookup-filters label {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -134,6 +145,28 @@
   font-weight: 400;
 }
 .ingredient-lookup-filters input::placeholder { color: #7e9abc; }
+.ingredient-lookup-filters label:focus-within { z-index: 3; }
+.ingredient-lookup-suggestions {
+  position: absolute;
+  z-index: 4;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-lg);
+}
+.ingredient-lookup-suggestions[hidden] { display: none; }
+.ingredient-lookup-suggestions li { padding: 9px 10px; border-radius: 6px; color: var(--color-text-primary); font-weight: 400; cursor: pointer; }
+.ingredient-lookup-suggestions li:hover,
+.ingredient-lookup-suggestions li[aria-selected="true"] { background: var(--color-surface-2); color: var(--color-primary-dark); }
+.ingredient-lookup-suggestions strong { color: var(--color-primary-dark); background: var(--color-primary-heavy-light); }
 .ingredient-lookup-filters input:focus-visible,
 .ingredient-lookup-panel button:focus-visible { outline: 2px solid #1680e3; outline-offset: 2px; }
 .ingredient-lookup-actions {

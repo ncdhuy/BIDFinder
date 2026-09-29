@@ -3,7 +3,7 @@
 from datetime import date, datetime
 from hashlib import sha256
 import json
-from urllib.parse import urlencode
+from threading import Lock
 
 
 FIELDS = ("ma", "hoatchat", "ten", "sodk", "duongdung", "nam_congbo")
@@ -39,6 +39,10 @@ COLLECTION_ALIAS = "vss_ingredient_lookup"
 SCHEMA_FIELDS = FIELDS
 
 
+def _fold(value: str) -> str:
+    return " ".join(value.split()).casefold()
+
+
 def collection_schema(name: str) -> dict:
     return {"name": name, "fields": [
         *({"name": field, "type": "string"} for field in SCHEMA_FIELDS),
@@ -54,36 +58,80 @@ def count_document(key: tuple[str | None, ...], count: int, order: int) -> dict:
             "occurrences": count, "sort_order": order}
 
 
-def lookup_filter(filters: dict[str, str]) -> str:
-    clauses = []
-    for name, field in FILTER_COLUMNS.items():
-        value = filters.get(name, "").strip()
-        if value:
-            if "`" in value:
-                raise ValueError("Ký tự ` không được hỗ trợ trong điều kiện tra cứu.")
-            operator = ":=" if name == "year" else ":"
-            clauses.append(f"{field}{operator}`{value}`")
-    return " && ".join(clauses)
+class IngredientLookupStore:
+    """A bounded in-process substring index of the current Typesense alias."""
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._collection = None
+        self._rows = ()
+        self._matches = {}
+
+    def _load(self, request_json, export_documents) -> None:
+        alias = request_json(f"/aliases/{COLLECTION_ALIAS}")
+        collection = alias["collection_name"]
+        if collection == self._collection:
+            return
+        rows = []
+        for document in export_documents(collection):
+            display = {field: document.get(field) or None for field in SCHEMA_FIELDS}
+            display["occurrences"] = int(document["occurrences"])
+            folded = tuple(_fold(document.get(field) or "") for field in SCHEMA_FIELDS)
+            rows.append((display, folded, int(document["sort_order"])))
+        expected = request_json(f"/collections/{collection}")["num_documents"]
+        if len(rows) != expected:
+            raise RuntimeError("eLMIS Typesense export is incomplete")
+        rows.sort(key=lambda row: (-row[0]["occurrences"], row[2]))
+        self._rows = tuple((display, folded) for display, folded, _ in rows)
+        self._collection = collection
+        self._matches.clear()
+
+    def matching(self, request_json, export_documents, filters: dict[str, str]):
+        needles = tuple(_fold(filters.get(name, "")) for name in FILTER_COLUMNS)
+        with self._lock:
+            self._load(request_json, export_documents)
+            if needles not in self._matches:
+                indexes = [(FIELDS.index(field), needle) for field, needle in zip(FILTER_COLUMNS.values(), needles) if needle]
+                matched = tuple(row for row in self._rows if all(needle in row[1][index] for index, needle in indexes))
+                total = sum(row[0]["occurrences"] for row in matched)
+                maximum = matched[0][0]["occurrences"] if matched else 0
+                if len(self._matches) >= 8:
+                    self._matches.pop(next(iter(self._matches)))
+                self._matches[needles] = (matched, total, maximum)
+            return self._matches[needles]
 
 
-def lookup_page(request_json, filters: dict[str, str], page: int, limit: int,
-                include_totals: bool = True) -> dict:
-    params = {"q": "*", "query_by": "ma", "page": page, "per_page": limit,
-              "sort_by": "occurrences:desc,sort_order:asc"}
-    if include_totals:
-        params.update(facet_by="occurrences", facet_strategy="exhaustive")
-    if condition := lookup_filter(filters):
-        params["filter_by"] = condition
-    result = request_json(f"/collections/{COLLECTION_ALIAS}/documents/search?{urlencode(params)}")
-    facets = result.get("facet_counts") or []
-    stats = next((facet.get("stats", {}) for facet in facets if facet.get("field_name") == "occurrences"), {})
+def lookup_page(store: IngredientLookupStore, request_json, export_documents,
+                filters: dict[str, str], page: int, limit: int, include_totals: bool = True) -> dict:
+    matched, total, maximum = store.matching(request_json, export_documents, filters)
+    start = (page - 1) * limit
     return {
-        "rows": [{field: (document.get(field) or None) for field in SCHEMA_FIELDS} |
-                 {"occurrences": document["occurrences"]}
-                 for hit in result.get("hits", []) for document in [hit["document"]]],
-        "total_groups": result.get("found", 0),
-        "total_records": int(stats.get("sum", 0)),
-        "max_count": int(stats.get("max", 0)),
+        "rows": [row[0] for row in matched[start:start + limit]],
+        "total_groups": len(matched),
+        "total_records": total if include_totals else 0,
+        "max_count": maximum if include_totals else 0,
         "page": page,
         "limit": limit,
     }
+
+
+def lookup_suggestions(store: IngredientLookupStore, request_json, export_documents,
+                       field: str, query: str, filters: dict[str, str], limit: int = 8) -> list[str]:
+    if field not in FILTER_COLUMNS:
+        raise ValueError("Trường gợi ý không hợp lệ.")
+    query = _fold(query)
+    if not query:
+        return []
+    context = {**filters, field: ""}
+    matched, _, _ = store.matching(request_json, export_documents, context)
+    index = FIELDS.index(FILTER_COLUMNS[field])
+    suggestions = {}
+    for display, folded in matched:
+        value = display[FIELDS[index]]
+        if value and query in folded[index]:
+            key = folded[index]
+            if key in suggestions:
+                suggestions[key][1] += display["occurrences"]
+            else:
+                suggestions[key] = [" ".join(value.split()), display["occurrences"]]
+    return [value for value, _ in sorted(suggestions.values(), key=lambda item: (-item[1], item[0].casefold(), item[0]))[:limit]]

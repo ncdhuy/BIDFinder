@@ -8,7 +8,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "apps" / "api"))
 sys.path.insert(0, str(ROOT / "tools"))
 
-from ingredient_lookup import count_document, lookup_filter, lookup_page, publication_year, source_key
+from ingredient_lookup import IngredientLookupStore, count_document, lookup_page, lookup_suggestions, publication_year, source_key
 from import_vss_ingredients import aggregate_xml, import_counts
 from crawler_engine.vss.download_vss_data import ManifestStore
 
@@ -25,27 +25,33 @@ class IngredientLookupTest(unittest.TestCase):
         self.assertEqual(publication_year("31/12/2021"), "2021")
         self.assertIsNone(publication_year("2021-02-30"))
 
-    def test_lookup_filters_and_facet_totals(self):
-        condition = lookup_filter({"registration": "VN-1", "drug": "Seduxen", "year": "2020"})
-        self.assertEqual(condition, "sodk:`VN-1` && ten:`Seduxen` && nam_congbo:=`2020`")
-        with self.assertRaises(ValueError):
-            lookup_filter({"drug": "x` && occurrences:>0"})
-
-        paths = []
+    def test_lookup_substrings_and_contextual_suggestions(self):
+        store = IngredientLookupStore()
+        collection = ["first"]
+        documents = {
+            "first": [
+                {"ma": "40.048", "hoatchat": "Diazepam", "ten": "Seduxen 5mg", "sodk": "VN-123", "duongdung": "Uống", "nam_congbo": "2020", "occurrences": 3, "sort_order": 0},
+                {"ma": "40.049", "hoatchat": "Diazepam", "ten": "Seduxen\n 5 mg", "sodk": "VN-124", "duongdung": "Tiêm", "nam_congbo": "2021", "occurrences": 2, "sort_order": 1},
+                {"ma": "40.050", "hoatchat": "Paracetamol", "ten": "Other", "sodk": "VN-125", "duongdung": "Uống", "nam_congbo": "2020", "occurrences": 1, "sort_order": 2},
+            ],
+            "second": [{"ma": "40.048", "hoatchat": "Diazepam", "ten": "Seduxen", "sodk": "VN-123", "duongdung": "Uống", "nam_congbo": "2020", "occurrences": 4, "sort_order": 0}],
+        }
         def request(path):
-            paths.append(path)
-            return {"found": 2, "hits": [{"document": {
-                "ma": "40.048", "hoatchat": "Diazepam", "ten": "Seduxen",
-                "sodk": "VN-1", "duongdung": "Uống", "nam_congbo": "2020",
-                "occurrences": 3,
-            }}], "facet_counts": [{"field_name": "occurrences", "stats": {"sum": 4, "max": 3}}]}
-        result = lookup_page(request, {"drug": "Seduxen"}, 1, 10)
-        self.assertEqual((result["total_groups"], result["total_records"], result["max_count"]), (2, 4, 3))
+            return {"collection_name": collection[0]} if path.startswith("/aliases/") else {"num_documents": len(documents[collection[0]])}
+        def export(name):
+            yield from documents[name]
+
+        result = lookup_page(store, request, export, {"drug": "DUX", "ingredient": "aze"}, 1, 1)
+        self.assertEqual((result["total_groups"], result["total_records"], result["max_count"]), (2, 5, 3))
         self.assertEqual(result["rows"][0]["ma"], "40.048")
-        self.assertIn("sort_by=occurrences%3Adesc%2Csort_order%3Aasc", paths[0])
-        self.assertIn("facet_strategy=exhaustive", paths[0])
-        lookup_page(request, {}, 2, 250, include_totals=False)
-        self.assertNotIn("facet_by", paths[-1])
+        next_page = lookup_page(store, request, export, {"drug": "dux"}, 2, 1, include_totals=False)
+        self.assertEqual(next_page["rows"][0]["ma"], "40.049")
+        self.assertEqual(next_page["total_records"], 0)
+        self.assertEqual(lookup_suggestions(store, request, export, "drug", "dux", {"ingredient": "dia"}),
+                         ["Seduxen 5mg", "Seduxen 5 mg"])
+        self.assertEqual(lookup_page(store, request, export, {"drug": "5 mg"}, 1, 10)["total_groups"], 1)
+        collection[0] = "second"
+        self.assertEqual(lookup_page(store, request, export, {"drug": "dux"}, 1, 10)["total_records"], 4)
 
     def test_import_publishes_only_after_complete_batches(self):
         class Client:

@@ -14,10 +14,118 @@
     let currentPage = 1;
     let currentResult = null;
     let controller = null;
+    let suggestionTimer = null;
+    let suggestionController = null;
+    let suggestionRequest = 0;
+    let activeSuggestion = -1;
+    let activeDropdown = null;
+    let suggestionOwner = null;
 
     function filterValues() {
         return Object.fromEntries([...new FormData(form)].map(([key, value]) => [key, String(value).trim()]));
     }
+
+    function closeSuggestions() {
+        clearTimeout(suggestionTimer);
+        suggestionController?.abort();
+        suggestionController = null;
+        suggestionRequest += 1;
+        activeSuggestion = -1;
+        suggestionOwner = null;
+        if (activeDropdown) {
+            activeDropdown.hidden = true;
+            activeDropdown.replaceChildren();
+            activeDropdown.previousElementSibling.setAttribute('aria-expanded', 'false');
+            activeDropdown.previousElementSibling.removeAttribute('aria-activedescendant');
+            activeDropdown = null;
+        }
+    }
+
+    form.querySelectorAll('input[name]').forEach(input => {
+        const dropdown = document.createElement('ul');
+        dropdown.className = 'ingredient-lookup-suggestions';
+        dropdown.id = `ingredient-lookup-suggestions-${input.name}`;
+        dropdown.setAttribute('role', 'listbox');
+        dropdown.hidden = true;
+        input.autocomplete = 'off';
+        input.setAttribute('aria-autocomplete', 'list');
+        input.setAttribute('aria-controls', dropdown.id);
+        input.setAttribute('aria-expanded', 'false');
+        input.after(dropdown);
+
+        const renderSuggestions = (items, query) => {
+            dropdown.replaceChildren();
+            activeSuggestion = -1;
+            items.forEach((value, index) => {
+                const option = document.createElement('li');
+                option.id = `${dropdown.id}-${index}`;
+                option.setAttribute('role', 'option');
+                option.setAttribute('aria-selected', 'false');
+                const at = value.toLocaleLowerCase('vi').indexOf(query.toLocaleLowerCase('vi'));
+                if (at < 0) option.textContent = value;
+                else {
+                    option.append(document.createTextNode(value.slice(0, at)));
+                    const strong = document.createElement('strong');
+                    strong.textContent = value.slice(at, at + query.length);
+                    option.append(strong, document.createTextNode(value.slice(at + query.length)));
+                }
+                option.addEventListener('mousedown', event => event.preventDefault());
+                option.addEventListener('click', () => {
+                    input.value = value;
+                    closeSuggestions();
+                    input.focus();
+                });
+                dropdown.append(option);
+            });
+            dropdown.hidden = !items.length;
+            input.setAttribute('aria-expanded', String(Boolean(items.length)));
+            if (items.length) activeDropdown = dropdown;
+        };
+
+        input.addEventListener('focus', () => {
+            if (suggestionOwner !== input) closeSuggestions();
+            suggestionOwner = input;
+        });
+        input.addEventListener('input', () => {
+            closeSuggestions();
+            suggestionOwner = input;
+            const query = input.value.trim();
+            if (!query) return;
+            const requestId = suggestionRequest;
+            suggestionTimer = setTimeout(async () => {
+                suggestionController = new AbortController();
+                const params = new URLSearchParams({ ...filterValues(), field: input.name, q: query });
+                try {
+                    const response = await fetch(`${window.API_BASE_URL}/api/ingredient-lookup/suggest?${params}`, { signal: suggestionController.signal });
+                    if (!response.ok) return;
+                    const result = await response.json();
+                    if (requestId === suggestionRequest && input.value.trim() === query) renderSuggestions(result.data || [], query);
+                } catch (error) {
+                    if (error.name !== 'AbortError') closeSuggestions();
+                }
+            }, 250);
+        });
+
+        input.addEventListener('keydown', event => {
+            const options = [...dropdown.children];
+            if (dropdown.hidden || !options.length) return;
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault();
+                activeSuggestion = (activeSuggestion + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length;
+                options.forEach((option, index) => option.setAttribute('aria-selected', String(index === activeSuggestion)));
+                input.setAttribute('aria-activedescendant', options[activeSuggestion].id);
+                options[activeSuggestion].scrollIntoView({ block: 'nearest' });
+            } else if (event.key === 'Enter' && activeSuggestion >= 0) {
+                event.preventDefault();
+                options[activeSuggestion].click();
+            } else if (event.key === 'Escape') {
+                closeSuggestions();
+            }
+        });
+        input.addEventListener('blur', () => setTimeout(() => {
+            if (suggestionOwner === input) closeSuggestions();
+        }, 120));
+    });
 
     async function request(page, limit = pageSize, signal) {
         const params = new URLSearchParams({ ...filters, page: String(page), limit: String(limit) });
@@ -136,11 +244,13 @@
 
     form.addEventListener('submit', event => {
         event.preventDefault();
+        closeSuggestions();
         filters = filterValues();
         if (Object.values(filters).some(Boolean)) void load();
         else resetResults();
     });
     document.getElementById('ingredient-lookup-clear').addEventListener('click', () => {
+        closeSuggestions();
         form.reset();
         filters = {};
         resetResults();

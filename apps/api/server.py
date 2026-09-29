@@ -27,7 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from ingredient_lookup import lookup_page
+from ingredient_lookup import IngredientLookupStore, lookup_page, lookup_suggestions
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=False)
@@ -2918,6 +2918,24 @@ def _typesense_json(path: str) -> Dict[str, Any]:
     return payload
 
 
+ingredient_lookup_store = IngredientLookupStore()
+
+
+def _ingredient_documents(collection: str):
+    config = typesense_search_repository.config
+    if not config.api_key:
+        raise RuntimeError("Typesense API key is not configured")
+    request = URLRequest(
+        f"{config.base_url}/collections/{quote(collection, safe='')}/documents/export",
+        method="GET",
+        headers={"X-TYPESENSE-API-KEY": config.api_key},
+    )
+    with urlopen(request, timeout=60) as response:
+        for line in response:
+            if line.strip():
+                yield json.loads(line)
+
+
 def typesense_runtime_status() -> Dict[str, Any]:
     config = typesense_search_repository.config
     generation = config.serving_generation
@@ -3077,15 +3095,37 @@ async def ingredient_lookup(
     include_totals: bool = Query(True),
 ):
     try:
-        return await asyncio.to_thread(lookup_page, _typesense_json, {
+        return await asyncio.to_thread(lookup_page, ingredient_lookup_store, _typesense_json, _ingredient_documents, {
             "registration": registration, "drug": drug, "ingredient": ingredient,
             "route": route, "year": year,
         }, page, limit, include_totals)
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    except (HTTPError, URLError, TimeoutError, OSError, RuntimeError) as exc:
+    except (HTTPError, URLError, TimeoutError, OSError, RuntimeError, ValueError, KeyError) as exc:
         logger.warning("eLMIS Typesense lookup unavailable: %s", type(exc).__name__)
         raise HTTPException(503, "Dữ liệu eLMIS trên Typesense chưa sẵn sàng.") from exc
+
+
+@app.get("/api/ingredient-lookup/suggest")
+async def ingredient_lookup_suggest(
+    field: Literal["registration", "drug", "ingredient", "route", "year"],
+    q: str = Query("", max_length=120),
+    registration: str = Query("", max_length=120),
+    drug: str = Query("", max_length=120),
+    ingredient: str = Query("", max_length=120),
+    route: str = Query("", max_length=120),
+    year: str = Query("", max_length=20),
+):
+    if not q.strip():
+        return {"data": []}
+    try:
+        suggestions = await asyncio.to_thread(
+            lookup_suggestions, ingredient_lookup_store, _typesense_json, _ingredient_documents,
+            field, q, {"registration": registration, "drug": drug, "ingredient": ingredient,
+                       "route": route, "year": year},
+        )
+        return {"data": suggestions}
+    except (HTTPError, URLError, TimeoutError, OSError, RuntimeError, ValueError, KeyError) as exc:
+        logger.warning("eLMIS Typesense suggestions unavailable: %s", type(exc).__name__)
+        raise HTTPException(503, "Gợi ý eLMIS chưa sẵn sàng.") from exc
 
 
 @app.exception_handler(AIUsageStorageError)
