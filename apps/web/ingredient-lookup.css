@@ -72,14 +72,6 @@
   background: var(--color-surface);
 }
 
-#data-tab.tab-content.active:has(> .ingredient-lookup-panel.active) {
-  grid-template-rows: auto auto;
-  height: auto !important;
-  overflow: visible !important;
-}
-
-.main-content:has(#ingredient-lookup-panel.active) { overflow-y: auto; }
-
 #data-tab:has(.ingredient-lookup-panel.active) + .legacy-pagination { display: none; }
 
 .ingredient-lookup-header {
