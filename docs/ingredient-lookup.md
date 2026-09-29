@@ -1,10 +1,10 @@
 # Tra cứu mã hoạt chất eLMIS
 
-BIDFinder sở hữu mã crawl trong `crawler_engine/vss/download_vss_data.py` và dữ liệu vận hành trong `crawler_engine/vss_data/`. Thư mục dữ liệu được Git bỏ qua; không đưa XML, CSV, manifest hay thông tin kết nối DB vào commit.
+BIDFinder lưu mã crawl tại `crawler_engine/vss/download_vss_data.py` và dành `crawler_engine/vss_data/` cho dữ liệu eLMIS. Tab tra cứu dùng một collection Typesense local riêng (`vss_ingredient_lookup`), không dùng bảng Neon. Các tab BIDFinder khác giữ nguyên nguồn dữ liệu hiện tại.
 
-## Chuyển dữ liệu cũ (người vận hành thực hiện)
+## Chuyển dữ liệu cũ
 
-Nguồn hiện tại: `D:\startup\app_vss\qlt_realtime`. Từ PowerShell ở thư mục gốc BIDFinder:
+Nguồn hiện tại: `D:\startup\app_vss\qlt_realtime`. Người vận hành chạy từ thư mục gốc BIDFinder:
 
 ```powershell
 robocopy 'D:\startup\app_vss\qlt_realtime\downloads' '.\crawler_engine\vss_data\downloads' *.xml /E /Z /R:2 /W:2
@@ -12,25 +12,28 @@ Copy-Item -LiteralPath 'D:\startup\app_vss\qlt_realtime\combined.csv' -Destinati
 Copy-Item -LiteralPath 'D:\startup\app_vss\qlt_realtime\crawl_manifest.csv' -Destination '.\crawler_engine\vss_data\crawl_manifest.csv'
 ```
 
-Giữ nguyên cấu trúc `downloads/YYYY/MM/vss_export_YYYYMMDD.xml`. Hiện nguồn có khoảng 1.639 XML (~2,96 GB); `combined.csv` khoảng 318 MB. `processed_dates.csv` và các CSV/XLSX khác là dữ liệu lưu trữ tùy chọn, không cần cho tab này. Script crawl tự ánh xạ lại đường dẫn trong manifest cũ sang thư mục XML mới, không tiếp tục tham chiếu đường dẫn `app_vss`.
+Giữ nguyên cấu trúc `downloads/YYYY/MM/vss_export_YYYYMMDD.xml`. XML là nguồn đầy đủ hơn; `combined.csv` có thể dùng để khởi động nhanh. Chỉ chọn **một** nguồn khi nạp, vì nhập cả hai sẽ đếm trùng. Dữ liệu thô được Git bỏ qua.
 
-## Chạy và cập nhật dữ liệu
+## Cấu hình Typesense
 
-Sau khi cài dependencies của `crawler_engine/requirements.txt`, crawl ngày mới bằng:
+API và lệnh import cần kết nối được tới **cùng một** Typesense. Cấu hình server API trong `apps/api/.env` và môi trường chạy lệnh import bằng `BIDFINDER_TYPESENSE_HOST`, `BIDFINDER_TYPESENSE_PORT`, `BIDFINDER_TYPESENSE_PROTOCOL`, `BIDFINDER_TYPESENSE_API_KEY`; có thể dùng các biến `TYPESENSE_*` tương ứng. Giá trị mặc định của host, port và protocol là `127.0.0.1`, `8108`, `http`. Không commit API key. Lệnh import cần key có quyền tạo collection, nhập document và cập nhật alias; API chỉ cần quyền đọc collection.
+
+Nếu API chạy trên máy hoặc container khác, `127.0.0.1` trỏ về chính môi trường đó. Hãy đặt host Typesense mà API thực sự truy cập được. Tab này sẽ trả HTTP 503 cho đến khi Typesense hoạt động và alias đã được nạp.
+
+## Crawl và nạp dữ liệu
+
+Cài dependencies của `crawler_engine/requirements.txt`. Crawl ngày mới:
 
 ```powershell
 rtk python crawler_engine/vss/download_vss_data.py --start-date 2026-09-30 --end-date 2026-09-30
 ```
 
-Script lưu XML gốc và manifest vào `crawler_engine/vss_data/`; `--build-excel` là tùy chọn. Tab tra cứu không cần bước xuất Excel hay chạy `preprocess_data.py` của project cũ. Các trường tra cứu có sẵn trong XML: `ma`, `hoatchat`, `ten`, `sodk`, `duongdung`, `congbo`.
-
-Xem trước số dòng và số tổ hợp, không ghi DB (chọn **một** nguồn):
+Xem trước tổng số dòng và nhóm, không ghi Typesense:
 
 ```powershell
-rtk python tools/import_vss_ingredients.py --csv crawler_engine/vss_data/combined.csv
 rtk python tools/import_vss_ingredients.py --raw-dir crawler_engine/vss_data/downloads
 ```
 
-`combined.csv` cho phép khởi động nhanh với dữ liệu đã xử lý trước đây; nhập trực tiếp XML cho phạm vi lịch sử đầy đủ và các đợt crawl tiếp theo. Không chạy đồng thời cả hai nguồn vì sẽ đếm trùng. Sau khi kiểm tra đúng đích `DATABASE_URL`, thêm `--apply` vào lệnh được chọn để thay bảng `vss_ingredient_counts` trong một transaction. Lặp lại sau khi dữ liệu nguồn thay đổi. API trả HTTP 503 cho đến khi bảng được nạp.
+Sau khi kiểm tra dữ liệu và đích Typesense local, thêm `--apply` để nạp. Hoặc dùng `--csv crawler_engine/vss_data/combined.csv` thay cho `--raw-dir`. Mỗi lần nạp tạo collection mới; chỉ chuyển alias sau khi tất cả batch được nhận và số document khớp. Collection cũ vẫn được giữ để có thể phục hồi; người vận hành có thể dọn sau khi kiểm tra bản mới. Nạp lại từ toàn bộ nguồn khi XML thay đổi, không chỉ từ những file mới.
 
-Mỗi dòng bảng là một tổ hợp `(ma, hoatchat, ten, sodk, duongdung, năm từ congbo)` và số lần xuất hiện. Mã lưu dưới dạng `TEXT` để giữ nguyên `40.048`. Ngày trống hoặc không hợp lệ có năm `NULL`. API lọc chuỗi con không phân biệt hoa thường; 5 điều kiện kết hợp AND. Tỷ lệ dùng tổng dòng nguồn sau lọc. UI phân trang tổ hợp và xuất toàn bộ tổ hợp sau lọc thành `.xlsx`.
+Mỗi document đại diện một tổ hợp `(ma, hoatchat, ten, sodk, duongdung, năm từ congbo)` và có `occurrences` là số dòng nguồn. Mã hoạt chất lưu dạng chuỗi để giữ nguyên `40.048`. Ngày trống hoặc sai có năm rỗng. Các điều kiện nhập kết hợp AND. Typesense lọc các trường văn bản theo từ, năm theo giá trị đầy đủ; cách này có thể khác tìm chuỗi con `ILIKE` trước đây. `total_records` là tổng `occurrences` sau lọc lấy từ numeric facet; tỷ lệ của mỗi dòng dựa trên tổng này. Bảng phân trang các tổ hợp, còn xuất Excel lấy toàn bộ tổ hợp đã lọc theo từng batch 250 dòng.

@@ -1,26 +1,27 @@
-"""Build the eLMIS lookup table from BIDFinder's local XML or CSV data.
+"""Build the eLMIS Typesense lookup collection from local XML or CSV data.
 
 Example: python tools/import_vss_ingredients.py --csv crawler_engine/vss_data/combined.csv
-Use --apply to replace the Postgres table after the full input has been grouped.
+Use --apply to publish a new Typesense collection after the full input is grouped.
 """
 
 import argparse
-import asyncio
 from collections import Counter
 import csv
 from itertools import islice
 import os
 from pathlib import Path
 import sys
+from uuid import uuid4
 
-import asyncpg
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "apps" / "api"))
-from ingredient_lookup import source_key
+from ingredient_lookup import COLLECTION_ALIAS, collection_schema, count_document, source_key
 from crawler_engine.vss.download_vss_data import iter_excel_xml_rows
+from crawler_engine.msc.config import TypesenseConfig
+from crawler_engine.msc.typesense_client import TypesenseClient
 
 load_dotenv(ROOT / "apps" / "api" / ".env", override=False)
 
@@ -61,34 +62,23 @@ def aggregate_xml(raw_dir: Path) -> Counter:
     return counts
 
 
-async def import_counts(database_url: str, counts: Counter) -> None:
-    conn = await asyncpg.connect(database_url)
-    try:
-        async with conn.transaction():
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS vss_ingredient_counts (
-                    ma TEXT, hoatchat TEXT, ten TEXT, sodk TEXT, duongdung TEXT,
-                    nam_congbo TEXT, occurrences INTEGER NOT NULL CHECK (occurrences > 0)
-                )
-            """)
-            await conn.execute("""
-                CREATE TEMP TABLE vss_ingredient_stage
-                (LIKE vss_ingredient_counts INCLUDING CONSTRAINTS) ON COMMIT DROP
-            """)
-            rows = ((*key, count) for key, count in counts.items())
-            while batch := list(islice(rows, 5000)):
-                await conn.copy_records_to_table(
-                    "vss_ingredient_stage", records=batch,
-                    columns=["ma", "hoatchat", "ten", "sodk", "duongdung", "nam_congbo", "occurrences"],
-                )
-            await conn.execute("TRUNCATE vss_ingredient_counts")
-            await conn.execute("INSERT INTO vss_ingredient_counts SELECT * FROM vss_ingredient_stage")
-            await conn.execute("""
-                CREATE INDEX IF NOT EXISTS vss_ingredient_counts_order
-                ON vss_ingredient_counts (occurrences DESC)
-            """)
-    finally:
-        await conn.close()
+def import_counts(client: TypesenseClient, counts: Counter) -> str:
+    if not counts:
+        raise ValueError("No eLMIS records to import")
+    name = f"{COLLECTION_ALIAS}_{uuid4().hex[:12]}"
+    client.create_collection(collection_schema(name))
+    # A fresh collection keeps the previous alias serving until every batch succeeds.
+    ordered = sorted(counts, key=lambda key: tuple(value or "" for value in key))
+    rows = (count_document(key, counts[key], order) for order, key in enumerate(ordered))
+    while batch := list(islice(rows, client.config.batch_size)):
+        result = client.import_documents(name, batch)
+        if result.rejected_count or result.accepted_count != len(batch):
+            raise RuntimeError(f"Typesense import stopped at {name}: {result.errors[:3]}")
+    actual = client.get_collection(name)
+    if not actual or actual.get("num_documents") != len(counts):
+        raise RuntimeError(f"Typesense document count mismatch in {name}")
+    client.upsert_alias(COLLECTION_ALIAS, name)
+    return name
 
 
 def main() -> None:
@@ -96,16 +86,19 @@ def main() -> None:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--csv", type=Path, help="Combined eLMIS CSV inside BIDFinder")
     source.add_argument("--raw-dir", type=Path, help="Directory of downloaded eLMIS XML files")
-    parser.add_argument("--database-url", default=os.getenv("DATABASE_URL"))
-    parser.add_argument("--apply", action="store_true", help="Replace the lookup table in Postgres")
+    parser.add_argument("--apply", action="store_true", help="Publish a new local Typesense collection")
     args = parser.parse_args()
     counts = aggregate_csv(args.csv) if args.csv else aggregate_xml(args.raw_dir)
     print(f"{sum(counts.values())} source rows; {len(counts)} grouped rows")
     if args.apply:
-        if not args.database_url:
-            parser.error("--database-url or DATABASE_URL is required with --apply")
-        asyncio.run(import_counts(args.database_url, counts))
-        print("Lookup table replaced")
+        config = TypesenseConfig(
+            host=os.getenv("BIDFINDER_TYPESENSE_HOST", os.getenv("TYPESENSE_HOST", "127.0.0.1")),
+            port=int(os.getenv("BIDFINDER_TYPESENSE_PORT", os.getenv("TYPESENSE_PORT", "8108"))),
+            protocol=os.getenv("BIDFINDER_TYPESENSE_PROTOCOL", os.getenv("TYPESENSE_PROTOCOL", "http")),
+            api_key=os.getenv("BIDFINDER_TYPESENSE_API_KEY", os.getenv("TYPESENSE_API_KEY", "")),
+        )
+        name = import_counts(TypesenseClient(config), counts)
+        print(f"Published {name} as {COLLECTION_ALIAS}")
 
 
 if __name__ == "__main__":

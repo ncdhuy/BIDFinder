@@ -1,6 +1,9 @@
-"""Aggregated eLMIS ingredient-code lookup."""
+"""Aggregated eLMIS ingredient-code lookup in a dedicated Typesense collection."""
 
 from datetime import date, datetime
+from hashlib import sha256
+import json
+from urllib.parse import urlencode
 
 
 FIELDS = ("ma", "hoatchat", "ten", "sodk", "duongdung", "nam_congbo")
@@ -32,38 +35,52 @@ def source_key(row: dict[str, str]) -> tuple[str | None, ...]:
                  else (row.get(field) or None) for field in FIELDS)
 
 
-def lookup_where(filters: dict[str, str]) -> tuple[str, list[str]]:
+COLLECTION_ALIAS = "vss_ingredient_lookup"
+SCHEMA_FIELDS = FIELDS
+
+
+def collection_schema(name: str) -> dict:
+    return {"name": name, "fields": [
+        *({"name": field, "type": "string"} for field in SCHEMA_FIELDS),
+        {"name": "occurrences", "type": "int32", "facet": True},
+        {"name": "sort_order", "type": "int32"},
+    ], "default_sorting_field": "occurrences"}
+
+
+def count_document(key: tuple[str | None, ...], count: int, order: int) -> dict:
+    values = [value or "" for value in key]
+    identity = sha256(json.dumps(values, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+    return {"id": identity, **dict(zip(SCHEMA_FIELDS, values)),
+            "occurrences": count, "sort_order": order}
+
+
+def lookup_filter(filters: dict[str, str]) -> str:
     clauses = []
-    values = []
-    for name, column in FILTER_COLUMNS.items():
+    for name, field in FILTER_COLUMNS.items():
         value = filters.get(name, "").strip()
         if value:
-            values.append("%" + value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%")
-            clauses.append(f"{column} ILIKE ${len(values)} ESCAPE '\\'")
-    return (" WHERE " + " AND ".join(clauses) if clauses else ""), values
+            if "`" in value:
+                raise ValueError("Ký tự ` không được hỗ trợ trong điều kiện tra cứu.")
+            operator = ":=" if name == "year" else ":"
+            clauses.append(f"{field}{operator}`{value}`")
+    return " && ".join(clauses)
 
 
-async def lookup_page(conn, filters: dict[str, str], page: int, limit: int) -> dict:
-    where, values = lookup_where(filters)
-    async with conn.transaction(readonly=True):
-        totals = await conn.fetchrow(
-            f"SELECT COUNT(*) AS groups, COALESCE(SUM(occurrences), 0) AS records, "
-            f"COALESCE(MAX(occurrences), 0) AS max_count FROM vss_ingredient_counts{where}",
-            *values,
-        )
-        rows = await conn.fetch(
-            f"SELECT ma, hoatchat, ten, sodk, duongdung, nam_congbo, occurrences "
-            f"FROM vss_ingredient_counts{where} "
-            f"ORDER BY occurrences DESC, ma ASC NULLS LAST, hoatchat ASC NULLS LAST, "
-            f"ten ASC NULLS LAST, sodk ASC NULLS LAST, duongdung ASC NULLS LAST, "
-            f"nam_congbo ASC NULLS LAST LIMIT ${len(values) + 1} OFFSET ${len(values) + 2}",
-            *values, limit, (page - 1) * limit,
-        )
+def lookup_page(request_json, filters: dict[str, str], page: int, limit: int) -> dict:
+    params = {"q": "*", "query_by": "ma", "page": page, "per_page": limit,
+              "sort_by": "occurrences:desc,sort_order:asc", "facet_by": "occurrences"}
+    if condition := lookup_filter(filters):
+        params["filter_by"] = condition
+    result = request_json(f"/collections/{COLLECTION_ALIAS}/documents/search?{urlencode(params)}")
+    facets = result.get("facet_counts") or []
+    stats = next((facet.get("stats", {}) for facet in facets if facet.get("field_name") == "occurrences"), {})
     return {
-        "rows": [dict(row) for row in rows],
-        "total_groups": totals["groups"],
-        "total_records": totals["records"],
-        "max_count": totals["max_count"],
+        "rows": [{field: (document.get(field) or None) for field in SCHEMA_FIELDS} |
+                 {"occurrences": document["occurrences"]}
+                 for hit in result.get("hits", []) for document in [hit["document"]]],
+        "total_groups": result.get("found", 0),
+        "total_records": int(stats.get("sum", 0)),
+        "max_count": int(stats.get("max", 0)),
         "page": page,
         "limit": limit,
     }

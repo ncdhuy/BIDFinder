@@ -151,7 +151,7 @@
         const { total_groups: groupTotal, total_records: recordTotal } = currentResult;
         const rows = [];
         try {
-            const batchSize = 1000;
+            const batchSize = 250;
             const batches = Math.ceil(groupTotal / batchSize);
             for (let page = 1; page <= batches; page++) {
                 const params = new URLSearchParams({ ...snapshot, page: String(page), limit: String(batchSize) });

@@ -8,8 +8,8 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "apps" / "api"))
 sys.path.insert(0, str(ROOT / "tools"))
 
-from ingredient_lookup import lookup_where, publication_year, source_key
-from import_vss_ingredients import aggregate_xml
+from ingredient_lookup import count_document, lookup_filter, lookup_page, publication_year, source_key
+from import_vss_ingredients import aggregate_xml, import_counts
 from crawler_engine.vss.download_vss_data import ManifestStore
 
 
@@ -25,13 +25,48 @@ class IngredientLookupTest(unittest.TestCase):
         self.assertEqual(publication_year("31/12/2021"), "2021")
         self.assertIsNone(publication_year("2021-02-30"))
 
-    def test_lookup_filters_are_and_combined_and_literal(self):
-        where, values = lookup_where({"registration": "VN_1%", "drug": "Seduxen", "year": "2020"})
-        self.assertEqual(where.count(" AND "), 2)
-        self.assertIn("sodk ILIKE $1", where)
-        self.assertIn("ten ILIKE $2", where)
-        self.assertIn("nam_congbo ILIKE $3", where)
-        self.assertEqual(values, ["%VN\\_1\\%%", "%Seduxen%", "%2020%"])
+    def test_lookup_filters_and_facet_totals(self):
+        condition = lookup_filter({"registration": "VN-1", "drug": "Seduxen", "year": "2020"})
+        self.assertEqual(condition, "sodk:`VN-1` && ten:`Seduxen` && nam_congbo:=`2020`")
+        with self.assertRaises(ValueError):
+            lookup_filter({"drug": "x` && occurrences:>0"})
+
+        paths = []
+        def request(path):
+            paths.append(path)
+            return {"found": 2, "hits": [{"document": {
+                "ma": "40.048", "hoatchat": "Diazepam", "ten": "Seduxen",
+                "sodk": "VN-1", "duongdung": "Uống", "nam_congbo": "2020",
+                "occurrences": 3,
+            }}], "facet_counts": [{"field_name": "occurrences", "stats": {"sum": 4, "max": 3}}]}
+        result = lookup_page(request, {"drug": "Seduxen"}, 1, 10)
+        self.assertEqual((result["total_groups"], result["total_records"], result["max_count"]), (2, 4, 3))
+        self.assertEqual(result["rows"][0]["ma"], "40.048")
+        self.assertIn("sort_by=occurrences%3Adesc%2Csort_order%3Aasc", paths[0])
+
+    def test_import_publishes_only_after_complete_batches(self):
+        class Client:
+            config = type("Config", (), {"batch_size": 1})()
+            def __init__(self): self.calls = []
+            def create_collection(self, schema): self.calls.append(("create", schema["name"]))
+            def import_documents(self, name, rows):
+                self.calls.append(("import", rows[0]["sort_order"]))
+                return type("Result", (), {"rejected_count": 0, "accepted_count": len(rows)})()
+            def get_collection(self, name): return {"num_documents": 2}
+            def upsert_alias(self, alias, name): self.calls.append(("alias", alias))
+        client = Client()
+        import_counts(client, Counter({("40.048", "A", None, None, None, None): 3,
+                                      ("40.49", "B", None, None, None, None): 1}))
+        self.assertEqual([call[0] for call in client.calls], ["create", "import", "import", "alias"])
+        self.assertEqual(count_document(("40.048", None, None, None, None, None), 2, 0)["ma"], "40.048")
+        class RejectingClient(Client):
+            def import_documents(self, name, rows):
+                return type("Result", (), {"rejected_count": 1, "accepted_count": 0,
+                                            "errors": ("rejected",)})()
+        rejecting = RejectingClient()
+        with self.assertRaises(RuntimeError):
+            import_counts(rejecting, Counter({("40.048", None, None, None, None, None): 1}))
+        self.assertNotIn("alias", [call[0] for call in rejecting.calls])
 
     def test_xml_import_and_relocated_manifest(self):
         fixture = ROOT / "tests" / "fixtures" / "vss"

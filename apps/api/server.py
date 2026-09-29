@@ -3073,19 +3073,18 @@ async def ingredient_lookup(
     route: str = Query("", max_length=120),
     year: str = Query("", max_length=20),
     page: int = Query(1, ge=1),
-    limit: int = Query(10, ge=1, le=1000),
+    limit: int = Query(10, ge=1, le=250),
 ):
-    if not DATABASE_URL:
-        raise HTTPException(503, "Dữ liệu eLMIS chưa được cấu hình.")
     try:
-        pool = await ensure_db_pool()
-        async with pool.acquire() as conn:
-            return await lookup_page(conn, {
-                "registration": registration, "drug": drug, "ingredient": ingredient,
-                "route": route, "year": year,
-            }, page, limit)
-    except asyncpg.UndefinedTableError:
-        raise HTTPException(503, "Dữ liệu eLMIS chưa được nạp.") from None
+        return await asyncio.to_thread(lookup_page, _typesense_json, {
+            "registration": registration, "drug": drug, "ingredient": ingredient,
+            "route": route, "year": year,
+        }, page, limit)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except (HTTPError, URLError, TimeoutError, OSError, RuntimeError) as exc:
+        logger.warning("eLMIS Typesense lookup unavailable: %s", type(exc).__name__)
+        raise HTTPException(503, "Dữ liệu eLMIS trên Typesense chưa sẵn sàng.") from exc
 
 
 @app.exception_handler(AIUsageStorageError)
