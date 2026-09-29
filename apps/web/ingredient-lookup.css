@@ -1,4 +1,4 @@
-/* Keep the navigation and command buttons on one toolbar row. */
+/* Equal tab widths keep the navigation on one toolbar row. */
 .result-table-tabs.toolbar {
   flex-wrap: nowrap;
 }
@@ -9,29 +9,26 @@
 }
 
 .result-table-tabs .result-table-tab-choice {
-  display: flex;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 205px;
   width: max-content;
   min-width: max-content;
   align-items: stretch;
 }
 
 .result-table-tabs .result-table-tab.scope-btn {
-  width: auto;
-  min-width: 0;
-  max-width: none;
-  flex: 0 0 auto;
-  padding-inline: 12px;
+  width: 205px;
+  min-width: 205px;
+  max-width: 205px;
+  flex: 0 0 205px;
 }
 
 .result-table-tabs .result-table-tab.scope-btn .scope-text {
-  flex: 0 0 auto;
-  overflow: visible;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.result-table-tabs .result-table-tab.ingredient-lookup-tab.scope-btn {
-  margin-left: 12px;
-  color: #145a9e;
 }
 
 .result-table-tabs .toolbar-actions {
