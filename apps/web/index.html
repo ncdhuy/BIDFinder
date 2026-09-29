@@ -515,17 +515,17 @@
                         <div class="ingredient-lookup-results">
                             <div class="ingredient-lookup-results-head">
                                 <h3><i data-feather="grid" aria-hidden="true"></i>Kết quả tra cứu</h3>
+                                <div class="ingredient-lookup-results-nav">
+                                    <span id="ingredient-lookup-range"></span>
+                                    <nav id="ingredient-lookup-pages" aria-label="Phân trang tra cứu mã hoạt chất"></nav>
+                                </div>
                                 <button id="ingredient-lookup-export" type="button" disabled><i data-feather="download" aria-hidden="true"></i>Xuất Excel</button>
                             </div>
                             <div class="ingredient-lookup-table-wrap">
                                 <table aria-label="Kết quả tra cứu mã hoạt chất">
                                     <thead><tr><th>#</th><th>Mã hoạt chất</th><th>Tên hoạt chất</th><th>Tên thuốc</th><th>Số đăng ký</th><th>Đường dùng</th><th>Năm công bố</th><th>Số lần xuất hiện ↓</th><th>Tỷ lệ (%)</th></tr></thead>
-                                    <tbody id="ingredient-lookup-body"></tbody>
+                                    <tbody id="ingredient-lookup-body"><tr><td class="ingredient-lookup-message" colspan="9">Chưa có dữ liệu, thực hiện tìm kiếm để hiển thị kết quả</td></tr></tbody>
                                 </table>
-                            </div>
-                            <div class="ingredient-lookup-footer">
-                                <span id="ingredient-lookup-range"></span>
-                                <nav id="ingredient-lookup-pages" aria-label="Phân trang tra cứu mã hoạt chất"></nav>
                             </div>
                         </div>
                     </section>

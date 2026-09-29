@@ -7,14 +7,13 @@
     const exportButton = document.getElementById('ingredient-lookup-export');
     const countFormat = new Intl.NumberFormat('vi-VN');
     const percentFormat = new Intl.NumberFormat('vi-VN', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-    const pageSize = 10;
+    const pageSize = 11;
     const headers = ['Mã hoạt chất', 'Tên hoạt chất', 'Tên thuốc', 'Số đăng ký', 'Đường dùng', 'Năm công bố', 'Số lần xuất hiện', 'Tỷ lệ (%)'];
     const fields = ['ma', 'hoatchat', 'ten', 'sodk', 'duongdung', 'nam_congbo'];
     let filters = {};
     let currentPage = 1;
     let currentResult = null;
     let controller = null;
-    let loaded = false;
 
     function filterValues() {
         return Object.fromEntries([...new FormData(form)].map(([key, value]) => [key, String(value).trim()]));
@@ -38,6 +37,17 @@
         cell.colSpan = 9;
         cell.className = `ingredient-lookup-message ${state}`;
         cell.textContent = message;
+    }
+
+    function resetResults() {
+        controller?.abort();
+        controller = null;
+        currentPage = 1;
+        currentResult = null;
+        exportButton.disabled = true;
+        range.textContent = '';
+        pages.replaceChildren();
+        showMessage('Chưa có dữ liệu, thực hiện tìm kiếm để hiển thị kết quả');
     }
 
     function addText(row, value, className = '') {
@@ -127,18 +137,13 @@
     form.addEventListener('submit', event => {
         event.preventDefault();
         filters = filterValues();
-        void load();
+        if (Object.values(filters).some(Boolean)) void load();
+        else resetResults();
     });
     document.getElementById('ingredient-lookup-clear').addEventListener('click', () => {
         form.reset();
         filters = {};
-        void load();
-    });
-    document.querySelector('[data-view="ingredient-lookup-panel"]').addEventListener('click', () => {
-        if (!loaded) {
-            loaded = true;
-            void load();
-        }
+        resetResults();
     });
     exportButton.addEventListener('click', async () => {
         if (!currentResult?.total_groups) return;
