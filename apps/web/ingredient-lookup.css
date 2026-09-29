@@ -64,6 +64,7 @@
 
 #data-tab > .ingredient-lookup-panel.active {
   box-sizing: border-box;
+  align-self: start;
   gap: 14px;
   height: auto !important;
   min-height: 0;
