@@ -7,6 +7,7 @@
     <meta name="referrer" content="strict-origin-when-cross-origin">
     <title>BIDFinder - Hệ thống quản lý dữ liệu đấu thầu y tế</title>
     <link rel="stylesheet" href="style.css?v=guide-flow-20260926">
+    <link rel="stylesheet" href="ingredient-lookup.css?v=1">
     <link rel="stylesheet" href="auth.css?v=search-login-notice-20260926">
     <script src="https://unpkg.com/feather-icons"></script>
 </head>
@@ -172,6 +173,11 @@
                                     <span class="scope-icon" aria-hidden="true"><i data-feather="bar-chart-2"></i></span>
                                     <span class="scope-text">Dashboard</span>
                                     <span class="dashboard-status-indicator" aria-hidden="true"></span>
+                                </button>
+                                <button class="scope-btn result-table-tab ingredient-lookup-tab" type="button" data-view="ingredient-lookup-panel" aria-selected="false" role="tab" title="Tra cứu mã hoạt chất">
+                                    <span class="tab-plate" aria-hidden="true"></span>
+                                    <span class="scope-icon" aria-hidden="true"><i data-feather="search"></i></span>
+                                    <span class="scope-text">Tra cứu mã hoạt chất</span>
                                 </button>
                             </div>
                         </div>
@@ -484,6 +490,42 @@
                                         </table>
                                     </div>
                                 </article>
+                            </div>
+                        </div>
+                    </section>
+                    <section class="result-panel ingredient-lookup-panel" id="ingredient-lookup-panel" aria-labelledby="ingredient-lookup-title">
+                        <header class="ingredient-lookup-header">
+                            <span class="ingredient-lookup-icon" aria-hidden="true"><i data-feather="link-2"></i></span>
+                            <div>
+                                <h2 id="ingredient-lookup-title">Tra cứu mã hoạt chất</h2>
+                                <p>Dữ liệu được thu thập từ eLMIS (<a href="https://quanlythuoc.vss.gov.vn/kqdt" target="_blank" rel="noopener noreferrer">https://quanlythuoc.vss.gov.vn/kqdt</a>) - Cổng thông tin thuốc trúng thầu do Bảo hiểm Xã hội Việt Nam quản lý.</p>
+                            </div>
+                        </header>
+                        <form class="ingredient-lookup-filters" id="ingredient-lookup-form">
+                            <label>Số đăng ký<input name="registration" type="text" maxlength="120" placeholder="Ví dụ: VN-12345-20"></label>
+                            <label>Tên thuốc<input name="drug" type="text" maxlength="120" placeholder="Ví dụ: Seduxen"></label>
+                            <label>Tên hoạt chất<input name="ingredient" type="text" maxlength="120" placeholder="Ví dụ: Diazepam"></label>
+                            <label>Đường dùng<input name="route" type="text" maxlength="120" placeholder="Ví dụ: Uống"></label>
+                            <label>Năm công bố<input name="year" type="text" maxlength="20" placeholder="Ví dụ: 2020"></label>
+                            <div class="ingredient-lookup-actions">
+                                <button class="ingredient-lookup-search" type="submit"><i data-feather="search" aria-hidden="true"></i>Tra cứu</button>
+                                <button id="ingredient-lookup-clear" type="button"><i data-feather="rotate-ccw" aria-hidden="true"></i>Xóa điều kiện</button>
+                            </div>
+                        </form>
+                        <div class="ingredient-lookup-results">
+                            <div class="ingredient-lookup-results-head">
+                                <h3><i data-feather="grid" aria-hidden="true"></i>Kết quả tra cứu</h3>
+                                <button id="ingredient-lookup-export" type="button" disabled><i data-feather="download" aria-hidden="true"></i>Xuất Excel</button>
+                            </div>
+                            <div class="ingredient-lookup-table-wrap">
+                                <table aria-label="Kết quả tra cứu mã hoạt chất">
+                                    <thead><tr><th>#</th><th>Mã hoạt chất</th><th>Tên hoạt chất</th><th>Tên thuốc</th><th>Số đăng ký</th><th>Đường dùng</th><th>Năm công bố</th><th>Số lần xuất hiện ↓</th><th>Tỷ lệ (%)</th></tr></thead>
+                                    <tbody id="ingredient-lookup-body"></tbody>
+                                </table>
+                            </div>
+                            <div class="ingredient-lookup-footer">
+                                <span id="ingredient-lookup-range"></span>
+                                <nav id="ingredient-lookup-pages" aria-label="Phân trang tra cứu mã hoạt chất"></nav>
                             </div>
                         </div>
                     </section>
@@ -1227,6 +1269,7 @@
     <script src="auth.js?v=search-login-notice-20260926"></script>
     <script src="typesense-search-form.js?v=dashboard-context-labels-20260925"></script>
 <script src="script.js?v=guide-flow-20260926"></script>
+    <script src="ingredient-lookup.js?v=1"></script>
     <script src="ai-search-chat.js"></script>
     <script>
         feather.replace();

@@ -22,11 +22,12 @@ from urllib.parse import quote, urlsplit
 from urllib.request import Request as URLRequest, urlopen
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from ingredient_lookup import lookup_page
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=False)
@@ -3062,6 +3063,29 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.get("/api/ingredient-lookup")
+async def ingredient_lookup(
+    registration: str = Query("", max_length=120),
+    drug: str = Query("", max_length=120),
+    ingredient: str = Query("", max_length=120),
+    route: str = Query("", max_length=120),
+    year: str = Query("", max_length=20),
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=1000),
+):
+    if not DATABASE_URL:
+        raise HTTPException(503, "Dữ liệu eLMIS chưa được cấu hình.")
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            return await lookup_page(conn, {
+                "registration": registration, "drug": drug, "ingredient": ingredient,
+                "route": route, "year": year,
+            }, page, limit)
+    except asyncpg.UndefinedTableError:
+        raise HTTPException(503, "Dữ liệu eLMIS chưa được nạp.") from None
 
 
 @app.exception_handler(AIUsageStorageError)

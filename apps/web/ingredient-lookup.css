@@ -1,0 +1,196 @@
+.result-table-tab.ingredient-lookup-tab.scope-btn {
+  width: 205px;
+  min-width: 205px;
+  max-width: 205px;
+  flex-basis: 205px;
+  margin-left: 12px;
+  color: #145a9e;
+}
+
+#data-tab > .ingredient-lookup-panel.active {
+  box-sizing: border-box;
+  gap: 14px;
+  height: auto;
+  min-height: calc(100dvh - 140px);
+  overflow: visible;
+  padding: 16px;
+  background: var(--color-surface);
+}
+
+#data-tab:has(.ingredient-lookup-panel.active) > .legacy-pagination { display: none; }
+
+.ingredient-lookup-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+.ingredient-lookup-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: #eff5fb;
+  color: #0872d9;
+}
+.ingredient-lookup-header h2 {
+  margin: 0 0 4px;
+  color: #0c3266;
+  font-size: 24px;
+  line-height: 1.2;
+}
+.ingredient-lookup-header p { margin: 0; color: var(--color-text-secondary); font-size: 13px; }
+.ingredient-lookup-header a { color: #176bbb; }
+
+.ingredient-lookup-filters,
+.ingredient-lookup-results {
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+}
+.ingredient-lookup-filters {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px 14px;
+  padding: 16px;
+}
+.ingredient-lookup-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  color: #173d6f;
+  font-size: 13px;
+  font-weight: 600;
+}
+.ingredient-lookup-filters input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  padding: 0 11px;
+  border: 1px solid #cbd9e7;
+  border-radius: 6px;
+  background: #fff;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-weight: 400;
+}
+.ingredient-lookup-filters input::placeholder { color: #7e9abc; }
+.ingredient-lookup-filters input:focus-visible,
+.ingredient-lookup-panel button:focus-visible { outline: 2px solid #1680e3; outline-offset: 2px; }
+.ingredient-lookup-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.ingredient-lookup-panel button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid #cbd9e7;
+  border-radius: 6px;
+  background: #fff;
+  color: #125b9f;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ingredient-lookup-panel button:disabled { opacity: .5; cursor: not-allowed; }
+.ingredient-lookup-panel .ingredient-lookup-search {
+  min-width: 116px;
+  border-color: #0d6ed2;
+  background: #0d6ed2;
+  color: #fff;
+}
+.ingredient-lookup-panel button svg { width: 15px; height: 15px; }
+.ingredient-lookup-results { min-width: 0; overflow: hidden; }
+.ingredient-lookup-results-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 50px;
+  padding: 0 14px;
+}
+.ingredient-lookup-results-head h3 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  color: #0c3266;
+  font-size: 18px;
+}
+.ingredient-lookup-results-head h3 svg { width: 20px; height: 20px; color: #0872d9; }
+.ingredient-lookup-table-wrap { overflow-x: auto; }
+.ingredient-lookup-results table {
+  width: 100%;
+  min-width: 1030px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  color: #203e64;
+  font-size: 12.5px;
+}
+.ingredient-lookup-results th,
+.ingredient-lookup-results td {
+  box-sizing: border-box;
+  height: 36px;
+  padding: 6px 10px;
+  border: 1px solid #e1e9f0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.ingredient-lookup-results th { height: 38px; background: #f1f6fb; color: #315276; font-weight: 600; }
+.ingredient-lookup-results th:nth-child(1) { width: 4%; }
+.ingredient-lookup-results th:nth-child(2) { width: 10%; }
+.ingredient-lookup-results th:nth-child(3) { width: 13%; }
+.ingredient-lookup-results th:nth-child(4) { width: 13%; }
+.ingredient-lookup-results th:nth-child(5) { width: 13%; }
+.ingredient-lookup-results th:nth-child(6) { width: 11%; }
+.ingredient-lookup-results th:nth-child(7) { width: 9%; }
+.ingredient-lookup-results th:nth-child(8) { width: 20%; }
+.ingredient-lookup-results th:nth-child(9) { width: 7%; }
+.ingredient-lookup-results .ingredient-lookup-rank,
+.ingredient-lookup-results th:first-child { text-align: center; }
+.ingredient-lookup-results .ingredient-lookup-code { color: #0872d9; }
+.ingredient-lookup-results .ingredient-lookup-percent,
+.ingredient-lookup-results th:last-child { text-align: right; }
+.ingredient-lookup-count-inner { display: flex; align-items: center; gap: 8px; }
+.ingredient-lookup-count strong { flex: 0 0 52px; text-align: right; font-weight: 600; color: #123b72; }
+.ingredient-lookup-track { display: block; flex: 1; height: 15px; border-radius: 4px; background: #edf2f7; overflow: hidden; }
+.ingredient-lookup-fill { display: block; height: 100%; border-radius: 4px; background: #77b3f5; }
+.ingredient-lookup-message { height: 360px !important; text-align: center !important; color: var(--color-text-secondary); }
+.ingredient-lookup-message.error { color: var(--color-error); }
+.ingredient-lookup-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 50px;
+  padding: 6px 12px;
+  color: #5d7595;
+  font-size: 12px;
+}
+.ingredient-lookup-footer nav { display: flex; align-items: center; gap: 4px; }
+.ingredient-lookup-footer button { min-width: 30px; min-height: 30px; padding: 0 7px; }
+.ingredient-lookup-footer button.active { background: #e6f0fd; color: #0756b2; font-weight: 700; }
+
+@media (max-width: 1100px) {
+  .ingredient-lookup-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 700px) {
+  #data-tab > .ingredient-lookup-panel.active { padding: 12px; }
+  .ingredient-lookup-header h2 { font-size: 19px; }
+  .ingredient-lookup-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ingredient-lookup-footer { align-items: flex-start; flex-direction: column; }
+}
+@media (max-width: 440px) {
+  .ingredient-lookup-filters { grid-template-columns: 1fr; }
+}
