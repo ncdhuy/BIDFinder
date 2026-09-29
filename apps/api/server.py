@@ -3074,12 +3074,13 @@ async def ingredient_lookup(
     year: str = Query("", max_length=20),
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=250),
+    include_totals: bool = Query(True),
 ):
     try:
         return await asyncio.to_thread(lookup_page, _typesense_json, {
             "registration": registration, "drug": drug, "ingredient": ingredient,
             "route": route, "year": year,
-        }, page, limit)
+        }, page, limit, include_totals)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     except (HTTPError, URLError, TimeoutError, OSError, RuntimeError) as exc:

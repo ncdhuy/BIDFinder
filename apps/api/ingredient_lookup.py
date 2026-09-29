@@ -66,9 +66,12 @@ def lookup_filter(filters: dict[str, str]) -> str:
     return " && ".join(clauses)
 
 
-def lookup_page(request_json, filters: dict[str, str], page: int, limit: int) -> dict:
+def lookup_page(request_json, filters: dict[str, str], page: int, limit: int,
+                include_totals: bool = True) -> dict:
     params = {"q": "*", "query_by": "ma", "page": page, "per_page": limit,
-              "sort_by": "occurrences:desc,sort_order:asc", "facet_by": "occurrences"}
+              "sort_by": "occurrences:desc,sort_order:asc"}
+    if include_totals:
+        params.update(facet_by="occurrences", facet_strategy="exhaustive")
     if condition := lookup_filter(filters):
         params["filter_by"] = condition
     result = request_json(f"/collections/{COLLECTION_ALIAS}/documents/search?{urlencode(params)}")

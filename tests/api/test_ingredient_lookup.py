@@ -43,6 +43,9 @@ class IngredientLookupTest(unittest.TestCase):
         self.assertEqual((result["total_groups"], result["total_records"], result["max_count"]), (2, 4, 3))
         self.assertEqual(result["rows"][0]["ma"], "40.048")
         self.assertIn("sort_by=occurrences%3Adesc%2Csort_order%3Aasc", paths[0])
+        self.assertIn("facet_strategy=exhaustive", paths[0])
+        lookup_page(request, {}, 2, 250, include_totals=False)
+        self.assertNotIn("facet_by", paths[-1])
 
     def test_import_publishes_only_after_complete_batches(self):
         class Client:

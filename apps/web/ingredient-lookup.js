@@ -154,7 +154,7 @@
             const batchSize = 250;
             const batches = Math.ceil(groupTotal / batchSize);
             for (let page = 1; page <= batches; page++) {
-                const params = new URLSearchParams({ ...snapshot, page: String(page), limit: String(batchSize) });
+                const params = new URLSearchParams({ ...snapshot, page: String(page), limit: String(batchSize), include_totals: 'false' });
                 const response = await fetch(`${window.API_BASE_URL}/api/ingredient-lookup?${params}`);
                 if (!response.ok) throw new Error('Không xuất được dữ liệu tra cứu.');
                 rows.push(...(await response.json()).rows);
