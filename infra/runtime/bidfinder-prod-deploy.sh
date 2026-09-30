@@ -118,13 +118,14 @@ render_units() {
   for template in "$release"/infra/systemd/*.in; do
     target="$unit_dir/$(basename "$template" .in)"
     tmp="$(mktemp "$target.XXXXXX")"
-    sed -e "s|@BIDFINDER_REPO@|$current_link|g" -e "s|@BIDFINDER_VENV@|$venv_dir|g" "$template" > "$tmp"
+    sed -e "s|@BIDFINDER_REPO@|$current_link|g" -e "s|@BIDFINDER_VSS_REPO@|$repo_root|g" -e "s|@BIDFINDER_VENV@|$venv_dir|g" "$template" > "$tmp"
     chmod 600 "$tmp"
     mv -f -- "$tmp" "$target"
   done
   systemctl --user daemon-reload
   systemctl --user enable bidfinder-typesense.service bidfinder-api.service \
     bidfinder-incremental.timer bidfinder-snapshot.timer bidfinder-log-prune.timer >/dev/null
+  systemctl --user enable --now bidfinder-vss.timer >/dev/null
 }
 
 switch_release() {

@@ -1,0 +1,15 @@
+[Unit]
+Description=BIDFinder eLMIS XML crawl and Typesense refresh
+Wants=network-online.target bidfinder-typesense.service
+After=network-online.target bidfinder-typesense.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%h/.config/bidfinder/typesense.env
+WorkingDirectory=@BIDFINDER_VSS_REPO@
+ExecStart=@BIDFINDER_VENV@/bin/python @BIDFINDER_VSS_REPO@/tools/update_vss_ingredients.py --data-root @BIDFINDER_VSS_REPO@/crawler_engine/vss_data
+TimeoutStartSec=6h
+Nice=15
+IOSchedulingClass=idle
+StandardOutput=journal
+StandardError=journal

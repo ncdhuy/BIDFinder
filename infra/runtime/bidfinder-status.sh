@@ -39,7 +39,7 @@ for unit in bidfinder-typesense.service bidfinder-api.service; do
     fail "$unit" inactive
   fi
 done
-for timer in bidfinder-incremental.timer bidfinder-snapshot.timer bidfinder-log-prune.timer; do
+for timer in bidfinder-incremental.timer bidfinder-vss.timer bidfinder-snapshot.timer bidfinder-log-prune.timer; do
   if [[ "$(systemctl --user is-enabled "$timer" 2>/dev/null || true)" == enabled ]]; then
     pass "$timer" enabled
   else

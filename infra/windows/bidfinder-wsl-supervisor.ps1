@@ -22,7 +22,7 @@ function Invoke-Wsl([string]$Command) {
 function Ensure-Services {
     $script = @'
 set -u
-systemctl --user start bidfinder-typesense.service bidfinder-api.service bidfinder-incremental.timer bidfinder-snapshot.timer bidfinder-log-prune.timer 2>&1 || true
+systemctl --user start bidfinder-typesense.service bidfinder-api.service bidfinder-incremental.timer bidfinder-vss.timer bidfinder-snapshot.timer bidfinder-log-prune.timer 2>&1 || true
 if systemctl --user is-enabled --quiet bidfinder-ingress.service 2>/dev/null; then
   systemctl --user start bidfinder-ingress.service 2>&1 || true
 fi

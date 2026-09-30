@@ -128,7 +128,7 @@ install_units() {
 
   for template in "$repo_root"/infra/systemd/*.in; do
     target="$unit_dir/$(basename "$template" .in)"
-    rendered="$(sed -e "s|@BIDFINDER_REPO@|$production_repo|g" -e "s|@BIDFINDER_VENV@|$venv_dir|g" "$template")"
+    rendered="$(sed -e "s|@BIDFINDER_REPO@|$production_repo|g" -e "s|@BIDFINDER_VSS_REPO@|$repo_root|g" -e "s|@BIDFINDER_VENV@|$venv_dir|g" "$template")"
     printf '%s\n' "$rendered" > "$target"
     chmod 600 "$target"
   done
@@ -136,7 +136,7 @@ install_units() {
   systemctl --user daemon-reload
   systemctl --user enable bidfinder-typesense.service bidfinder-api.service
   systemctl --user enable --now bidfinder-incremental.timer \
-    bidfinder-incremental-current-day.timer bidfinder-snapshot.timer \
+    bidfinder-incremental-current-day.timer bidfinder-vss.timer bidfinder-snapshot.timer \
     bidfinder-log-prune.timer
   if command -v loginctl >/dev/null 2>&1; then
     loginctl enable-linger "$USER" 2>/dev/null || echo "NOTE: enable lingering manually with: sudo loginctl enable-linger $USER" >&2

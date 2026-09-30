@@ -1,12 +1,11 @@
-"""Build the eLMIS Typesense lookup collection from local XML or CSV data.
+"""Build the eLMIS Typesense lookup collection from local XML data.
 
-Example: python tools/import_vss_ingredients.py --csv crawler_engine/vss_data/combined.csv
+Example: python tools/import_vss_ingredients.py --raw-dir crawler_engine/vss_data/downloads
 Use --apply to publish a new Typesense collection after the full input is grouped.
 """
 
 import argparse
 from collections import Counter
-import csv
 from itertools import islice
 import os
 from pathlib import Path
@@ -26,18 +25,6 @@ from crawler_engine.msc.typesense_client import TypesenseClient
 load_dotenv(ROOT / "apps" / "api" / ".env", override=False)
 
 SOURCE_FIELDS = {"ma", "hoatchat", "ten", "sodk", "duongdung", "congbo"}
-
-
-def aggregate_csv(path: Path) -> Counter:
-    counts = Counter()
-    with path.open(encoding="utf-8-sig", newline="") as source:
-        reader = csv.DictReader(source)
-        missing = SOURCE_FIELDS - set(reader.fieldnames or ())
-        if missing:
-            raise ValueError(f"Missing CSV columns: {', '.join(sorted(missing))}")
-        for row in reader:
-            counts[source_key(row)] += 1
-    return counts
 
 
 def aggregate_xml(raw_dir: Path) -> Counter:
@@ -81,23 +68,25 @@ def import_counts(client: TypesenseClient, counts: Counter) -> str:
     return name
 
 
+def typesense_client_from_env() -> TypesenseClient:
+    config = TypesenseConfig(
+        host=os.getenv("BIDFINDER_TYPESENSE_HOST", os.getenv("TYPESENSE_HOST", "127.0.0.1")),
+        port=int(os.getenv("BIDFINDER_TYPESENSE_PORT", os.getenv("TYPESENSE_PORT", "8108"))),
+        protocol=os.getenv("BIDFINDER_TYPESENSE_PROTOCOL", os.getenv("TYPESENSE_PROTOCOL", "http")),
+        api_key=os.getenv("BIDFINDER_TYPESENSE_API_KEY", os.getenv("TYPESENSE_API_KEY", "")),
+    )
+    return TypesenseClient(config)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument("--csv", type=Path, help="Combined eLMIS CSV inside BIDFinder")
-    source.add_argument("--raw-dir", type=Path, help="Directory of downloaded eLMIS XML files")
+    parser.add_argument("--raw-dir", required=True, type=Path, help="Directory of downloaded eLMIS XML files")
     parser.add_argument("--apply", action="store_true", help="Publish a new local Typesense collection")
     args = parser.parse_args()
-    counts = aggregate_csv(args.csv) if args.csv else aggregate_xml(args.raw_dir)
+    counts = aggregate_xml(args.raw_dir)
     print(f"{sum(counts.values())} source rows; {len(counts)} grouped rows")
     if args.apply:
-        config = TypesenseConfig(
-            host=os.getenv("BIDFINDER_TYPESENSE_HOST", os.getenv("TYPESENSE_HOST", "127.0.0.1")),
-            port=int(os.getenv("BIDFINDER_TYPESENSE_PORT", os.getenv("TYPESENSE_PORT", "8108"))),
-            protocol=os.getenv("BIDFINDER_TYPESENSE_PROTOCOL", os.getenv("TYPESENSE_PROTOCOL", "http")),
-            api_key=os.getenv("BIDFINDER_TYPESENSE_API_KEY", os.getenv("TYPESENSE_API_KEY", "")),
-        )
-        name = import_counts(TypesenseClient(config), counts)
+        name = import_counts(typesense_client_from_env(), counts)
         print(f"Published {name} as {COLLECTION_ALIAS}")
 
 

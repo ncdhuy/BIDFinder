@@ -1,4 +1,5 @@
 from collections import Counter
+from datetime import date
 from pathlib import Path
 import sys
 import unittest
@@ -10,6 +11,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 from ingredient_lookup import IngredientLookupStore, count_document, lookup_page, lookup_suggestions, publication_year, source_key
 from import_vss_ingredients import aggregate_xml, import_counts
+from update_vss_ingredients import crawl_window, prune_old_collections, validate_crawl
 from crawler_engine.vss.download_vss_data import ManifestStore
 
 
@@ -88,6 +90,25 @@ class IngredientLookupTest(unittest.TestCase):
             Path(manifest.rows["2025-01-01"]["raw_path"]),
             raw_dir / "2025" / "01" / "vss_export_20250101.xml",
         )
+        validate_crawl(manifest, date(2025, 1, 1), date(2025, 1, 1))
+        with self.assertRaisesRegex(RuntimeError, "2025-01-02"):
+            validate_crawl(manifest, date(2025, 1, 1), date(2025, 1, 2))
+
+    def test_daily_window_catches_up_and_collection_cleanup_keeps_rollback(self):
+        self.assertEqual(
+            crawl_window(date(2026, 9, 30), date(2026, 9, 20), 3),
+            (date(2026, 9, 21), date(2026, 9, 28)),
+        )
+        class Client:
+            def __init__(self): self.deleted = []
+            def get_alias(self, alias): return {"collection_name": f"{alias}_d"}
+            def list_collections(self):
+                return [{"name": f"vss_ingredient_lookup_{letter}", "created_at": index}
+                        for index, letter in enumerate("abcd", 1)]
+            def delete_collection(self, name): self.deleted.append(name)
+        client = Client()
+        prune_old_collections(client)
+        self.assertEqual(client.deleted, ["vss_ingredient_lookup_a"])
 
 
 if __name__ == "__main__":

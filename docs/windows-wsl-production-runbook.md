@@ -61,6 +61,8 @@ bidfinder-incremental-current-day.service (oneshot)
 bidfinder-incremental-current-day.timer  Mon–Fri every 30m, 07:00–16:30; Sat–Sun 08:00 Asia/Ho_Chi_Minh
 bidfinder-incremental.service (oneshot reconciliation)
 bidfinder-incremental.timer  daily 17:00 Asia/Ho_Chi_Minh
+bidfinder-vss.service (oneshot eLMIS XML crawl and Typesense refresh)
+bidfinder-vss.timer         daily 17:00 Asia/Ho_Chi_Minh
 bidfinder-snapshot.service (oneshot)
 bidfinder-snapshot.timer     Sunday 05:30 Asia/Ho_Chi_Minh
 bidfinder-log-prune.timer    daily 03:30
