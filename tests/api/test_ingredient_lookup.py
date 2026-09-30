@@ -83,6 +83,28 @@ class IngredientLookupTest(unittest.TestCase):
             import_counts(rejecting, Counter({("40.048", None, None, None, None, None, "1"): 1}))
         self.assertNotIn("alias", [call[0] for call in rejecting.calls])
 
+    def test_sorting_applies_before_pagination_and_default_restores_count_order(self):
+        store = IngredientLookupStore()
+        documents = [
+            {"ma": "40.9", "hoatchat": "Z", "ten": "Sort", "sodk": "B", "duongdung": "Uống", "nam_congbo": "2023", "loai": "1", "occurrences": 5, "sort_order": 2},
+            {"ma": "05C.8", "hoatchat": "A", "ten": "Sort", "sodk": "A", "duongdung": "Uống", "nam_congbo": "", "loai": "2", "occurrences": 2, "sort_order": 0},
+            {"ma": "40P.7", "hoatchat": "M", "ten": "Sort", "sodk": "C", "duongdung": "Tiêm", "nam_congbo": "2022", "loai": "4", "occurrences": 3, "sort_order": 1},
+        ]
+        def request(path):
+            return {"collection_name": "sample"} if path.startswith("/aliases/") else {"num_documents": len(documents)}
+        def export(_):
+            yield from documents
+        def codes(field=None, order="asc"):
+            return [lookup_page(store, request, export, {"drug": "Sort"}, page, 1,
+                                sort_by=field, sort_order=order)["rows"][0]["ma"] for page in (1, 2, 3)]
+
+        self.assertEqual(codes(), ["40.9", "40P.7", "05C.8"])
+        self.assertEqual(codes("ma"), ["05C.8", "40.9", "40P.7"])
+        self.assertEqual(codes("ma", "desc"), ["40P.7", "40.9", "05C.8"])
+        self.assertEqual(codes("occurrences"), ["05C.8", "40P.7", "40.9"])
+        self.assertEqual(codes("percentage", "desc"), codes())
+        self.assertEqual(codes("nam_congbo"), ["40P.7", "40.9", "05C.8"])
+
     def test_xml_import_and_relocated_manifest(self):
         fixture = ROOT / "tests" / "fixtures" / "vss"
         raw_dir = fixture / "downloads"

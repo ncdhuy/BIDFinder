@@ -14,6 +14,8 @@ FILTER_COLUMNS = {
     "route": "duongdung",
     "year": "nam_congbo",
 }
+SORT_COLUMNS = {field: field for field in FIELDS if field != "loai"}
+SORT_COLUMNS.update({"occurrences": "occurrences", "percentage": "occurrences"})
 
 
 def publication_year(value: str | None) -> str | None:
@@ -67,6 +69,7 @@ class IngredientLookupStore:
         self._collection = None
         self._rows = ()
         self._matches = {}
+        self._orders = {}
 
     def _load(self, request_json, export_documents) -> None:
         alias = request_json(f"/aliases/{COLLECTION_ALIAS}")
@@ -86,8 +89,14 @@ class IngredientLookupStore:
         self._rows = tuple((display, folded) for display, folded, _ in rows)
         self._collection = collection
         self._matches.clear()
+        self._orders.clear()
 
-    def matching(self, request_json, export_documents, filters: dict[str, str]):
+    def matching(self, request_json, export_documents, filters: dict[str, str],
+                 sort_by: str | None = None, sort_order: str = "asc"):
+        if sort_by is not None and sort_by not in SORT_COLUMNS:
+            raise ValueError("Trường sắp xếp không hợp lệ.")
+        if sort_order not in {"asc", "desc"}:
+            raise ValueError("Thứ tự sắp xếp không hợp lệ.")
         needles = tuple(_fold(filters.get(name, "")) for name in FILTER_COLUMNS)
         with self._lock:
             self._load(request_json, export_documents)
@@ -99,12 +108,31 @@ class IngredientLookupStore:
                 if len(self._matches) >= 8:
                     self._matches.pop(next(iter(self._matches)))
                 self._matches[needles] = (matched, total, maximum)
-            return self._matches[needles]
+            matched, total, maximum = self._matches[needles]
+            if sort_by is None:
+                return matched, total, maximum
+            order_key = (needles, sort_by, sort_order)
+            if order_key not in self._orders:
+                field = SORT_COLUMNS[sort_by]
+                if field == "occurrences":
+                    ordered = sorted(matched, key=lambda row: row[0]["occurrences"],
+                                     reverse=sort_order == "desc")
+                else:
+                    index = FIELDS.index(field)
+                    present = [row for row in matched if row[1][index]]
+                    missing = [row for row in matched if not row[1][index]]
+                    ordered = sorted(present, key=lambda row: row[1][index],
+                                     reverse=sort_order == "desc") + missing
+                if len(self._orders) >= 8:
+                    self._orders.pop(next(iter(self._orders)))
+                self._orders[order_key] = tuple(ordered)
+            return self._orders[order_key], total, maximum
 
 
 def lookup_page(store: IngredientLookupStore, request_json, export_documents,
-                filters: dict[str, str], page: int, limit: int, include_totals: bool = True) -> dict:
-    matched, total, maximum = store.matching(request_json, export_documents, filters)
+                 filters: dict[str, str], page: int, limit: int, include_totals: bool = True,
+                 sort_by: str | None = None, sort_order: str = "asc") -> dict:
+    matched, total, maximum = store.matching(request_json, export_documents, filters, sort_by, sort_order)
     start = (page - 1) * limit
     return {
         "rows": [row[0] for row in matched[start:start + limit]],

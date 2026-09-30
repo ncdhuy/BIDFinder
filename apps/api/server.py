@@ -3093,12 +3093,14 @@ async def ingredient_lookup(
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=250),
     include_totals: bool = Query(True),
+    sort_by: Optional[Literal["ma", "hoatchat", "ten", "sodk", "duongdung", "nam_congbo", "occurrences", "percentage"]] = Query(None),
+    sort_order: Literal["asc", "desc"] = Query("asc"),
 ):
     try:
         return await asyncio.to_thread(lookup_page, ingredient_lookup_store, _typesense_json, _ingredient_documents, {
             "registration": registration, "drug": drug, "ingredient": ingredient,
             "route": route, "year": year,
-        }, page, limit, include_totals)
+        }, page, limit, include_totals, sort_by, sort_order)
     except (HTTPError, URLError, TimeoutError, OSError, RuntimeError, ValueError, KeyError) as exc:
         logger.warning("eLMIS Typesense lookup unavailable: %s", type(exc).__name__)
         raise HTTPException(503, "Dữ liệu eLMIS trên Typesense chưa sẵn sàng.") from exc

@@ -10,7 +10,10 @@
     const pageSize = 10;
     const headers = ['Mã hoạt chất', 'Tên hoạt chất', 'Tên thuốc', 'Số đăng ký', 'Đường dùng', 'Năm công bố', 'Số lần xuất hiện', 'Tỷ lệ (%)'];
     const fields = ['ma', 'hoatchat', 'ten', 'sodk', 'duongdung', 'nam_congbo'];
+    const sortableHeaders = [...document.querySelectorAll('.ingredient-lookup-results th[data-sort]')];
     let filters = {};
+    let sortBy = null;
+    let sortOrder = 'asc';
     let currentPage = 1;
     let currentResult = null;
     let controller = null;
@@ -24,6 +27,47 @@
     function filterValues() {
         return Object.fromEntries([...new FormData(form)].map(([key, value]) => [key, String(value).trim()]));
     }
+
+    function sortParams() {
+        return sortBy ? { sort_by: sortBy, sort_order: sortOrder } : {};
+    }
+
+    function updateSortHeaders() {
+        sortableHeaders.forEach(header => {
+            const selected = header.dataset.sort === sortBy;
+            const isDefault = !sortBy && header.dataset.sort === 'occurrences';
+            header.classList.toggle('is-sorted', selected);
+            header.textContent = `${header.dataset.label}${selected ? (sortOrder === 'asc' ? ' ↑' : ' ↓') : (isDefault ? ' ↓' : '')}`;
+            header.setAttribute('aria-sort', selected ? (sortOrder === 'asc' ? 'ascending' : 'descending') : (isDefault ? 'descending' : 'none'));
+            header.title = selected ? (sortOrder === 'asc' ? 'Bấm để sắp xếp giảm dần' : 'Bấm để trở về thứ tự mặc định') : 'Bấm để sắp xếp tăng dần';
+        });
+    }
+
+    sortableHeaders.forEach(header => {
+        header.dataset.label = header.textContent.replace(/\s*[↑↓]$/, '').trim();
+        header.tabIndex = 0;
+        const toggle = () => {
+            if (sortBy !== header.dataset.sort) {
+                sortBy = header.dataset.sort;
+                sortOrder = 'asc';
+            } else if (sortOrder === 'asc') {
+                sortOrder = 'desc';
+            } else {
+                sortBy = null;
+                sortOrder = 'asc';
+            }
+            updateSortHeaders();
+            if (Object.values(filters).some(Boolean)) void load(1);
+        };
+        header.addEventListener('click', toggle);
+        header.addEventListener('keydown', event => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                toggle();
+            }
+        });
+    });
+    updateSortHeaders();
 
     function closeSuggestions() {
         clearTimeout(suggestionTimer);
@@ -128,7 +172,7 @@
     });
 
     async function request(page, limit = pageSize, signal) {
-        const params = new URLSearchParams({ ...filters, page: String(page), limit: String(limit) });
+        const params = new URLSearchParams({ ...filters, ...sortParams(), page: String(page), limit: String(limit) });
         const response = await fetch(`${window.API_BASE_URL}/api/ingredient-lookup?${params}`, { signal });
         if (!response.ok) {
             let message = 'Không tải được dữ liệu tra cứu.';
@@ -152,6 +196,9 @@
         controller = null;
         currentPage = 1;
         currentResult = null;
+        sortBy = null;
+        sortOrder = 'asc';
+        updateSortHeaders();
         exportButton.disabled = true;
         range.textContent = '';
         pages.replaceChildren();
@@ -262,7 +309,7 @@
             return;
         }
         exportButton.disabled = true;
-        const snapshot = { ...filters };
+        const snapshot = { ...filters, ...sortParams() };
         const { total_groups: groupTotal, total_records: recordTotal } = currentResult;
         const rows = [];
         try {

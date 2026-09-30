@@ -7,7 +7,7 @@
     <meta name="referrer" content="strict-origin-when-cross-origin">
     <title>BIDFinder - Hệ thống quản lý dữ liệu đấu thầu y tế</title>
     <link rel="stylesheet" href="style.css?v=guide-flow-20260926">
-    <link rel="stylesheet" href="ingredient-lookup.css?v=lookup-height-20260930">
+    <link rel="stylesheet" href="ingredient-lookup.css?v=lookup-sort-tabs-20260930">
     <link rel="stylesheet" href="auth.css?v=search-login-notice-20260926">
     <script src="https://unpkg.com/feather-icons"></script>
 </head>
@@ -519,7 +519,7 @@
                             </div>
                             <div class="ingredient-lookup-table-wrap">
                                 <table aria-label="Kết quả tra cứu mã hoạt chất">
-                                    <thead><tr><th>#</th><th>Mã hoạt chất</th><th>Tên hoạt chất</th><th>Tên thuốc</th><th>Số đăng ký</th><th>Đường dùng</th><th>Năm công bố</th><th>Số lần xuất hiện ↓</th><th>Tỷ lệ (%)</th></tr></thead>
+                                    <thead><tr><th>#</th><th data-sort="ma">Mã hoạt chất</th><th data-sort="hoatchat">Tên hoạt chất</th><th data-sort="ten">Tên thuốc</th><th data-sort="sodk">Số đăng ký</th><th data-sort="duongdung">Đường dùng</th><th data-sort="nam_congbo">Năm công bố</th><th data-sort="occurrences" aria-sort="descending">Số lần xuất hiện ↓</th><th data-sort="percentage">Tỷ lệ (%)</th></tr></thead>
                                     <tbody id="ingredient-lookup-body"><tr><td class="ingredient-lookup-message" colspan="9">Chưa có dữ liệu, thực hiện tìm kiếm để hiển thị kết quả</td></tr></tbody>
                                 </table>
                             </div>
@@ -1269,7 +1269,7 @@
     <script src="auth.js?v=search-login-notice-20260926"></script>
     <script src="typesense-search-form.js?v=dashboard-context-labels-20260925"></script>
 <script src="script.js?v=guide-flow-20260926"></script>
-    <script src="ingredient-lookup.js?v=four-types-plain-20260930"></script>
+    <script src="ingredient-lookup.js?v=lookup-sort-tabs-20260930"></script>
     <script src="ai-search-chat.js"></script>
     <script>
         feather.replace();
