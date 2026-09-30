@@ -202,7 +202,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 50px;
+  min-height: 48px;
   padding: 0 14px;
 }
 .ingredient-lookup-results-head h3 {
@@ -226,7 +226,7 @@
 .ingredient-lookup-results th,
 .ingredient-lookup-results td {
   box-sizing: border-box;
-  height: 36px;
+  height: 35px;
   padding: 6px 10px;
   border: 1px solid #e1e9f0;
   overflow: hidden;
@@ -261,7 +261,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 50px;
+  min-height: 48px;
   padding: 6px 12px;
   color: #5d7595;
   font-size: 12px;
