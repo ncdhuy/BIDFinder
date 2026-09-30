@@ -27,7 +27,19 @@
     let selectedStart = null;
     let selectedEnd = null;
     let selectingCells = false;
+    let copyFeedbackTimer = null;
     const scrollContainer = table.closest('.ingredient-lookup-table-wrap');
+
+    function showCopyFeedback() {
+        clearTimeout(copyFeedbackTimer);
+        document.querySelector('.ingredient-lookup-copy-feedback')?.remove();
+        const feedback = document.createElement('div');
+        feedback.className = 'ingredient-lookup-copy-feedback';
+        feedback.setAttribute('role', 'status');
+        feedback.textContent = 'Đã sao chép';
+        document.body.appendChild(feedback);
+        copyFeedbackTimer = setTimeout(() => feedback.remove(), 1800);
+    }
 
     function clearCopyOutline() {
         scrollContainer.querySelector('.lookup-copy-outline')?.remove();
@@ -139,6 +151,7 @@
         event.preventDefault();
         event.stopPropagation();
         showCopyOutline();
+        showCopyFeedback();
     });
 
     function filterValues() {
