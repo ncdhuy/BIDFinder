@@ -8,10 +8,8 @@
     const countFormat = new Intl.NumberFormat('vi-VN');
     const percentFormat = new Intl.NumberFormat('vi-VN', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
     const pageSize = 10;
-    const headers = ['Mã hoạt chất', 'Loại dữ liệu', 'Tên hoạt chất', 'Tên thuốc', 'Số đăng ký', 'Đường dùng', 'Năm công bố', 'Số lần xuất hiện', 'Tỷ lệ (%)'];
-    const fields = ['ma', 'loai', 'hoatchat', 'ten', 'sodk', 'duongdung', 'nam_congbo'];
-    const categoryNames = { '1': 'Tân dược', '2': 'Chế phẩm y học cổ truyền', '3': 'Vị thuốc y học cổ truyền', '4': 'Thuốc phóng xạ và chất đánh dấu' };
-    const displayValue = (item, field) => field === 'loai' ? (categoryNames[item.loai] || item.loai || '') : item[field];
+    const headers = ['Mã hoạt chất', 'Tên hoạt chất', 'Tên thuốc', 'Số đăng ký', 'Đường dùng', 'Năm công bố', 'Số lần xuất hiện', 'Tỷ lệ (%)'];
+    const fields = ['ma', 'hoatchat', 'ten', 'sodk', 'duongdung', 'nam_congbo'];
     let filters = {};
     let currentPage = 1;
     let currentResult = null;
@@ -144,7 +142,7 @@
         body.replaceChildren();
         const row = body.insertRow();
         const cell = row.insertCell();
-        cell.colSpan = 10;
+        cell.colSpan = 9;
         cell.className = `ingredient-lookup-message ${state}`;
         cell.textContent = message;
     }
@@ -179,7 +177,7 @@
             result.rows.forEach((item, index) => {
                 const row = body.insertRow();
                 addText(row, countFormat.format((currentPage - 1) * pageSize + index + 1), 'ingredient-lookup-rank');
-                fields.forEach((field, fieldIndex) => addText(row, displayValue(item, field), fieldIndex === 0 ? 'ingredient-lookup-code' : ''));
+                fields.forEach((field, fieldIndex) => addText(row, item[field], fieldIndex === 0 ? 'ingredient-lookup-code' : ''));
                 const countCell = row.insertCell();
                 countCell.className = 'ingredient-lookup-count';
                 const countContent = document.createElement('div');
@@ -277,11 +275,11 @@
                 rows.push(...(await response.json()).rows);
             }
             const values = rows.map(item => [
-                ...fields.map(field => displayValue(item, field) ?? ''), item.occurrences,
+                ...fields.map(field => item[field] ?? ''), item.occurrences,
                 recordTotal ? Number((item.occurrences / recordTotal * 100).toFixed(1)) : 0,
             ]);
             const sheet = XLSX.utils.aoa_to_sheet([headers, ...values]);
-            sheet['!cols'] = [12, 22, 30, 30, 20, 18, 14, 20, 14].map(wch => ({ wch }));
+            sheet['!cols'] = [12, 30, 30, 20, 18, 14, 20, 14].map(wch => ({ wch }));
             const workbook = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(workbook, sheet, 'Tra cứu mã hoạt chất');
             XLSX.writeFile(workbook, 'TraCuuMaHoatChat.xlsx');
