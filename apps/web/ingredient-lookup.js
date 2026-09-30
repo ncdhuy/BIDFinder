@@ -2,6 +2,7 @@
     const form = document.getElementById('ingredient-lookup-form');
     if (!form) return;
     const body = document.getElementById('ingredient-lookup-body');
+    const table = body.closest('table');
     const range = document.getElementById('ingredient-lookup-range');
     const pages = document.getElementById('ingredient-lookup-pages');
     const exportButton = document.getElementById('ingredient-lookup-export');
@@ -23,6 +24,74 @@
     let activeSuggestion = -1;
     let activeDropdown = null;
     let suggestionOwner = null;
+    let selectedStart = null;
+    let selectedEnd = null;
+    let selectingCells = false;
+
+    function clearCellSelection() {
+        body.querySelectorAll('.lookup-cell-selected').forEach(cell => cell.classList.remove('lookup-cell-selected'));
+        selectedStart = null;
+        selectedEnd = null;
+    }
+
+    function cellPosition(cell) {
+        return { row: cell.parentElement.sectionRowIndex, column: cell.cellIndex };
+    }
+
+    function selectCellRange() {
+        body.querySelectorAll('.lookup-cell-selected').forEach(cell => cell.classList.remove('lookup-cell-selected'));
+        if (!selectedStart || !selectedEnd) return;
+        const firstRow = Math.min(selectedStart.row, selectedEnd.row);
+        const lastRow = Math.max(selectedStart.row, selectedEnd.row);
+        const firstColumn = Math.min(selectedStart.column, selectedEnd.column);
+        const lastColumn = Math.max(selectedStart.column, selectedEnd.column);
+        for (let row = firstRow; row <= lastRow; row += 1) {
+            for (let column = firstColumn; column <= lastColumn; column += 1) {
+                body.rows[row]?.cells[column]?.classList.add('lookup-cell-selected');
+            }
+        }
+    }
+
+    body.addEventListener('selectstart', event => {
+        if (event.target.closest('td:not(.ingredient-lookup-message)')) event.preventDefault();
+    });
+    body.addEventListener('mousedown', event => {
+        const cell = event.target.closest('td:not(.ingredient-lookup-message)');
+        if (event.button !== 0 || !cell || !body.contains(cell)) return;
+        const position = cellPosition(cell);
+        if (!event.shiftKey || !selectedStart) selectedStart = position;
+        selectedEnd = position;
+        selectingCells = true;
+        selectCellRange();
+        table.focus({ preventScroll: true });
+        event.preventDefault();
+    });
+    body.addEventListener('mouseover', event => {
+        if (!selectingCells) return;
+        const cell = event.target.closest('td:not(.ingredient-lookup-message)');
+        if (!cell || !body.contains(cell)) return;
+        selectedEnd = cellPosition(cell);
+        selectCellRange();
+    });
+    document.addEventListener('mouseup', () => { selectingCells = false; });
+    document.addEventListener('mousedown', event => {
+        if (!body.contains(event.target)) clearCellSelection();
+    });
+    table.tabIndex = 0;
+    table.addEventListener('copy', event => {
+        if (!selectedStart || !selectedEnd || !event.clipboardData) return;
+        const lines = [];
+        for (let row = Math.min(selectedStart.row, selectedEnd.row); row <= Math.max(selectedStart.row, selectedEnd.row); row += 1) {
+            const values = [];
+            for (let column = Math.min(selectedStart.column, selectedEnd.column); column <= Math.max(selectedStart.column, selectedEnd.column); column += 1) {
+                values.push(body.rows[row]?.cells[column]?.textContent?.trim() || '');
+            }
+            lines.push(values.join('\t'));
+        }
+        event.clipboardData.setData('text/plain', lines.join('\n'));
+        event.preventDefault();
+        event.stopPropagation();
+    });
 
     function filterValues() {
         return Object.fromEntries([...new FormData(form)].map(([key, value]) => [key, String(value).trim()]));
@@ -183,6 +252,7 @@
     }
 
     function showMessage(message, state = '') {
+        clearCellSelection();
         body.replaceChildren();
         const row = body.insertRow();
         const cell = row.insertCell();
@@ -216,6 +286,7 @@
 
     function render(result) {
         currentResult = result;
+        clearCellSelection();
         body.replaceChildren();
         exportButton.disabled = !result.total_groups;
         if (!result.total_groups) {

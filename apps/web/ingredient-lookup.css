@@ -31,21 +31,15 @@
   white-space: nowrap;
 }
 
-.result-table-tabs .result-table-tab:not(.active):not(.ingredient-lookup-tab) .tab-plate {
-  background: #e2e6ea;
-}
-.result-table-tabs .result-table-tab:not(.active):not(.ingredient-lookup-tab):hover .tab-plate {
-  background: #f3f5f7;
-}
 .result-table-tabs .result-table-tab.ingredient-lookup-tab:not(.active) {
-  --tab-accent: #155fa9;
-  color: #155fa9;
+  --tab-accent: #315b7c;
+  color: #315b7c;
 }
 .result-table-tabs .result-table-tab.ingredient-lookup-tab:not(.active) .tab-plate {
-  background: #dcecff;
+  background: #e8f0f6;
 }
 .result-table-tabs .result-table-tab.ingredient-lookup-tab:not(.active):hover .tab-plate {
-  background: #cce3ff;
+  background: #f4f8fb;
 }
 
 .result-table-tabs .toolbar-actions {
@@ -256,6 +250,13 @@
 .ingredient-lookup-results th[data-sort]:hover { background: #e6f0fa; }
 .ingredient-lookup-results th[data-sort].is-sorted { color: #0d6ed2; }
 .ingredient-lookup-results th[data-sort]:focus-visible { outline: 2px solid #1680e3; outline-offset: -2px; }
+.ingredient-lookup-results tbody td:not(.ingredient-lookup-message) { cursor: cell; }
+.ingredient-lookup-results tbody td.lookup-cell-selected {
+  background: #dceafa;
+  box-shadow: inset 0 0 0 1px #5d9de0;
+  user-select: none;
+}
+.ingredient-lookup-results table:focus { outline: none; }
 .ingredient-lookup-results th:nth-child(1) { width: 4%; }
 .ingredient-lookup-results th:nth-child(2) { width: 10%; }
 .ingredient-lookup-results th:nth-child(3) { width: 13%; }
