@@ -6,7 +6,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://accounts.google.com https://cdn.jsdelivr.net https://cdn.sheetjs.com https://us-assets.i.posthog.com https://eu-assets.i.posthog.com https://app-assets.i.posthog.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com data:; connect-src 'self' http://127.0.0.1:8002 https://api.bidfinder.vn https://accounts.google.com https://us.i.posthog.com https://eu.i.posthog.com https://app.posthog.com; frame-src https://accounts.google.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self' https://accounts.google.com;">
     <meta name="referrer" content="strict-origin-when-cross-origin">
     <title>BIDFinder - Hệ thống quản lý dữ liệu đấu thầu y tế</title>
-    <link rel="stylesheet" href="style.css?v=guide-flow-20260926">
+    <link rel="stylesheet" href="style.css?v=dashboard-tab-filled-ping-20260929">
     <link rel="stylesheet" href="ingredient-lookup.css?v=lookup-copy-layer-20260930">
     <link rel="stylesheet" href="auth.css?v=search-login-notice-20260926">
     <script src="https://unpkg.com/feather-icons"></script>
@@ -376,7 +376,7 @@
                                 <div class="dashboard-header-context">
                                     <div class="dashboard-context-bar">
                                         <span class="dashboard-context-icon" aria-hidden="true"><i data-feather="filter"></i></span>
-                                        <span class="dashboard-context-label">Bộ lọc đang áp dụng:</span>
+                                        <span class="dashboard-context-label">Từ khóa:</span>
                                         <div class="dashboard-context" id="dashboard-base-context" aria-label="Bộ lọc hiện tại"></div>
                                     </div>
                                 </div>
@@ -502,11 +502,11 @@
                             </div>
                         </header>
                         <form class="ingredient-lookup-filters" id="ingredient-lookup-form">
-                            <label>Số đăng ký<input name="registration" type="text" maxlength="120" placeholder="Ví dụ: VN-12345-20"></label>
-                            <label>Tên thuốc<input name="drug" type="text" maxlength="120" placeholder="Ví dụ: Seduxen"></label>
-                            <label>Tên hoạt chất<input name="ingredient" type="text" maxlength="120" placeholder="Ví dụ: Diazepam"></label>
-                            <label>Đường dùng<input name="route" type="text" maxlength="120" placeholder="Ví dụ: Uống"></label>
-                            <label>Năm công bố<input name="year" type="text" maxlength="20" placeholder="Ví dụ: 2020"></label>
+                            <label>Số đăng ký<input name="registration" type="text" maxlength="120" placeholder="VD: VN-12345-20"></label>
+                            <label>Tên thuốc<input name="drug" type="text" maxlength="120" placeholder="VD: Efferalgan"></label>
+                            <label>Tên hoạt chất<input name="ingredient" type="text" maxlength="120" placeholder="VD: Paracetamol"></label>
+                            <label>Đường dùng<input name="route" type="text" maxlength="120" placeholder="VD: Uống"></label>
+                            <label>Năm công bố<input name="year" type="text" maxlength="20" placeholder="VD: 2026"></label>
                             <div class="ingredient-lookup-actions">
                                 <button class="ingredient-lookup-search" type="submit"><i data-feather="search" aria-hidden="true"></i>Tra cứu</button>
                                 <button id="ingredient-lookup-clear" type="button"><i data-feather="rotate-ccw" aria-hidden="true"></i>Xóa điều kiện</button>
@@ -608,7 +608,7 @@
                             <ul class="auth-feature-list" aria-label="Lợi ích khi dùng BIDFinder">
                                 <li class="auth-feature-item">
                                     <span class="auth-feature-icon" aria-hidden="true"></span>
-                                    <span>Miễn phí cho người dùng cá nhân</span>
+                                    <span>Miễn phí</span>
                                 </li>
                                 <li class="auth-feature-item">
                                     <span class="auth-feature-icon" aria-hidden="true"></span>
@@ -1267,8 +1267,8 @@
     <script src="analytics.js"></script>
     <script src="config.js"></script>
     <script src="auth.js?v=search-login-notice-20260926"></script>
-    <script src="typesense-search-form.js?v=dashboard-context-labels-20260925"></script>
-<script src="script.js?v=lookup-copy-layer-20260930"></script>
+    <script src="typesense-search-form.js?v=estimate-status-20260928"></script>
+    <script src="script.js?v=lookup-copy-layer-20260930"></script>
     <script src="ingredient-lookup.js?v=lookup-shared-copy-20260930"></script>
     <script src="ai-search-chat.js"></script>
     <script>

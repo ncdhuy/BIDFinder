@@ -818,7 +818,7 @@ function getResultTableIdForConfig(configKey) {
 }
 
 function legacyDetailLabel(fieldName, tableId = null) {
-    if (['id', 'data_group', 'source_tab', 'source_tab_label', 'partition_date'].includes(fieldName) || fieldName.startsWith('__')) return '';
+    if (['id', 'data_group', 'source_tab', 'source_tab_label', 'partition_date', 'decision_date'].includes(fieldName) || fieldName.startsWith('__')) return '';
     if (tableId && RESULT_COLUMN_CATALOG.labels?.[RESULT_TABLE_GROUPS[tableId]]?.[fieldName]) {
         return getResultColumnLabel(tableId, fieldName);
     }
@@ -871,7 +871,7 @@ function openLegacyRowDetail(item, configKey) {
         const dt = document.createElement('dt');
         dt.textContent = label;
         const dd = document.createElement('dd');
-        dd.textContent = Array.isArray(rawValue) ? rawValue.join(', ') : String(rawValue);
+        dd.textContent = formatResultDisplayValue(fieldName, rawValue, TABLE_CONFIGS[configKey].fieldMappers);
         fields.append(dt, dd);
     });
 
@@ -1045,15 +1045,24 @@ function formatColumnDisplayValue(columnName, value) {
     return SELECTION_METHOD_DISPLAY_LABELS.get(code) || value;
 }
 
-function mapField(item, colName, fieldMappers) {
-    const canonicalName = RESULT_COLUMN_ALIASES[colName] || colName;
+function formatResultDisplayValue(colName, rawValue, fieldMappers) {
+    const canonicalName = RESULT_COLUMN_ALIASES[colName] || LEGACY_FIELD_ALIASES[colName]?.[0] || colName;
     const formatter = fieldMappers[canonicalName] || fieldMappers[colName];
-    const rawValue = getRawColumnValue(item, colName);
     const displayValue = canonicalName === 'location'
         ? formatLocationDisplayValue(rawValue)
         : formatColumnDisplayValue(canonicalName, rawValue);
     const value = formatter ? formatter(displayValue) : (displayValue ?? '');
     return Array.isArray(value) ? value.join(', ') : value;
+}
+
+function mapField(item, colName, fieldMappers) {
+    return formatResultDisplayValue(colName, getRawColumnValue(item, colName), fieldMappers);
+}
+
+function getTableFieldMappers(tableId) {
+    const configKey = tableId === 'extended-table' ? 'df2'
+        : tableId === 'traditional-table' ? 'df3' : 'df1';
+    return TABLE_CONFIGS[configKey].fieldMappers;
 }
 
 // Wrapper functions giữ lại interface cũ
@@ -4279,11 +4288,12 @@ function clearColumnTextFilter(tableId, columnName) {
 
 const MAX_COLUMN_VALUES_RENDERED = 250;
 
-function getMatchingColumnValueOptions(facetOptions, searchTerm = '', columnName = '') {
+function getMatchingColumnValueOptions(facetOptions, searchTerm = '', columnName = '', tableId = '') {
     const normalizedSearch = String(searchTerm || '').trim().toLocaleLowerCase('vi');
+    const fieldMappers = getTableFieldMappers(tableId);
     return facetOptions.filter(option => (
         !normalizedSearch
-        || [option.value, formatColumnDisplayValue(columnName, option.value)]
+        || [option.value, formatResultDisplayValue(columnName, option.value, fieldMappers)]
             .some(value => String(value || '(Trống)').toLocaleLowerCase('vi').includes(normalizedSearch))
     ));
 }
@@ -4292,7 +4302,9 @@ function renderColumnValueOptions(valueList, facetOptions, draft, searchTerm = '
     valueList.replaceChildren();
     const normalizedSearch = String(searchTerm || '').trim().toLocaleLowerCase('vi');
     const columnName = valueList.dataset.columnName || '';
-    const matchingOptions = getMatchingColumnValueOptions(facetOptions, searchTerm, columnName);
+    const tableId = valueList.dataset.tableId || '';
+    const fieldMappers = getTableFieldMappers(tableId);
+    const matchingOptions = getMatchingColumnValueOptions(facetOptions, searchTerm, columnName, tableId);
     const visibleOptions = matchingOptions.slice(0, MAX_COLUMN_VALUES_RENDERED);
 
     const selectAll = document.createElement('label');
@@ -4317,7 +4329,7 @@ function renderColumnValueOptions(valueList, facetOptions, draft, searchTerm = '
         checkbox.dataset.value = encodeColumnName(value);
         checkbox.checked = draft.selectedKeys.has(normalizeColumnFilterValue(value));
         const label = document.createElement('span');
-        label.textContent = formatColumnDisplayValue(columnName, value) || '(Trống)';
+        label.textContent = formatResultDisplayValue(columnName, value, fieldMappers) || '(Trống)';
         label.title = label.textContent;
         const countLabel = document.createElement('small');
         countLabel.className = 'column-value-count';
@@ -4482,6 +4494,7 @@ function renderColumnMenuShell(tableId, columnName, { actionsOpen } = {}) {
     const valueList = document.createElement('div');
     valueList.className = 'column-value-list';
     valueList.dataset.columnName = columnName;
+    valueList.dataset.tableId = tableId;
 
     const selectAll = document.createElement('label');
     selectAll.className = 'column-value-option is-select-all';
@@ -4578,7 +4591,7 @@ function renderColumnMenu(tableId, columnName, options = {}) {
     const rerenderValueOptions = ({ syncSelection = false } = {}) => {
         const searchTerm = searchInput?.value || '';
         if (syncSelection) {
-            const matchingOptions = getMatchingColumnValueOptions(draft.facetOptions, searchTerm, columnName);
+            const matchingOptions = getMatchingColumnValueOptions(draft.facetOptions, searchTerm, columnName, tableId);
             draft.selectedKeys = searchTerm.trim()
                 ? new Set(matchingOptions.map(({ value }) => normalizeColumnFilterValue(value)))
                 : new Set(draft.valuesByKey.keys());
@@ -5343,11 +5356,9 @@ function getProvinceValueEntries(data) {
         const current = adminValueMap.get(adminUnit.key) || {
             name: adminUnit.name,
             parts: adminUnit.parts,
-            value: 0,
-            packageCount: 0
+            value: 0
         };
         current.value += value;
-        current.packageCount += Number(r?.package_count || 0);
         adminValueMap.set(adminUnit.key, current);
     });
 
@@ -5689,20 +5700,16 @@ function getOrCreateProvinceMapTooltip(container) {
 
 function moveProvinceMapTooltip(container, tooltip, event) {
     const rect = container.getBoundingClientRect();
-    const offset = 14;
+    const offset = 64;
     const tooltipRect = tooltip.getBoundingClientRect();
     let left = event.clientX - rect.left + offset;
-    let top = event.clientY - rect.top + offset;
+    let top = event.clientY - rect.top - tooltipRect.height / 2;
 
     if (left + tooltipRect.width > rect.width - 8) {
         left = event.clientX - rect.left - tooltipRect.width - offset;
     }
-    if (top + tooltipRect.height > rect.height - 8) {
-        top = event.clientY - rect.top - tooltipRect.height - offset;
-    }
-
     tooltip.style.left = `${Math.max(8, left)}px`;
-    tooltip.style.top = `${Math.max(8, top)}px`;
+    tooltip.style.top = `${Math.max(8, Math.min(top, rect.height - tooltipRect.height - 8))}px`;
 }
 
 function fitProvinceMapViewBox(svg) {
@@ -5875,15 +5882,6 @@ function renderProvinceValueMap(data = [], options = {}) {
             nameEl.textContent = displayName;
             valueEl.textContent = valueText;
             partsEl.textContent = mergeStatus;
-            const packageCount = Number(provinceValue?.packageCount || 0);
-            if (packageCount > 0) {
-                const packageEl = document.createElement('span');
-                const formattedCount = typeof options.formatCount === 'function'
-                    ? options.formatCount(packageCount)
-                    : packageCount.toLocaleString('vi-VN');
-                packageEl.textContent = `${formattedCount} gói thầu`;
-                tooltip.appendChild(packageEl);
-            }
             tooltip.append(nameEl, valueEl, partsEl);
             tooltip.classList.add('visible');
             moveProvinceMapTooltip(container, tooltip, event);
@@ -6798,7 +6796,7 @@ function renderDashboardBaseContext() {
     if (!parts.length) {
         const empty = document.createElement('span');
         empty.className = 'dashboard-context-empty';
-        empty.textContent = 'Không có bộ lọc bổ sung';
+        empty.textContent = 'Không có từ khóa';
         container.appendChild(empty);
     }
     scheduleDashboardFit();
@@ -6939,7 +6937,6 @@ function renderDashboardMap(geography = []) {
         containerId: 'dashboard-province-map',
         selectedProvince: dashboardSelection.province,
         formatCurrency: formatDashboardCurrencyTooltip,
-        formatCount: formatDashboardCount,
         onProvinceSelect: province => setDashboardSelection('province', province),
         onMapLoading: () => setDashboardWidgetState('geography', 'Đang tải bản đồ Việt Nam…', 'loading'),
         onMapReady: () => {
@@ -7041,11 +7038,14 @@ async function renderDashboardCharts(timeline = {}) {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
                 layout: { padding: { top: 15, right: 6 } },
                 plugins: {
                     dashboardTimelineLabels: { unit: trendUnit },
                     legend: { display: false },
                     tooltip: {
+                        mode: 'index',
+                        intersect: false,
                         callbacks: {
                             title: items => formatDashboardTimelinePeriod(items[0]?.label || ''),
                             label: item => formatDashboardCurrencyTooltip(Number(item.raw))
@@ -7099,6 +7099,10 @@ function renderDashboardInvestors(investors = []) {
         row.dataset.dashboardInvestor = investor.name;
         row.dataset.dashboardFilterMatch = String(investor._dashboardFilterMatch !== false);
         row.classList.toggle('is-selected', sameDashboardIdentity(dashboardSelection.investor, investor.name));
+        row.addEventListener('click', event => {
+            if (event.target.closest?.('.dashboard-investor-link')) return;
+            setDashboardSelection('investor', investor.name);
+        });
         const rankCell = document.createElement('td');
         rankCell.className = 'dashboard-investor-rank';
         const rankBadge = document.createElement('span');
@@ -7148,6 +7152,10 @@ function renderDashboardBidderPriceBands(analysis = {}) {
         row.className = 'dashboard-investor-row dashboard-price-band-row';
         row.dataset.dashboardBidder = band.bidder_name || '';
         row.dataset.dashboardFilterMatch = String(band._dashboardFilterMatch !== false);
+        row.addEventListener('click', event => {
+            if (event.target.closest?.('.dashboard-investor-link')) return;
+            setDashboardSelection('bidder', band.bidder_name || '');
+        });
         const rank = document.createElement('td');
         rank.className = 'dashboard-investor-rank';
         const rankBadge = document.createElement('span');
@@ -10568,6 +10576,7 @@ function activateResultView(targetId) {
     }
 
     const isDashboardView = targetId === 'dashboard-panel';
+    if (isDashboardView) button.classList.add('dashboard-tab-seen');
     document.body.classList.toggle('dashboard-view-active', isDashboardView);
     document.getElementById('data-tab')?.classList.toggle('dashboard-view-active', isDashboardView);
     document.getElementById('legacy-pagination')?.classList.toggle('is-dashboard-hidden', isDashboardView);
@@ -10802,6 +10811,7 @@ function initSearchFormEvents() {
     searchForm.addEventListener('preview-filters', async (e) => {
         const requestId = ++previewRequestId;
         previewAbortController?.abort();
+        searchForm.setPreviewResult?.({ loading: true });
         const controller = new AbortController();
         previewAbortController = controller;
         const stopConnectionMessageTimer = startConnectionMessageTimer(searchForm, controller.signal);
@@ -10906,6 +10916,7 @@ function markFeatureIntroUserInteraction(event) {
     if (!featureIntroPreparation || productJourneyState || document.body.classList.contains('landing-active')) return;
     if (event.type === 'pointerdown' && event.composedPath().some(node =>
         node?.id === 'history-modal' || node?.id === 'open-run-history'
+            || node?.classList?.contains('history-overlay')
     )) return;
     featureIntroUserInteracted = true;
 }
@@ -11154,48 +11165,81 @@ function getProductJourneySteps() {
     return [
         {
             title: 'Làm quen với BIDFinder',
-            body: 'Đi từ tìm kiếm đến xem dữ liệu và phân tích trên Dashboard. Dùng Tiếp hoặc Quay lại để đổi bước; bạn có thể đóng hướng dẫn bất cứ lúc nào.',
-            selector: '.main-content', placement: 'center', dialogOnly: true,
-            before: () => { ensureAppViewForJourney(); closeJourneySurfaces(); }
+            body: '2 phút khám phá các chức năng chính của BIDFinder.',
+            selector: '.main-content',
+            placement: 'center',
+            dialogOnly: true,
+            before: () => {
+                ensureAppViewForJourney();
+                closeJourneySurfaces();
+            }
         },
         {
-            title: 'Tìm kiếm nâng cao',
-            body: 'Chọn nhóm dữ liệu và trường cần tìm, nhập từ khóa rồi nhấn Enter để xem ước tính. Bấm Tìm kiếm để xem kết quả.',
-            selector: '#open-filter-panel', placement: 'left',
-            before: closeJourneySurfaces, afterClick: openFilterForJourney,
-            focusAfterSelector: '#filter-panel'
+            title: 'Cụm chức năng chính',
+            body: 'Cụm chức năng gồm: Tìm kiếm toàn bộ, lịch sử cập nhật, tìm kiếm hàng loạt, tìm kiếm nâng cao và tìm kiếm bằng AI.',
+            selector: '#data-view-switcher .toolbar-actions',
+            placement: 'bottom',
+            before: closeJourneySurfaces
         },
         {
-            title: 'Tìm kiếm bằng AI',
-            body: 'Dùng nút Ai để diễn đạt nhu cầu bằng ngôn ngữ tự nhiên. Kiểm tra lại các điều kiện được đề xuất trước khi tìm kiếm.',
-            selector: '#open-ai-search', placement: 'bottom', before: closeJourneySurfaces
+            title: 'Lịch sử cập nhật',
+            body: 'Theo dõi số liệu trong ngày và số gói thầu được phê duyệt theo thời gian.',
+            afterTitle: 'Lịch sử cập nhật',
+            afterBody: 'Theo dõi số gói thầu được phê duyệt theo thời gian.',
+            selector: '#open-run-history',
+            focusAfterSelector: '#history-modal .history-content',
+            afterClick: openHistoryForJourney
         },
         {
             title: 'Tìm kiếm hàng loạt',
-            body: 'Có sẵn danh sách sản phẩm? Nhập file Excel tại đây để tra cứu hàng loạt. BIDFinder không lưu trữ file này.',
-            selector: '#open-bulk-search-modal', placement: 'left',
-            before: closeJourneySurfaces, afterClick: openBulkForJourney,
-            focusAfterSelector: '#bulk-search-modal .bulk-search-dialog'
+            body: 'Tìm kiếm hàng loạt sản phẩm từ file Excel.',
+            afterTitle: 'Tìm kiếm hàng loạt',
+            afterBody: 'Tìm kiếm dựa trên file Excel có danh sách sản phẩm cần tìm kiếm. BIDFinder không lưu trữ file này.',
+            selector: '#open-bulk-search-modal',
+            focusAfterSelector: '#bulk-search-modal .bulk-search-dialog',
+            before: closeJourneySurfaces,
+            afterClick: openBulkForJourney
+        },
+        {
+            title: 'Tìm kiếm nâng cao',
+            body: 'Tìm kiếm với bộ lọc nâng cao.',
+            afterTitle: 'Tìm kiếm nâng cao',
+            afterBody: 'Tìm kiếm với bộ lọc nâng cao.',
+            selector: '#open-filter-panel',
+            focusAfterSelector: '#filter-panel',
+            before: closeJourneySurfaces,
+            afterClick: openFilterForJourney
         },
         {
             title: 'Tìm kiếm toàn bộ',
-            body: 'Sau khi tìm kiếm, dùng nút này để mở rộng phạm vi kết quả ngoài giới hạn thông thường. Số lượt còn lại hiển thị trên nút.',
+            body: 'Kết quả thông thường sẽ giới hạn ở 1000 dòng. Chức năng này cho phép mở rộng phạm vi tìm kiếm.',
             selector: '#insight-full-search', placement: 'bottom', before: closeJourneySurfaces
         },
         {
-            title: 'Ba nhóm dữ liệu',
-            body: 'Chuyển giữa Hàng hóa, Thuốc và Dược liệu / Vị thuốc cổ truyền để xem kết quả tương ứng. Số trên mỗi tab cho biết số kết quả của nhóm.',
-            selector: '#data-view-switcher .result-table-tab-list', placement: 'bottom',
-            before: prepareJourneyTableView
+            title: 'Tìm kiếm bằng AI',
+            body: 'Hỗ trợ người dùng diễn đạt yêu cầu tìm kiếm bằng ngôn ngữ tự nhiên và xây dựng truy vấn phù hợp.',
+            selector: '#open-ai-search', placement: 'bottom', before: closeJourneySurfaces
         },
         {
-            title: 'Làm việc với bảng dữ liệu',
-            body: 'Chọn ô hoặc kéo chọn một vùng rồi sao chép như spreadsheet. Kéo mép cột để đổi độ rộng, kéo tiêu đề để đổi vị trí cột.',
-            getElement: getActiveTableWrapperForJourney, placement: 'top', before: prepareJourneyTableView
+            title: 'Ba nhóm dữ liệu',
+            body: 'Kết quả tìm kiếm được phân loại theo ba nhóm: Hàng hóa, Thuốc và Dược liệu / Vị thuốc cổ truyền.',
+            selector: '#data-view-switcher .result-table-tab-list',
+            placement: 'bottom',
+            before: () => {
+                closeJourneySurfaces();
+                activateResultView('df1-panel');
+            }
+        },
+        {
+            title: 'Không gian bảng dữ liệu',
+            body: 'Bảng hỗ trợ thao tác tương tự làm việc với spreadsheet.',
+            getElement: getActiveTableWrapperForJourney,
+            placement: 'top',
+            before: closeJourneySurfaces
         },
         {
             title: 'Xem chi tiết nội dung',
-            body: 'Nhấp đúp vào một giá trị để mở đầy đủ thông tin của hàng. Đây là minh họa trên một hàng trong kết quả hiện tại.',
+            body: 'Nhấp đúp vào bất kỳ giá trị nào trong hàng để xem đầy đủ thông tin của hàng đó.',
             unavailableBody: 'Sau khi có kết quả, nhấp đúp vào một giá trị bất kỳ để xem đầy đủ thông tin của hàng, kể cả các cột đang ẩn.',
             getElement: () => getJourneyDetailCell() || getActiveTableWrapperForJourney(),
             canDemonstrate: () => Boolean(getJourneyDetailCell()),
@@ -11204,25 +11248,57 @@ function getProductJourneySteps() {
             afterClick: () => getJourneyDetailCell()?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
         },
         {
-            title: 'Lọc và sắp xếp từng cột',
-            body: 'Menu cột có sắp xếp, bộ lọc, tự căn độ rộng, ngắt dòng, ghim và ẩn cột. Các nút Hủy / OK nằm ở cuối menu.',
+            title: 'Thao tác trên từng cột',
+            body: 'Mở menu cột để sắp xếp, tự căn độ rộng, ngắt dòng, ghim hoặc ẩn cột đang xem, tìm kiếm nhanh.',
             getElement: () => document.querySelector('.column-menu-popover') || getFirstColumnMenuTriggerForJourney(),
             placement: 'right',
-            before: () => { prepareJourneyTableView(); openColumnMenuForJourney(); }
+            before: openColumnMenuForJourney
+        },
+        {
+            title: 'Cụm chức năng trên bảng',
+            body: 'Các chức năng ẩn/hiện cột, tải Excel và chế độ toàn màn hình.',
+            getElement: getVisibleTableControlsForJourney,
+            before: () => {
+                closeJourneySurfaces();
+                setJourneyTableToolsVisible(true);
+            }
         },
         {
             title: 'Ẩn/hiện cột',
-            body: 'Chọn những cột cần hiển thị để tập trung vào thông tin bạn quan tâm.',
+            body: 'Tùy chỉnh trên danh sách cột.',
+            afterTitle: 'Ẩn/hiện cột',
+            afterBody: 'Tùy chỉnh trên danh sách cột.',
             getElement: () => getVisibleTableToolButtonForJourney('toggle-columns'),
-            placement: 'left', before: () => { prepareJourneyTableView(); setJourneyTableToolsVisible(true); },
-            afterClick: openColumnsPopoverForJourney,
-            focusAfterSelector: '.table-columns-popover:not([hidden])'
+            focusAfterSelector: '.table-columns-popover:not([hidden])',
+            before: () => {
+                closeJourneySurfaces();
+                setJourneyTableToolsVisible(true);
+            },
+            afterClick: openColumnsPopoverForJourney
         },
         {
-            title: 'Tải Excel và toàn màn hình',
-            body: 'Dùng nút tải để xuất dữ liệu đang hiển thị ra Excel. Nút toàn màn hình bên cạnh giúp mở rộng không gian làm việc với bảng.',
-            getElement: getVisibleTableControlsForJourney, placement: 'bottom',
-            before: () => { prepareJourneyTableView(); setJourneyTableToolsVisible(true); }
+            title: 'Tải Excel',
+            body: 'Tải dữ liệu đang hiển thị.',
+            afterTitle: 'Tải Excel',
+            afterBody: 'Tải dữ liệu đang hiển thị.',
+            getElement: () => getVisibleTableToolButtonForJourney('download'),
+            before: () => {
+                closeJourneySurfaces();
+                setJourneyTableToolsVisible(true);
+            },
+            afterClick: () => setJourneyTableToolsVisible(true)
+        },
+        {
+            title: 'Toàn màn hình',
+            body: 'Mở rộng không gian hiển thị bảng dữ liệu.',
+            afterTitle: 'Toàn màn hình',
+            afterBody: 'Mở rộng không gian hiển thị bảng dữ liệu.',
+            getElement: () => getVisibleTableToolButtonForJourney('fullscreen'),
+            before: () => {
+                closeJourneySurfaces();
+                setJourneyTableToolsVisible(true);
+            },
+            afterClick: () => setJourneyTableToolsVisible(true)
         },
         {
             title: 'Dashboard',
@@ -11246,21 +11322,29 @@ function getProductJourneySteps() {
             }
         },
         {
-            title: 'Lịch sử cập nhật',
-            body: 'Theo dõi số gói thầu được phê duyệt theo ngày, gói thầu có giá trị cao nhất và sản phẩm có đơn giá cao nhất trong ngày. Chọn 30, 90 hoặc 180 ngày để xem xu hướng.',
-            selector: '#open-run-history', placement: 'left', before: closeJourneySurfaces,
-            afterClick: openHistoryForJourney, focusAfterSelector: '#history-modal .history-content'
+            title: 'Hướng dẫn, thông báo và tài khoản',
+            body: 'Xem hướng dẫn sử dụng, theo dõi thông báo từ BIDFinder và quản lý tài khoản.',
+            selector: '.app-header-links',
+            placement: 'bottom',
+            before: closeJourneySurfaces
         },
         {
-            title: 'Thông báo và tài khoản',
-            body: 'Nút chuông mở thông báo, cập nhật và trao đổi. Nút tài khoản bên cạnh dùng để đăng nhập và quản lý tài khoản.',
-            selector: '#open-feedback-modal', placement: 'left', before: closeJourneySurfaces,
-            afterClick: openFeedbackForJourney, focusAfterSelector: '#feedback-modal .feedback-dialog'
+            title: 'Thông báo',
+            body: 'Nơi theo dõi thông báo, cập nhật và trao đổi thông tin trong lĩnh vực đấu thầu.',
+            afterTitle: 'Thông báo',
+            afterBody: 'Bạn có thể theo dõi thông báo và cập nhật mới nhất trong lĩnh vực đấu thầu.',
+            selector: '#open-feedback-modal',
+            focusAfterSelector: '#feedback-modal .feedback-dialog',
+            before: closeJourneySurfaces,
+            afterClick: openFeedbackForJourney
         },
         {
             title: 'Sẵn sàng tìm kiếm',
-            body: 'Bạn có thể mở lại hướng dẫn bất cứ lúc nào từ nút dấu hỏi. Bấm Hoàn tất để trở về tab và lựa chọn trước khi xem hướng dẫn.',
-            selector: '.main-content', placement: 'center', dialogOnly: true, before: closeJourneySurfaces
+            body: 'Bạn đã đi qua các chức năng chính của BIDFinder. Chúc bạn một ngày làm việc hiệu quả.',
+            selector: '#open-filter-panel',
+            placement: 'center',
+            dialogOnly: true,
+            before: closeJourneySurfaces
         }
     ];
 }
@@ -11286,6 +11370,11 @@ function getFeatureIntroSteps() {
             },
             afterClick: () => productJourneyState?.activeTarget
                 ?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+        },
+        {
+            title: 'Tìm kiếm bằng AI',
+            body: 'Hỗ trợ người dùng diễn đạt yêu cầu tìm kiếm bằng ngôn ngữ tự nhiên và xây dựng truy vấn phù hợp.',
+            selector: '#open-ai-search', placement: 'bottom', before: closeJourneySurfaces
         },
         {
             title: 'Tìm kiếm toàn bộ',
@@ -11353,7 +11442,7 @@ function createProductJourneyDom() {
             <h3 id="product-journey-title"></h3>
             <p></p>
             <div class="product-journey-footer">
-                <span class="product-journey-hint">← → đổi bước · Esc đóng</span>
+                <span class="product-journey-hint" data-journey-action="next">Nhấn phím bất kỳ để tiếp tục.</span>
                 <div class="product-journey-actions">
                     <button type="button" data-journey-action="prev" aria-label="Quay lại" title="Quay lại"></button>
                     <button type="button" data-journey-action="next" aria-label="Tiếp" title="Tiếp"></button>
@@ -11656,7 +11745,8 @@ function endProductJourney({ completed = false } = {}) {
         if (dashboardAnalyticsData) renderDashboardAnalytics(dashboardAnalyticsData);
     }
     syncDashboardSelectionVisuals();
-    if (state.initialView) activateResultView(state.initialView);
+    if (kind === 'feature_intro') activateResultView('dashboard-panel');
+    else if (state.initialView) activateResultView(state.initialView);
     state.tableScroll.forEach(({ node, top, left }) => { node.scrollTop = top; node.scrollLeft = left; });
     window.scrollTo(state.initialScroll.x, state.initialScroll.y);
     if (state.initialFocus?.isConnected) state.initialFocus.focus({ preventScroll: true });
@@ -11677,16 +11767,6 @@ function endProductJourney({ completed = false } = {}) {
 function handleProductJourneyKeydown(event) {
     if (!productJourneyState) return;
     event.stopImmediatePropagation();
-    if (event.key === 'Tab') {
-        const buttons = Array.from(productJourneyState.root.querySelectorAll('[data-journey-action]'))
-            .filter(button => !button.disabled);
-        const index = buttons.indexOf(document.activeElement);
-        const next = event.shiftKey ? (index <= 0 ? buttons.length - 1 : index - 1) : (index + 1) % buttons.length;
-        event.preventDefault();
-        buttons[next]?.focus({ preventScroll: true });
-        return;
-    }
-    if ((event.key === 'Enter' || event.key === ' ') && event.target.closest?.('[data-journey-action]')) return;
     event.preventDefault();
     if (event.key === 'Escape') {
         endProductJourney({ completed: false });
@@ -11696,10 +11776,7 @@ function handleProductJourneyKeydown(event) {
         previousProductJourneyStep();
         return;
     }
-    if (event.key === 'ArrowRight') {
-        nextProductJourneyStep();
-        return;
-    }
+    nextProductJourneyStep();
 }
 
 function handleProductJourneyClick(event) {

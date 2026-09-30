@@ -104,7 +104,7 @@
 
         detailFields(row) {
             const contractFields = this.fields().map(field => field.name).filter(name => Object.prototype.hasOwnProperty.call(row, name));
-            const extras = Object.keys(row).filter(name => !contractFields.includes(name) && !name.startsWith('__'));
+            const extras = Object.keys(row).filter(name => !contractFields.includes(name) && !name.startsWith('__') && name !== 'decision_date');
             return [...contractFields, ...extras];
         }
 

@@ -11,17 +11,17 @@
 .result-table-tabs .result-table-tab-choice {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: 205px;
+  grid-auto-columns: 165px;
   width: max-content;
   min-width: max-content;
   align-items: stretch;
 }
 
 .result-table-tabs .result-table-tab.scope-btn {
-  width: 205px;
-  min-width: 205px;
-  max-width: 205px;
-  flex: 0 0 205px;
+  width: 165px;
+  min-width: 165px;
+  max-width: 165px;
+  flex: 0 0 165px;
 }
 
 .result-table-tabs .result-table-tab.scope-btn .scope-text {

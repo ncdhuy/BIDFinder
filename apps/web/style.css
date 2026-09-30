@@ -4505,6 +4505,7 @@ body {
 }
 
 .result-table-tab.dashboard-tab .dashboard-status-indicator {
+  position: relative;
   order: 2;
   flex: 0 0 8px;
   width: 8px;
@@ -4517,6 +4518,23 @@ body {
 
 .result-table-tab.dashboard-tab.has-results .dashboard-status-indicator {
   background-color: #1f9d55;
+}
+
+.result-table-tab.dashboard-tab.has-results:not(.dashboard-tab-seen) .dashboard-status-indicator::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background-color: #1f9d55;
+  pointer-events: none;
+  transform-origin: 50% 50%;
+  animation: dashboard-tab-ping 1.8s ease-out infinite;
+}
+
+@keyframes dashboard-tab-ping {
+  0% { opacity: 0.68; transform: scale(1); }
+  100% { opacity: 0; transform: scale(3.2); }
 }
 
 .result-table-tab .scope-icon {
@@ -7460,10 +7478,6 @@ body {
 .product-journey-card {
   position: fixed;
   width: min(360px, calc(100vw - 24px));
-  box-sizing: border-box;
-  max-height: calc(100dvh - 24px);
-  display: flex;
-  flex-direction: column;
   padding: 16px;
   border-radius: 8px;
   background: #ffffff;
@@ -7506,8 +7520,6 @@ body {
   color: var(--color-text-secondary);
   font-size: 13.5px;
   line-height: 1.5;
-  min-height: 0;
-  overflow-y: auto;
 }
 
 .product-journey-footer {
@@ -7519,7 +7531,6 @@ body {
   margin-top: 16px;
   padding-top: 12px;
   border-top: 1px solid rgba(209, 219, 226, 0.72);
-  flex-shrink: 0;
 }
 
 .product-journey-hint {
@@ -7626,12 +7637,7 @@ body {
 }
 
 body.product-journey-active {
-  cursor: default;
-}
-
-.product-journey-actions button:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
+  cursor: pointer;
 }
 
 body.product-journey-active .history-modal.show,
@@ -8374,6 +8380,7 @@ body.product-journey-active #panel-overlay.show {
 }
 @media (prefers-reduced-motion: reduce) {
   .ai-chat-dots { animation: none; }
+  .result-table-tab.dashboard-tab.has-results:not(.dashboard-tab-seen) .dashboard-status-indicator::before { animation: none; }
 }
 
 /* =========================
@@ -9093,6 +9100,7 @@ body.product-journey-active #panel-overlay.show {
 }
 .dashboard-product-rank,
 .dashboard-rank-badge { transition: background-color 160ms ease, color 160ms ease; }
+.dashboard-investor-row { cursor: pointer; }
 .dashboard-investor-row:hover { background: #f3f8ff; }
 
 .dashboard-investor-row.is-selected td {

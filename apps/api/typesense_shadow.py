@@ -1286,6 +1286,14 @@ def _analytics_identity(value: Any) -> str | None:
     return " ".join(folded.split())
 
 
+def _analytics_add_label_count(counts: dict[str, int], label: str) -> None:
+    counts[label] = counts.get(label, 0) + 1
+
+
+def _analytics_most_common_label(counts: Mapping[str, int]) -> str | None:
+    return min(counts, key=lambda label: (-counts[label], label.casefold(), label), default=None)
+
+
 def _analytics_row_value(document: Mapping[str, Any]) -> Decimal:
     explicit_total = _analytics_decimal(document.get("total_value"), positive_only=True)
     if explicit_total is None:
@@ -1377,6 +1385,11 @@ def build_dashboard_bidder_price_bands(
     if selected_product_key:
         valid = [item for item in valid if item["product_key"] == selected_product_key]
 
+    bidder_name_counts: dict[str, dict[str, int]] = {}
+    for item in valid:
+        counts = bidder_name_counts.setdefault(item["bidder_key"], {})
+        _analytics_add_label_count(counts, item["bidder_name"])
+
     by_context_bidder: dict[tuple[str | None, str, str], list[dict[str, Any]]] = {}
     for item in valid:
         context = (item["product_key"], item["unit_key"], item["bidder_key"])
@@ -1388,8 +1401,12 @@ def build_dashboard_bidder_price_bands(
         for row in rows:
             unique_records.setdefault(row["record_key"], row)
         prices = [row["unit_price"] for row in unique_records.values()]
-        bidder_name = min((row["bidder_name"] for row in rows), key=lambda name: (name.casefold(), name))
-        unit = min((row["unit"] for row in rows if row["unit"]), key=lambda name: (name.casefold(), name), default=None)
+        bidder_name = _analytics_most_common_label(bidder_name_counts.get(bidder_key, {})) or bidder_key
+        unit_counts: dict[str, int] = {}
+        for row in unique_records.values():
+            if row["unit"]:
+                _analytics_add_label_count(unit_counts, row["unit"])
+        unit = _analytics_most_common_label(unit_counts)
         records_by_price: dict[Decimal, list[dict[str, Any]]] = {}
         for row in unique_records.values():
             records_by_price.setdefault(row["unit_price"], []).append(row)
@@ -1684,8 +1701,10 @@ def aggregate_dashboard_documents(
 
             product_name = _analytics_text(document.get(product_field))
             if product_name:
-                product_key = product_name
-                entry = products.setdefault(product_key, {"name": product_name, "packages": set(), "group": public_group(group)})
+                product_key = _analytics_identity(product_name)
+                entry = products.setdefault(product_key, {"name": product_name, "labels": {}, "packages": set(), "group": public_group(group)})
+                _analytics_add_label_count(entry["labels"], product_name)
+                entry["name"] = _analytics_most_common_label(entry["labels"]) or product_name
                 entry["packages"].add(package_key)
 
             bidder_identity_values = _analytics_values(document.get("winning_bidder_id")) or _analytics_values(document.get("winning_bidder_name"))
@@ -1720,7 +1739,9 @@ def aggregate_dashboard_documents(
             investor_key = _analytics_identity(investor_name) or investor_id
             if investor_key:
                 package["investor_key"] = package["investor_key"] or investor_key
-                investor = investors.setdefault(investor_key, {"name": investor_name or investor_key, "packages": set()})
+                investor = investors.setdefault(investor_key, {"name": investor_name or investor_key, "labels": {}, "packages": set()})
+                _analytics_add_label_count(investor["labels"], investor_name or investor_key)
+                investor["name"] = _analytics_most_common_label(investor["labels"]) or investor_key
                 investor["packages"].add(package_key)
 
             province = _analytics_province(document.get("location"))

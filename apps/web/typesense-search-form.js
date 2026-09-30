@@ -1265,7 +1265,7 @@
         }
         showStatus(message, error = false) { const status = this.shadowRoot?.querySelector('.preview-estimate'); if (status) { status.textContent = message; status.hidden = !message; status.classList.toggle('error', error); } }
         showError(message) { this.renderShell(message); this.shadowRoot.querySelector('.ts-loading')?.classList.add('ts-error'); }
-        hasVisiblePreviewEstimate() { return Boolean(this._previewState.total !== null && !this._previewState.loading && !this._previewState.error); }
+        hasVisiblePreviewEstimate() { return Boolean(!this._previewState.idle && this._previewState.total != null && !this._previewState.loading && !this._previewState.error); }
         hasPendingPreview() { return Boolean(this._previewState.loading); }
         cancelPreview() {
             clearTimeout(this.previewTimer);
