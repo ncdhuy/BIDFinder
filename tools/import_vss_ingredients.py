@@ -33,6 +33,10 @@ def aggregate_xml(raw_dir: Path) -> Counter:
     if not files:
         raise ValueError(f"No XML files found in {raw_dir}")
     for path in files:
+        first_part = path.relative_to(raw_dir).parts[0]
+        loai = int(first_part.removeprefix("loai_")) if first_part.startswith("loai_") else 1
+        if loai not in (1, 2, 3, 4):
+            raise ValueError(f"{path}: unsupported eLMIS category {loai}")
         rows = iter_excel_xml_rows(path)
         headers = [value.strip() for value in next(rows, [])]
         if not headers:
@@ -45,7 +49,7 @@ def aggregate_xml(raw_dir: Path) -> Counter:
             if not any(values):
                 continue
             row = {field: values[index] if index < len(values) else "" for field, index in positions.items()}
-            counts[source_key(row)] += 1
+            counts[source_key(row, loai)] += 1
     return counts
 
 

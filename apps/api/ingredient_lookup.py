@@ -6,7 +6,7 @@ import json
 from threading import Lock
 
 
-FIELDS = ("ma", "hoatchat", "ten", "sodk", "duongdung", "nam_congbo")
+FIELDS = ("ma", "hoatchat", "ten", "sodk", "duongdung", "nam_congbo", "loai")
 FILTER_COLUMNS = {
     "registration": "sodk",
     "drug": "ten",
@@ -30,8 +30,9 @@ def publication_year(value: str | None) -> str | None:
             return None
 
 
-def source_key(row: dict[str, str]) -> tuple[str | None, ...]:
+def source_key(row: dict[str, str], loai: int = 1) -> tuple[str | None, ...]:
     return tuple(publication_year(row.get("congbo")) if field == "nam_congbo"
+                 else str(loai) if field == "loai"
                  else (row.get(field) or None) for field in FIELDS)
 
 
@@ -74,7 +75,7 @@ class IngredientLookupStore:
             return
         rows = []
         for document in export_documents(collection):
-            display = {field: document.get(field) or None for field in SCHEMA_FIELDS}
+            display = {field: document.get(field) or ("1" if field == "loai" else None) for field in SCHEMA_FIELDS}
             display["occurrences"] = int(document["occurrences"])
             folded = tuple(_fold(document.get(field) or "") for field in SCHEMA_FIELDS)
             rows.append((display, folded, int(document["sort_order"])))

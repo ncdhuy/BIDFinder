@@ -224,9 +224,10 @@ def make_session(
 
 
 class ManifestStore:
-    def __init__(self, manifest_file: Path, raw_dir: Path):
+    def __init__(self, manifest_file: Path, raw_dir: Path, loai: int = 1):
         self.manifest_file = manifest_file
         self.raw_dir = raw_dir
+        self.loai = loai
         self.rows: Dict[str, Dict[str, str]] = self._load()
 
     def _load(self) -> Dict[str, Dict[str, str]]:
@@ -242,14 +243,13 @@ class ManifestStore:
                     entry = {column: row.get(column, "") for column in MANIFEST_COLUMNS}
                     parsed_date = parse_manifest_date(row_date)
                     if parsed_date:
-                        local_path = (
-                            self.raw_dir / parsed_date.strftime("%Y") / parsed_date.strftime("%m")
-                            / f"vss_export_{parsed_date:%Y%m%d}.xml"
-                        )
-                        legacy_path = self.raw_dir / f"data_{parsed_date:%Y%m%d}.xml"
+                        category_dir = self.raw_dir if self.loai == 1 else self.raw_dir / f"loai_{self.loai}"
+                        local_path = (category_dir / parsed_date.strftime("%Y") / parsed_date.strftime("%m")
+                                      / f"vss_export_{parsed_date:%Y%m%d}.xml")
+                        legacy_path = self.raw_dir / f"data_{parsed_date:%Y%m%d}.xml" if self.loai == 1 else None
                         entry["raw_path"] = (
                             str(local_path) if local_path.exists()
-                            else str(legacy_path) if legacy_path.exists() else ""
+                            else str(legacy_path) if legacy_path and legacy_path.exists() else ""
                         )
                     rows[row_date] = entry
             return rows
@@ -294,6 +294,7 @@ class VSSRawCrawler:
         throttle_seconds: float,
         user_agent: str,
         force: bool = False,
+        loai: int = 1,
     ):
         self.raw_dir = raw_dir
         self.manifest = manifest
@@ -303,17 +304,19 @@ class VSSRawCrawler:
         self.throttle_seconds = throttle_seconds
         self.user_agent = user_agent
         self.force = force
+        self.loai = loai
 
     def build_url(self, item_date: date) -> str:
         params = {
             "ngaycongbo": item_date.strftime("%d/%m/%Y"),
-            "loai": "1",
+            "loai": str(self.loai),
         }
         return f"{BASE_URL}?{urlencode(params)}"
 
     def raw_path_for(self, item_date: date) -> Path:
+        category_dir = self.raw_dir if self.loai == 1 else self.raw_dir / f"loai_{self.loai}"
         return (
-            self.raw_dir
+            category_dir
             / item_date.strftime("%Y")
             / item_date.strftime("%m")
             / f"vss_export_{item_date.strftime('%Y%m%d')}.xml"
@@ -331,14 +334,14 @@ class VSSRawCrawler:
                 logging.info("Skipping %s because manifest already has a raw file", item_date)
                 continue
 
-            legacy_path = self.legacy_raw_path_for(item_date)
+            legacy_path = self.legacy_raw_path_for(item_date) if self.loai == 1 else None
             target_path = self.raw_path_for(item_date)
             if not self.force and target_path.exists():
                 self.manifest.upsert(self._result_from_existing_file(item_date, target_path))
                 logging.info("Cataloged existing raw file for %s: %s", item_date, target_path)
                 continue
 
-            if not self.force and legacy_path.exists():
+            if not self.force and legacy_path and legacy_path.exists():
                 self.manifest.upsert(self._result_from_existing_file(item_date, legacy_path))
                 logging.info("Cataloged legacy raw file for %s: %s", item_date, legacy_path)
                 continue
@@ -649,6 +652,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--start-date", type=parse_yyyy_mm_dd, help="Start date, format YYYY-MM-DD.")
     parser.add_argument("--end-date", type=parse_yyyy_mm_dd, help="End date, format YYYY-MM-DD. Defaults to today.")
+    parser.add_argument("--loai", type=int, choices=(1, 2, 3, 4), default=1, help="eLMIS category (1-4).")
     parser.add_argument("--raw-dir", default=DEFAULT_RAW_DIR, help=f"Raw output directory. Default: {DEFAULT_RAW_DIR}")
     parser.add_argument(
         "--manifest-file",
@@ -731,7 +735,7 @@ def main() -> None:
 
     raw_dir = resolve_path(script_dir, args.raw_dir)
     manifest_file = resolve_path(script_dir, args.manifest_file)
-    manifest = ManifestStore(manifest_file, raw_dir)
+    manifest = ManifestStore(manifest_file, raw_dir, loai=args.loai)
 
     if should_crawl:
         crawler = VSSRawCrawler(
@@ -743,6 +747,7 @@ def main() -> None:
             throttle_seconds=args.throttle,
             user_agent=args.user_agent,
             force=args.force,
+            loai=args.loai,
         )
 
         logging.info("BIDFinder VSS raw crawl started: %s -> %s", start_date, end_date)

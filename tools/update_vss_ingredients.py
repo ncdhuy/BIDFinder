@@ -21,13 +21,25 @@ from crawler_engine.vss.download_vss_data import ManifestStore, iter_dates
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATA_ROOT = ROOT / "crawler_engine" / "vss_data"
 SOURCE_SCRIPT = ROOT / "crawler_engine" / "vss" / "download_vss_data.py"
+CATEGORIES = (1, 2, 3, 4)
+HISTORY_START = date(2022, 1, 1)
 
 
-def last_published_date(data_root: Path, manifest: ManifestStore) -> date | None:
+def manifest_path(data_root: Path, loai: int) -> Path:
+    return data_root / ("crawl_manifest.csv" if loai == 1 else f"crawl_manifest_{loai}.csv")
+
+
+def last_published_date(data_root: Path, manifest: ManifestStore, loai: int) -> date | None:
     status_file = data_root / "vss_refresh_status.json"
     if status_file.exists():
         payload = json.loads(status_file.read_text(encoding="utf-8"))
-        return date.fromisoformat(payload["published_through"])
+        by_category = payload.get("published_through_by_loai", {})
+        if str(loai) in by_category:
+            return date.fromisoformat(by_category[str(loai)])
+        if loai == 1 and payload.get("published_through"):
+            return date.fromisoformat(payload["published_through"])
+    if loai != 1:
+        return None
     available = (
         date.fromisoformat(day) for day, row in manifest.rows.items()
         if row.get("status") in {"downloaded", "existing"}
@@ -44,13 +56,14 @@ def crawl_window(today: date, last_published: date | None, lookback_days: int) -
     return start, recent_start
 
 
-def crawl(data_root: Path, start: date, end: date, *, force: bool) -> None:
+def crawl(data_root: Path, start: date, end: date, *, loai: int, force: bool) -> None:
     command = [
         sys.executable, str(SOURCE_SCRIPT),
         "--start-date", start.isoformat(), "--end-date", end.isoformat(),
+        "--loai", str(loai),
         "--raw-dir", str(data_root / "downloads"),
-        "--manifest-file", str(data_root / "crawl_manifest.csv"),
-        "--log-file", str(data_root / "download_log.log"),
+        "--manifest-file", str(manifest_path(data_root, loai)),
+        "--log-file", str(data_root / f"download_log_{loai}.log"),
     ]
     if force:
         command.append("--force")
@@ -91,6 +104,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-root", type=Path, default=Path(os.getenv("BIDFINDER_VSS_DATA_ROOT", DEFAULT_DATA_ROOT)))
     parser.add_argument("--lookback-days", type=int, default=3)
+    parser.add_argument("--history-start", type=date.fromisoformat, default=HISTORY_START,
+                        help="First publication date to backfill for new categories")
     parser.add_argument("--plan", action="store_true", help="Print the crawl window without changing data")
     args = parser.parse_args()
     data_root = args.data_root.resolve()
@@ -99,18 +114,25 @@ def main() -> None:
         parser.error(f"eLMIS XML directory is missing: {raw_dir}")
 
     today = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date()
-    manifest_path = data_root / "crawl_manifest.csv"
-    manifest = ManifestStore(manifest_path, raw_dir)
-    start, recent_start = crawl_window(today, last_published_date(data_root, manifest), args.lookback_days)
-    print(json.dumps({"start": start.isoformat(), "recent_start": recent_start.isoformat(), "through": today.isoformat()}), flush=True)
+    windows = {}
+    for loai in CATEGORIES:
+        manifest = ManifestStore(manifest_path(data_root, loai), raw_dir, loai=loai)
+        published = last_published_date(data_root, manifest, loai)
+        start, recent_start = crawl_window(today, published, args.lookback_days)
+        if published is None and loai != 1:
+            start = min(args.history_start, recent_start)
+        windows[loai] = (start, recent_start)
+    print(json.dumps({"windows": {str(loai): {"start": start.isoformat(), "recent_start": recent.isoformat()}
+                                  for loai, (start, recent) in windows.items()}, "through": today.isoformat()}), flush=True)
     if args.plan:
         return
 
-    if start < recent_start:
-        crawl(data_root, start, recent_start - timedelta(days=1), force=False)
-    crawl(data_root, recent_start, today, force=True)
-    manifest = ManifestStore(manifest_path, raw_dir)
-    validate_crawl(manifest, start, today)
+    for loai, (start, recent_start) in windows.items():
+        if start < recent_start:
+            crawl(data_root, start, recent_start - timedelta(days=1), loai=loai, force=False)
+        crawl(data_root, recent_start, today, loai=loai, force=True)
+        manifest = ManifestStore(manifest_path(data_root, loai), raw_dir, loai=loai)
+        validate_crawl(manifest, start, today)
 
     counts = aggregate_xml(raw_dir)
     client = typesense_client_from_env()
@@ -119,6 +141,7 @@ def main() -> None:
     temporary = status_file.with_suffix(".json.tmp")
     temporary.write_text(json.dumps({
         "published_through": today.isoformat(), "collection": collection,
+        "published_through_by_loai": {str(loai): today.isoformat() for loai in CATEGORIES},
         "source_rows": sum(counts.values()), "grouped_rows": len(counts),
         "published_at": datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).isoformat(),
     }, ensure_ascii=False) + "\n", encoding="utf-8")

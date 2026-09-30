@@ -11,7 +11,7 @@ robocopy 'D:\startup\app_vss\qlt_realtime\downloads' '.\crawler_engine\vss_data\
 Copy-Item -LiteralPath 'D:\startup\app_vss\qlt_realtime\crawl_manifest.csv' -Destination '.\crawler_engine\vss_data\crawl_manifest.csv'
 ```
 
-Giữ nguyên cấu trúc `downloads/YYYY/MM/vss_export_YYYYMMDD.xml`. XML là nguồn duy nhất để nạp Typesense. Dữ liệu thô được Git bỏ qua; file CSV cũ không tham gia luồng cập nhật và không cần xóa.
+Giữ nguyên cấu trúc `downloads/YYYY/MM/vss_export_YYYYMMDD.xml` cho Tân dược (`loai=1`). Ba loại còn lại được crawl vào `downloads/loai_2`, `downloads/loai_3`, `downloads/loai_4`, mỗi thư mục có cấu trúc năm/tháng tương tự. XML là nguồn duy nhất để nạp Typesense. Dữ liệu thô được Git bỏ qua; file CSV dữ liệu cũ không tham gia luồng cập nhật và không cần xóa.
 
 ## Cấu hình Typesense
 
@@ -24,7 +24,7 @@ Nếu API chạy trên máy hoặc container khác, `127.0.0.1` trỏ về chín
 Cài dependencies của `crawler_engine/requirements.txt`. Crawl ngày mới:
 
 ```powershell
-rtk python crawler_engine/vss/download_vss_data.py --start-date 2026-09-30 --end-date 2026-09-30
+rtk python crawler_engine/vss/download_vss_data.py --start-date 2026-09-30 --end-date 2026-09-30 --loai 2 --raw-dir crawler_engine/vss_data/downloads --manifest-file crawler_engine/vss_data/crawl_manifest_2.csv
 ```
 
 Xem trước tổng số dòng và nhóm, không ghi Typesense:
@@ -39,8 +39,8 @@ Sau khi kiểm tra dữ liệu và đích Typesense local, thêm `--apply` để
 
 Timer WSL `bidfinder-vss.timer` chạy **17:00 mỗi ngày, giờ Việt Nam**. Service dùng mã và dữ liệu XML trong checkout BIDFinder trên máy local; không dùng dữ liệu trong release production vì dữ liệu thô không được đưa vào Git. Mỗi lần chạy:
 
-1. Crawl bù các ngày chưa được xuất bản và tải lại ba ngày gần nhất để bắt thay đổi muộn.
-2. Kiểm tra manifest và file XML của từng ngày vừa crawl. Nếu thiếu hoặc lỗi, giữ nguyên alias Typesense đang phục vụ.
+1. Với cả bốn loại (`1` Tân dược, `2` Chế phẩm y học cổ truyền, `3` Vị thuốc y học cổ truyền, `4` Thuốc phóng xạ và chất đánh dấu), crawl bù các ngày chưa được xuất bản và tải lại ba ngày gần nhất để bắt thay đổi muộn. Ba loại mới được nạp lịch sử từ 01/01/2022; lần chạy sau bỏ qua file đã có.
+2. Kiểm tra manifest riêng và file XML của từng cặp ngày/loại. XML hợp lệ không có dòng dữ liệu là ngày rỗng. Nếu một cặp thiếu hoặc lỗi, giữ nguyên alias Typesense đang phục vụ.
 3. Gom nhóm toàn bộ XML, nạp collection mới, kiểm tra số document, rồi chuyển alias `vss_ingredient_lookup`.
 4. Lưu `crawler_engine/vss_data/vss_refresh_status.json` và giữ ba phiên bản collection mới nhất để có đường quay lại.
 
@@ -52,4 +52,4 @@ rtk python tools/update_vss_ingredients.py --plan
 
 Trong WSL, kiểm tra lịch và log bằng `systemctl --user status bidfinder-vss.timer` và `journalctl --user-unit=bidfinder-vss.service -n 100`. Timer được cài cùng các unit BIDFinder qua `bidfinder-install.sh install` hoặc `bidfinder-prod-deploy.sh deploy`.
 
-Mỗi document đại diện một tổ hợp `(ma, hoatchat, ten, sodk, duongdung, năm từ congbo)` và có `occurrences` là số dòng nguồn. Mã hoạt chất lưu dạng chuỗi để giữ nguyên `40.048`. Ngày trống hoặc sai có năm rỗng. API đọc collection Typesense vào bộ nhớ khi có lượt tra cứu đầu tiên, rồi lọc chuỗi con không phân biệt hoa thường như `ILIKE '%...%'`; khoảng trắng liên tiếp được chuẩn hóa khi so khớp. Năm trường kết hợp AND, kể cả năm công bố. Bộ nhớ tra cứu được nạp lại khi alias trỏ sang collection mới. Gợi ý lấy từ cùng bộ dữ liệu, có xét các điều kiện đã nhập ở ô khác. `total_records` là tổng `occurrences` của các tổ hợp sau lọc; tỷ lệ của mỗi dòng dựa trên tổng này. Bảng phân trang các tổ hợp, còn xuất Excel lấy toàn bộ tổ hợp đã lọc theo từng batch 250 dòng.
+Mỗi document đại diện một tổ hợp `(ma, hoatchat, ten, sodk, duongdung, năm từ congbo, loai)` và có `occurrences` là số dòng nguồn. Mã hoạt chất lưu dạng chuỗi để giữ nguyên cả `40.048`, `05C.81`, `05V.50` và `40P.7`. Loại dữ liệu được hiển thị trong bảng và file Excel. Ngày trống hoặc sai có năm rỗng. API đọc collection Typesense vào bộ nhớ khi có lượt tra cứu đầu tiên, rồi lọc chuỗi con không phân biệt hoa thường như `ILIKE '%...%'`; khoảng trắng liên tiếp được chuẩn hóa khi so khớp. Năm trường kết hợp AND, kể cả năm công bố. Bộ nhớ tra cứu được nạp lại khi alias trỏ sang collection mới. Gợi ý lấy từ cùng bộ dữ liệu, có xét các điều kiện đã nhập ở ô khác. `total_records` là tổng `occurrences` của các tổ hợp sau lọc; tỷ lệ của mỗi dòng dựa trên tổng này. Bảng phân trang các tổ hợp, còn xuất Excel lấy toàn bộ tổ hợp đã lọc theo từng batch 250 dòng.

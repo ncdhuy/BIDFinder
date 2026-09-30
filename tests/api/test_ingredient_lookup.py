@@ -3,6 +3,7 @@ from datetime import date
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -11,8 +12,8 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 from ingredient_lookup import IngredientLookupStore, count_document, lookup_page, lookup_suggestions, publication_year, source_key
 from import_vss_ingredients import aggregate_xml, import_counts
-from update_vss_ingredients import crawl_window, prune_old_collections, validate_crawl
-from crawler_engine.vss.download_vss_data import ManifestStore
+from update_vss_ingredients import crawl_window, manifest_path, prune_old_collections, validate_crawl
+from crawler_engine.vss.download_vss_data import ManifestStore, VSSRawCrawler
 
 
 class IngredientLookupTest(unittest.TestCase):
@@ -22,8 +23,9 @@ class IngredientLookupTest(unittest.TestCase):
                 {**base, "congbo": "2020-05-06"},
                 {**base, "congbo": "invalid"}]
         counts = Counter(map(source_key, rows))
-        self.assertEqual(counts[("40.048", "Diazepam", "Seduxen", "VN-1", "Uống", "2020")], 2)
-        self.assertEqual(counts[("40.048", "Diazepam", "Seduxen", "VN-1", "Uống", None)], 1)
+        self.assertEqual(counts[("40.048", "Diazepam", "Seduxen", "VN-1", "Uống", "2020", "1")], 2)
+        self.assertEqual(counts[("40.048", "Diazepam", "Seduxen", "VN-1", "Uống", None, "1")], 1)
+        self.assertEqual(source_key({**base, "ma": "05V.50"}, 3)[-1], "3")
         self.assertEqual(publication_year("31/12/2021"), "2021")
         self.assertIsNone(publication_year("2021-02-30"))
 
@@ -36,7 +38,7 @@ class IngredientLookupTest(unittest.TestCase):
                 {"ma": "40.049", "hoatchat": "Diazepam", "ten": "Seduxen\n 5 mg", "sodk": "VN-124", "duongdung": "Tiêm", "nam_congbo": "2021", "occurrences": 2, "sort_order": 1},
                 {"ma": "40.050", "hoatchat": "Paracetamol", "ten": "Other", "sodk": "VN-125", "duongdung": "Uống", "nam_congbo": "2020", "occurrences": 1, "sort_order": 2},
             ],
-            "second": [{"ma": "40.048", "hoatchat": "Diazepam", "ten": "Seduxen", "sodk": "VN-123", "duongdung": "Uống", "nam_congbo": "2020", "occurrences": 4, "sort_order": 0}],
+            "second": [{"ma": "05C.81", "hoatchat": "Diazepam", "ten": "Seduxen", "sodk": "VN-123", "duongdung": "Uống", "nam_congbo": "2020", "loai": "2", "occurrences": 4, "sort_order": 0}],
         }
         def request(path):
             return {"collection_name": collection[0]} if path.startswith("/aliases/") else {"num_documents": len(documents[collection[0]])}
@@ -53,7 +55,9 @@ class IngredientLookupTest(unittest.TestCase):
                          ["Seduxen 5mg", "Seduxen 5 mg"])
         self.assertEqual(lookup_page(store, request, export, {"drug": "5 mg"}, 1, 10)["total_groups"], 1)
         collection[0] = "second"
-        self.assertEqual(lookup_page(store, request, export, {"drug": "dux"}, 1, 10)["total_records"], 4)
+        refreshed = lookup_page(store, request, export, {"drug": "dux"}, 1, 10)
+        self.assertEqual(refreshed["total_records"], 4)
+        self.assertEqual((refreshed["rows"][0]["ma"], refreshed["rows"][0]["loai"]), ("05C.81", "2"))
 
     def test_import_publishes_only_after_complete_batches(self):
         class Client:
@@ -66,25 +70,25 @@ class IngredientLookupTest(unittest.TestCase):
             def get_collection(self, name): return {"num_documents": 2}
             def upsert_alias(self, alias, name): self.calls.append(("alias", alias))
         client = Client()
-        import_counts(client, Counter({("40.048", "A", None, None, None, None): 3,
-                                      ("40.49", "B", None, None, None, None): 1}))
+        import_counts(client, Counter({("40.048", "A", None, None, None, None, "1"): 3,
+                                      ("40.49", "B", None, None, None, None, "2"): 1}))
         self.assertEqual([call[0] for call in client.calls], ["create", "import", "import", "alias"])
-        self.assertEqual(count_document(("40.048", None, None, None, None, None), 2, 0)["ma"], "40.048")
+        self.assertEqual(count_document(("40.048", None, None, None, None, None, "1"), 2, 0)["ma"], "40.048")
         class RejectingClient(Client):
             def import_documents(self, name, rows):
                 return type("Result", (), {"rejected_count": 1, "accepted_count": 0,
                                             "errors": ("rejected",)})()
         rejecting = RejectingClient()
         with self.assertRaises(RuntimeError):
-            import_counts(rejecting, Counter({("40.048", None, None, None, None, None): 1}))
+            import_counts(rejecting, Counter({("40.048", None, None, None, None, None, "1"): 1}))
         self.assertNotIn("alias", [call[0] for call in rejecting.calls])
 
     def test_xml_import_and_relocated_manifest(self):
         fixture = ROOT / "tests" / "fixtures" / "vss"
         raw_dir = fixture / "downloads"
         counts = aggregate_xml(raw_dir)
-        self.assertEqual(counts[("40.048", "Diazepam", "Seduxen", "VN-1", "Uống", "2025")], 2)
-        self.assertEqual(counts[("40.048", "Diazepam", "Seduxen", "VN-1", "Uống", None)], 1)
+        self.assertEqual(counts[("40.048", "Diazepam", "Seduxen", "VN-1", "Uống", "2025", "1")], 2)
+        self.assertEqual(counts[("40.048", "Diazepam", "Seduxen", "VN-1", "Uống", None, "1")], 1)
         manifest = ManifestStore(fixture / "crawl_manifest.csv", raw_dir)
         self.assertEqual(
             Path(manifest.rows["2025-01-01"]["raw_path"]),
@@ -93,6 +97,26 @@ class IngredientLookupTest(unittest.TestCase):
         validate_crawl(manifest, date(2025, 1, 1), date(2025, 1, 1))
         with self.assertRaisesRegex(RuntimeError, "2025-01-02"):
             validate_crawl(manifest, date(2025, 1, 1), date(2025, 1, 2))
+
+    def test_category_files_and_manifests_do_not_overlap(self):
+        root = ROOT / "tests" / "fixtures" / "vss"
+        raw = root / "downloads"
+        old = raw / "2025" / "01" / "vss_export_20250101.xml"
+        new = raw / "loai_2" / "2025" / "01" / old.name
+        headers = ["ma", "hoatchat", "ten", "sodk", "duongdung", "congbo"]
+        record = ["40.048", "Diazepam", "Seduxen", "VN-1", "Uống", "2025-01-01"]
+        with patch.object(Path, "rglob", return_value=[old, new]), patch(
+            "import_vss_ingredients.iter_excel_xml_rows", side_effect=lambda _: iter([headers, record])
+        ):
+            counts = aggregate_xml(raw)
+        legacy = ("40.048", "Diazepam", "Seduxen", "VN-1", "Uống", "2025")
+        self.assertEqual(counts[(*legacy, "1")], 1)
+        self.assertEqual(counts[(*legacy, "2")], 1)
+        self.assertNotEqual(manifest_path(root, 1), manifest_path(root, 2))
+        manifest = ManifestStore(manifest_path(root, 2), raw, loai=2)
+        crawler = VSSRawCrawler(raw, manifest, (10, 60), 1, 1, 0, "test", loai=2)
+        self.assertEqual(crawler.raw_path_for(date(2025, 1, 1)), new)
+        self.assertIn("loai=2", crawler.build_url(date(2025, 1, 1)))
 
     def test_daily_window_catches_up_and_collection_cleanup_keeps_rollback(self):
         self.assertEqual(
