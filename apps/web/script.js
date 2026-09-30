@@ -8244,10 +8244,12 @@ function showCopiedCellRange(tableId) {
     const containerRect = scrollContainer.getBoundingClientRect();
     const pixelRatio = window.devicePixelRatio || 1;
     const snapToDevicePixel = value => Math.round(value * pixelRatio) / pixelRatio;
-    const left = snapToDevicePixel(firstRect.left - containerRect.left + scrollContainer.scrollLeft);
-    const top = snapToDevicePixel(firstRect.top - containerRect.top + scrollContainer.scrollTop);
-    const right = snapToDevicePixel(lastRect.right - containerRect.left + scrollContainer.scrollLeft);
-    const bottom = snapToDevicePixel(lastRect.bottom - containerRect.top + scrollContainer.scrollTop);
+    // Lookup cells can sit flush with the clipped scroll edge; keep the dashed stroke inside.
+    const edgeInset = tableId === 'ingredient-lookup-table' ? 2 : 0;
+    const left = snapToDevicePixel(firstRect.left - containerRect.left + scrollContainer.scrollLeft) + edgeInset;
+    const top = snapToDevicePixel(firstRect.top - containerRect.top + scrollContainer.scrollTop) + edgeInset;
+    const right = snapToDevicePixel(lastRect.right - containerRect.left + scrollContainer.scrollLeft) - edgeInset;
+    const bottom = snapToDevicePixel(lastRect.bottom - containerRect.top + scrollContainer.scrollTop) - edgeInset;
     const width = Math.max(0, right - left);
     const height = Math.max(0, bottom - top);
     const strokeWidth = 1 / pixelRatio;

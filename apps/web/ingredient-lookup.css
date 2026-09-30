@@ -244,7 +244,7 @@
 .ingredient-lookup-results tbody td.cell-range,
 .ingredient-lookup-results tbody td.cell-active {
   background: var(--table-interaction-selected-bg);
-  box-shadow: inset 0 0 0 1px var(--table-interaction-selected-border);
+  box-shadow: inset 0 0 0 9999px color-mix(in srgb, var(--table-interaction-selected-border) 28%, transparent);
   user-select: none;
 }
 .ingredient-lookup-results table:focus { outline: none; }
