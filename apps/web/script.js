@@ -8220,6 +8220,7 @@ function initTableRangeSelect(tableId){
 
 function clearCopiedCellRange() {
     document.querySelectorAll('.table-copy-outline').forEach(outline => outline.remove());
+    document.querySelectorAll('.ingredient-lookup-copy-layer').forEach(layer => layer.remove());
 }
 
 function showCopiedCellRange(tableId) {
@@ -8239,17 +8240,38 @@ function showCopiedCellRange(tableId) {
     const scrollContainer = table.closest('.table-scroll, .ingredient-lookup-table-wrap');
     if (!firstCell || !lastCell || !scrollContainer) return;
 
+    const isLookup = tableId === 'ingredient-lookup-table';
+    let overlayContainer = scrollContainer;
+    if (isLookup) {
+        const host = scrollContainer.closest('.ingredient-lookup-results');
+        if (!host) return;
+        const hostRect = host.getBoundingClientRect();
+        const scrollRect = scrollContainer.getBoundingClientRect();
+        const layer = document.createElement('div');
+        layer.className = 'ingredient-lookup-copy-layer';
+        layer.setAttribute('aria-hidden', 'true');
+        layer.style.left = `${scrollRect.left - hostRect.left - host.clientLeft}px`;
+        layer.style.top = `${scrollRect.top - hostRect.top - host.clientTop}px`;
+        layer.style.width = `${scrollContainer.clientWidth}px`;
+        layer.style.height = `${scrollContainer.clientHeight}px`;
+        host.appendChild(layer);
+        overlayContainer = layer;
+    }
+
     const firstRect = firstCell.getBoundingClientRect();
     const lastRect = lastCell.getBoundingClientRect();
-    const containerRect = scrollContainer.getBoundingClientRect();
+    const containerRect = overlayContainer.getBoundingClientRect();
     const pixelRatio = window.devicePixelRatio || 1;
     const snapToDevicePixel = value => Math.round(value * pixelRatio) / pixelRatio;
-    // Lookup cells can sit flush with the clipped scroll edge; keep the dashed stroke inside.
-    const edgeInset = tableId === 'ingredient-lookup-table' ? 2 : 0;
-    const left = snapToDevicePixel(firstRect.left - containerRect.left + scrollContainer.scrollLeft) + edgeInset;
-    const top = snapToDevicePixel(firstRect.top - containerRect.top + scrollContainer.scrollTop) + edgeInset;
-    const right = snapToDevicePixel(lastRect.right - containerRect.left + scrollContainer.scrollLeft) - edgeInset;
-    const bottom = snapToDevicePixel(lastRect.bottom - containerRect.top + scrollContainer.scrollTop) - edgeInset;
+    const scaleX = isLookup ? containerRect.width / overlayContainer.offsetWidth || 1 : 1;
+    const scaleY = isLookup ? containerRect.height / overlayContainer.offsetHeight || scaleX : 1;
+    const alignEdge = isLookup ? value => value : snapToDevicePixel;
+    const scrollLeft = isLookup ? 0 : scrollContainer.scrollLeft;
+    const scrollTop = isLookup ? 0 : scrollContainer.scrollTop;
+    const left = alignEdge((firstRect.left - containerRect.left) / scaleX + scrollLeft);
+    const top = alignEdge((firstRect.top - containerRect.top) / scaleY + scrollTop);
+    const right = alignEdge((lastRect.right - containerRect.left) / scaleX + scrollLeft);
+    const bottom = alignEdge((lastRect.bottom - containerRect.top) / scaleY + scrollTop);
     const width = Math.max(0, right - left);
     const height = Math.max(0, bottom - top);
     const strokeWidth = 1 / pixelRatio;
@@ -8273,7 +8295,7 @@ function showCopiedCellRange(tableId) {
     border.setAttribute('stroke-width', String(strokeWidth));
     svg.appendChild(border);
     outline.appendChild(svg);
-    scrollContainer.appendChild(outline);
+    overlayContainer.appendChild(outline);
 }
 
 function initRangeCopy() {
@@ -8281,11 +8303,11 @@ function initRangeCopy() {
     document.addEventListener("copy", (e) => {
         // Tìm table có lastActive lớn nhất (được select gần nhất)
         const tables = Object.keys(tableSel);
-        const activeTable = tables.reduce((prev, curr) => 
+        const activeTable = tables.reduce((prev, curr) =>
             tableSel[curr].lastActive > tableSel[prev].lastActive ? curr : prev
         );
         if (activeTable === 'ingredient-lookup-table' && !document.getElementById(activeTable)?.contains(e.target)) return;
-        
+
         let text = tableSel[activeTable].text;
         if (!text) {
             text = buildSelectionClipboardText(activeTable);
@@ -8300,6 +8322,14 @@ function initRangeCopy() {
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') clearCopiedCellRange();
     });
+
+    const refreshLookupOutline = () => {
+        if (document.querySelector('.ingredient-lookup-copy-layer')) {
+            showCopiedCellRange('ingredient-lookup-table');
+        }
+    };
+    document.querySelector('.ingredient-lookup-table-wrap')?.addEventListener('scroll', refreshLookupOutline);
+    window.addEventListener('resize', refreshLookupOutline);
 }
 
 function buildSelectionClipboardText(tableId) {

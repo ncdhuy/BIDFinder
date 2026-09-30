@@ -191,6 +191,7 @@
 }
 .ingredient-lookup-panel button svg { width: 15px; height: 15px; }
 .ingredient-lookup-results {
+  position: relative;
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
@@ -214,7 +215,8 @@
   font-size: 18px;
 }
 .ingredient-lookup-results-head h3 svg { width: 20px; height: 20px; color: #0872d9; }
-.ingredient-lookup-table-wrap { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; }
+.ingredient-lookup-table-wrap { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.ingredient-lookup-copy-layer { position: absolute; z-index: 40; overflow: hidden; pointer-events: none; }
 .ingredient-lookup-results table {
   width: 100%;
   min-width: 1030px;
