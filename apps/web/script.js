@@ -599,7 +599,8 @@ let activeSortRule = loadStoredSortRule();
 const selectionState = {
     'standard-table': { rows: new Set(), columns: new Set(), lastRow: null, lastColumn: null },
     'extended-table': { rows: new Set(), columns: new Set(), lastRow: null, lastColumn: null },
-    'traditional-table': { rows: new Set(), columns: new Set(), lastRow: null, lastColumn: null }
+    'traditional-table': { rows: new Set(), columns: new Set(), lastRow: null, lastColumn: null },
+    'ingredient-lookup-table': { rows: new Set(), columns: new Set(), lastRow: null, lastColumn: null }
 };
 let currentDisplayedDf1 = [];
 let currentDisplayedDf2 = [];
@@ -8155,7 +8156,7 @@ function initTableRangeSelect(tableId){
 
     table.addEventListener("mousedown", (e) => {
         const td = e.target.closest("td");
-        if (!td || td.classList.contains('row-selector-cell')) return;
+        if (!td || td.classList.contains('row-selector-cell') || td.classList.contains('ingredient-lookup-message')) return;
 
         // chỉ xử lý click trái
         if (e.button !== 0) return;
@@ -8185,7 +8186,7 @@ function initTableRangeSelect(tableId){
         if (!st.isDown) return;
 
         const td = e.target.closest("td");
-        if (!td || td.classList.contains('row-selector-cell')) return;
+        if (!td || td.classList.contains('row-selector-cell') || td.classList.contains('ingredient-lookup-message')) return;
 
         const nextPos = getCellPos(td);
         if (
@@ -8235,7 +8236,7 @@ function showCopiedCellRange(tableId) {
     const colEnd = Math.max(state.start.colIndex, state.end.colIndex);
     const firstCell = rows[rowStart]?.cells?.[colStart];
     const lastCell = rows[rowEnd]?.cells?.[colEnd];
-    const scrollContainer = table.closest('.table-scroll');
+    const scrollContainer = table.closest('.table-scroll, .ingredient-lookup-table-wrap');
     if (!firstCell || !lastCell || !scrollContainer) return;
 
     const firstRect = firstCell.getBoundingClientRect();
@@ -8281,6 +8282,7 @@ function initRangeCopy() {
         const activeTable = tables.reduce((prev, curr) => 
             tableSel[curr].lastActive > tableSel[prev].lastActive ? curr : prev
         );
+        if (activeTable === 'ingredient-lookup-table' && !document.getElementById(activeTable)?.contains(e.target)) return;
         
         let text = tableSel[activeTable].text;
         if (!text) {
@@ -8645,7 +8647,8 @@ let df2 = [];
 const tableSel = {
     "standard-table": { isDown: false, start: null, end: null, text: "", lastActive: 0 },
     "extended-table": { isDown: false, start: null, end: null, text: "", lastActive: 0 },
-    "traditional-table": { isDown: false, start: null, end: null, text: "", lastActive: 0 }
+    "traditional-table": { isDown: false, start: null, end: null, text: "", lastActive: 0 },
+    "ingredient-lookup-table": { isDown: false, start: null, end: null, text: "", lastActive: 0 }
 };
 
 function initStorageAndElements() {

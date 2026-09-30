@@ -24,135 +24,6 @@
     let activeSuggestion = -1;
     let activeDropdown = null;
     let suggestionOwner = null;
-    let selectedStart = null;
-    let selectedEnd = null;
-    let selectingCells = false;
-    let copyFeedbackTimer = null;
-    const scrollContainer = table.closest('.ingredient-lookup-table-wrap');
-
-    function showCopyFeedback() {
-        clearTimeout(copyFeedbackTimer);
-        document.querySelector('.ingredient-lookup-copy-feedback')?.remove();
-        const feedback = document.createElement('div');
-        feedback.className = 'ingredient-lookup-copy-feedback';
-        feedback.setAttribute('role', 'status');
-        feedback.textContent = 'Đã sao chép';
-        document.body.appendChild(feedback);
-        copyFeedbackTimer = setTimeout(() => feedback.remove(), 1800);
-    }
-
-    function clearCopyOutline() {
-        scrollContainer.querySelector('.lookup-copy-outline')?.remove();
-    }
-
-    function showCopyOutline() {
-        clearCopyOutline();
-        const firstCell = body.rows[Math.min(selectedStart.row, selectedEnd.row)]?.cells[Math.min(selectedStart.column, selectedEnd.column)];
-        const lastCell = body.rows[Math.max(selectedStart.row, selectedEnd.row)]?.cells[Math.max(selectedStart.column, selectedEnd.column)];
-        if (!firstCell || !lastCell) return;
-        const firstRect = firstCell.getBoundingClientRect();
-        const lastRect = lastCell.getBoundingClientRect();
-        const containerRect = scrollContainer.getBoundingClientRect();
-        const pixelRatio = window.devicePixelRatio || 1;
-        const snap = value => Math.round(value * pixelRatio) / pixelRatio;
-        const left = snap(firstRect.left - containerRect.left + scrollContainer.scrollLeft);
-        const top = snap(firstRect.top - containerRect.top + scrollContainer.scrollTop);
-        const width = Math.max(0, snap(lastRect.right - containerRect.left + scrollContainer.scrollLeft) - left);
-        const height = Math.max(0, snap(lastRect.bottom - containerRect.top + scrollContainer.scrollTop) - top);
-        const strokeWidth = 1 / pixelRatio;
-        const outline = document.createElement('div');
-        outline.className = 'table-copy-outline lookup-copy-outline';
-        outline.setAttribute('aria-hidden', 'true');
-        outline.style.left = `${left}px`;
-        outline.style.top = `${top}px`;
-        outline.style.width = `${width}px`;
-        outline.style.height = `${height}px`;
-        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-        svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-        svg.setAttribute('preserveAspectRatio', 'none');
-        const border = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        border.setAttribute('class', 'table-copy-outline-border');
-        border.setAttribute('x', String(strokeWidth / 2));
-        border.setAttribute('y', String(strokeWidth / 2));
-        border.setAttribute('width', String(Math.max(0, width - strokeWidth)));
-        border.setAttribute('height', String(Math.max(0, height - strokeWidth)));
-        border.setAttribute('stroke-width', String(strokeWidth));
-        svg.appendChild(border);
-        outline.appendChild(svg);
-        scrollContainer.appendChild(outline);
-    }
-
-    function clearCellSelection() {
-        clearCopyOutline();
-        body.querySelectorAll('.lookup-cell-selected').forEach(cell => cell.classList.remove('lookup-cell-selected'));
-        selectedStart = null;
-        selectedEnd = null;
-    }
-
-    function cellPosition(cell) {
-        return { row: cell.parentElement.sectionRowIndex, column: cell.cellIndex };
-    }
-
-    function selectCellRange() {
-        body.querySelectorAll('.lookup-cell-selected').forEach(cell => cell.classList.remove('lookup-cell-selected'));
-        if (!selectedStart || !selectedEnd) return;
-        const firstRow = Math.min(selectedStart.row, selectedEnd.row);
-        const lastRow = Math.max(selectedStart.row, selectedEnd.row);
-        const firstColumn = Math.min(selectedStart.column, selectedEnd.column);
-        const lastColumn = Math.max(selectedStart.column, selectedEnd.column);
-        for (let row = firstRow; row <= lastRow; row += 1) {
-            for (let column = firstColumn; column <= lastColumn; column += 1) {
-                body.rows[row]?.cells[column]?.classList.add('lookup-cell-selected');
-            }
-        }
-    }
-
-    body.addEventListener('selectstart', event => {
-        if (event.target.closest('td:not(.ingredient-lookup-message)')) event.preventDefault();
-    });
-    body.addEventListener('mousedown', event => {
-        const cell = event.target.closest('td:not(.ingredient-lookup-message)');
-        if (event.button !== 0 || !cell || !body.contains(cell)) return;
-        clearCopyOutline();
-        const position = cellPosition(cell);
-        if (!event.shiftKey || !selectedStart) selectedStart = position;
-        selectedEnd = position;
-        selectingCells = true;
-        selectCellRange();
-        table.focus({ preventScroll: true });
-        event.preventDefault();
-    });
-    body.addEventListener('mouseover', event => {
-        if (!selectingCells) return;
-        const cell = event.target.closest('td:not(.ingredient-lookup-message)');
-        if (!cell || !body.contains(cell)) return;
-        selectedEnd = cellPosition(cell);
-        selectCellRange();
-    });
-    document.addEventListener('mouseup', () => { selectingCells = false; });
-    document.addEventListener('mousedown', event => {
-        if (!body.contains(event.target)) clearCellSelection();
-    });
-    document.addEventListener('keydown', event => {
-        if (event.key === 'Escape') clearCopyOutline();
-    });
-    table.tabIndex = 0;
-    table.addEventListener('copy', event => {
-        if (!selectedStart || !selectedEnd || !event.clipboardData) return;
-        const lines = [];
-        for (let row = Math.min(selectedStart.row, selectedEnd.row); row <= Math.max(selectedStart.row, selectedEnd.row); row += 1) {
-            const values = [];
-            for (let column = Math.min(selectedStart.column, selectedEnd.column); column <= Math.max(selectedStart.column, selectedEnd.column); column += 1) {
-                values.push(body.rows[row]?.cells[column]?.textContent?.trim() || '');
-            }
-            lines.push(values.join('\t'));
-        }
-        event.clipboardData.setData('text/plain', lines.join('\n'));
-        event.preventDefault();
-        event.stopPropagation();
-        showCopyOutline();
-        showCopyFeedback();
-    });
 
     function filterValues() {
         return Object.fromEntries([...new FormData(form)].map(([key, value]) => [key, String(value).trim()]));
@@ -313,7 +184,8 @@
     }
 
     function showMessage(message, state = '') {
-        clearCellSelection();
+        clearCellSelectionForTable(table.id);
+        clearCopiedCellRange();
         body.replaceChildren();
         const row = body.insertRow();
         const cell = row.insertCell();
@@ -347,7 +219,8 @@
 
     function render(result) {
         currentResult = result;
-        clearCellSelection();
+        clearCellSelectionForTable(table.id);
+        clearCopiedCellRange();
         body.replaceChildren();
         exportButton.disabled = !result.total_groups;
         if (!result.total_groups) {

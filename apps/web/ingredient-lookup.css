@@ -240,35 +240,14 @@
 .ingredient-lookup-results th[data-sort].is-sorted { color: #0d6ed2; }
 .ingredient-lookup-results th[data-sort]:focus-visible { outline: 2px solid #1680e3; outline-offset: -2px; }
 .ingredient-lookup-results tbody td:not(.ingredient-lookup-message) { cursor: cell; }
-.ingredient-lookup-results tbody td.lookup-cell-selected {
-  background: #dceafa;
-  box-shadow: inset 0 0 0 1px #5d9de0;
+.ingredient-lookup-results tbody td.cell-selected,
+.ingredient-lookup-results tbody td.cell-range,
+.ingredient-lookup-results tbody td.cell-active {
+  background: var(--table-interaction-selected-bg);
+  box-shadow: inset 0 0 0 1px var(--table-interaction-selected-border);
   user-select: none;
 }
 .ingredient-lookup-results table:focus { outline: none; }
-.ingredient-lookup-copy-feedback {
-  position: fixed;
-  right: 24px;
-  bottom: 24px;
-  z-index: 10000;
-  padding: 10px 16px;
-  border: 1px solid #0b5eaf;
-  border-radius: 8px;
-  background: #0d6ed2;
-  box-shadow: 0 6px 20px rgba(13, 66, 124, .22);
-  color: #fff;
-  font-size: 14px;
-  font-weight: 600;
-  pointer-events: none;
-  animation: ingredient-lookup-copy-appear 180ms ease-out;
-}
-@keyframes ingredient-lookup-copy-appear {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .ingredient-lookup-copy-feedback { animation: none; }
-}
 .ingredient-lookup-results th:nth-child(1) { width: 4%; }
 .ingredient-lookup-results th:nth-child(2) { width: 10%; }
 .ingredient-lookup-results th:nth-child(3) { width: 13%; }
