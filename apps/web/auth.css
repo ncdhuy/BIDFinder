@@ -145,6 +145,33 @@ body.auth-state-guest #open-login-nav {
   color: #a46318;
 }
 
+.app-header-links .app-icon-btn-notification {
+  position: relative;
+}
+
+.app-header-links .notification-count-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 999px;
+  background: #d92d20;
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.app-header-links .notification-count-badge[hidden] {
+  display: none;
+}
+
 .app-auth-btn-danger {
   color: var(--auth-danger);
   border-color: #edcfcd;

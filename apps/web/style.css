@@ -913,6 +913,7 @@ body.landing-active .page-container {
   overflow: hidden;
 }
 .app-header {
+  margin-top: 8px;
   margin-bottom: 0;
   padding: 10px 12px 6px;
   border: 0;
@@ -2249,6 +2250,21 @@ body:not(.landing-active) .btn-export {
     border-color: var(--color-border);
 }
 
+.feedback-topic-item.is-unread {
+    position: relative;
+    background: #eff7ff;
+    border-color: #c8ddf2;
+    padding-right: 34px;
+}
+
+.feedback-topic-item.is-unread strong {
+    font-weight: 800;
+}
+
+.feedback-topic-item.is-read strong {
+    font-weight: 600;
+}
+
 .feedback-topic-item strong {
     display: block;
     min-width: 0;
@@ -2315,6 +2331,37 @@ body:not(.landing-active) .btn-export {
 .feedback-topic-admin-badge {
     background: #e6f3fa;
     color: var(--color-primary-dark) !important;
+}
+
+.feedback-topic-read-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border-radius: 999px;
+    font-size: 10.5px !important;
+    font-weight: 700;
+    padding: 3px 8px;
+}
+
+.feedback-topic-read-state.is-unread {
+    background: #dceeff;
+    color: #0866ff !important;
+}
+
+.feedback-topic-read-state.is-read {
+    background: #eef2f6;
+    color: #718096 !important;
+}
+
+.feedback-topic-unread-dot {
+    position: absolute;
+    top: 50%;
+    right: 12px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #0866ff;
+    transform: translateY(-50%);
 }
 
 .feedback-board-detail {
@@ -7877,7 +7924,9 @@ body.product-journey-active #panel-overlay.show {
     gap: 6px;
     justify-content: flex-start;
     overflow-x: auto;
+    padding-top: 6px;
     padding-bottom: 2px;
+    margin-top: -6px;
   }
 
   .app-auth-btn {

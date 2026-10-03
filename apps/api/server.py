@@ -3442,6 +3442,42 @@ def is_feedback_admin_email(email: Optional[str]) -> bool:
     return bool(normalized and normalized in ADMIN_EMAILS)
 
 
+feedback_topic_reads_table_ready = False
+feedback_topic_reads_table_lock = asyncio.Lock()
+
+
+async def ensure_feedback_topic_reads_table(conn: asyncpg.Connection) -> None:
+    global feedback_topic_reads_table_ready
+    if feedback_topic_reads_table_ready:
+        return
+    async with feedback_topic_reads_table_lock:
+        if not feedback_topic_reads_table_ready:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS app_feedback_topic_reads (
+                    user_id BIGINT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+                    topic_id BIGINT NOT NULL REFERENCES app_feedback_topics(id) ON DELETE CASCADE,
+                    read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (user_id, topic_id)
+                )
+            """)
+            feedback_topic_reads_table_ready = True
+
+
+async def count_unread_feedback_topics(conn: asyncpg.Connection, user_id: int) -> int:
+    count = await conn.fetchval("""
+        SELECT COUNT(*)
+        FROM app_feedback_topics t
+        WHERE (t.is_admin_topic OR LOWER(BTRIM(t.user_email)) = ANY($2::text[]))
+          AND NOT EXISTS (
+              SELECT 1
+              FROM app_feedback_topic_reads r
+              WHERE r.user_id = $1
+                AND r.topic_id = t.id
+          )
+    """, user_id, sorted(ADMIN_EMAILS))
+    return int(count or 0)
+
+
 def serialize_feedback_topic(row: asyncpg.Record) -> Dict[str, Any]:
     keys = set(row.keys())
     return {
@@ -3454,6 +3490,7 @@ def serialize_feedback_topic(row: asyncpg.Record) -> Dict[str, Any]:
             (bool(row["is_admin_topic"]) if "is_admin_topic" in keys else False)
             or is_feedback_admin_email(row["user_email"])
         ),
+        "is_read": bool(row["is_read"]) if "is_read" in keys else False,
         "reply_count": int(row["reply_count"] or 0),
         "user_email": row["user_email"],
         "author_name": row["author_name"] if "author_name" in keys else None,
@@ -3821,16 +3858,21 @@ async def list_feedback_topics(request: Request):
         pool = await ensure_db_pool()
         async with pool.acquire() as conn:
             current_user = await get_optional_authenticated_user(conn, request)
+            await ensure_feedback_topic_reads_table(conn)
             rows = await conn.fetch(
                 """
                 SELECT t.id, t.user_id, t.user_email, u.full_name AS author_name,
                        t.title, t.category, t.status, t.is_admin_topic,
-                       t.reply_count, t.created_at, t.updated_at, t.last_activity_at
+                       t.reply_count, t.created_at, t.updated_at, t.last_activity_at,
+                       (r.topic_id IS NOT NULL) AS is_read
                 FROM app_feedback_topics t
                 LEFT JOIN app_users u ON u.id = t.user_id
+                LEFT JOIN app_feedback_topic_reads r
+                       ON r.topic_id = t.id AND r.user_id = $1::bigint
                 ORDER BY t.created_at DESC, t.id DESC
                 LIMIT 100
-                """
+                """,
+                current_user.get("id") if current_user else None,
             )
         return {
             "success": True,
@@ -3841,6 +3883,28 @@ async def list_feedback_topics(request: Request):
         return auth_error_response(exc)
     except Exception as exc:
         log_server_exception("list_feedback_topics failed", exc)
+        return internal_error_response()
+
+
+@app.get("/api/feedback/notifications/unread-count")
+async def get_feedback_notification_unread_count(request: Request):
+    limited = await enforce_rate_limit(request, "feedback-notification-count", FEEDBACK_READ_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            current_user = await get_optional_authenticated_user(conn, request)
+            if not current_user:
+                return {"success": True, "unread_count": 0}
+            await ensure_feedback_topic_reads_table(conn)
+            unread_count = await count_unread_feedback_topics(conn, int(current_user["id"]))
+        return {"success": True, "unread_count": unread_count}
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        log_server_exception("get_feedback_notification_unread_count failed", exc)
         return internal_error_response()
 
 
@@ -3948,6 +4012,41 @@ async def get_feedback_topic(request: Request, topic_id: int):
         return auth_error_response(exc)
     except Exception as exc:
         log_server_exception("get_feedback_topic failed", exc)
+        return internal_error_response()
+
+
+@app.post("/api/feedback/topics/{topic_id}/read")
+async def mark_feedback_topic_read(request: Request, topic_id: int):
+    limited = await enforce_rate_limit(request, "feedback-topic-read", FEEDBACK_READ_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            current_user = await require_authenticated_user(conn, request)
+            await ensure_feedback_topic_reads_table(conn)
+            is_app_topic = await conn.fetchval("""
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM app_feedback_topics t
+                    WHERE t.id = $1
+                      AND (t.is_admin_topic OR LOWER(BTRIM(t.user_email)) = ANY($2::text[]))
+                )
+            """, topic_id, sorted(ADMIN_EMAILS))
+            if not is_app_topic:
+                raise HTTPException(status_code=404, detail="Không tìm thấy thông báo.")
+            marked_topic_id = await conn.fetchval("""
+                INSERT INTO app_feedback_topic_reads (user_id, topic_id)
+                VALUES ($1, $2)
+                ON CONFLICT (user_id, topic_id) DO NOTHING
+                RETURNING topic_id
+            """, int(current_user["id"]), topic_id)
+        return {"success": True, "marked_read": marked_topic_id is not None}
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        log_server_exception("mark_feedback_topic_read failed", exc)
         return internal_error_response()
 
 

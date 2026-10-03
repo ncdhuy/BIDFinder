@@ -332,6 +332,14 @@ class DatabaseMigrator:
                 CREATE INDEX IF NOT EXISTS idx_app_feedback_topics_last_activity
                 ON app_feedback_topics (last_activity_at DESC)
             """)
+            self.cursor.execute("""
+                CREATE TABLE IF NOT EXISTS app_feedback_topic_reads (
+                    user_id BIGINT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+                    topic_id BIGINT NOT NULL REFERENCES app_feedback_topics(id) ON DELETE CASCADE,
+                    read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (user_id, topic_id)
+                )
+            """)
 
             self.cursor.execute("""
                 CREATE TABLE IF NOT EXISTS app_feedback_replies (

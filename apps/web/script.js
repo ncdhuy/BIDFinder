@@ -9771,8 +9771,10 @@ let feedbackBoardState = {
     repliesHasMore: false,
     repliesLoading: false,
     topicFilter: 'all',
-    isAdmin: false
+    isAdmin: false,
+    unreadNotificationCount: 0
 };
+let feedbackUnreadCountRequestId = 0;
 
 const FEEDBACK_REPLY_BATCH_SIZE = 20;
 const FEEDBACK_TOPIC_CACHE_TTL_MS = 45 * 1000;
@@ -9837,6 +9839,61 @@ function getVisibleFeedbackTopics() {
 
 function isFeedbackUserAuthenticated() {
     return Boolean(window.BIDFinderAuth?.isAuthenticated?.());
+}
+
+function updateFeedbackNotificationBadge(count) {
+    const button = document.getElementById('open-feedback-modal');
+    const badge = document.getElementById('feedback-unread-count');
+    if (!button || !badge) return;
+
+    const unreadCount = Math.max(0, Math.floor(Number(count) || 0));
+    feedbackBoardState.unreadNotificationCount = unreadCount;
+    badge.textContent = unreadCount >= 1000 ? '1000+' : String(unreadCount);
+    badge.hidden = unreadCount === 0;
+    const label = unreadCount > 0 ? `Thông báo, ${unreadCount} bài chưa đọc` : 'Thông báo';
+    button.setAttribute('aria-label', label);
+    button.title = label;
+}
+
+async function refreshFeedbackNotificationCount() {
+    const requestId = ++feedbackUnreadCountRequestId;
+    if (!isFeedbackUserAuthenticated()) {
+        updateFeedbackNotificationBadge(0);
+        return;
+    }
+
+    try {
+        const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/feedback/notifications/unread-count`);
+        const result = await response.json().catch(() => ({}));
+        if (requestId !== feedbackUnreadCountRequestId || !response.ok || result.success === false) return;
+        updateFeedbackNotificationBadge(result.unread_count);
+    } catch (error) {
+        // Keep the last known count when the network is temporarily unavailable.
+    }
+}
+
+async function markFeedbackTopicAsRead(topic) {
+    if (!topic?.is_admin_topic || topic.is_read || !isFeedbackUserAuthenticated()) return;
+    try {
+        const response = await getAuthorizedFetch()(`${API_BASE_URL}/api/feedback/topics/${topic.id}/read`, { method: 'POST' });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || result.success === false) {
+            throw new Error(result.message || result.detail || 'Không thể đánh dấu thông báo đã đọc.');
+        }
+
+        topic.is_read = true;
+        renderFeedbackTopicList();
+        if (result.marked_read) {
+            const knownUnreadCount = feedbackBoardState.unreadNotificationCount;
+            feedbackUnreadCountRequestId += 1;
+            updateFeedbackNotificationBadge(knownUnreadCount - 1);
+            if (knownUnreadCount === 0) refreshFeedbackNotificationCount();
+        } else {
+            refreshFeedbackNotificationCount();
+        }
+    } catch (error) {
+        console.warn('Feedback notification read mark failed:', error);
+    }
 }
 
 function requireFeedbackAuthentication() {
@@ -9926,14 +9983,16 @@ function renderFeedbackTopicList() {
     }
 
     list.innerHTML = visibleTopics.map(topic => `
-        <button class="feedback-topic-item${topic.id === feedbackBoardState.activeTopicId ? ' active' : ''}" type="button" data-topic-id="${topic.id}">
+        <button class="feedback-topic-item${topic.id === feedbackBoardState.activeTopicId ? ' active' : ''}${topic.is_admin_topic ? (topic.is_read ? ' is-read' : ' is-unread') : ''}" type="button" data-topic-id="${topic.id}">
             <span class="feedback-topic-item-meta">
                 ${topic.is_admin_topic ? '<span class="feedback-topic-admin-badge">BIDFinder</span>' : ''}
                 <span class="feedback-topic-item-status${topic.status === 'closed' ? ' is-closed' : ' is-open'}">
                     ${FEEDBACK_STATUS_ICONS[topic.status] || FEEDBACK_STATUS_ICONS.open}
                     ${FEEDBACK_STATUS_LABELS[topic.status] || topic.status}
                 </span>
+                ${topic.is_admin_topic ? `<span class="feedback-topic-read-state${topic.is_read ? ' is-read' : ' is-unread'}">${topic.is_read ? 'Đã đọc' : 'Chưa đọc'}</span>` : ''}
             </span>
+            ${topic.is_admin_topic && !topic.is_read ? '<span class="feedback-topic-unread-dot" aria-hidden="true"></span>' : ''}
             <strong>${escapeHtml(topic.title || '')}</strong>
             <span>${FEEDBACK_CATEGORY_LABELS[topic.category] || 'Chủ đề'} · ${Number(topic.reply_count || 0)} phản hồi · ${formatFeedbackDate(topic.created_at)}</span>
         </button>
@@ -10062,6 +10121,7 @@ async function loadFeedbackTopicDetail(topicId) {
     renderFeedbackTopicList();
     setFeedbackStatus('');
 
+    const topicMeta = feedbackBoardState.topics.find(topic => topic.id === numericTopicId);
     const cached = feedbackBoardState.topicDetails.get(numericTopicId);
     const cachedAt = Number(cached?.cachedAt || 0);
     const isFreshCache = cached?.topic && Date.now() - cachedAt < FEEDBACK_TOPIC_CACHE_TTL_MS;
@@ -10073,7 +10133,6 @@ async function loadFeedbackTopicDetail(topicId) {
         const scroller = document.querySelector('#feedback-topic-detail .feedback-discussion-scroll');
         if (scroller) scroller.scrollTop = 0;
     } else {
-        const topicMeta = feedbackBoardState.topics.find(topic => topic.id === numericTopicId);
         if (topicMeta) {
             renderFeedbackTopicPreview(topicMeta);
             const scroller = document.querySelector('#feedback-topic-detail .feedback-discussion-scroll');
@@ -10081,6 +10140,7 @@ async function loadFeedbackTopicDetail(topicId) {
         }
     }
     if (isFreshCache) {
+        await markFeedbackTopicAsRead(topicMeta);
         setFeedbackStatus('');
         return;
     }
@@ -10115,6 +10175,7 @@ async function loadFeedbackTopicDetail(topicId) {
     renderFeedbackTopicDetail(result.topic, feedbackBoardState.replies);
     const scroller = document.querySelector('#feedback-topic-detail .feedback-discussion-scroll');
     if (scroller) scroller.scrollTop = 0;
+    await markFeedbackTopicAsRead(topicMeta);
     setFeedbackStatus('');
 }
 
@@ -10167,6 +10228,7 @@ function openFeedbackModal() {
     setFeedbackStatus('');
     feedbackBoardState.activeTopicId = null;
     feedbackBoardState.activeTopic = null;
+    refreshFeedbackNotificationCount();
     loadFeedbackTopics().catch(error => {
         console.error('Feedback topics load failed:', error);
         setFeedbackStatus(error?.message || 'Không tải được thông báo lúc này.', 'error');
@@ -10409,7 +10471,17 @@ function initFeedbackModalEvents() {
     document.getElementById('feedback-topic-form')?.addEventListener('submit', createFeedbackTopic);
     document.getElementById('send-feedback-reply')?.addEventListener('click', sendFeedbackReply);
     document.getElementById('feedback-reply-body')?.addEventListener('input', updateFeedbackReplyButtonState);
-    window.addEventListener('bidfinder:auth-changed', syncFeedbackComposerAuthState);
+    window.addEventListener('bidfinder:auth-changed', () => {
+        syncFeedbackComposerAuthState();
+        refreshFeedbackNotificationCount();
+    });
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) refreshFeedbackNotificationCount();
+    });
+    window.setInterval(() => {
+        if (!document.hidden) refreshFeedbackNotificationCount();
+    }, 60_000);
+    refreshFeedbackNotificationCount();
     document.querySelector('#feedback-topic-detail .feedback-discussion-scroll')?.addEventListener('scroll', handleFeedbackDiscussionScroll);
     document.getElementById('feedback-reply-body')?.addEventListener('keydown', event => {
         if (event.key !== 'Enter' || event.isComposing) return;
@@ -10566,6 +10638,18 @@ function activateResultView(targetId) {
     const button = document.querySelector(`.scope-btn[data-view="${targetId}"]`);
     const activeButton = document.querySelector('.scope-btn.active');
     if (!button) return;
+
+    const tabStrip = button.closest('.result-table-tab-list');
+    if (tabStrip) {
+        const stripRect = tabStrip.getBoundingClientRect();
+        const buttonRect = button.getBoundingClientRect();
+        const stripLeft = stripRect.left + tabStrip.clientLeft;
+        const stripRight = stripLeft + tabStrip.clientWidth;
+        const scrollDelta = buttonRect.left < stripLeft
+            ? buttonRect.left - stripLeft
+            : buttonRect.right > stripRight ? buttonRect.right - stripRight : 0;
+        if (scrollDelta) tabStrip.scrollBy({ left: scrollDelta, behavior: 'smooth' });
+    }
 
     const leavingDashboard = activeButton?.getAttribute('data-view') === 'dashboard-panel'
         && targetId !== 'dashboard-panel';
@@ -11221,9 +11305,24 @@ function getProductJourneySteps() {
             selector: '#open-ai-search', placement: 'bottom', before: closeJourneySurfaces
         },
         {
-            title: 'Ba nhóm dữ liệu',
-            body: 'Kết quả tìm kiếm được phân loại theo ba nhóm: Hàng hóa, Thuốc và Dược liệu / Vị thuốc cổ truyền.',
-            selector: '#data-view-switcher .result-table-tab-list',
+            title: '03 nhóm dữ liệu',
+            body: 'Kết quả tìm kiếm được phân loại theo 03 nhóm: Hàng hóa, Thuốc và Dược liệu / Vị thuốc cổ truyền.',
+            selector: '#data-view-switcher .result-table-tab[data-view="df2-panel"]',
+            highlightMargin: 8,
+            highlightRightMargin: 0,
+            getRect: () => {
+                const rects = Array.from(document.querySelectorAll(
+                    '#data-view-switcher .result-table-tab[data-view="df2-panel"], '
+                    + '#data-view-switcher .result-table-tab[data-view="df1-panel"], '
+                    + '#data-view-switcher .result-table-tab[data-view="df3-panel"]'
+                )).map(tab => tab.getBoundingClientRect());
+                if (rects.length !== 3) return null;
+                const left = Math.min(...rects.map(rect => rect.left));
+                const top = Math.min(...rects.map(rect => rect.top));
+                const right = Math.max(...rects.map(rect => rect.right));
+                const bottom = Math.max(...rects.map(rect => rect.bottom));
+                return { left, top, right, bottom, width: right - left, height: bottom - top };
+            },
             placement: 'bottom',
             before: () => {
                 closeJourneySurfaces();
@@ -11320,6 +11419,13 @@ function getProductJourneySteps() {
                 const product = productJourneyState?.activeTarget?.closest('.dashboard-product-row')?.dataset.dashboardProduct;
                 if (product && !sameDashboardIdentity(dashboardSelection.product, product)) setDashboardSelection('product', product);
             }
+        },
+        {
+            title: 'Tra cứu mã hoạt chất',
+            body: 'Tra cứu mã và thông tin hoạt chất từ danh mục thuốc trúng thầu.',
+            selector: '.scope-btn[data-view="ingredient-lookup-panel"]', placement: 'bottom',
+            before: closeJourneySurfaces, afterClick: () => activateResultView('ingredient-lookup-panel'),
+            focusAfterSelector: '#ingredient-lookup-panel'
         },
         {
             title: 'Hướng dẫn, thông báo và tài khoản',
@@ -11562,7 +11668,7 @@ function positionProductJourney(step, target) {
     const state = productJourneyState;
     if (!state?.root || !target) return;
 
-    const rect = target.getBoundingClientRect();
+    const rect = step.getRect?.(target) || target.getBoundingClientRect();
     const highlight = state.root.querySelector('.product-journey-highlight');
     const card = state.root.querySelector('.product-journey-card');
 
@@ -11575,14 +11681,15 @@ function positionProductJourney(step, target) {
     }
 
     highlight.hidden = false;
-    const margin = 8;
+    const margin = step.highlightMargin ?? 8;
+    const rightMargin = step.highlightRightMargin ?? margin;
     const wrapperRect = target.closest?.('.table-wrapper')?.getBoundingClientRect?.();
     const leftEdge = Math.max(8, rect.left - margin, wrapperRect?.left ?? 0);
     const topEdge = Math.max(8, rect.top - margin, wrapperRect?.top ?? 0);
     const highlightRect = {
         left: leftEdge,
         top: topEdge,
-        width: Math.max(0, Math.min(window.innerWidth - 8, rect.right + margin, wrapperRect?.right ?? window.innerWidth) - leftEdge),
+        width: Math.max(0, Math.min(window.innerWidth - 8, rect.right + rightMargin, wrapperRect?.right ?? window.innerWidth) - leftEdge),
         height: Math.max(0, Math.min(window.innerHeight - 8, rect.bottom + margin, wrapperRect?.bottom ?? window.innerHeight) - topEdge)
     };
     if (!highlightRect.width || !highlightRect.height) {
@@ -11783,10 +11890,14 @@ function handleProductJourneyClick(event) {
     if (!productJourneyState) return;
     event.preventDefault();
     event.stopImmediatePropagation();
+    const actionElement = event.target.closest('[data-journey-action]');
+    if (!actionElement) {
+        nextProductJourneyStep();
+        return;
+    }
 
-    const action = event.target.closest('[data-journey-action]')?.dataset.journeyAction;
-    if (!action) return;
-    if (event.target.closest('[data-journey-action]')?.disabled) return;
+    const action = actionElement.dataset.journeyAction;
+    if (actionElement.disabled) return;
     if (action === 'prev') {
         previousProductJourneyStep();
         return;
