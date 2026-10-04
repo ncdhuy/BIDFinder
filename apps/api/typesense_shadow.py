@@ -853,8 +853,12 @@ def _cross_group_product_fields(schema_group: str, source_fields: Sequence[str])
     if schema_group == "goods":
         return CROSS_GROUP_GOODS_PRODUCT_FIELDS
     if schema_group == "traditional_medicine":
+        if "marketing_authorization_or_import_permit" in source:
+            return ("registration_or_import_permit_number",)
         return ("item_name",)
     if schema_group == "medicines":
+        if "marketing_authorization_or_import_permit" in source:
+            return ("marketing_authorization_or_import_permit",)
         if "item_name" in source:
             return CROSS_GROUP_MEDICINE_PRODUCT_FIELDS
         selected = tuple(field for field in CROSS_GROUP_MEDICINE_PRODUCT_FIELDS if field in source)

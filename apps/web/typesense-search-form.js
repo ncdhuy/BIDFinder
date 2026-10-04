@@ -67,6 +67,9 @@
         medicines: new Set(['medicine_name', 'active_ingredient_or_herbal_component']),
         traditional: new Set(['item_name'])
     };
+    const CROSS_GROUP_REGISTRATION_TRIGGER_FIELDS = {
+        medicines: new Set(['marketing_authorization_or_import_permit'])
+    };
     // Existing FilterRequest aliases. Keeping these aliases reuses the legacy
     // token translator (including AND / OR / NOT) without changing the API.
     const LEGACY_TOKEN_FILTER_KEYS = {
@@ -90,7 +93,10 @@
         }
     };
     function isCrossGroupProductField(group, fieldName) {
-        return Boolean(CROSS_GROUP_PRODUCT_TRIGGER_FIELDS[group]?.has(fieldName));
+        return Boolean(
+            CROSS_GROUP_PRODUCT_TRIGGER_FIELDS[group]?.has(fieldName)
+            || CROSS_GROUP_REGISTRATION_TRIGGER_FIELDS[group]?.has(fieldName)
+        );
     }
     const SELECTION_METHODS = ['Đấu thầu rộng rãi', 'Đấu thầu hạn chế', 'Chỉ định thầu', 'Chào hàng cạnh tranh', 'Mua sắm trực tiếp', 'Tự thực hiện', 'Tham gia thực hiện của cộng đồng', 'Đàm phán giá', 'Lựa chọn nhà thầu trong trường hợp đặc biệt', 'Đặt hàng', 'Chào giá trực tuyến', 'Chào giá trực tuyến theo quy trình rút gọn', 'Mua sắm trực tuyến'];
     const SELECTION_METHOD_LABELS = new Map([
@@ -1187,7 +1193,12 @@
                     addTextFields(name);
                     textValues.push(values[0]);
                 }
-                else if (criterion.kind === 'tokens' && legacyFilterKey) filters[legacyFilterKey] = { tokens: this.criterionTokens(criterion) };
+                else if (criterion.kind === 'tokens' && legacyFilterKey) {
+                    const filterKey = isCrossGroupProductField(this.state.group, name)
+                        ? 'crossGroupProductKeyword'
+                        : legacyFilterKey;
+                    filters[filterKey] = { tokens: this.criterionTokens(criterion) };
+                }
                 else if (field.filterable) structuredFilters[name] = values.length === 1 ? { eq: values[0] } : { in: values };
                 else if (field.type === 'string' || field.type === 'string[]') { textFields.push(name); textValues.push(...values); }
             }

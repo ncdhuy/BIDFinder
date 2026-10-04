@@ -236,11 +236,25 @@
   white-space: nowrap;
   text-align: left;
 }
-.ingredient-lookup-results th { height: 38px; background: #f1f6fb; color: #315276; font-weight: 600; }
+.ingredient-lookup-results th { position: relative; height: 38px; padding-right: 18px; background: #f1f6fb; color: #315276; font-weight: 600; }
 .ingredient-lookup-results th[data-sort] { cursor: pointer; user-select: none; }
 .ingredient-lookup-results th[data-sort]:hover { background: #e6f0fa; }
 .ingredient-lookup-results th[data-sort].is-sorted { color: #0d6ed2; }
 .ingredient-lookup-results th[data-sort]:focus-visible { outline: 2px solid #1680e3; outline-offset: -2px; }
+.ingredient-lookup-col-resizer {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  right: 0;
+  width: 14px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+}
+.ingredient-lookup-col-resizer:focus-visible { outline: 2px solid #1680e3; outline-offset: -2px; }
+.ingredient-lookup-results table.is-resizing,
+.ingredient-lookup-results table.is-resizing * { user-select: none; }
+.ingredient-lookup-results table.is-resizing .ingredient-lookup-col-resizer { cursor: col-resize; }
 .ingredient-lookup-results tbody td:not(.ingredient-lookup-message) { cursor: cell; }
 .ingredient-lookup-results tbody td.cell-selected,
 .ingredient-lookup-results tbody td.cell-range,
@@ -251,14 +265,14 @@
 }
 .ingredient-lookup-results table:focus { outline: none; }
 .ingredient-lookup-results th:nth-child(1) { width: 4%; }
-.ingredient-lookup-results th:nth-child(2) { width: 10%; }
+.ingredient-lookup-results th:nth-child(2) { width: 8%; }
 .ingredient-lookup-results th:nth-child(3) { width: 13%; }
 .ingredient-lookup-results th:nth-child(4) { width: 13%; }
-.ingredient-lookup-results th:nth-child(5) { width: 13%; }
-.ingredient-lookup-results th:nth-child(6) { width: 11%; }
-.ingredient-lookup-results th:nth-child(7) { width: 9%; }
-.ingredient-lookup-results th:nth-child(8) { width: 20%; }
-.ingredient-lookup-results th:nth-child(9) { width: 7%; }
+.ingredient-lookup-results th:nth-child(5) { width: 11%; }
+.ingredient-lookup-results th:nth-child(6) { width: 9%; }
+.ingredient-lookup-results th:nth-child(7) { width: 12%; }
+.ingredient-lookup-results th:nth-child(8) { width: 17%; }
+.ingredient-lookup-results th:nth-child(9) { width: 13%; }
 .ingredient-lookup-results .ingredient-lookup-rank,
 .ingredient-lookup-results th:first-child { text-align: center; }
 .ingredient-lookup-results .ingredient-lookup-code { color: #0872d9; }
@@ -267,7 +281,7 @@
 .ingredient-lookup-count-inner { display: flex; align-items: center; gap: 8px; }
 .ingredient-lookup-count strong { flex: 0 0 52px; text-align: right; font-weight: 600; color: #123b72; }
 .ingredient-lookup-track { display: block; flex: 1; height: 15px; border-radius: 4px; background: #edf2f7; overflow: hidden; }
-.ingredient-lookup-fill { display: block; height: 100%; border-radius: 4px; background: #77b3f5; }
+.ingredient-lookup-fill { display: block; height: 100%; border-radius: 4px; background: #0d6ed2; }
 .ingredient-lookup-message { height: 360px !important; text-align: center !important; color: var(--color-text-secondary); }
 .ingredient-lookup-message.error { color: var(--color-error); }
 .ingredient-lookup-footer {

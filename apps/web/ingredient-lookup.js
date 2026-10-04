@@ -38,7 +38,8 @@
             const selected = header.dataset.sort === sortBy;
             const isDefault = !sortBy && header.dataset.sort === 'occurrences';
             header.classList.toggle('is-sorted', selected);
-            header.textContent = `${header.dataset.label}${selected ? (sortOrder === 'asc' ? ' ↑' : ' ↓') : (isDefault ? ' ↓' : '')}`;
+            const label = header.querySelector('.ingredient-lookup-sort-label');
+            if (label) label.textContent = `${header.dataset.label}${selected ? (sortOrder === 'asc' ? ' ↑' : ' ↓') : (isDefault ? ' ↓' : '')}`;
             header.setAttribute('aria-sort', selected ? (sortOrder === 'asc' ? 'ascending' : 'descending') : (isDefault ? 'descending' : 'none'));
             header.title = selected ? (sortOrder === 'asc' ? 'Bấm để sắp xếp giảm dần' : 'Bấm để trở về thứ tự mặc định') : 'Bấm để sắp xếp tăng dần';
         });
@@ -46,6 +47,10 @@
 
     sortableHeaders.forEach(header => {
         header.dataset.label = header.textContent.replace(/\s*[↑↓]$/, '').trim();
+        const label = document.createElement('span');
+        label.className = 'ingredient-lookup-sort-label';
+        label.textContent = header.dataset.label;
+        header.replaceChildren(label);
         header.tabIndex = 0;
         const toggle = () => {
             if (sortBy !== header.dataset.sort) {
@@ -69,6 +74,155 @@
         });
     });
     updateSortHeaders();
+
+    function initColumnResizing() {
+        const tableHeaders = [...table.querySelectorAll('thead th')];
+        const wrapper = table.closest('.ingredient-lookup-table-wrap');
+        if (!tableHeaders.length || !wrapper) return;
+
+        const storageKey = 'bidfinder:ingredient-lookup-column-widths:v3';
+        const minWidth = 48;
+        let savedWidths = {};
+        try {
+            savedWidths = JSON.parse(localStorage.getItem(storageKey) || '{}') || {};
+        } catch {
+            savedWidths = {};
+        }
+
+        let colgroup = table.querySelector('colgroup');
+        if (!colgroup) {
+            colgroup = document.createElement('colgroup');
+            table.insertBefore(colgroup, table.firstChild);
+        }
+        while (colgroup.children.length < tableHeaders.length) {
+            colgroup.appendChild(document.createElement('col'));
+        }
+
+        let initialized = false;
+        const handles = [];
+        const columnKey = (header, index) => header.dataset.sort || (index === 0 ? 'rank' : `column-${index + 1}`);
+        const syncTableWidth = () => {
+            const totalWidth = [...colgroup.children].reduce((sum, column) => sum + (Number.parseFloat(column.style.width) || 0), 0);
+            if (totalWidth > 0) {
+                table.style.width = `${Math.round(totalWidth)}px`;
+                table.style.minWidth = '0';
+            }
+        };
+        const saveWidths = () => {
+            const widths = Object.fromEntries(tableHeaders.map((header, index) => [
+                columnKey(header, index), Math.round(Number.parseFloat(colgroup.children[index].style.width) || 0)
+            ]));
+            try {
+                localStorage.setItem(storageKey, JSON.stringify(widths));
+            } catch {
+                // Resizing should continue to work when browser storage is unavailable.
+            }
+        };
+        const setColumnWidth = (index, width) => {
+            const nextWidth = Math.max(minWidth, Math.round(width));
+            colgroup.children[index].style.width = `${nextWidth}px`;
+            handles[index].setAttribute('aria-valuenow', String(nextWidth));
+            syncTableWidth();
+        };
+        const initializeWidths = () => {
+            if (initialized) return true;
+            const measuredWidths = tableHeaders.map(header => header.getBoundingClientRect().width);
+            if (!measuredWidths.some(width => width > 0)) return false;
+
+            const storedColumnWidths = tableHeaders.map((header, index) => {
+                const width = Number(savedWidths[columnKey(header, index)]);
+                return Number.isFinite(width) && width > 0 ? width : null;
+            });
+            const defaultIndexes = storedColumnWidths
+                .map((width, index) => width === null ? index : -1)
+                .filter(index => index >= 0);
+            const storedTotal = storedColumnWidths.reduce((sum, width) => sum + (width || 0), 0);
+            const minTableWidth = Number.parseFloat(getComputedStyle(table).minWidth) || 0;
+            const targetWidth = Math.max(wrapper.clientWidth, minTableWidth);
+            const measuredDefaultTotal = defaultIndexes.reduce((sum, index) => sum + measuredWidths[index], 0);
+            const availableDefaultWidth = Math.max(defaultIndexes.length * minWidth, targetWidth - storedTotal);
+            const defaultScale = measuredDefaultTotal > 0 ? availableDefaultWidth / measuredDefaultTotal : 1;
+            const widths = tableHeaders.map((_, index) => storedColumnWidths[index]
+                ?? Math.max(minWidth, Math.round(measuredWidths[index] * defaultScale)));
+
+            if (defaultIndexes.length && storedTotal < targetWidth) {
+                const lastDefaultIndex = defaultIndexes[defaultIndexes.length - 1];
+                const otherColumnsWidth = widths.reduce((sum, width, index) => sum + (index === lastDefaultIndex ? 0 : width), 0);
+                widths[lastDefaultIndex] = Math.max(minWidth, targetWidth - otherColumnsWidth);
+            }
+
+            tableHeaders.forEach((header, index) => {
+                const width = Math.round(widths[index]);
+                colgroup.children[index].style.width = `${width}px`;
+                handles[index].setAttribute('aria-valuenow', String(width));
+            });
+            initialized = true;
+            syncTableWidth();
+            return true;
+        };
+
+        tableHeaders.forEach((header, index) => {
+            const handle = document.createElement('span');
+            const label = header.dataset.label || header.textContent.trim();
+            handle.className = 'ingredient-lookup-col-resizer';
+            handle.setAttribute('role', 'separator');
+            handle.setAttribute('aria-orientation', 'vertical');
+            handle.setAttribute('aria-label', `Điều chỉnh độ rộng cột ${label}`);
+            handle.setAttribute('aria-valuemin', String(minWidth));
+            handle.tabIndex = 0;
+            header.appendChild(handle);
+            handles.push(handle);
+
+            handle.addEventListener('pointerdown', event => {
+                if (event.button !== 0 || !initializeWidths()) return;
+                event.preventDefault();
+                event.stopPropagation();
+                const pointerId = event.pointerId;
+                const startX = event.clientX;
+                const startWidth = Number.parseFloat(colgroup.children[index].style.width) || header.getBoundingClientRect().width;
+                const onMove = moveEvent => {
+                    if (moveEvent.pointerId === pointerId) setColumnWidth(index, startWidth + moveEvent.clientX - startX);
+                };
+                const onEnd = endEvent => {
+                    if (endEvent.pointerId !== pointerId) return;
+                    document.removeEventListener('pointermove', onMove);
+                    document.removeEventListener('pointerup', onEnd);
+                    document.removeEventListener('pointercancel', onEnd);
+                    table.classList.remove('is-resizing');
+                    saveWidths();
+                };
+                document.addEventListener('pointermove', onMove);
+                document.addEventListener('pointerup', onEnd);
+                document.addEventListener('pointercancel', onEnd);
+                table.classList.add('is-resizing');
+            });
+            handle.addEventListener('click', event => event.stopPropagation());
+            handle.addEventListener('keydown', event => {
+                if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        event.stopPropagation();
+                    }
+                    return;
+                }
+                if (!initializeWidths()) return;
+                event.preventDefault();
+                setColumnWidth(index, (Number.parseFloat(colgroup.children[index].style.width) || minWidth) + (event.key === 'ArrowRight' ? 16 : -16));
+                saveWidths();
+            });
+        });
+
+        initializeWidths();
+        if (!initialized && typeof ResizeObserver !== 'undefined') {
+            const observer = new ResizeObserver(() => {
+                if (!initializeWidths()) return;
+                observer.disconnect();
+            });
+            observer.observe(wrapper);
+        }
+    }
+
+    initColumnResizing();
 
     function closeSuggestions() {
         clearTimeout(suggestionTimer);

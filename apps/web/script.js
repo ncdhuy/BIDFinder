@@ -2161,7 +2161,10 @@ function hasActiveQueryFilters(queryRequest) {
     });
 }
 
+let filterUrlWriteVersion = 0;
+
 function clearFilterUrlState() {
+    filterUrlWriteVersion += 1;
     const url = new URL(window.location.href);
     url.searchParams.delete('q');
     url.searchParams.delete('bq');
@@ -2175,18 +2178,47 @@ function clearLegacyBulkUrlState() {
     window.history.replaceState({}, '', url);
 }
 
-function encodeUrlState(payload) {
-    return encodeURIComponent(JSON.stringify(payload));
-}
-
-function decodeUrlState(rawValue) {
-    if (!rawValue) return null;
+async function encodeUrlState(payload) {
+    const serialized = JSON.stringify(payload);
+    if (typeof CompressionStream !== 'function') return serialized;
 
     try {
-        return JSON.parse(decodeURIComponent(rawValue));
+        const stream = new Blob([serialized]).stream().pipeThrough(new CompressionStream('gzip'));
+        const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+        let binary = '';
+        for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+            binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+        }
+        const base64Url = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+        return `gz1.${base64Url}`;
+    } catch (error) {
+        console.warn('Unable to compress URL state:', error);
+        return serialized;
+    }
+}
+
+async function decodeUrlState(rawValue) {
+    if (!rawValue) return null;
+
+    if (rawValue.startsWith('gz1.')) {
+        try {
+            if (typeof DecompressionStream !== 'function') return null;
+            const base64 = rawValue.slice(4).replace(/-/g, '+').replace(/_/g, '/');
+            const binary = atob(base64 + '='.repeat((4 - base64.length % 4) % 4));
+            const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
+            const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+            return JSON.parse(await new Response(stream).text());
+        } catch (error) {
+            console.warn('Unable to decompress URL state:', error);
+            return null;
+        }
+    }
+
+    try {
+        return JSON.parse(rawValue);
     } catch (error) {
         try {
-            return JSON.parse(rawValue);
+            return JSON.parse(decodeURIComponent(rawValue));
         } catch (fallbackError) {
             console.warn('Unable to parse URL state:', fallbackError);
             return null;
@@ -2194,36 +2226,49 @@ function decodeUrlState(rawValue) {
     }
 }
 
-function encodeFilterUrlState(queryRequest) {
+async function encodeFilterUrlState(queryRequest) {
     return encodeUrlState(buildQueryRequest(queryRequest));
 }
 
-function decodeFilterUrlState(rawValue) {
-    const decoded = decodeUrlState(rawValue);
+async function decodeFilterUrlState(rawValue) {
+    const decoded = await decodeUrlState(rawValue);
     return decoded ? buildQueryRequest(decoded) : null;
 }
 
-function readFilterUrlState() {
+async function readFilterUrlState() {
     const rawValue = new URL(window.location.href).searchParams.get('q');
     return decodeFilterUrlState(rawValue);
 }
 
-function setFilterUrlState(queryRequest) {
+function hasFilterUrlState() {
+    return Boolean(new URL(window.location.href).searchParams.get('q'));
+}
+
+async function setFilterUrlState(queryRequest) {
+    const writeVersion = ++filterUrlWriteVersion;
     const request = buildQueryRequest(queryRequest);
     if (!hasActiveQueryFilters(request)) {
         clearFilterUrlState();
         return;
     }
 
+    const encodedState = await encodeFilterUrlState(request);
+    if (writeVersion !== filterUrlWriteVersion) return;
+
     const url = new URL(window.location.href);
-    url.searchParams.set('q', encodeFilterUrlState(request));
+    url.searchParams.set('q', encodedState);
     url.searchParams.delete('bq');
     window.history.replaceState({ bidfinderFilters: request }, '', url);
 }
 
 async function restoreFilterUrlState({ apply = true } = {}) {
-    const queryRequest = readFilterUrlState();
+    const queryRequest = await readFilterUrlState();
     if (!queryRequest || !hasActiveQueryFilters(queryRequest)) return false;
+
+    const currentUrlState = new URL(window.location.href).searchParams.get('q');
+    if (currentUrlState && !currentUrlState.startsWith('gz1.')) {
+        setFilterUrlState(queryRequest);
+    }
 
     const searchForm = getProcurementSearchForm();
     if (typeof searchForm?.setFilterPayload === 'function') {
@@ -3247,7 +3292,7 @@ function initLandingShell() {
         applyLandingView(view);
     };
 
-    const hasSharedQueryUrl = hasActiveQueryFilters(readFilterUrlState());
+    const hasSharedQueryUrl = hasFilterUrlState();
     const currentView = sessionStorage.getItem('bidfinder:view') || (hasSharedQueryUrl ? 'app' : 'landing');
     const canOpenSavedApp =
         (currentView === 'app' || hasSharedQueryUrl) &&
@@ -3300,7 +3345,7 @@ function initLandingShell() {
     window.addEventListener('bidfinder:auth-ready', (event) => {
         const authed = Boolean(event.detail?.authenticated);
         const savedView = sessionStorage.getItem('bidfinder:view') || 'landing';
-        const hasSharedQueryUrl = hasActiveQueryFilters(readFilterUrlState());
+        const hasSharedQueryUrl = hasFilterUrlState();
         const mustLogin = Boolean(event.detail?.config?.require_auth_for_data_access);
 
         if (mustLogin && !authed) {
@@ -6938,7 +6983,6 @@ function renderDashboardMap(geography = []) {
         selectedProvince: dashboardSelection.province,
         formatCurrency: formatDashboardCurrencyTooltip,
         onProvinceSelect: province => setDashboardSelection('province', province),
-        onMapLoading: () => setDashboardWidgetState('geography', 'Đang tải bản đồ Việt Nam…', 'loading'),
         onMapReady: () => {
             clearDashboardWidgetState('geography');
             syncDashboardSelectionVisuals();
@@ -10949,8 +10993,8 @@ function initSearchFormEvents() {
 }
 
 function initFilterUrlEvents() {
-    window.addEventListener('popstate', () => {
-        const queryRequest = readFilterUrlState();
+    window.addEventListener('popstate', async () => {
+        const queryRequest = await readFilterUrlState();
         const searchForm = getProcurementSearchForm();
 
         if (!queryRequest || !hasActiveQueryFilters(queryRequest)) {
@@ -11021,7 +11065,7 @@ function canShowFeatureIntro() {
     if (document.body.classList.contains('landing-active') || productJourneyState || featureIntroUserInteracted
         || (!featureIntroRepeatable && hasSeenFeatureIntroLocally())) return false;
     if (isFeatureIntroSampleRequest(currentQueryRequest)) return true;
-    if (hasActiveQueryFilters(readFilterUrlState())) return false;
+    if (hasFilterUrlState()) return false;
     return !hasActiveQueryFilters({ ...currentQueryRequest, group: null, sourceTypes: [] })
         && Number(currentQueryMeta?.totalCount || 0) === 0;
 }
