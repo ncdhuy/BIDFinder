@@ -1,0 +1,314 @@
+{
+  "audit_version": "phase-3c1-r-v1",
+  "starting_head": "0fd6754ff8dc609e43b3913ce04ea8e36eadc283",
+  "branch": "refactor-msc-typesense-v1",
+  "preserved_prior_evidence": [
+    "historical-backfill-audit.json",
+    "historical-backfill-audit.md",
+    "incremental-serving-audit.json",
+    "incremental-serving-audit.md",
+    "historical final recovery bundle",
+    "prior VALIDATED_PARTIAL serving recovery bundle"
+  ],
+  "coverage_floor_registry": {
+    "version": "msc-source-coverage-v1",
+    "floors": {
+      "goods_general": "2022-01-01",
+      "medical_devices": "2023-01-01",
+      "medicine_generic": "2023-01-01",
+      "medicine_originator": "2023-01-01",
+      "medicine_herbal": "2023-01-01",
+      "herbal_material": "2023-01-01",
+      "traditional_medicine": "2023-01-01"
+    }
+  },
+  "empirical_floor_verification": {
+    "production_path": "MSCClient.count_interval via /search_prc",
+    "evidence_dir": "/home/ncdhuy/.local/share/bidfinder/typesense/reports",
+    "reports": [
+      "phase3c1-preflight-goods-boundary.json",
+      "phase3c1-preflight-goods-jan-2022.json",
+      "phase3c1-preflight-goods-feb-2022.json",
+      "phase3c1-preflight-2022-all.json",
+      "phase3c1-preflight-six-dec22-jan23.json",
+      "phase3c1-preflight-six-jan23.json",
+      "phase3c1-preflight-six-feb23.json"
+    ],
+    "goods_general": {
+      "2021_full_year": 0,
+      "2022_full_year": 284190,
+      "2022-01-01..2022-01-31": 0,
+      "2022-02-01..2022-02-28": 0,
+      "2022-01-01..2023-01-31": 394288,
+      "floor_supported": true
+    },
+    "remaining_sources": {
+      "2022_full_year": {
+        "medical_devices": 0,
+        "medicine_generic": 0,
+        "medicine_originator": 0,
+        "medicine_herbal": 0,
+        "herbal_material": 0,
+        "traditional_medicine": 0
+      },
+      "2023-01-01..2023-01-31": {
+        "medical_devices": 80,
+        "medicine_generic": 0,
+        "medicine_originator": 0,
+        "medicine_herbal": 0,
+        "herbal_material": 0,
+        "traditional_medicine": 0
+      },
+      "floor_supported": true
+    }
+  },
+  "missing_prefix_ranges": {
+    "goods_general": {
+      "from": "2022-01-01",
+      "to": "2023-01-31",
+      "partitions": 396
+    },
+    "medical_devices": {"from": "2023-01-01", "to": "2023-01-31", "partitions": 31},
+    "medicine_generic": {"from": "2023-01-01", "to": "2023-01-31", "partitions": 31},
+    "medicine_originator": {"from": "2023-01-01", "to": "2023-01-31", "partitions": 31},
+    "medicine_herbal": {"from": "2023-01-01", "to": "2023-01-31", "partitions": 31},
+    "herbal_material": {"from": "2023-01-01", "to": "2023-01-31", "partitions": 31},
+    "traditional_medicine": {"from": "2023-01-01", "to": "2023-01-31", "partitions": 31},
+    "total_partitions": 582
+  },
+  "prefix_execution": {
+    "goods_command": "prefix goods_general 2022-01-01..2023-01-31 --max-partitions 396 --no-force",
+    "six_source_command": "prefix medical_devices,medicine_generic,medicine_originator,medicine_herbal,herbal_material,traditional_medicine 2023-01-01..2023-01-31 --max-partitions 186 --no-force",
+    "generation": "serving_v1_20260901",
+    "completed_partitions": 582,
+    "goods_partitions": 396,
+    "other_source_partitions": 186,
+    "records_added_by_source": {
+      "goods_general": 394288,
+      "medical_devices": 80,
+      "medicine_generic": 0,
+      "medicine_originator": 0,
+      "medicine_herbal": 0,
+      "herbal_material": 0,
+      "traditional_medicine": 0
+    },
+    "source_reports": [
+      "/home/ncdhuy/.local/share/bidfinder/typesense/reports/historical-prefix-goods-report.json",
+      "/home/ncdhuy/.local/share/bidfinder/typesense/reports/historical-prefix-six-report.json"
+    ],
+    "partition_invariants": "pre-count/post-count/unique/normalized/accepted exact on completed partitions; zero rejects"
+  },
+  "historical_live_retirement": {
+    "historical_generation": "hist_v1_20260829",
+    "historical_bundle": "/home/ncdhuy/.local/share/bidfinder/typesense/recovery/hist_v1_20260829/final-bundle-hist_v1_20260829-20260901-a513d2c1c0774028aa8769c148043663",
+    "historical_bundle_validation": {
+      "bundle_version": "phase-3b-final-v1",
+      "snapshot_state": true,
+      "checkpoint_integrity": "ok",
+      "provenance_integrity": "ok",
+      "manifest": true,
+      "audit": true,
+      "offline_asset_preserved": true
+    },
+    "serving_bundle_used_for_guard": "/home/ncdhuy/.local/share/bidfinder/typesense/recovery/serving_v1_20260901/bundle-20260901T121638Z",
+    "serving_bundle_prior_status": "VALIDATED",
+    "aliases_before": [],
+    "live_before": ["hist_v1_20260829", "serving_v1_20260901"],
+    "exact_collections_deleted": [
+      "bidfinder_goods_v1_hist_v1_20260829",
+      "bidfinder_medicines_v1_hist_v1_20260829",
+      "bidfinder_traditional_v1_hist_v1_20260829"
+    ],
+    "deleted_count": 3,
+    "live_after": ["serving_v1_20260901"],
+    "historical_physical_collections_present_after": false
+  },
+  "ram_measurements": {
+    "before_retirement": {
+      "typesense_rss_kb": 13827440,
+      "wsl_mem_available_kb": 4792472,
+      "swap_free_kb": 8376580,
+      "timestamp": "2026-09-02T01:00:53Z"
+    },
+    "after_retirement_before_restart": {
+      "typesense_rss_kb": 12759928,
+      "wsl_mem_available_kb": 5654044,
+      "swap_free_kb": 8376244,
+      "timestamp": "2026-09-02T01:13:56Z"
+    },
+    "post_restart_warm": {
+      "typesense_rss_kb": 7308576,
+      "wsl_mem_total_kb": 20479644,
+      "wsl_mem_available_kb": 11215936,
+      "swap_total_kb": 8388608,
+      "swap_free_kb": 8374524,
+      "swap_used_kb": 14084,
+      "disk_free_kb": 819408752,
+      "disk_free_bytes": 839074562048,
+      "cpu_idle_percent": 99.94,
+      "timestamp": "2026-09-02T03:09:41Z"
+    },
+    "comparison_to_phase3c_two_generation_peak": "13.8 GB Typesense RSS peak; one-generation warm RSS was approximately 7.32 GB",
+    "temporary_local_serving_recommendation": "SAFE for serving-only operation with headroom; do not run a second full generation or broad backfill concurrently"
+  },
+  "checkpoint_coverage": {
+    "through": "2026-08-31",
+    "expected_partitions": 9738,
+    "completed_partitions": 9738,
+    "failed": 0,
+    "quarantined": 0,
+    "pending": 0,
+    "stale_running": 0,
+    "per_source": {
+      "goods_general": {"from": "2022-01-01", "to": "2026-08-31", "partitions": 1704, "checkpoint_sum": 8629031},
+      "medical_devices": {"from": "2023-01-01", "to": "2026-08-31", "partitions": 1339, "checkpoint_sum": 964765},
+      "medicine_generic": {"from": "2023-01-01", "to": "2026-08-31", "partitions": 1339, "checkpoint_sum": 494720},
+      "medicine_originator": {"from": "2023-01-01", "to": "2026-08-31", "partitions": 1339, "checkpoint_sum": 55239},
+      "medicine_herbal": {"from": "2023-01-01", "to": "2026-08-31", "partitions": 1339, "checkpoint_sum": 35490},
+      "herbal_material": {"from": "2023-01-01", "to": "2026-08-31", "partitions": 1339, "checkpoint_sum": 9554},
+      "traditional_medicine": {"from": "2023-01-01", "to": "2026-08-31", "partitions": 1339, "checkpoint_sum": 22468}
+    }
+  },
+  "full_source_reconciliation": {
+    "broad_msc_counts": {
+      "goods_general": 8629031,
+      "medical_devices": 964765,
+      "medicine_generic": 494720,
+      "medicine_originator": 55239,
+      "medicine_herbal": 35490,
+      "herbal_material": 9554,
+      "traditional_medicine": 22468
+    },
+    "checkpoint_source_sums": {
+      "goods_general": 8629038,
+      "medical_devices": 964765,
+      "medicine_generic": 494720,
+      "medicine_originator": 55239,
+      "medicine_herbal": 35490,
+      "herbal_material": 9554,
+      "traditional_medicine": 22468
+    },
+    "parity": "PASS",
+    "mismatch": {
+      "source": "goods_general",
+      "difference": 7,
+      "scope": "2025 calendar year",
+      "current_msc_count": 2557868,
+      "checkpoint_sum": 2557875,
+      "action": "reconciled exactly at goods_general:2025-09-13; seven stale UUIDs removed"
+    }
+  },
+  "reconciliation": {
+    "status": "PASS",
+    "bounded_rounds": 1,
+    "range": {"start": "2025-01-01", "end": "2025-12-31"},
+    "count_only_recursive_requests": 19,
+    "intervals_pruned": 9,
+    "changed_dates": ["2025-09-13"],
+    "total_source_delta": -7,
+    "changed_partitions": [
+      {
+        "source": "goods_general",
+        "date": "2025-09-13",
+        "old_count": 5756,
+        "new_count": 5749,
+        "delta": -7,
+        "parent_pre_count": 5749,
+        "parent_post_count": 5749,
+        "current_source_unique_uuid_count": 5749,
+        "normalized_count": 5749,
+        "retained": 5749,
+        "added_uuid_count": 0,
+        "removed_uuid_count": 7,
+        "added_uuid_samples": [],
+        "removed_uuid_samples": [
+          "27b200b6-3334-4171-9e00-657f46ae8791",
+          "33b6e92a-4bca-4350-9fef-cc6860bd6a33",
+          "840851c3-c212-4b51-9c27-ef0fc04138f6",
+          "92b12037-f029-419f-bfae-0b139b8ff87b",
+          "9ae49fe6-45f1-428c-940a-a7229432da74"
+        ],
+        "typesense_stale_deletes": 7,
+        "unresolved_rejected": 0,
+        "status": "COMPLETED"
+      }
+    ],
+    "fresh_broad_source_requests": 7,
+    "final_source_broad_parity": "PASS",
+    "note": "Only exact stale UUIDs from changed completed partition were deleted; unrelated dates untouched"
+  },
+  "provenance_typesense_parity": {
+    "provenance_unique_groups": {"goods": 9593796, "medicines": 585449, "traditional_medicine": 32022},
+    "typesense_physical_groups": {"goods": 9593796, "medicines": 585449, "traditional_medicine": 32022},
+    "uuid_conflicts": 0,
+    "unresolved_rejected": 0,
+    "parity": "PASS"
+  },
+  "boundary_audit": {
+    "boundary": "2023-01-31 -> 2023-02-01",
+    "all_14_source_day_rows_completed": true,
+    "duplicate_source_date_keys": 0,
+    "uuid_overlap_by_source": {
+      "goods_general": 0,
+      "medical_devices": 0,
+      "medicine_generic": 0,
+      "medicine_originator": 0,
+      "medicine_herbal": 0,
+      "herbal_material": 0,
+      "traditional_medicine": 0
+    }
+  },
+  "idempotency": {
+    "goods": {"partitions": 396, "completed_status": 396, "skipped_true": 396, "ingestion_request_count": 0, "preflight_msc_requests": 1, "physical_count_changed": false},
+    "other_sources": {"partitions": 186, "completed_status": 186, "skipped_true": 186, "ingestion_request_count": 0, "preflight_msc_requests": 6, "physical_count_changed": false},
+    "status": "PASS"
+  },
+  "serving_recovery_snapshot": {
+    "bundle": "/home/ncdhuy/.local/share/bidfinder/typesense/recovery/serving_v1_20260901/final-bundle-phase3c1-validated-20260902-f011f1aba46d461485ed9bd60965f1f6",
+    "snapshot_state_present": true,
+    "checkpoint_integrity": "ok",
+    "provenance_integrity": "ok",
+    "snapshot_success": true,
+    "snapshot_files": 249,
+    "snapshot_bytes": 12258298192,
+    "status": "VALIDATED",
+    "prior_validated_partial_bundle": "/home/ncdhuy/.local/share/bidfinder/typesense/recovery/serving_v1_20260901/final-bundle-phase3c1-partial-20260902T0140Z",
+    "fingerprints": {
+      "checkpoint_sha256": "783205715b499a3d599620df1abed0b87234bc27780cd7df67b02c267bdc1c4f",
+      "provenance_sha256": "1e704d20c267f6a2002bcfd15933991377d581a0ab6c31f2508339fd2bc7514a",
+      "serving_manifest_content_fingerprint": "ecd187a69b6b635c2dfdb23e237977d7679d7def9228c34e18610d2e0084dfe5",
+      "serving_manifest_file_sha256": "a82dac97faf3c1a64abc0da0daca2dd6bd27dd7671a79698826c62706739b800",
+      "reconciliation_sha256": "80df2aa5a04a6f112f5500863cf874ea653cb8ab9e52a758ba5b047a29aebab7",
+      "snapshot_tree_sha256": "e37dcb86e2bb35ad196cfb19a3f24e84a0cbb790e77219472a82179067935087"
+    },
+    "note": "Final post-reconciliation serving recovery bundle; prior VALIDATED_PARTIAL bundle remains preserved as evidence"
+  },
+  "clean_restart": {
+    "status": "PASS",
+    "health": {"ok": true},
+    "physical_counts_unchanged": true,
+    "sigkill": false,
+    "only_live_generation": "serving_v1_20260901",
+    "aliases": [],
+    "old_pid": 8098,
+    "new_pid": 12700,
+    "restart_log": "/home/ncdhuy/.local/share/bidfinder/typesense/logs/typesense-phase3c1-final-restart.log"
+  },
+  "search_smoke": {
+    "2022_goods_2022-12-02": {"found": 6815, "returned": 1, "uuid_read": true},
+    "january_2023_2023-01-31": {"found": 5127, "returned": 1, "uuid_read": true},
+    "recent_2026_2026-08-31": {"found": 12437, "returned": 1, "uuid_read": true},
+    "filter_sort": {"found": 5127, "returned": 5, "sort_descending": true}
+  },
+  "tests": {
+    "compileall": "PASS",
+    "unittest_discovery": "140 tests, OK, skipped=1",
+    "pytest_tests_msc": "not collected (suite is unittest-based)",
+    "fastapi_frontend_changed": false
+  },
+  "overall_status": "PASS",
+  "blocking_gate": null,
+  "phase4_fastapi_shadow_read": "NOT_STARTED; do not begin until parity gate is resolved",
+  "commit_sha": null,
+  "commit_message_if_pass": "Phase 3C.1: complete historical source coverage"
+}

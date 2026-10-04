@@ -1,0 +1,11 @@
+RAW_COLUMNS=['STT', 'Mã thuốc', 'Tên thuốc', 'Tên hoạt chất', 'Nồng độ, hàm lượng', 'Đường dùng', 'Dạng bào chế', 'Quy cách', 'Nhóm thuốc', 'Hạn dùng (Tuổi thọ)', 'SĐK hoặc GPNK', 'Cơ sở sản xuất', 'Nước sản xuất', 'Đơn vị tính', 'Số lượng', 'Đơn giá', 'Thành tiền', 'Ghi chú']
+RAW_SHAPE=(938, 18)
+
+SCHEMA=GOODS_STANDARD
+ERROR=ValueError("Thiếu cột bắt buộc: ['Danh mục hàng hóa']")
+
+SCHEMA=MEDICINE_STANDARD
+normalized=665
+after_drop_duplicates=663
+exact_distinct=663
+medicine_uq_count=663

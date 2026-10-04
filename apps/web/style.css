@@ -1640,14 +1640,20 @@ body:not(.landing-active) .btn-export {
    SCROLLBAR (dùng chung cho mọi bảng)
    ========================= */
 #data-tab .table-wrapper .table-scroll {
-  /* Use the browser's thin native scrollbar consistently. This is the only
-     cross-browser width control supported by Firefox and current Chrome;
-     pixel-sized WebKit scrollbars are only a fallback below. */
-  scrollbar-width: thin !important;
+  /* Keep a full-size native scrollbar in Firefox. Chromium and Safari use
+     the larger pixel-sized drag target below. */
+  scrollbar-width: auto !important;
   scrollbar-color: var(--table-scroll-thumb) var(--table-scroll-track) !important;
 }
 
-#data-tab .table-wrapper .table-scroll::-webkit-scrollbar{ width: 8px; height: 8px; }
+@supports selector(::-webkit-scrollbar) {
+  #data-tab .table-wrapper .table-scroll {
+    /* Standard scrollbar-color overrides WebKit sizing in current Chromium. */
+    scrollbar-color: auto !important;
+  }
+}
+
+#data-tab .table-wrapper .table-scroll::-webkit-scrollbar{ width: 18px; height: 18px; }
 #data-tab .table-wrapper .table-scroll::-webkit-scrollbar-button{
   display: none;
   width: 0;
@@ -1659,10 +1665,15 @@ body:not(.landing-active) .btn-export {
 }
 #data-tab .table-wrapper .table-scroll::-webkit-scrollbar-thumb{
   background: var(--table-scroll-thumb);
+  border: 3px solid var(--table-scroll-track);
   border-radius: 10px;
+  min-width: 44px;
+  min-height: 44px;
 }
-#data-tab .table-wrapper .table-scroll::-webkit-scrollbar-thumb:hover{
+#data-tab .table-wrapper .table-scroll::-webkit-scrollbar-thumb:hover,
+#data-tab .table-wrapper .table-scroll::-webkit-scrollbar-thumb:active{
   background: var(--table-scroll-thumb-hover);
+  border-width: 0;
 }
 #data-tab .table-wrapper .table-scroll::-webkit-scrollbar-corner{
   background: var(--table-scroll-track);

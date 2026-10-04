@@ -1,0 +1,11 @@
+[Unit]
+Description=BIDFinder daily reconciliation incremental schedule
+
+[Timer]
+OnCalendar=*-*-* 17:00:00 Asia/Ho_Chi_Minh
+AccuracySec=1m
+Persistent=false
+Unit=bidfinder-incremental.service
+
+[Install]
+WantedBy=timers.target

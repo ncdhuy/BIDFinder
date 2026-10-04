@@ -1,0 +1,154 @@
+{
+  "phase": "4E",
+  "title": "Secure External Early-User Ingress",
+  "status": "PARTIAL",
+  "audited_at": "2026-09-03",
+  "starting_state": {
+    "branch": "refactor-msc-typesense-v1",
+    "expected_head": "04f84bf63d06695afb3756aba638d74c0726eb08",
+    "actual_head": "04f84bf63d06695afb3756aba638d74c0726eb08",
+    "worktree_at_start": "clean"
+  },
+  "chosen_ingress": {
+    "class": "Cloudflare Tunnel",
+    "reason": "No BIDFinder reverse proxy or public 80/443 listener exists; a named tunnel provides managed HTTPS without router port forwarding and adds one direct hop to loopback FastAPI.",
+    "origin": "http://127.0.0.1:8001",
+    "typesense_origin": "not exposed",
+    "cloudflared_present": false,
+    "named_tunnel_configured": false,
+    "public_hostname_configuration": "External BIDFINDER_PUBLIC_URL plus external ~/.config/bidfinder/cloudflared.yml; no hostname is hard-coded in application logic."
+  },
+  "security_boundary": {
+    "fastapi_binding": "127.0.0.1:8001",
+    "typesense_api_binding": "127.0.0.1:8108",
+    "typesense_peering_binding": "127.0.0.1:8107",
+    "public_target": "FastAPI/static web only",
+    "blocked_public_diagnostics": ["/ready", "/api/warmup", "/docs", "/redoc", "/openapi.json"],
+    "credentials_server_side": true,
+    "browser_typesense_key": false
+  },
+  "public_surface": {
+    "allowed": [
+      "/",
+      "/config.js",
+      "/health",
+      "/api/auth/*",
+      "/api/query",
+      "/api/query-preview",
+      "/api/bulk-query",
+      "/api/autocomplete",
+      "/api/filter-config",
+      "/api/search-contract",
+      "/api/metadata",
+      "/api/feedback*",
+      "static assets under apps/web"
+    ],
+    "operator_only_or_denied": ["/ready", "/api/warmup", "/docs", "/redoc", "/openapi.json"],
+    "frontend_serving": "FastAPI serves existing apps/web same-origin when repository is present; dynamic /config.js sets browser API base to window.location.origin. file:// behavior remains unchanged."
+  },
+  "auth_cors_session": {
+    "authentication": "Existing auth policy preserved; Phase 4D proved unauthenticated full query returns HTTP 401.",
+    "cors": "Explicit allowlist retained; no wildcard; configured public origin is added from BIDFINDER_PUBLIC_URL.",
+    "proxy_headers": "Trusted only when the direct peer is configured loopback 127.0.0.1 or ::1; arbitrary public X-Forwarded-* headers are ignored.",
+    "cookies": "Public mode defaults to Secure, HttpOnly, SameSite=Lax when BIDFINDER_PUBLIC_URL is configured; local mode remains practical.",
+    "csrf": "SameSite=Lax plus same-origin public web/API blocks cross-site cookie POSTs; no new state-changing GET route added.",
+    "external_validation": "BLOCKED: no configured public hostname or tunnel credential."
+  },
+  "abuse_and_limits": {
+    "rate_limit_model": "Existing in-process per-client-IP and user-agent buckets",
+    "default_per_minute": {
+      "query": 30,
+      "autocomplete": 120,
+      "preview": 90,
+      "metadata": 20,
+      "auth": 20,
+      "feedback": 10
+    },
+    "request_body_bytes": 2097152,
+    "bulk_child_queries": 100,
+    "bulk_fields": 20,
+    "bulk_concurrency": 1,
+    "note": "Process-local MVP guard; not a distributed rate-limiting service."
+  },
+  "headers_and_errors": {
+    "security_headers": ["X-Content-Type-Options", "X-Frame-Options", "Referrer-Policy", "Permissions-Policy", "Cross-Origin-Resource-Policy", "Strict-Transport-Security under HTTPS"],
+    "frontend_csp": "Existing compatible CSP meta retained; connect-src self supports same-origin API.",
+    "public_errors": "Unhandled exceptions return generic sanitized text; server logs retain only path and exception type/context.",
+    "access_logging": "FastAPI access logging remains disabled; tunnel wrapper does not enable request-body logging."
+  },
+  "lifecycle": {
+    "unit": "bidfinder-ingress.service",
+    "dependency_order": "Typesense -> FastAPI -> ingress via systemd ordering",
+    "normal_local_start": "Unchanged; does not start ingress.",
+    "public_commands": ["public-start", "public-stop", "public-restart", "public-enable", "public-disable", "public-status"],
+    "independent_stop": "public-stop stops only ingress; FastAPI and Typesense remain local.",
+    "persistence": "systemd user service; public-enable enables startup after WSL user-service recovery.",
+    "restart_loop_behavior": "Ingress uses Wants/After, Restart=on-failure, 10s backoff; backend unavailability does not require an ingress restart loop.",
+    "credential_rotation": "Replace external Cloudflare credentials-file, restart, then revoke old tunnel credential in Cloudflare."
+  },
+  "validation": {
+    "python_compile": "PASS",
+    "bash_syntax": "PASS",
+    "api_unit_tests": "PASS: 43",
+    "web_unit_tests": "PASS: 5",
+    "crawler_unit_tests": "PASS: 3",
+    "secret_scan": "PASS: 1 test",
+    "local_health": "PASS: GET /health returned 200",
+    "local_static_root": "PASS: GET / returned 200 text/html",
+    "local_dynamic_config": "PASS: GET /config.js returned same-origin selector",
+    "local_auth_smoke": "PASS: /api/auth/config 200, /api/auth/me 401, unauthenticated /api/query 401",
+    "request_size_guard": "PASS: 2097153-byte Content-Length returned 413",
+    "public_disable_switch": "PASS: public-stop left local /health available",
+    "local_typesense_binding": "PASS: ss showed 127.0.0.1:8108 only",
+    "local_typesense_health_during_audit": "PARTIAL: service active but still loading after normal restart; health returned 503 during sampled window",
+    "public_https": "BLOCKED: cloudflared absent and no named tunnel/hostname configuration",
+    "typesense_external_exposure": "NOT_RUN externally; no public ingress was activated. Local binding proof PASS.",
+    "auth_smoke_external": "BLOCKED",
+    "seven_subtype_external_journeys": "BLOCKED",
+    "full_data_external_proof": "BLOCKED",
+    "external_autocomplete": "BLOCKED",
+    "external_concurrency": "BLOCKED",
+    "local_vs_external_latency": "BLOCKED",
+    "full_unittest_discovery": "PARTIAL: repository discovery has unrelated MSC package/import and long-running safety tests; focused changed-area suites pass."
+  },
+  "inherited_phase4d_proof": {
+    "search_core": "PASS",
+    "seven_subtypes_local": "PASS",
+    "coverage": ["2022 goods", "January 2023", "recent 2026", "all seven source subtypes"],
+    "typesense_rss": "approximately 7.5 GB",
+    "daily_incremental": "04:00 Asia/Ho_Chi_Minh",
+    "weekly_snapshot": "Sunday 05:30 Asia/Ho_Chi_Minh",
+    "generation": "serving_v1_20260901"
+  },
+  "resources": {
+    "current_startup_sample": {
+      "typesense_service": "active, normal generation load in progress",
+      "typesense_rss_kb": 483200,
+      "typesense_cpu_percent": 501,
+      "wsl_memory_available": "17 GiB",
+      "wsl_swap_used": "12 MiB"
+    },
+    "interpretation": "Startup sample is not a steady-state benchmark; inherited Phase 4D steady-state RSS was approximately 7.5 GB with no sustained saturation or swap-growth signal."
+  },
+  "jobs_and_data": {
+    "ingestion_logic_changed": false,
+    "typesense_schema_changed": false,
+    "new_generation_created": false,
+    "daily_incremental_changed": false,
+    "weekly_snapshot_changed": false,
+    "data_recreated": false
+  },
+  "rollback": "bash infra/runtime/bidfinder-install.sh public-stop; use public-disable to remove automatic ingress startup. Local FastAPI/Typesense remain available.",
+  "limitations": [
+    "Real external validation requires the operator's Cloudflare account, named tunnel, DNS hostname, cloudflared binary, and external network.",
+    "Windows must run, WSL must be active, the machine must stay awake, and Internet connectivity must remain available.",
+    "Windows reboot/update or WSL shutdown causes an outage; enable public mode or run public-start after recovery.",
+    "Single-machine hosting; no HA and no distributed abuse guard."
+  ],
+  "gate": {
+    "status": "PARTIAL",
+    "blocking_items": ["HTTPS public ingress not activated", "external seven-subtype/full-data/autocomplete/concurrency/latency proof not run"],
+    "search_or_data_redesign": false
+  },
+  "commit": null
+}

@@ -1,0 +1,28 @@
+# 1. Chặn thư mục dữ liệu trong crawler_engine
+crawler_engine/raw_data/
+crawler_engine/test_outputs/
+crawler_engine/tmp_storage/
+crawler_engine/reports/
+tools/load-tests/*.docx
+crawler_engine/qlt_realtime/
+crawler_engine/vss_data/*
+!crawler_engine/vss_data/.gitkeep
+
+# 2. Chặn các file môi trường chứa thông tin bảo mật (DATABASE_URL, API_KEY)
+.env
+apps/api/.env
+crawler_engine/.env
+
+# 3. Chặn các file rác của Python
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# 4. Chặn các file tạm của hệ điều hành
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Phase 2 local MSC operational state and validation output
+crawler_engine/.msc_state/
+crawler_engine/msc-output/

@@ -1,0 +1,987 @@
+{
+  "status": "PASS",
+  "checks": {
+    "health": true,
+    "schema_validation": true,
+    "source_partitions_complete": true,
+    "uuid_count_parity": true,
+    "sample_retrieval_parity": true,
+    "idempotency": true,
+    "search_smoke": true,
+    "filters": true,
+    "sorts": true,
+    "multi_search": true,
+    "alias_activation": true,
+    "alias_switch_and_rollback": true,
+    "checkpoint_generation": true,
+    "partial_import": true
+  },
+  "runtime": {
+    "typesense_version": "30.2",
+    "health": {
+      "ok": true
+    },
+    "api_key_logged": false,
+    "msc_endpoint_scope": "public /search_prc"
+  },
+  "generation_id": "live_gate_20260830g",
+  "physical_collections": {
+    "goods": "bidfinder_goods_v1_live_gate_20260830g",
+    "medicines": "bidfinder_medicines_v1_live_gate_20260830g",
+    "traditional_medicine": "bidfinder_traditional_v1_live_gate_20260830g"
+  },
+  "schemas": {
+    "validated": true,
+    "inspected_field_counts": {
+      "goods": 28,
+      "medicines": 29,
+      "traditional_medicine": 28
+    },
+    "implicit_id_omitted_by_server": true
+  },
+  "source_partitions": [
+    {
+      "source_key": "goods_general",
+      "logical_group": "goods",
+      "date": "2026-08-25",
+      "pre_count": 9257,
+      "post_count": 9257,
+      "leaf_count": 1,
+      "msc_page_request_count": 12,
+      "msc_count_request_count": 2,
+      "msc_request_count": 13,
+      "unique_source_count": 9257,
+      "normalized_count": 9257,
+      "typesense_import_batches": 19,
+      "typesense_attempted_count": 9257,
+      "typesense_accepted_count": 9257,
+      "typesense_rejected_count": 0,
+      "checkpoint_final_state": {
+        "source_key": "goods_general",
+        "partition_date": "2026-08-25",
+        "sink_target": "typesense:live_gate_20260830g",
+        "status": "COMPLETED",
+        "attempt_count": 1,
+        "parent_pre_count": 9257,
+        "parent_post_count": 9257,
+        "raw_fetched_count": 9257,
+        "unique_uuid_count": 9257,
+        "normalized_count": 9257,
+        "sink_accepted_count": 9257,
+        "started_at": "2026-08-30T01:34:27+00:00",
+        "completed_at": "2026-08-30T01:34:42+00:00",
+        "last_error_code": null,
+        "last_error_message": null,
+        "engine_version": "msc-ingestion-v1",
+        "schema_version": "msc-source-schema-v1"
+      },
+      "status": "COMPLETED",
+      "skipped": false,
+      "retry_count": 1,
+      "sink_elapsed_seconds": 1.5676691999979084,
+      "elapsed_seconds": 15.771,
+      "schema_drift": {
+        "additive_fields": [],
+        "type_errors": []
+      }
+    },
+    {
+      "source_key": "medical_devices",
+      "logical_group": "goods",
+      "date": "2026-08-28",
+      "pre_count": 1727,
+      "post_count": 1727,
+      "leaf_count": 1,
+      "msc_page_request_count": 4,
+      "msc_count_request_count": 2,
+      "msc_request_count": 4,
+      "unique_source_count": 1727,
+      "normalized_count": 1727,
+      "typesense_import_batches": 4,
+      "typesense_attempted_count": 1727,
+      "typesense_accepted_count": 1727,
+      "typesense_rejected_count": 0,
+      "checkpoint_final_state": {
+        "source_key": "medical_devices",
+        "partition_date": "2026-08-28",
+        "sink_target": "typesense:live_gate_20260830g",
+        "status": "COMPLETED",
+        "attempt_count": 1,
+        "parent_pre_count": 1727,
+        "parent_post_count": 1727,
+        "raw_fetched_count": 1727,
+        "unique_uuid_count": 1727,
+        "normalized_count": 1727,
+        "sink_accepted_count": 1727,
+        "started_at": "2026-08-30T01:34:42+00:00",
+        "completed_at": "2026-08-30T01:34:47+00:00",
+        "last_error_code": null,
+        "last_error_message": null,
+        "engine_version": "msc-ingestion-v1",
+        "schema_version": "msc-source-schema-v1"
+      },
+      "status": "COMPLETED",
+      "skipped": false,
+      "retry_count": 0,
+      "sink_elapsed_seconds": 0.3528959999966901,
+      "elapsed_seconds": 4.672,
+      "schema_drift": {
+        "additive_fields": [],
+        "type_errors": []
+      }
+    },
+    {
+      "source_key": "medicine_generic",
+      "logical_group": "medicines",
+      "date": "2026-08-28",
+      "pre_count": 125,
+      "post_count": 125,
+      "leaf_count": 1,
+      "msc_page_request_count": 3,
+      "msc_count_request_count": 2,
+      "msc_request_count": 3,
+      "unique_source_count": 125,
+      "normalized_count": 125,
+      "typesense_import_batches": 1,
+      "typesense_attempted_count": 125,
+      "typesense_accepted_count": 125,
+      "typesense_rejected_count": 0,
+      "checkpoint_final_state": {
+        "source_key": "medicine_generic",
+        "partition_date": "2026-08-28",
+        "sink_target": "typesense:live_gate_20260830g",
+        "status": "COMPLETED",
+        "attempt_count": 1,
+        "parent_pre_count": 125,
+        "parent_post_count": 125,
+        "raw_fetched_count": 125,
+        "unique_uuid_count": 125,
+        "normalized_count": 125,
+        "sink_accepted_count": 125,
+        "started_at": "2026-08-30T01:34:47+00:00",
+        "completed_at": "2026-08-30T01:34:49+00:00",
+        "last_error_code": null,
+        "last_error_message": null,
+        "engine_version": "msc-ingestion-v1",
+        "schema_version": "msc-source-schema-v1"
+      },
+      "status": "COMPLETED",
+      "skipped": false,
+      "retry_count": 0,
+      "sink_elapsed_seconds": 0.024571000001742505,
+      "elapsed_seconds": 2.476,
+      "schema_drift": {
+        "additive_fields": [],
+        "type_errors": []
+      }
+    },
+    {
+      "source_key": "medicine_originator",
+      "logical_group": "medicines",
+      "date": "2026-08-27",
+      "pre_count": 17,
+      "post_count": 17,
+      "leaf_count": 1,
+      "msc_page_request_count": 3,
+      "msc_count_request_count": 2,
+      "msc_request_count": 3,
+      "unique_source_count": 17,
+      "normalized_count": 17,
+      "typesense_import_batches": 1,
+      "typesense_attempted_count": 17,
+      "typesense_accepted_count": 17,
+      "typesense_rejected_count": 0,
+      "checkpoint_final_state": {
+        "source_key": "medicine_originator",
+        "partition_date": "2026-08-27",
+        "sink_target": "typesense:live_gate_20260830g",
+        "status": "COMPLETED",
+        "attempt_count": 1,
+        "parent_pre_count": 17,
+        "parent_post_count": 17,
+        "raw_fetched_count": 17,
+        "unique_uuid_count": 17,
+        "normalized_count": 17,
+        "sink_accepted_count": 17,
+        "started_at": "2026-08-30T01:34:49+00:00",
+        "completed_at": "2026-08-30T01:34:52+00:00",
+        "last_error_code": null,
+        "last_error_message": null,
+        "engine_version": "msc-ingestion-v1",
+        "schema_version": "msc-source-schema-v1"
+      },
+      "status": "COMPLETED",
+      "skipped": false,
+      "retry_count": 0,
+      "sink_elapsed_seconds": 0.010234599991235882,
+      "elapsed_seconds": 2.859,
+      "schema_drift": {
+        "additive_fields": [],
+        "type_errors": []
+      }
+    },
+    {
+      "source_key": "medicine_herbal",
+      "logical_group": "medicines",
+      "date": "2026-08-28",
+      "pre_count": 30,
+      "post_count": 30,
+      "leaf_count": 1,
+      "msc_page_request_count": 3,
+      "msc_count_request_count": 2,
+      "msc_request_count": 3,
+      "unique_source_count": 30,
+      "normalized_count": 30,
+      "typesense_import_batches": 1,
+      "typesense_attempted_count": 30,
+      "typesense_accepted_count": 30,
+      "typesense_rejected_count": 0,
+      "checkpoint_final_state": {
+        "source_key": "medicine_herbal",
+        "partition_date": "2026-08-28",
+        "sink_target": "typesense:live_gate_20260830g",
+        "status": "COMPLETED",
+        "attempt_count": 1,
+        "parent_pre_count": 30,
+        "parent_post_count": 30,
+        "raw_fetched_count": 30,
+        "unique_uuid_count": 30,
+        "normalized_count": 30,
+        "sink_accepted_count": 30,
+        "started_at": "2026-08-30T01:34:52+00:00",
+        "completed_at": "2026-08-30T01:34:55+00:00",
+        "last_error_code": null,
+        "last_error_message": null,
+        "engine_version": "msc-ingestion-v1",
+        "schema_version": "msc-source-schema-v1"
+      },
+      "status": "COMPLETED",
+      "skipped": false,
+      "retry_count": 0,
+      "sink_elapsed_seconds": 0.010773499991046265,
+      "elapsed_seconds": 3.054,
+      "schema_drift": {
+        "additive_fields": [],
+        "type_errors": []
+      }
+    },
+    {
+      "source_key": "herbal_material",
+      "logical_group": "traditional_medicine",
+      "date": "2026-08-22",
+      "pre_count": 25,
+      "post_count": 25,
+      "leaf_count": 1,
+      "msc_page_request_count": 3,
+      "msc_count_request_count": 2,
+      "msc_request_count": 3,
+      "unique_source_count": 25,
+      "normalized_count": 25,
+      "typesense_import_batches": 1,
+      "typesense_attempted_count": 25,
+      "typesense_accepted_count": 25,
+      "typesense_rejected_count": 0,
+      "checkpoint_final_state": {
+        "source_key": "herbal_material",
+        "partition_date": "2026-08-22",
+        "sink_target": "typesense:live_gate_20260830g",
+        "status": "COMPLETED",
+        "attempt_count": 1,
+        "parent_pre_count": 25,
+        "parent_post_count": 25,
+        "raw_fetched_count": 25,
+        "unique_uuid_count": 25,
+        "normalized_count": 25,
+        "sink_accepted_count": 25,
+        "started_at": "2026-08-30T01:34:55+00:00",
+        "completed_at": "2026-08-30T01:34:58+00:00",
+        "last_error_code": null,
+        "last_error_message": null,
+        "engine_version": "msc-ingestion-v1",
+        "schema_version": "msc-source-schema-v1"
+      },
+      "status": "COMPLETED",
+      "skipped": false,
+      "retry_count": 0,
+      "sink_elapsed_seconds": 0.0099393999989843,
+      "elapsed_seconds": 2.885,
+      "schema_drift": {
+        "additive_fields": [],
+        "type_errors": []
+      }
+    },
+    {
+      "source_key": "traditional_medicine",
+      "logical_group": "traditional_medicine",
+      "date": "2026-08-27",
+      "pre_count": 62,
+      "post_count": 62,
+      "leaf_count": 1,
+      "msc_page_request_count": 3,
+      "msc_count_request_count": 2,
+      "msc_request_count": 3,
+      "unique_source_count": 62,
+      "normalized_count": 62,
+      "typesense_import_batches": 1,
+      "typesense_attempted_count": 62,
+      "typesense_accepted_count": 62,
+      "typesense_rejected_count": 0,
+      "checkpoint_final_state": {
+        "source_key": "traditional_medicine",
+        "partition_date": "2026-08-27",
+        "sink_target": "typesense:live_gate_20260830g",
+        "status": "COMPLETED",
+        "attempt_count": 1,
+        "parent_pre_count": 62,
+        "parent_post_count": 62,
+        "raw_fetched_count": 62,
+        "unique_uuid_count": 62,
+        "normalized_count": 62,
+        "sink_accepted_count": 62,
+        "started_at": "2026-08-30T01:34:58+00:00",
+        "completed_at": "2026-08-30T01:35:01+00:00",
+        "last_error_code": null,
+        "last_error_message": null,
+        "engine_version": "msc-ingestion-v1",
+        "schema_version": "msc-source-schema-v1"
+      },
+      "status": "COMPLETED",
+      "skipped": false,
+      "retry_count": 0,
+      "sink_elapsed_seconds": 0.047515099999145605,
+      "elapsed_seconds": 3.128,
+      "schema_drift": {
+        "additive_fields": [],
+        "type_errors": []
+      }
+    }
+  ],
+  "overflow": {
+    "source_key": "goods_general",
+    "logical_group": "goods",
+    "date": "2026-08-28",
+    "pre_count": 16248,
+    "post_count": 16248,
+    "leaf_count": 4,
+    "msc_page_request_count": 26,
+    "msc_count_request_count": 8,
+    "msc_request_count": 26,
+    "unique_source_count": 16248,
+    "normalized_count": 16248,
+    "typesense_import_batches": 33,
+    "typesense_attempted_count": 16248,
+    "typesense_accepted_count": 16248,
+    "typesense_rejected_count": 0,
+    "checkpoint_final_state": {
+      "source_key": "goods_general",
+      "partition_date": "2026-08-28",
+      "sink_target": "typesense:live_gate_20260830g",
+      "status": "COMPLETED",
+      "attempt_count": 1,
+      "parent_pre_count": 16248,
+      "parent_post_count": 16248,
+      "raw_fetched_count": 16248,
+      "unique_uuid_count": 16248,
+      "normalized_count": 16248,
+      "sink_accepted_count": 16248,
+      "started_at": "2026-08-30T01:35:01+00:00",
+      "completed_at": "2026-08-30T01:35:32+00:00",
+      "last_error_code": null,
+      "last_error_message": null,
+      "engine_version": "msc-ingestion-v1",
+      "schema_version": "msc-source-schema-v1"
+    },
+    "status": "COMPLETED",
+    "skipped": false,
+    "retry_count": 0,
+    "sink_elapsed_seconds": 2.8296386000001803,
+    "elapsed_seconds": 30.422,
+    "schema_drift": {
+      "additive_fields": [],
+      "type_errors": []
+    }
+  },
+  "expected_uuid_union": {
+    "goods": 27232,
+    "medicines": 172,
+    "traditional_medicine": 87
+  },
+  "actual_collection_document_counts": {
+    "goods": 27232,
+    "medicines": 172,
+    "traditional_medicine": 87
+  },
+  "uuid_count_parity": true,
+  "sample_retrieval_parity": [
+    {
+      "group": "goods",
+      "sample_id": "0000042b-b7b3-413f-aa70-dbe46da7e8f4",
+      "retrieved": true,
+      "important_fields_equal": true
+    },
+    {
+      "group": "medicines",
+      "sample_id": "01964663-9d7e-4e6d-8807-44d72bd4d9bf",
+      "retrieved": true,
+      "important_fields_equal": true
+    },
+    {
+      "group": "traditional_medicine",
+      "sample_id": "19d9090f-28df-42d8-82cb-2c36deaa03b7",
+      "retrieved": true,
+      "important_fields_equal": true
+    }
+  ],
+  "idempotency": {
+    "forced_rerun": {
+      "source_key": "goods_general",
+      "logical_group": "goods",
+      "date": "2026-08-25",
+      "pre_count": 9257,
+      "post_count": 9257,
+      "leaf_count": 1,
+      "msc_page_request_count": 12,
+      "msc_count_request_count": 2,
+      "msc_request_count": 12,
+      "unique_source_count": 9257,
+      "normalized_count": 9257,
+      "typesense_import_batches": 19,
+      "typesense_attempted_count": 9257,
+      "typesense_accepted_count": 9257,
+      "typesense_rejected_count": 0,
+      "checkpoint_final_state": {
+        "source_key": "goods_general",
+        "partition_date": "2026-08-25",
+        "sink_target": "typesense:live_gate_20260830g",
+        "status": "COMPLETED",
+        "attempt_count": 2,
+        "parent_pre_count": 9257,
+        "parent_post_count": 9257,
+        "raw_fetched_count": 9257,
+        "unique_uuid_count": 9257,
+        "normalized_count": 9257,
+        "sink_accepted_count": 9257,
+        "started_at": "2026-08-30T01:35:32+00:00",
+        "completed_at": "2026-08-30T01:35:46+00:00",
+        "last_error_code": null,
+        "last_error_message": null,
+        "engine_version": "msc-ingestion-v1",
+        "schema_version": "msc-source-schema-v1"
+      },
+      "status": "COMPLETED",
+      "skipped": false,
+      "retry_count": 0,
+      "sink_elapsed_seconds": 1.3671219999960158,
+      "elapsed_seconds": 13.861,
+      "schema_drift": {
+        "additive_fields": [],
+        "type_errors": []
+      }
+    },
+    "following_unforced_run_skipped": true,
+    "counts_before": {
+      "goods": 27232,
+      "medicines": 172,
+      "traditional_medicine": 87
+    },
+    "counts_after": {
+      "goods": 27232,
+      "medicines": 172,
+      "traditional_medicine": 87
+    },
+    "counts_unchanged": true,
+    "sample_ids_unchanged": true
+  },
+  "search_smoke": [
+    {
+      "group": "goods",
+      "category": "item name",
+      "query": "Dây điện mềm oval VCmo 2 x 1.5 Pa",
+      "result_count": 1,
+      "top_sample_ids": [
+        "0000042b-b7b3-413f-aa70-dbe46da7e8f4"
+      ],
+      "latency_ms": 17.29
+    },
+    {
+      "group": "goods",
+      "category": "manufacturer/brand",
+      "query": "Không có",
+      "result_count": 5091,
+      "top_sample_ids": [
+        "60e9e416-f0d2-4471-8959-7410a44f2706",
+        "3bc62fd8-1b22-4b52-897e-c78038fadbb2",
+        "c826a223-91c5-464b-811e-d7aba8f13954"
+      ],
+      "latency_ms": 21.22
+    },
+    {
+      "group": "goods",
+      "category": "bidder",
+      "query": "CÔNG TY TNHH TƯỜNG TƯỜNG PHÁT",
+      "result_count": 45,
+      "top_sample_ids": [
+        "d19ee680-2f64-4a99-95f8-f697f6dcbb7c",
+        "82576132-c003-470c-b6e5-03fc4ab0e6c8",
+        "02f221d2-11b7-487f-a17c-894df0e8ae34"
+      ],
+      "latency_ms": 25.85
+    },
+    {
+      "group": "goods",
+      "category": "tender code",
+      "query": "IB2600480927",
+      "result_count": 38,
+      "top_sample_ids": [
+        "fe10b668-571c-4422-af63-0566d5f289ad",
+        "f6b45220-d9b9-46ec-b818-ce95dd63049b",
+        "f2e5b45a-9e99-40f1-9f24-2df407faeb29"
+      ],
+      "latency_ms": 13.34
+    },
+    {
+      "group": "medicines",
+      "category": "medicine name",
+      "query": "Elaria",
+      "result_count": 1,
+      "top_sample_ids": [
+        "01964663-9d7e-4e6d-8807-44d72bd4d9bf"
+      ],
+      "latency_ms": 14.5
+    },
+    {
+      "group": "medicines",
+      "category": "active ingredient",
+      "query": "Diclofenac Natri",
+      "result_count": 2,
+      "top_sample_ids": [
+        "450566e9-7553-4144-8c5d-496ed1849b41",
+        "01964663-9d7e-4e6d-8807-44d72bd4d9bf"
+      ],
+      "latency_ms": 3.37
+    },
+    {
+      "group": "medicines",
+      "category": "manufacturer",
+      "query": "Medochemie Ltd-Ampoule Injectable Facility",
+      "result_count": 1,
+      "top_sample_ids": [
+        "01964663-9d7e-4e6d-8807-44d72bd4d9bf"
+      ],
+      "latency_ms": 3.05
+    },
+    {
+      "group": "medicines",
+      "category": "bidder",
+      "query": "CÔNG TY CỔ PHẦN DƯỢC Á CHÂU",
+      "result_count": 1,
+      "top_sample_ids": [
+        "01964663-9d7e-4e6d-8807-44d72bd4d9bf"
+      ],
+      "latency_ms": 3.34
+    },
+    {
+      "group": "medicines",
+      "category": "tender code",
+      "query": "IB2600403053",
+      "result_count": 26,
+      "top_sample_ids": [
+        "f11ce94b-ee15-41ef-9842-1bf74e778e41",
+        "ea0abf7b-7438-4f4b-a702-13f2c6f62a38",
+        "e50a0bc6-e0bd-4cca-b18c-84c49133b035"
+      ],
+      "latency_ms": 3.19
+    },
+    {
+      "group": "traditional_medicine",
+      "category": "item name",
+      "query": "Đại táo",
+      "result_count": 2,
+      "top_sample_ids": [
+        "f32e130d-f037-4656-844a-451fb89dcec2",
+        "19d9090f-28df-42d8-82cb-2c36deaa03b7"
+      ],
+      "latency_ms": 18.38
+    },
+    {
+      "group": "traditional_medicine",
+      "category": "scientific name",
+      "query": "Fructus Ziziphi jujubae",
+      "result_count": 2,
+      "top_sample_ids": [
+        "f32e130d-f037-4656-844a-451fb89dcec2",
+        "19d9090f-28df-42d8-82cb-2c36deaa03b7"
+      ],
+      "latency_ms": 4.26
+    },
+    {
+      "group": "traditional_medicine",
+      "category": "manufacturer/source",
+      "query": "Công ty TNHH Đông Dược Văn Hương",
+      "result_count": 25,
+      "top_sample_ids": [
+        "f603a974-031c-460f-b4d2-7b89ee733b1b",
+        "f506b3e8-ed25-46fd-b09f-06772c0f8592",
+        "f0837d74-ac76-4118-be9d-d45421ec8cd1"
+      ],
+      "latency_ms": 26.59
+    },
+    {
+      "group": "traditional_medicine",
+      "category": "bidder",
+      "query": "Công ty TNHH Đông Dược Văn Hương",
+      "result_count": 25,
+      "top_sample_ids": [
+        "f603a974-031c-460f-b4d2-7b89ee733b1b",
+        "f506b3e8-ed25-46fd-b09f-06772c0f8592",
+        "f0837d74-ac76-4118-be9d-d45421ec8cd1"
+      ],
+      "latency_ms": 3.64
+    },
+    {
+      "group": "traditional_medicine",
+      "category": "tender code",
+      "query": "IB2600477804",
+      "result_count": 25,
+      "top_sample_ids": [
+        "f603a974-031c-460f-b4d2-7b89ee733b1b",
+        "f506b3e8-ed25-46fd-b09f-06772c0f8592",
+        "f0837d74-ac76-4118-be9d-d45421ec8cd1"
+      ],
+      "latency_ms": 3.56
+    }
+  ],
+  "filters": [
+    {
+      "group": "goods",
+      "category": "source_tab",
+      "query": "*",
+      "result_count": 25505,
+      "top_sample_ids": [
+        "fff3e468-6e02-48d2-bb4b-5453389c9081",
+        "ffeeeac2-8d58-484a-aff9-ca9e53cf717e",
+        "ffeed32a-d785-42dd-af26-7381c48cc581"
+      ],
+      "latency_ms": 25.08,
+      "filter": "source_tab",
+      "filter_value": "HANG_HOA",
+      "semantics_ok": true
+    },
+    {
+      "group": "goods",
+      "category": "selection_method",
+      "query": "*",
+      "result_count": 13603,
+      "top_sample_ids": [
+        "fff3e468-6e02-48d2-bb4b-5453389c9081",
+        "ffeed32a-d785-42dd-af26-7381c48cc581",
+        "ffd9b2da-9f60-4da4-b221-bbf96182346f"
+      ],
+      "latency_ms": 24.95,
+      "filter": "selection_method",
+      "filter_value": "CDTRG"
+    },
+    {
+      "group": "goods",
+      "filter": "location",
+      "skipped": "not configured as facet/filter field"
+    },
+    {
+      "group": "goods",
+      "category": "price range",
+      "query": "*",
+      "result_count": 27151,
+      "top_sample_ids": [
+        "fff3e468-6e02-48d2-bb4b-5453389c9081",
+        "ffeeeac2-8d58-484a-aff9-ca9e53cf717e",
+        "ffeed32a-d785-42dd-af26-7381c48cc581"
+      ],
+      "latency_ms": 18.9,
+      "filter": "winning_unit_price",
+      "filter_value": "winning_unit_price:>0",
+      "semantics_ok": true
+    },
+    {
+      "group": "medicines",
+      "category": "source_tab",
+      "query": "*",
+      "result_count": 172,
+      "top_sample_ids": [
+        "fc1e5eb3-ca13-4ec8-87ba-77f082a3def4",
+        "faa7c464-1699-4a5b-98a8-bdcdf920cf18",
+        "e0a76022-6d7a-409c-8fcf-082dd4342b5b"
+      ],
+      "latency_ms": 3.56,
+      "filter": "source_tab",
+      "filter_value": "THUOC_TAN_DUOC",
+      "semantics_ok": true
+    },
+    {
+      "group": "medicines",
+      "category": "selection_method",
+      "query": "*",
+      "result_count": 147,
+      "top_sample_ids": [
+        "fc1e5eb3-ca13-4ec8-87ba-77f082a3def4",
+        "faa7c464-1699-4a5b-98a8-bdcdf920cf18",
+        "e0a76022-6d7a-409c-8fcf-082dd4342b5b"
+      ],
+      "latency_ms": 14.29,
+      "filter": "selection_method",
+      "filter_value": "DTRR"
+    },
+    {
+      "group": "medicines",
+      "filter": "location",
+      "skipped": "not configured as facet/filter field"
+    },
+    {
+      "group": "medicines",
+      "category": "price range",
+      "query": "*",
+      "result_count": 172,
+      "top_sample_ids": [
+        "fc1e5eb3-ca13-4ec8-87ba-77f082a3def4",
+        "faa7c464-1699-4a5b-98a8-bdcdf920cf18",
+        "e0a76022-6d7a-409c-8fcf-082dd4342b5b"
+      ],
+      "latency_ms": 15.38,
+      "filter": "winning_unit_price",
+      "filter_value": "winning_unit_price:>0",
+      "semantics_ok": true
+    },
+    {
+      "group": "traditional_medicine",
+      "category": "source_tab",
+      "query": "*",
+      "result_count": 25,
+      "top_sample_ids": [
+        "f603a974-031c-460f-b4d2-7b89ee733b1b",
+        "f506b3e8-ed25-46fd-b09f-06772c0f8592",
+        "f0837d74-ac76-4118-be9d-d45421ec8cd1"
+      ],
+      "latency_ms": 26.35,
+      "filter": "source_tab",
+      "filter_value": "DUOC_LIEU",
+      "semantics_ok": true
+    },
+    {
+      "group": "traditional_medicine",
+      "category": "selection_method",
+      "query": "*",
+      "result_count": 25,
+      "top_sample_ids": [
+        "f603a974-031c-460f-b4d2-7b89ee733b1b",
+        "f506b3e8-ed25-46fd-b09f-06772c0f8592",
+        "f0837d74-ac76-4118-be9d-d45421ec8cd1"
+      ],
+      "latency_ms": 27.13,
+      "filter": "selection_method",
+      "filter_value": "CDTRG"
+    },
+    {
+      "group": "traditional_medicine",
+      "filter": "location",
+      "skipped": "not configured as facet/filter field"
+    },
+    {
+      "group": "traditional_medicine",
+      "category": "price range",
+      "query": "*",
+      "result_count": 87,
+      "top_sample_ids": [
+        "fb2723a2-1cf2-4755-ac91-031886d1986f",
+        "f8d2f413-8357-48f5-a42d-97f076395ecc",
+        "f7c3785c-f83a-49bd-a9b6-fb60fb1f428f"
+      ],
+      "latency_ms": 16.34,
+      "filter": "winning_unit_price",
+      "filter_value": "winning_unit_price:>0",
+      "semantics_ok": true
+    }
+  ],
+  "sorts": [
+    {
+      "group": "goods",
+      "sort": "winning_unit_price:asc",
+      "result_count": 27232,
+      "numeric_values_checked": 20,
+      "order_ok": true,
+      "latency_ms": 17.44
+    },
+    {
+      "group": "goods",
+      "sort": "winning_unit_price:desc",
+      "result_count": 27232,
+      "numeric_values_checked": 20,
+      "order_ok": true,
+      "latency_ms": 5.58
+    },
+    {
+      "group": "medicines",
+      "sort": "winning_unit_price:asc",
+      "result_count": 172,
+      "numeric_values_checked": 20,
+      "order_ok": true,
+      "latency_ms": 23.17
+    },
+    {
+      "group": "medicines",
+      "sort": "winning_unit_price:desc",
+      "result_count": 172,
+      "numeric_values_checked": 20,
+      "order_ok": true,
+      "latency_ms": 15.38
+    },
+    {
+      "group": "traditional_medicine",
+      "sort": "winning_unit_price:asc",
+      "result_count": 87,
+      "numeric_values_checked": 20,
+      "order_ok": true,
+      "latency_ms": 15.23
+    },
+    {
+      "group": "traditional_medicine",
+      "sort": "winning_unit_price:desc",
+      "result_count": 87,
+      "numeric_values_checked": 20,
+      "order_ok": true,
+      "latency_ms": 15.95
+    }
+  ],
+  "multi_search": {
+    "result_count": 3,
+    "found_counts": [
+      27232,
+      172,
+      87
+    ],
+    "latency_ms": 15.07
+  },
+  "alias_proof": {
+    "activate_generation_a": {
+      "bidfinder_goods": "bidfinder_goods_v1_live_gate_20260830g",
+      "bidfinder_medicines": "bidfinder_medicines_v1_live_gate_20260830g",
+      "bidfinder_traditional": "bidfinder_traditional_v1_live_gate_20260830g"
+    },
+    "aliases_after_a": {
+      "aliases": {
+        "bidfinder_goods": {
+          "collection_name": "bidfinder_goods_v1_live_gate_20260830g",
+          "num_documents": 27232
+        },
+        "bidfinder_medicines": {
+          "collection_name": "bidfinder_medicines_v1_live_gate_20260830g",
+          "num_documents": 172
+        },
+        "bidfinder_traditional": {
+          "collection_name": "bidfinder_traditional_v1_live_gate_20260830g",
+          "num_documents": 87
+        }
+      }
+    },
+    "switched_goods_to_generation_b": {
+      "collection_name": "bidfinder_goods_v1_live_gate_20260830g_b",
+      "name": "bidfinder_goods"
+    },
+    "switched_goods_target": {
+      "collection_name": "bidfinder_goods_v1_live_gate_20260830g_b",
+      "name": "bidfinder_goods"
+    },
+    "switched_goods_found": 1,
+    "rolled_back_goods_to_generation_a": {
+      "collection_name": "bidfinder_goods_v1_live_gate_20260830g",
+      "name": "bidfinder_goods"
+    },
+    "rollback_goods_target": {
+      "collection_name": "bidfinder_goods_v1_live_gate_20260830g",
+      "name": "bidfinder_goods"
+    },
+    "rollback_goods_found": 27232
+  },
+  "checkpoint_generation": {
+    "old_validation_jsonl_seeded": true,
+    "old_validation_jsonl_did_not_skip_typesense": true,
+    "generation_a_completed": true,
+    "generation_a_rerun_skipped": true,
+    "generation_b_not_skipped": true,
+    "generation_b_result": {
+      "source_key": "medicine_originator",
+      "logical_group": "medicines",
+      "date": "2026-08-27",
+      "pre_count": 17,
+      "post_count": 17,
+      "leaf_count": 1,
+      "msc_page_request_count": 3,
+      "msc_count_request_count": 2,
+      "msc_request_count": 3,
+      "unique_source_count": 17,
+      "normalized_count": 17,
+      "typesense_import_batches": 1,
+      "typesense_attempted_count": 17,
+      "typesense_accepted_count": 17,
+      "typesense_rejected_count": 0,
+      "checkpoint_final_state": {
+        "source_key": "medicine_originator",
+        "partition_date": "2026-08-27",
+        "sink_target": "typesense:live_gate_20260830g_b",
+        "status": "COMPLETED",
+        "attempt_count": 1,
+        "parent_pre_count": 17,
+        "parent_post_count": 17,
+        "raw_fetched_count": 17,
+        "unique_uuid_count": 17,
+        "normalized_count": 17,
+        "sink_accepted_count": 17,
+        "started_at": "2026-08-30T01:35:46+00:00",
+        "completed_at": "2026-08-30T01:35:49+00:00",
+        "last_error_code": null,
+        "last_error_message": null,
+        "engine_version": "msc-ingestion-v1",
+        "schema_version": "msc-source-schema-v1"
+      },
+      "status": "COMPLETED",
+      "skipped": false,
+      "retry_count": 0,
+      "sink_elapsed_seconds": 0.01174170000012964,
+      "elapsed_seconds": 2.4,
+      "schema_drift": {
+        "additive_fields": [],
+        "type_errors": []
+      }
+    }
+  },
+  "partial_import": {
+    "dedicated_fixture_collection": "bidfinder_partial_29200",
+    "raw_http_import": {
+      "http_status": 200,
+      "attempted_count": 2,
+      "accepted_count": 1,
+      "rejected_count": 1,
+      "error_code": "TYPESENSE_PARTIAL_IMPORT",
+      "parser_errors": [
+        "document[1] import failed: Field `title` must be a string."
+      ]
+    },
+    "sink_attempted_count": 0,
+    "sink_accepted_count": 0,
+    "sink_rejected_count": 1,
+    "sink_error_code": "TYPESENSE_SCHEMA_ERROR",
+    "sink_fail_closed_before_import": true,
+    "checkpoint_status_before_finish": "RUNNING",
+    "not_marked_complete": true
+  },
+  "performance": {
+    "main_documents_indexed": 27491,
+    "main_import_batches": 61,
+    "batch_size": 500,
+    "import_documents_per_second": 5664.47,
+    "batch_latency_mean_ms": 51.2,
+    "batch_latency_median_ms": 51.07,
+    "multi_search_latency_ms": 15.07,
+    "overflow_elapsed_seconds": 30.422,
+    "gate_elapsed_seconds": 82.413
+  },
+  "proof_collections_retained_until_disposable_server_shutdown": true
+}

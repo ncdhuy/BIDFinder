@@ -53,6 +53,10 @@
         }
     };
     const TENDER_FIELD_NAMES = new Set(['winning_unit_price', 'winning_bidder_id', 'winning_bidder_name', 'bid_invitation_code', 'procuring_entity_id', 'procuring_entity_name', 'selection_method', 'result_posted_at', 'decision_number', 'decision_issued_at', 'bidder_count', 'location']);
+    const CROSS_TABLE_TENDER_SEARCH_FIELDS = new Set([
+        'winning_bidder_name', 'bid_invitation_code', 'procuring_entity_name', 'decision_number',
+        'decision_issued_at', 'selection_method', 'result_posted_at', 'location'
+    ]);
     const ADVANCED_FILTER_EXCLUDED_FIELDS = new Set(['quantity', 'winning_unit_price', 'winning_bidder_id', 'procuring_entity_id', 'bidder_count']);
     const GOODS_SHARED_SEARCH_FIELDS = new Set(['item_name', 'model_mark', 'brand', 'technical_specification']);
     const CROSS_GROUP_PRODUCT_SEARCH_FIELDS = [
@@ -289,8 +293,30 @@
                 .search-conditions-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
                 .search-conditions-title { margin: 0; color: var(--c-primary-hover); font-size: 14px; font-weight: 800; line-height: 1.35; }
                 .search-conditions-list { min-width: 0; min-height: 40px; max-height: 96px; overflow-y: auto; text-align: left; }
-                .search-conditions-list::-webkit-scrollbar { width: 6px; }
-                .search-conditions-list::-webkit-scrollbar-thumb { background: #d5dbe7; border-radius: var(--radius-sm); }
+                .search-conditions-list, .sidebar-column {
+                    scrollbar-width: auto;
+                    scrollbar-color: var(--table-scroll-thumb, #6f7d86) var(--table-scroll-track, #e6ebee);
+                }
+                @supports selector(::-webkit-scrollbar) {
+                    .search-conditions-list, .sidebar-column { scrollbar-color: auto; }
+                }
+                .search-conditions-list::-webkit-scrollbar, .sidebar-column::-webkit-scrollbar { width: 16px; height: 16px; }
+                .search-conditions-list::-webkit-scrollbar-track, .sidebar-column::-webkit-scrollbar-track {
+                    background: var(--table-scroll-track, #e6ebee);
+                    border-radius: var(--radius-sm);
+                }
+                .search-conditions-list::-webkit-scrollbar-thumb, .sidebar-column::-webkit-scrollbar-thumb {
+                    background: var(--table-scroll-thumb, #6f7d86);
+                    border: 3px solid var(--table-scroll-track, #e6ebee);
+                    border-radius: var(--radius-sm);
+                    min-width: 40px;
+                    min-height: 40px;
+                }
+                .search-conditions-list::-webkit-scrollbar-thumb:hover, .sidebar-column::-webkit-scrollbar-thumb:hover,
+                .search-conditions-list::-webkit-scrollbar-thumb:active, .sidebar-column::-webkit-scrollbar-thumb:active {
+                    background: var(--table-scroll-thumb-hover, #596972);
+                    border-width: 0;
+                }
                 .filter-chip {
                     display: inline-flex;
                     align-items: flex-start;
@@ -334,8 +360,6 @@
                 }
                 .sidebar-column { display: flex; min-width: 0; min-height: 0; flex-direction: column; gap: 2px; overflow-y: auto; }
                 .sidebar-column + .sidebar-column { padding-left: 0; border-left: 0; }
-                .sidebar-column::-webkit-scrollbar { width: 6px; }
-                .sidebar-column::-webkit-scrollbar-thumb { background: #d5dbe7; border-radius: var(--radius-sm); }
                 .sidebar-group { display: flex; align-items: center; gap: 7px; margin: 0 0 2px; padding: 5px 8px; background: #e7f1f6; border: 1px solid #dce8ef; border-radius: var(--radius-sm); color: #537080; font-size: 12px; font-weight: 800; letter-spacing: 0.08em; line-height: 1.2; text-transform: uppercase; }
                 .group-choice, .sidebar-item {
                     position: relative;
@@ -1117,6 +1141,7 @@
             const filters = {}, structuredFilters = {}, ranges = {};
             const textFields = [], textValues = [];
             const crossGroupSearchFields = [];
+            const activeCriteriaFields = new Set();
             let crossGroupSearch = false;
             const addTextFields = name => {
                 const crossGroup = isCrossGroupProductField(this.state.group, name);
@@ -1140,7 +1165,13 @@
                     if (!crossGroupSearchFields.includes(name)) crossGroupSearchFields.push(name);
                 }
                 const legacyFilterKey = LEGACY_TOKEN_FILTER_KEYS[this.state.group]?.[name];
-                if (criterion.kind === 'date-range') continue;
+                if (criterion.kind === 'date-range') {
+                    if (criterion.from || criterion.to) activeCriteriaFields.add(name);
+                    continue;
+                }
+                if (criterion.kind === 'range' ? (criterion.min !== '' || criterion.max !== '') : values.length > 0) {
+                    activeCriteriaFields.add(name);
+                }
                 if (criterion.kind === 'range') ranges[name] = { ...(criterion.min !== '' ? { min: Number(criterion.min) } : {}), ...(criterion.max !== '' ? { max: Number(criterion.max) } : {}) };
                 else if (name === 'selection_method') filters.selectionMethod = values;
                 else if (name === 'location') filters.place = values;
@@ -1148,6 +1179,13 @@
                 else if (criterion.kind === 'tokens' && values.length === 1 && /\s/.test(values[0]) && (field.type === 'string' || field.type === 'string[]')) {
                     addTextFields(name);
                     textValues.push(quoteSearchPhrase(values[0]));
+                }
+                else if (
+                    criterion.kind === 'tokens' && values.length === 1 && field.infix_search &&
+                    (field.type === 'string' || field.type === 'string[]')
+                ) {
+                    addTextFields(name);
+                    textValues.push(values[0]);
                 }
                 else if (criterion.kind === 'tokens' && legacyFilterKey) filters[legacyFilterKey] = { tokens: this.criterionTokens(criterion) };
                 else if (field.filterable) structuredFilters[name] = values.length === 1 ? { eq: values[0] } : { in: values };
@@ -1157,10 +1195,13 @@
             for (const [name, criterion] of Object.entries(this.state.criteria)) {
                 if (criterion.kind === 'date-range') dateRanges[name] = { ...(criterion.from ? { from: criterion.from } : {}), ...(criterion.to ? { to: criterion.to } : {}) };
             }
+            const tenderInfoOnlySearch = activeCriteriaFields.size > 0
+                && [...activeCriteriaFields].every(name => CROSS_TABLE_TENDER_SEARCH_FIELDS.has(name));
+            const searchAllTables = crossGroupSearch || tenderInfoOnlySearch;
             return {
-                scope: crossGroupSearch ? 'all' : GROUP_SCOPE[this.state.group],
-                group: crossGroupSearch ? null : this.state.group,
-                sourceTypes: crossGroupSearch ? [] : [...this.state.sourceTypes],
+                scope: searchAllTables ? 'all' : GROUP_SCOPE[this.state.group],
+                group: searchAllTables ? null : this.state.group,
+                sourceTypes: searchAllTables ? [] : [...this.state.sourceTypes],
                 crossGroupSearch,
                 crossGroupSearchFields,
                 uiState: {

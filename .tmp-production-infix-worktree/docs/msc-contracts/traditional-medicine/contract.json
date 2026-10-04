@@ -1,0 +1,40 @@
+{
+  "source_tab_label": "Vị thuốc cổ truyền",
+  "data_group": "traditional_medicine",
+  "source_tab": "VI_THUOC_CO_TRUYEN",
+  "type": "HANG_HOA",
+  "tab": "VI_THUOC_CO_TRUYEN",
+  "request_index": "es-smart-pricing",
+  "match_fields": ["ten_duoc_lieu", "ten_khoa_hoc", "ten_san_pham", "ma_tbmt"],
+  "fixed_filters": [
+    {"fieldName": "medicine_type", "searchType": "in", "fieldValues": [0, null]},
+    {"fieldName": "type", "searchType": "in", "fieldValues": ["HANG_HOA"]},
+    {"fieldName": "tab", "searchType": "in", "fieldValues": ["VI_THUOC_CO_TRUYEN"]}
+  ],
+  "special_filters": ["medicine_type=[0,null] when official medicineType is 0"],
+  "optional_filters": ["ngay_dang_tai_kqlcnt range"],
+  "search_endpoint": "https://muasamcong.mpi.gov.vn/o/egp-portal-winning-bid-data/services/smart/search_prc",
+  "export_endpoint": "https://muasamcong.mpi.gov.vn/o/egp-portal-winning-bid-data/services/smart/search_prc/export",
+  "aggregation_path": "agg[0].buckets[0].docCount",
+  "export_result_path": "resultList",
+  "search_envelope_keys": ["page", "agg"],
+  "export_envelope_keys": ["resultList"],
+  "observed_source_field_names": ["bidForm", "boPhanDung", "dangBaoChe", "diaDiem", "donGia", "donGiaDuThau", "donViTinh", "gdklh_GPNK", "id", "maCdt", "maTbmt", "ngayBanHanhQuyetDinh", "ngayDangTaiKqlcnt", "nguonGoc", "nhomTCKT", "nuocSanXuat", "phuongPhapCheBien", "quyCachDongGoi", "soLuong", "soNhaThauThamDu", "soQuyetDinh", "tab", "tenCdtBmt", "tenCoSoSanXuat", "tenKhoaHoc", "tenSanPham", "tenViThuocCoTruyen", "type", "winningCode", "winningName"],
+  "known_null_forms": ["field absent", "empty string", "JSON null in medicine_type filter values"],
+  "known_numeric_representations": {"donGia": "JSON number", "donGiaDuThau": "JSON number", "soLuong": "JSON number", "soNhaThauThamDu": "JSON number and may be fractional"},
+  "known_date_representations": ["JSON string YYYY-MM-DDTHH:mm:ss without explicit timezone"],
+  "contract_evidence_status": "VERIFIED",
+  "fixture_date": "2026-08-27",
+  "fixture_range": {"from": "2026-08-27T00:00:00.000Z", "to": "2026-08-27T23:59:59.059Z"},
+  "preflight_doc_count": 62,
+  "sample_query": {"keyword": "IB2600182363", "search_doc_count": 62, "export_expected_count": 62, "export_fixture_result_count": 1, "export_fixture_truncated": true},
+  "export_capture_note": "Request shape is verified from the official page and export resultList envelope is the Phase 0 verified behavior. Anonymous live export returned HTTP 200 with zero body; sample record mirrors the live search record for offline parser tests.",
+  "export_ceiling": 30000,
+  "response_behavior": {"search_zero_result": "HTTP 200 with page.content=[] and docCount=0", "search_nonzero_result": "HTTP 200 with records under page.content", "export_zero_result": "expected resultList=[]", "export_nonzero_result": "resultList array", "relevant_errors": ["HTTP 400 for deep search pagination", "HTTP 400 for export pageNumber=1", "HTTP 429/5xx are transient"]},
+  "zero_result_evidence": {"keyword": "__bidfinder_contract_zero_20260829__", "http": 200, "docCount": 0, "page_content_length": 0},
+  "provenance_fields": ["id", "source_tab", "source_tab_label", "data_group", "partition_date"],
+  "canonical_mapping": [
+    {"canonical_key": "item_name", "source_field": "tenViThuocCoTruyen", "optional": true}, {"canonical_key": "used_part", "source_field": "boPhanDung", "optional": true}, {"canonical_key": "scientific_name", "source_field": "tenKhoaHoc", "optional": true}, {"canonical_key": "origin", "source_field": "nguonGoc", "optional": true}, {"canonical_key": "processing_method", "source_field": "phuongPhapCheBien", "optional": true}, {"canonical_key": "registration_or_import_permit_number", "source_field": "gdklh_GPNK", "optional": true}, {"canonical_key": "manufacturer", "source_field": "tenCoSoSanXuat", "optional": true}, {"canonical_key": "production_country", "source_field": "nuocSanXuat", "optional": true}, {"canonical_key": "packaging", "source_field": "quyCachDongGoi", "optional": true}, {"canonical_key": "unit", "source_field": "donViTinh", "optional": true}, {"canonical_key": "quantity", "source_field": "soLuong", "optional": true}, {"canonical_key": "winning_unit_price", "source_field": "donGia", "optional": true}, {"canonical_key": "winning_bidder_id", "source_field": "winningCode", "optional": true}, {"canonical_key": "winning_bidder_name", "source_field": "winningName", "optional": true}, {"canonical_key": "technical_group", "source_field": "nhomTCKT", "optional": true}, {"canonical_key": "bid_invitation_code", "source_field": "maTbmt", "optional": true}, {"canonical_key": "procuring_entity_id", "source_field": "maCdt", "optional": true}, {"canonical_key": "procuring_entity_name", "source_field": "tenCdtBmt", "optional": true}, {"canonical_key": "selection_method", "source_field": "bidForm", "optional": true}, {"canonical_key": "result_posted_at", "source_field": "ngayDangTaiKqlcnt", "optional": true}, {"canonical_key": "decision_number", "source_field": "soQuyetDinh", "optional": true}, {"canonical_key": "decision_issued_at", "source_field": "ngayBanHanhQuyetDinh", "optional": true}, {"canonical_key": "bidder_count", "source_field": "soNhaThauThamDu", "optional": true}, {"canonical_key": "location", "source_field": "diaDiem", "optional": true}
+  ],
+  "verification_notes": ["Official page uses VI_THUOC_CO_TRUYEN as distinct source discriminator.", "Canonical item_name uses tenViThuocCoTruyen while Dược liệu uses tenDuocLieu.", "One-day preflight count remained below export ceiling for this fixture date."]
+}

@@ -1,0 +1,1158 @@
+{
+  "phase": "4C",
+  "status": "PASS",
+  "starting_head": "3d131d08ba6e8be49576ca57262dc7f186fa77d6",
+  "branch": "refactor-msc-typesense-v1",
+  "initial_worktree": "clean",
+  "serving_generation": "serving_v1_20260901",
+  "backend": {
+    "before": "postgres",
+    "after": "typesense",
+    "final_default": "typesense",
+    "supported_modes": [
+      "postgres",
+      "typesense",
+      "controlled"
+    ],
+    "fallback_enabled": true,
+    "fallback_policy": "infrastructure-only; SHADOW_INFRA_ERROR only",
+    "fallback_event": "DEGRADED_POSTGRES_FALLBACK",
+    "fallback_coverage": "legacy_postgres_subset"
+  },
+  "serving_health": {
+    "health_endpoint": "PASS",
+    "collections": {
+      "goods": {
+        "name": "bidfinder_goods_v1_serving_v1_20260901",
+        "documents": 9593796
+      },
+      "medicines": {
+        "name": "bidfinder_medicines_v1_serving_v1_20260901",
+        "documents": 585449
+      },
+      "traditional": {
+        "name": "bidfinder_traditional_v1_serving_v1_20260901",
+        "documents": 32022
+      }
+    },
+    "total_documents": 10211267,
+    "full_serving_generations_live": 1,
+    "aliases_active": false
+  },
+  "ui": {
+    "groups": [
+      {
+        "key": "goods",
+        "label": "Hàng hóa"
+      },
+      {
+        "key": "medicines",
+        "label": "Thuốc"
+      },
+      {
+        "key": "traditional",
+        "label": "Dược liệu / Vị thuốc cổ truyền"
+      }
+    ],
+    "subtype_selectors": 7,
+    "metadata_source": [
+      "typesense-search-contract.json",
+      "GET /api/search-contract"
+    ],
+    "canonical_payload_only": true,
+    "raw_typesense_query_syntax_in_frontend": false,
+    "dynamic_controls": [
+      "search fields",
+      "filters",
+      "sort choices",
+      "autocomplete sources"
+    ],
+    "result_model": "primary result columns plus expandable detail containing every returned approved field",
+    "responsive_sanity": "PASS via static CSS checks; narrow layouts collapse controls and keep result overflow accessible"
+  },
+  "field_completeness": {
+    "total_fields": 88,
+    "groups": {
+      "goods": {
+        "label": "Hàng hóa",
+        "source_types": [
+          {
+            "key": "goods_general",
+            "label": "Hàng hóa ngoài thuốc, thiết bị, vật tư y tế",
+            "selector": {
+              "field": "source_tab",
+              "value": "HANG_HOA"
+            }
+          },
+          {
+            "key": "medical_devices",
+            "label": "Thiết bị, vật tư y tế",
+            "selector": {
+              "field": "source_tab",
+              "value": "THIET_BI_VAT_TU_Y_TE"
+            }
+          }
+        ],
+        "sort_fields": [
+          "bidder_count",
+          "partition_date",
+          "production_year",
+          "quantity",
+          "winning_unit_price"
+        ],
+        "capability_counts": {
+          "search": 14,
+          "filter": 11,
+          "sort": 5,
+          "autocomplete": 5
+        },
+        "fields": [
+          {
+            "name": "id",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "data_group",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "exposed",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "source_tab",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "exposed",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "source_tab_label",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "exposed",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "partition_date",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "exposed",
+            "sort": "exposed",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "item_name",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "exposed",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "unit",
+            "search": "exposed",
+            "filter": "exposed",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "quantity",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "exposed",
+            "sort": "exposed",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "country_of_origin",
+            "search": "exposed",
+            "filter": "exposed",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "hs_code",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "model_mark",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "brand",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "production_year",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "exposed",
+            "sort": "exposed",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "manufacturer",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "exposed",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "technical_specification",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "model",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "registration_or_import_permit_number",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "winning_unit_price",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "exposed",
+            "sort": "exposed",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "winning_bidder_id",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "winning_bidder_name",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "exposed",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "bid_invitation_code",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "exposed",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "procuring_entity_id",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "procuring_entity_name",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "exposed",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "selection_method",
+            "search": "exposed",
+            "filter": "exposed",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "result_posted_at",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "decision_number",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "decision_issued_at",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "bidder_count",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "exposed",
+            "sort": "exposed",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "location",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          }
+        ]
+      },
+      "medicines": {
+        "label": "Thuốc",
+        "source_types": [
+          {
+            "key": "medicine_generic",
+            "label": "Gói thầu thuốc Generic",
+            "selector": {
+              "field": "source_tab_label",
+              "value": "Gói thầu thuốc Generic"
+            }
+          },
+          {
+            "key": "medicine_originator",
+            "label": "Gói thầu thuốc biệt dược gốc",
+            "selector": {
+              "field": "source_tab_label",
+              "value": "Gói thầu thuốc biệt dược gốc"
+            }
+          },
+          {
+            "key": "medicine_herbal",
+            "label": "Gói thầu thuốc dược liệu",
+            "selector": {
+              "field": "source_tab_label",
+              "value": "Gói thầu thuốc dược liệu"
+            }
+          }
+        ],
+        "sort_fields": [
+          "bidder_count",
+          "partition_date",
+          "quantity",
+          "winning_unit_price"
+        ],
+        "capability_counts": {
+          "search": 16,
+          "filter": 13,
+          "sort": 4,
+          "autocomplete": 6
+        },
+        "fields": [
+          {
+            "name": "id",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "data_group",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "exposed",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "source_tab",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "exposed",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "source_tab_label",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "exposed",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "partition_date",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "exposed",
+            "sort": "exposed",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "medicine_name",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "exposed",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "active_ingredient_or_herbal_component",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "exposed",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "strength",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "marketing_authorization_or_import_permit",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "route_of_administration",
+            "search": "exposed",
+            "filter": "exposed",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "dosage_form",
+            "search": "exposed",
+            "filter": "exposed",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "shelf_life",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "manufacturer",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "exposed",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "production_country",
+            "search": "exposed",
+            "filter": "exposed",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "packaging",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "unit",
+            "search": "exposed",
+            "filter": "exposed",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "quantity",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "exposed",
+            "sort": "exposed",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "winning_unit_price",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "exposed",
+            "sort": "exposed",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "winning_bidder_id",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "winning_bidder_name",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "exposed",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "medicine_group",
+            "search": "exposed",
+            "filter": "exposed",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "bid_invitation_code",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "exposed",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "procuring_entity_id",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "procuring_entity_name",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "exposed",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "selection_method",
+            "search": "exposed",
+            "filter": "exposed",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "result_posted_at",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "decision_number",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "decision_issued_at",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "bidder_count",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "exposed",
+            "sort": "exposed",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "location",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          }
+        ]
+      },
+      "traditional": {
+        "label": "Dược liệu / Vị thuốc cổ truyền",
+        "source_types": [
+          {
+            "key": "herbal_material",
+            "label": "Dược liệu",
+            "selector": {
+              "field": "source_tab",
+              "value": "DUOC_LIEU"
+            }
+          },
+          {
+            "key": "traditional_medicine",
+            "label": "Vị thuốc cổ truyền",
+            "selector": {
+              "field": "source_tab",
+              "value": "VI_THUOC_CO_TRUYEN"
+            }
+          }
+        ],
+        "sort_fields": [
+          "bidder_count",
+          "partition_date",
+          "quantity",
+          "winning_unit_price"
+        ],
+        "capability_counts": {
+          "search": 15,
+          "filter": 12,
+          "sort": 4,
+          "autocomplete": 6
+        },
+        "fields": [
+          {
+            "name": "id",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "data_group",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "exposed",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "source_tab",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "exposed",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "source_tab_label",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "exposed",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "partition_date",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "exposed",
+            "sort": "exposed",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "item_name",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "exposed",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "used_part",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "scientific_name",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "exposed",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "origin",
+            "search": "exposed",
+            "filter": "exposed",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "processing_method",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "registration_or_import_permit_number",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "manufacturer",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "exposed",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "production_country",
+            "search": "exposed",
+            "filter": "exposed",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "packaging",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "unit",
+            "search": "exposed",
+            "filter": "exposed",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "quantity",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "exposed",
+            "sort": "exposed",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "winning_unit_price",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "exposed",
+            "sort": "exposed",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "winning_bidder_id",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "winning_bidder_name",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "exposed",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "technical_group",
+            "search": "exposed",
+            "filter": "exposed",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "bid_invitation_code",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "exposed",
+            "display": "primary_result_and_expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "procuring_entity_id",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "procuring_entity_name",
+            "search": "exposed",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "exposed",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "selection_method",
+            "search": "exposed",
+            "filter": "exposed",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "result_posted_at",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "decision_number",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "decision_issued_at",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "bidder_count",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "exposed",
+            "sort": "exposed",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          },
+          {
+            "name": "location",
+            "search": "not_approved_by_phase_4b_contract",
+            "filter": "not_approved_by_phase_4b_contract",
+            "sort": "not_approved_by_phase_4b_contract",
+            "autocomplete": "not_approved_by_phase_4b_contract",
+            "display": "expandable_detail",
+            "reason": "This capability is not approved for this field in the Phase 4B contract."
+          }
+        ]
+      }
+    }
+  },
+  "journeys": [
+    {
+      "source_type": "goods_general",
+      "group": "goods",
+      "selector": "source_tab=HANG_HOA",
+      "status": "PASS",
+      "search_filter_detail_pagination": "PASS"
+    },
+    {
+      "source_type": "medical_devices",
+      "group": "goods",
+      "selector": "source_tab=THIET_BI_VAT_TU_Y_TE",
+      "status": "PASS",
+      "search_filter_detail_pagination": "PASS"
+    },
+    {
+      "source_type": "medicine_generic",
+      "group": "medicines",
+      "selector": "source_tab_label=Gói thầu thuốc Generic",
+      "status": "PASS",
+      "search_filter_detail_pagination": "PASS"
+    },
+    {
+      "source_type": "medicine_originator",
+      "group": "medicines",
+      "selector": "source_tab_label=Gói thầu thuốc biệt dược gốc",
+      "status": "PASS",
+      "search_filter_detail_pagination": "PASS"
+    },
+    {
+      "source_type": "medicine_herbal",
+      "group": "medicines",
+      "selector": "source_tab_label=Gói thầu thuốc dược liệu",
+      "status": "PASS",
+      "search_filter_detail_pagination": "PASS"
+    },
+    {
+      "source_type": "herbal_material",
+      "group": "traditional",
+      "selector": "source_tab=DUOC_LIEU",
+      "status": "PASS",
+      "search_filter_detail_pagination": "PASS"
+    },
+    {
+      "source_type": "traditional_medicine",
+      "group": "traditional",
+      "selector": "source_tab=VI_THUOC_CO_TRUYEN",
+      "status": "PASS",
+      "search_filter_detail_pagination": "PASS"
+    }
+  ],
+  "full_data_proof": {
+    "goods_2022": {
+      "hits": 8647,
+      "sample_partition_date": "2022-11-30"
+    },
+    "goods_january_2023": {
+      "hits": 36772,
+      "sample_partition_date": "2023-01-18"
+    },
+    "goods_recent_2026": {
+      "hits": 61150,
+      "sample_partition_date": "2026-07-31"
+    },
+    "subtype_hits": {
+      "goods_general": 8629031,
+      "medical_devices": 964765,
+      "medicine_generic": 494717,
+      "medicine_originator": 55239,
+      "medicine_herbal": 35490,
+      "herbal_material": 9554,
+      "traditional_medicine": 22468
+    }
+  },
+  "api_smoke": {
+    "status": "PASS",
+    "environment": "Windows FastAPI TestClient with real Typesense repository; DB/auth dependencies isolated with fakes; no database writes",
+    "backend": "typesense",
+    "endpoints": {
+      "search_contract": "PASS: 200; three groups",
+      "goods_text": "PASS: 200; hits=478852; page=1; displayed=2",
+      "medicine_subtype": "PASS: 200; hits=494717; displayed=2",
+      "traditional_subtype": "PASS: 200; hits=9554; displayed=2",
+      "pagination": "PASS: 200; goods page=2; displayed=2",
+      "sort": "PASS: 200; goods sort; displayed=2",
+      "autocomplete": "PASS: 200; suggestions=1",
+      "preview": "PASS: 200; total=562653",
+      "bulk": "PASS: 200; matched=2; child_errors=0"
+    }
+  },
+  "fallback_test": {
+    "status": "PASS",
+    "injected_failure": "Typesense infrastructure failure",
+    "response": "valid legacy Postgres page",
+    "event": "DEGRADED_POSTGRES_FALLBACK",
+    "coverage": "degraded legacy subset",
+    "semantic_failure": "PASS: query-contract failure propagated; Postgres was not called"
+  },
+  "rollback_test": {
+    "status": "PASS",
+    "configuration": "BIDFINDER_PROCUREMENT_BACKEND=postgres",
+    "response": "valid legacy Postgres page",
+    "frontend_rollback_required": false
+  },
+  "latency": {
+    "normal_text": {
+      "api_sample_ms": 613.335,
+      "typesense_reported_ms": 613.335
+    },
+    "filter_eq": {
+      "typesense_p50_ms": 5.386,
+      "typesense_p95_ms": 1578.911
+    },
+    "pagination": {
+      "api_sample_ms": 490.069,
+      "typesense_reported_ms": 490.069
+    },
+    "broad_quantity_sort": {
+      "api_sample_ms": 1626.476,
+      "typesense_reported_ms": 1626.476,
+      "known_outlier": "approximately one second is accepted MVP behavior"
+    },
+    "autocomplete": {
+      "api_status": "PASS",
+      "typesense_validation_p50_ms": 9.004,
+      "typesense_validation_p95_ms": 350.049
+    }
+  },
+  "resources": {
+    "typesense_rss_kb": 7362288,
+    "typesense_cpu_percent_sample": 22.9,
+    "wsl_mem_available_bytes": 11547017216,
+    "wsl_swap_free_bytes": 8576716800,
+    "typesense_process_count": 1,
+    "fastapi_process": "No persistent FastAPI daemon was running; bounded TestClient smoke only"
+  },
+  "daily_incremental": {
+    "status": "PASS: compatibility verified",
+    "serving_generation": "serving_v1_20260901",
+    "evidence": "crawler_engine.msc.cli incremental --help requires explicit serving generation and rejects historical generation; no backfill or incremental write was executed"
+  },
+  "tests": {
+    "focused_unittest": "PASS",
+    "full_explicit_module_unittest": {
+      "status": "PASS",
+      "tests": 191,
+      "failures": 0,
+      "errors": 0
+    },
+    "pytest": "NOT RUN: pytest is unavailable in the environment",
+    "node_syntax": "PASS",
+    "python_compileall": "PASS",
+    "contract_json_validation": "PASS",
+    "secret_scan": "PASS",
+    "git_diff_check": "PASS",
+    "frontend_visual_browser": "NOT RUN: native/static responsive assertions used"
+  },
+  "known_limitations": [
+    "Postgres fallback is a temporary degraded legacy subset and cannot reproduce the full Typesense corpus.",
+    "Broad quantity sort can be approximately one second or slower on high-cardinality queries; retained as an accepted MVP behavior.",
+    "Typesense serving generation is explicit and aliases are intentionally inactive; generation rotation is deferred.",
+    "No persistent FastAPI daemon was started during local smoke; user-serving deployment still needs its normal runtime restart/reload.",
+    "No historical backfill, incremental write, or procurement write migration was performed."
+  ],
+  "rollback": {
+    "command_configuration": [
+      "BIDFINDER_PROCUREMENT_BACKEND=postgres",
+      "BIDFINDER_PROCUREMENT_FALLBACK_ENABLED=false"
+    ],
+    "action": "restart/reload the FastAPI runtime",
+    "expected_limitation": "Postgres search covers only the legacy subset; no frontend rollback is required"
+  },
+  "final_status": "PASS",
+  "ready_for_early_stage_users": true
+}

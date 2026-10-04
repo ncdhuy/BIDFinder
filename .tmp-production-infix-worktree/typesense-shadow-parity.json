@@ -1,0 +1,205 @@
+{
+  "phase": "4A",
+  "validation": "Phase 4A-R",
+  "overall_status": "PARTIAL",
+  "phase_4b_reclassification": {
+    "postgres_is_search_authority": false,
+    "legacy_population_difference_is_p0": false,
+    "legacy_population_differences": 21,
+    "query_contract_failures_in_preserved_run": 0,
+    "ranking_differences_are_population_gated": false,
+    "interpretation": "Preserved Phase 4A counts compare a sparse legacy Postgres subset with the complete Typesense serving corpus. Population expansion is evidence, not correctness failure or cutover gate.",
+    "classification_policy": {
+      "LEGACY_POPULATION_DIFFERENCE": "Informational population expansion; never a Phase 4B PASS gate.",
+      "QUERY_CONTRACT_FAILURE": "Only an advertised operation rejected by the live Typesense schema or adapter.",
+      "RANKING_DIFFERENCE": "Ranking observation independent of sparse legacy population membership.",
+      "PERFORMANCE_OUTLIER": "Bounded slow query requiring evidence-backed documentation or tuning.",
+      "SHADOW_INFRA_ERROR": "Infrastructure-only failure isolated from the primary response."
+    }
+  },
+  "starting_head": "2010504bbe1d1a5eaec8ea6b085b4c09dc52a036",
+  "branch": "refactor-msc-typesense-v1",
+  "serving_generation": "serving_v1_20260901",
+  "stable_aliases_active": false,
+  "offline_synthetic_baseline": {
+    "executed": true,
+    "records": 13,
+    "comparisons": 30,
+    "p0": 0,
+    "p1": 0,
+    "p2": 0,
+    "p3": 0,
+    "status": "PASS"
+  },
+  "live_postgres_typesense_baseline": {
+    "executed": true,
+    "config": {
+      "endpoint": "http://127.0.0.1:8108",
+      "serving_generation": "serving_v1_20260901",
+      "sample_rate": 1.0,
+      "timeout_seconds": 3.0
+    },
+    "serving_data_plane": {
+      "health": "PASS",
+      "coverage": "9738/9738",
+      "provenance_rows": 10211267,
+      "uuid_conflicts": 0,
+      "unresolved_rejects": 0,
+      "physical_provenance_parity": "PASS",
+      "physical_counts": {
+        "goods": 9593796,
+        "medicines": 585449,
+        "traditional": 32022
+      },
+      "live_physical_generations": ["serving_v1_20260901"]
+    },
+    "postgres": {
+      "connectivity": "PASS",
+      "real_query_path": "PASS",
+      "processed_goods": 374689,
+      "processed_medicines": 274790,
+      "legacy_identity_columns": {
+        "goods": ["id", "ma_tbmt", "so_qd", "version"],
+        "medicines": ["id", "ma_tbmt", "so_qd", "version", "ma_thuoc"]
+      },
+      "shared_authoritative_uuid": false
+    },
+    "identity": {
+      "strategy": "canonical_sha256_fingerprint",
+      "reason": "Legacy Postgres rows have serial __row_id and no shared MSC/source UUID.",
+      "source_fields": "Normalized stable fields common to both representations; backend serial IDs, Typesense metadata, ordering, and non-canonical timestamps excluded.",
+      "multiset_semantics": true,
+      "comparisons": 96,
+      "comparable_cases": 96,
+      "compared_rows": 627,
+      "identity_not_comparable": 1,
+      "collision_audit": {
+        "rows": 845,
+        "unique_fingerprints": 844,
+        "duplicated_fingerprint_groups": 1,
+        "ambiguous_collision_groups": 1
+      }
+    },
+    "corpus": {
+      "parity_comparisons": 96,
+      "autocomplete_comparisons": 8,
+      "total_comparisons_including_autocomplete": 104,
+      "traditional_adapter_smoke": 8,
+      "by_endpoint": {
+        "/api/query": {"comparisons": 60, "p0": 21, "p1": 1, "p2": 31, "p3": 0, "infra_errors": 0, "slow_over_500ms": 6},
+        "/api/query-preview": {"comparisons": 12, "p0": 0, "p1": 1, "p2": 0, "p3": 0, "infra_errors": 0, "slow_over_500ms": 0},
+        "/api/bulk-query": {"comparisons": 24, "p0": 0, "p1": 5, "p2": 19, "p3": 0, "infra_errors": 0, "slow_over_500ms": 0}
+      },
+      "by_query_class": {
+        "exact_identifier": {"comparisons": 3, "p0": 3, "p1": 0, "p2": 0},
+        "filter_only": {"comparisons": 8, "p0": 6, "p1": 0, "p2": 0},
+        "explicit_sort": {"comparisons": 12, "p0": 12, "p1": 0, "p2": 0},
+        "full_text_relevance": {"comparisons": 73, "p0": 0, "p1": 7, "p2": 50}
+      },
+      "by_group": {
+        "goods": {"comparisons": 45, "p0": 10, "p1": 4, "p2": 23},
+        "medicines": {"comparisons": 45, "p0": 11, "p1": 3, "p2": 27},
+        "traditional": {"adapter_smoke_cases": 8, "status": "REACHED"}
+      }
+    },
+    "parity": {
+      "p0_mismatches": 21,
+      "p1_mismatches": 7,
+      "p2_ranking_or_relevance_differences": 50,
+      "p3_issues": 0,
+      "shadow_infrastructure_errors": 0,
+      "total_count": {"matched": 13, "total": 96},
+      "missing_canonical_identity_rows": 422,
+      "extra_canonical_identity_rows": 423,
+      "explicit_sort": {"matched": 0, "total": 12},
+      "field_mismatches": 0,
+      "top_k_overlap": {"count": 96, "p50": 0.0, "p95": 1.0},
+      "interpretation": "The unresolved deterministic mismatches are consistent with the sparse legacy Postgres read population versus the full serving population; they are not erased by the identity bridge. Relevance ordering differences remain P2 evidence for follow-up."
+    },
+    "latency_ms": {
+      "postgres": {"count": 96, "p50": 242.509, "p95": 921.274},
+      "typesense": {"count": 96, "p50": 27.944, "p95": 579.397}
+    },
+    "slow_typesense_queries_over_500ms": {
+      "count": 6,
+      "privacy": "No raw query values or credentials recorded.",
+      "representative": [
+        {"endpoint": "/api/query", "group": "goods", "query_class": "filter_only", "page": 1, "limit": 5, "latency_ms": 579.397},
+        {"endpoint": "/api/query", "group": "goods", "query_class": "explicit_sort", "sort": "quantity:asc", "page": 1, "limit": 10, "latency_ms": 978.508},
+        {"endpoint": "/api/query", "group": "goods", "query_class": "explicit_sort", "sort": "quantity:desc", "page": 1, "limit": 10, "latency_ms": 968.566}
+      ],
+      "note": "All six were bounded local validation reads; the remaining three are retained in the harness output index, not this compact artifact."
+    },
+    "preview": {
+      "comparisons": 12,
+      "semantic_validation": "PASS for the exercised preview semantics; public preview envelope unchanged.",
+      "sql_text_contract_changed": false
+    },
+    "bulk": {
+      "child_comparisons": 24,
+      "child_mapping": "PASS",
+      "failure_isolation": "PASS",
+      "public_envelope_changed": false,
+      "uncontrolled_load": false
+    },
+    "autocomplete": {
+      "comparisons": 8,
+      "status": "REACHED",
+      "infrastructure_errors": 0,
+      "prefix_empty_unicode_limit_and_dedup_cases": "EXERCISED",
+      "ranking_comparison": {"top_k_p50": 0.2, "top_k_p95": 0.5}
+    },
+    "traditional_adapter": {
+      "cases": 8,
+      "status": "REACHED",
+      "broad_total": 32022,
+      "zero_result_total": 0,
+      "unsupported_filters": []
+    },
+    "primary_response_isolation": {
+      "baseline_requests": 6,
+      "shadow_requests": 6,
+      "baseline_statuses": [200, 200, 200, 200, 200, 200],
+      "shadow_statuses": [200, 200, 200, 200, 200, 200],
+      "baseline_p50_ms": 1075.353,
+      "baseline_p95_ms": 1085.075,
+      "shadow_p50_ms": 1130.199,
+      "shadow_p95_ms": 1151.914,
+      "response_overhead_p50_ms": 54.846,
+      "response_overhead_p95_ms": 66.839,
+      "public_schema_equal": true,
+      "public_data_equal": true,
+      "user_waits_for_typesense": false
+    },
+    "failure_isolation": {
+      "isolated_invalid_shadow_endpoint": true,
+      "postgres_status": 200,
+      "shadow_classification": "SHADOW_INFRA_ERROR",
+      "shadow_report_lines": 1,
+      "caused_http_5xx": false
+    },
+    "resource_measurement": {
+      "typesense_rss_kb": {"baseline_or_after_load": 7371396},
+      "typesense_cpu_sample_percent": 63.6,
+      "wsl_mem_available_bytes": 11333726208,
+      "wsl_swap_total_bytes": 20971155456,
+      "wsl_swap_free_bytes": 9637429248,
+      "fastapi_baseline": {"rss_bytes": 75071488, "cpu_seconds_cumulative": 1.515625},
+      "fastapi_shadow": {"rss_bytes": 77189120, "cpu_seconds_cumulative": 1.953125},
+      "interpretation": "Bounded shadow traffic showed small FastAPI RSS delta; WSL swap was already in use and is recorded as an environment condition, not attributed to shadow traffic."
+    },
+    "unresolved_p0": {
+      "count": 21,
+      "categories": ["exact_identifier membership", "filter-only membership/count", "explicit deterministic sort membership/order"],
+      "raw_phase4a_label": "P0",
+      "reclassified_as": "LEGACY_POPULATION_DIFFERENCE",
+      "is_phase4b_p0": false,
+      "cause_assessment": "Legacy Postgres read population is not the full serving population; this expected expansion is not a Typesense search-contract defect."
+    }
+  },
+  "public_api_unchanged": true,
+  "frontend_changed": false,
+  "readiness": "PARTIAL",
+  "recommendation": "Phase 4B — full Typesense search contract, query semantics, tuning, and controlled primary-cutover preparation",
+  "commit": null
+}

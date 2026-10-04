@@ -1,0 +1,200 @@
+{
+  "phase": "4D",
+  "title": "Early-User Production Stabilization",
+  "status": "PASS",
+  "scope": "single Windows + WSL2 local runtime",
+  "starting_state": {
+    "branch": "refactor-msc-typesense-v1",
+    "expected_head": "4622b6ca8ebf9ffc2bb619e06af1c179385ffd39",
+    "actual_head": "4622b6ca8ebf9ffc2bb619e06af1c179385ffd39",
+    "worktree_was_clean": true,
+    "phase4c_audit_read": true,
+    "phase4c_runbook_read": true
+  },
+  "runtime": {
+    "architecture": "Windows/network -> WSL2 -> FastAPI -> Typesense PRIMARY; Postgres infrastructure-only degraded fallback",
+    "typesense_service": "systemd user service bidfinder-typesense.service using local-typesense.sh foreground mode",
+    "fastapi_service": "systemd user service bidfinder-api.service, uvicorn one worker",
+    "systemd_user_linger": true,
+    "graceful_stop": "SIGTERM with SendSIGKILL=no; Typesense stop timeout 300 seconds",
+    "generation": "serving_v1_20260901",
+    "backend": "typesense",
+    "fallback_enabled": true,
+    "startup_summary_verified": true,
+    "commands": {
+      "start": "wsl.exe -d Ubuntu -- bash -lc 'bash /mnt/d/startup/muasamcong/BIDFinder/infra/runtime/bidfinder-install.sh start'",
+      "stop": "wsl.exe -d Ubuntu -- bash -lc 'bash /mnt/d/startup/muasamcong/BIDFinder/infra/runtime/bidfinder-install.sh stop'",
+      "restart": "wsl.exe -d Ubuntu -- bash -lc 'bash /mnt/d/startup/muasamcong/BIDFinder/infra/runtime/bidfinder-install.sh restart'",
+      "status": "wsl.exe -d Ubuntu -- bash -lc 'bash /mnt/d/startup/muasamcong/BIDFinder/infra/runtime/bidfinder-install.sh status'",
+      "daily": "wsl.exe -d Ubuntu -- bash -lc 'bash /mnt/d/startup/muasamcong/BIDFinder/infra/runtime/bidfinder-install.sh daily'",
+      "catch_up": "wsl.exe -d Ubuntu -- bash -lc 'bash /mnt/d/startup/muasamcong/BIDFinder/infra/runtime/bidfinder-install.sh catch-up'",
+      "snapshot": "wsl.exe -d Ubuntu -- bash -lc 'bash /mnt/d/startup/muasamcong/BIDFinder/infra/runtime/bidfinder-install.sh snapshot'"
+    }
+  },
+  "freshness": {
+    "coverage_before": "2026-08-31",
+    "coverage_after": "2026-09-01",
+    "latest_closed_vietnam_day": "2026-09-01",
+    "next_expected_date": "2026-09-02",
+    "freshness_lag_days": 0,
+    "latest_successful_incremental_run": "2026-09-02T13:20:45+00:00",
+    "unresolved_errors": 0,
+    "physical_counts_after": {
+      "goods": 9596715,
+      "medicines": 585449,
+      "traditional_medicine": 32022,
+      "total": 10214186
+    }
+  },
+  "incremental_catch_up": {
+    "status": "PASS",
+    "dates_processed": ["2026-08-30", "2026-08-31", "2026-09-01"],
+    "partitions_processed": 21,
+    "records_accepted": 18651,
+    "accepted_by_source": {
+      "goods_general": 18552,
+      "medical_devices": 76,
+      "medicine_generic": 22,
+      "medicine_herbal": 1,
+      "medicine_originator": 0,
+      "herbal_material": 0,
+      "traditional_medicine": 0
+    },
+    "retries": 0,
+    "rejected": 0,
+    "conflicts": 0,
+    "active_day_permanently_completed": false,
+    "second_run": {
+      "status": "SKIPPED",
+      "reason": "no fully closed dates are missing",
+      "partitions_processed": 0,
+      "records_accepted": 0
+    }
+  },
+  "scheduler": {
+    "timezone": "Asia/Ho_Chi_Minh",
+    "incremental": "systemd user timer daily at 04:00",
+    "snapshot": "systemd user timer Sunday at 05:30",
+    "log_prune": "systemd user timer daily at 03:30",
+    "outside_primary_business_hours": true,
+    "persistent_chat_session_required": false,
+    "overlap_lock": "flock held on serving-maintenance.lock; overlapping invocation exits 0 with 'already running'",
+    "lock_test": "PASS"
+  },
+  "snapshot_recovery": {
+    "status": "PASS",
+    "cadence": "weekly Sunday 05:30 Asia/Ho_Chi_Minh",
+    "retention": 3,
+    "retained_validated_bundles_at_audit": 1,
+    "latest_bundle_coverage": "2026-09-01",
+    "latest_bundle_generation": "serving_v1_20260901",
+    "latest_bundle_size_approx": "14G",
+    "validation": "Typesense snapshot plus checkpoint/provenance/report copied to unique staging; SQLite integrity and generation checks passed; bundle status VALIDATED",
+    "only_known_good_bundle_protected": true,
+    "restore_policy": "restore validates bundle and generation, quarantines live data recoverably, then starts the validated copy; no live restore was performed against the 10M-document corpus"
+  },
+  "resource_guards": {
+    "disk_target": "WSL filesystem containing Typesense root",
+    "disk_free_percent": 76.2,
+    "disk_warning_percent": 25,
+    "disk_critical_percent": 15,
+    "typesense_rss_gb": 7.5,
+    "mem_available_gb": 10.7,
+    "ram_warning_gb": 2.0,
+    "ram_critical_gb": 1.0,
+    "swap_used_mb": 12,
+    "swap_warning_gb": 1.0,
+    "idle_typesense_cpu_percent": 0.0,
+    "representative_search_cpu_percent_samples": [110.0, 99.0, 17.0],
+    "interpretation": "short query CPU spikes are normal; no sustained saturation, OOM, or swap-growth signal observed"
+  },
+  "logs": {
+    "typesense": "systemd journal",
+    "fastapi": "systemd journal",
+    "incremental": "systemd journal plus compact incremental-status.json",
+    "retention": "daily user-journal vacuum at 03:30, 14 days and 250M bounds",
+    "runtime_logs_committed": false
+  },
+  "network_security": {
+    "fastapi_listener": "127.0.0.1:8001",
+    "typesense_api_listener": "127.0.0.1:8108",
+    "typesense_peering_listener": "127.0.0.1:8107",
+    "direct_typesense_public_exposure": false,
+    "typesense_key_frontend_exposure": false,
+    "secret_storage": "external mode-600 WSL environment files; no credentials in service definitions or Git",
+    "debug_query_logging": false,
+    "unauthenticated_full_query_result": "HTTP 401",
+    "external_ingress": "not configured; a secured FastAPI reverse proxy/tunnel is required for users outside this machine"
+  },
+  "http_smoke": {
+    "runtime": "actual HTTP through a persistent systemd-managed uvicorn process on loopback",
+    "full_access_test_process": "temporary loopback-only port 8002 with environment-only anonymous-full access; stopped after test",
+    "journeys": {
+      "goods_general": "PASS",
+      "medical_devices": "PASS",
+      "medicine_generic": "PASS",
+      "medicine_originator": "PASS",
+      "medicine_herbal": "PASS",
+      "herbal_material": "PASS",
+      "traditional_medicine": "PASS"
+    },
+    "field_contract": {
+      "status": "PASS",
+      "searchable": 45,
+      "filterable": 36,
+      "sortable": 13,
+      "autocomplete": 17,
+      "failures": []
+    },
+    "production_boundary": {
+      "health": 200,
+      "ready": 200,
+      "search_contract": 200,
+      "query_without_auth": 401,
+      "preview": 200
+    }
+  },
+  "performance_ms": {
+    "search": {"samples": 5, "p50": 482.823, "p95": 510.693, "max": 596.537},
+    "filter": {"samples": 5, "p50": 14.04, "p95": 14.083, "max": 14.795},
+    "quantity_sort": {"samples": 5, "p50": 1001.405, "p95": 1014.912, "max": 1020.725},
+    "autocomplete": {"samples": 5, "p50": 39.873, "p95": 41.159, "max": 44.417}
+  },
+  "concurrency": [
+    {"clients": 1, "requests": 1, "error_rate": 0.0, "p95_ms": 470.643},
+    {"clients": 5, "requests": 5, "error_rate": 0.0, "p95_ms": 918.728},
+    {"clients": 10, "requests": 10, "error_rate": 0.0, "p95_ms": 1783.687}
+  ],
+  "fallback": {
+    "status": "PASS",
+    "test": "isolated FastAPI process with unavailable Typesense port and 60-second test-only legacy SQL budget",
+    "http_status": 200,
+    "telemetry": "DEGRADED_POSTGRES_FALLBACK",
+    "legacy_subset_count": 100,
+    "production_primary_restored": true
+  },
+  "lifecycle": {
+    "persistent_typesense": "PASS",
+    "persistent_fastapi": "PASS",
+    "clean_api_restart": "PASS",
+    "clean_wsl_recovery_and_auto_start": "PASS",
+    "no_destructive_power_loss_test": true
+  },
+  "validation": {
+    "repository_tests": "190 passed, 1 skipped, 5 subtests passed",
+    "compile_checks": "PASS",
+    "shell_checks": "PASS",
+    "frontend_syntax": "PASS",
+    "git_diff_check": "PASS",
+    "full_root_pytest": "not used as gate; repository root has unrelated raw-data I/O and Selenium collection errors documented during audit"
+  },
+  "known_limitations": [
+    "Postgres fallback is a legacy subset, not the complete 10M-document corpus.",
+    "Broad quantity sorting is approximately 1.0 seconds p50 on this machine.",
+    "The serving generation is explicit; aliases are not active.",
+    "Availability depends on Windows power, sleep, updates, network, and WSL lifecycle.",
+    "This is single-machine local hosting, not HA hosting.",
+    "FastAPI external ingress is intentionally not configured; do not expose Typesense directly."
+  ],
+  "recommendation": "PASS for local single-machine early-user operation with the runbook. Do not open it to users outside this machine until a secured FastAPI-only ingress is added; no continuous Codex session is required once WSL is running."
+}

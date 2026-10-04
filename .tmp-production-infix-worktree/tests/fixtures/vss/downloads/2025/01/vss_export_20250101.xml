@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Workbook xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet><Table>
+<Row><Cell><Data>ma</Data></Cell><Cell><Data>hoatchat</Data></Cell><Cell><Data>ten</Data></Cell><Cell><Data>sodk</Data></Cell><Cell><Data>duongdung</Data></Cell><Cell><Data>congbo</Data></Cell></Row>
+<Row><Cell><Data>40.048</Data></Cell><Cell><Data>Diazepam</Data></Cell><Cell><Data>Seduxen</Data></Cell><Cell><Data>VN-1</Data></Cell><Cell><Data>Uống</Data></Cell><Cell><Data>2025-01-01 00:00:00</Data></Cell></Row>
+<Row><Cell><Data>40.048</Data></Cell><Cell><Data>Diazepam</Data></Cell><Cell><Data>Seduxen</Data></Cell><Cell><Data>VN-1</Data></Cell><Cell><Data>Uống</Data></Cell><Cell><Data>2025-01-02 00:00:00</Data></Cell></Row>
+<Row><Cell><Data>40.048</Data></Cell><Cell><Data>Diazepam</Data></Cell><Cell><Data>Seduxen</Data></Cell><Cell><Data>VN-1</Data></Cell><Cell><Data>Uống</Data></Cell><Cell><Data>invalid</Data></Cell></Row>
+</Table></Worksheet></Workbook>

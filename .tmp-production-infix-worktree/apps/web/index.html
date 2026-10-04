@@ -1,0 +1,1284 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://accounts.google.com https://cdn.jsdelivr.net https://cdn.sheetjs.com https://us-assets.i.posthog.com https://eu-assets.i.posthog.com https://app-assets.i.posthog.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com data:; connect-src 'self' http://127.0.0.1:8002 https://api.bidfinder.vn https://accounts.google.com https://us.i.posthog.com https://eu.i.posthog.com https://app.posthog.com; frame-src https://accounts.google.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self' https://accounts.google.com;">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
+    <title>BIDFinder - Hệ thống quản lý dữ liệu đấu thầu y tế</title>
+    <link rel="stylesheet" href="style.css?v=dashboard-tab-filled-ping-20260929">
+    <link rel="stylesheet" href="ingredient-lookup.css?v=lookup-copy-layer-20260930">
+    <link rel="stylesheet" href="auth.css?v=search-login-notice-20260926">
+    <script src="https://unpkg.com/feather-icons"></script>
+</head>
+<body>
+    <script>
+        try {
+            const optimisticToken = sessionStorage.getItem('bidfinder:auth_token') || localStorage.getItem('bidfinder:auth_token') || '';
+            const optimisticHint = localStorage.getItem('bidfinder:auth_hint') || '';
+            document.body.classList.add(optimisticToken || optimisticHint === 'authed' ? 'auth-state-authed' : 'auth-state-guest');
+        } catch (err) {
+            document.body.classList.add('auth-state-guest');
+        }
+
+        const savedBidfinderView = sessionStorage.getItem('bidfinder:view') || 'landing';
+        const hasSharedFilterUrl = new URLSearchParams(window.location.search).has('q');
+        const requireAuthForDataAccess = localStorage.getItem('bidfinder:require_auth_for_data_access') === '1';
+        if ((!hasSharedFilterUrl && savedBidfinderView === 'landing') || requireAuthForDataAccess) {
+            document.body.classList.add('landing-active');
+        }
+    </script>
+    <section class="bf-landing" id="landing-shell" aria-label="Giới thiệu BIDFinder">
+        <div class="bf-bg-grid"></div>
+        <div class="bf-bg-glow bf-bg-glow-1"></div>
+        <div class="bf-bg-glow bf-bg-glow-2"></div>
+
+        <header class="bf-header">
+            <div class="bf-header-inner">
+                <a class="bf-brand" href="#" aria-label="BIDFinder">
+                    <img class="bf-brand-logo" src="./assets/logo_v2.png" alt="BIDFinder" />
+                </a>
+
+                <nav class="bf-nav">
+                    <button class="bf-nav-link" id="open-account-nav" type="button">Tài khoản</button>
+                    <button class="bf-nav-link" id="open-register-nav" type="button">Đăng ký</button>
+                    <button class="bf-nav-link" id="open-login-nav" type="button">Đăng nhập</button>
+                </nav>
+
+            </div>
+        </header>
+
+        <div class="bf-main">
+            <section class="bf-hero">
+                <div class="bf-hero-copy">
+                    <h1 class="bf-title">
+                        BIDFinder
+                        <span>Hệ thống quản lý dữ liệu đấu thầu y tế</span>
+                    </h1>
+
+                    <p class="bf-desc">
+                        Dữ liệu được thu thập và cập nhật từ Hệ thống mạng đấu thầu quốc gia (<a href="https://muasamcong.mpi.gov.vn" target="_blank" rel="noreferrer">muasamcong.mpi.gov.vn</a>) 
+                        - nền tảng chính thức do Bộ Tài chính quản lý.
+                    </p>
+
+                    <div class="bf-hero-actions">
+                        <button id="enter-app-btn-hero" class="bf-btn bf-btn-primary bf-btn-lg" type="button">
+                            Bắt đầu tìm kiếm
+                        </button>
+                    </div>
+
+                </div>
+
+                <div class="bf-hero-visual">
+                    <div class="bf-dashboard-shell">
+                        <div class="bf-dashboard-topbar">
+                            <div class="bf-window-dots">
+                                <span></span><span></span><span></span>
+                            </div>
+                            <div class="bf-dashboard-chip">Live Search</div>
+                        </div>
+
+                        <div class="bf-dashboard-meta">
+                            <div>
+                                <p class="bf-kicker">BIDFinder Workspace</p>
+                                <!-- <h3>Tìm kiếm kết quả đấu thầu y tế</h3> -->
+                            </div>
+                            <div class="bf-meta-badge">Tối ưu cho desktop</div>
+                        </div>
+
+                        <div class="bf-dashboard-image">
+                            <img src="./assets/lp.png" alt="Giao diện BIDFinder" />
+                        </div>
+                    </div>
+
+                    <div class="bf-float bf-float-a">
+                        <span>Tìm kiếm tập trung</span>
+                        <strong>Thuốc, thiết bị y tế, thực phẩm chức năng, thực phẩm bảo vệ sức khỏe, mỹ phẩm...</strong>
+                    </div>
+
+                    <div class="bf-float bf-float-b">
+                        <span>Cập nhật liên tục</span>
+                        <strong>Dữ liệu được cập nhật hàng ngày</strong>
+                    </div>
+
+                    <div class="bf-float bf-float-c">
+                        <span>Tăng tốc độ tìm kiếm</span>
+                        <strong>Truy xuất, tổng hợp dữ liệu nhanh chóng theo nhiều tiêu chí</strong>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </section>
+    <div class="page-container">
+        <!-- LAYOUT CHÍNH -->
+        <div class="main-layout">
+            
+            <main class="main-content">
+                <header class="app-header">
+                    <div class="app-brand">
+                        <div class="app-title">
+                            <button class="app-home-trigger" id="app-home-trigger" type="button" aria-label="Quay về landing page">
+                                <img class="app-logo" src="./assets/logo_v3.png" alt="BIDFinder" />
+                            </button>
+                            <span class="app-title-text">Hệ thống quản lý dữ liệu đấu thầu y tế</span>
+                        </div>
+                    </div>
+
+                    <div class="app-header-links">
+                        <button class="app-auth-btn app-icon-btn app-icon-btn-help" id="open-product-journey" type="button" aria-label="Hướng dẫn" title="Hướng dẫn">
+                            <i data-feather="help-circle" aria-hidden="true"></i>
+                        </button>
+                        <button class="app-auth-btn app-icon-btn app-icon-btn-notification" id="open-feedback-modal" type="button" aria-label="Thông báo" title="Thông báo">
+                            <i data-feather="bell" aria-hidden="true"></i>
+                            <span class="notification-count-badge" id="feedback-unread-count" aria-hidden="true" hidden></span>
+                        </button>
+                        <div class="app-auth-shell" id="app-auth-shell">
+                            <button class="app-auth-btn app-icon-btn app-icon-btn-account" id="auth-edit-profile-btn" type="button" aria-label="Tài khoản" title="Tài khoản">
+                                <i data-feather="user" aria-hidden="true"></i>
+                            </button>
+                        </div>
+                    </div>
+                </header>
+
+                <!-- DATA TABLES -->
+                <div id="data-tab" class="tab-content active">
+                    <div class="result-table-tabs toolbar" id="data-view-switcher">
+                        <div class="result-table-tab-list toolbar-navigation">
+                            <div class="result-table-tab-choice" role="tablist" aria-label="Chọn bảng dữ liệu hoặc Dashboard">
+                                <button class="scope-btn result-table-tab" type="button" data-view="df2-panel" aria-selected="false" role="tab" title="Hàng hóa">
+                                    <span class="tab-plate" aria-hidden="true"></span>
+                                    <span class="scope-icon" aria-hidden="true">
+                                        📦
+                                    </span>
+                                    <span class="scope-text">Hàng hóa</span>
+                                    <span class="scope-count" id="df2-count-switcher">0</span>
+                                </button>
+                                <button class="scope-btn result-table-tab active" type="button" data-view="df1-panel" aria-selected="true" role="tab" title="Thuốc">
+                                    <span class="tab-plate" aria-hidden="true"></span>
+                                    <span class="scope-icon" aria-hidden="true">
+                                        💊
+                                    </span>
+                                    <span class="scope-text">Thuốc</span>
+                                    <span class="scope-count" id="df1-count-switcher">0</span>
+                                </button>
+                                <button class="scope-btn result-table-tab" type="button" data-view="df3-panel" aria-selected="false" role="tab" title="Dược liệu">
+                                    <span class="tab-plate" aria-hidden="true"></span>
+                                    <span class="scope-icon" aria-hidden="true">
+                                        🌿
+                                    </span>
+                                    <span class="scope-text">Dược liệu</span>
+                                    <span class="scope-count" id="df3-count-switcher">0</span>
+                                </button>
+                                <button class="scope-btn result-table-tab dashboard-tab" type="button" data-view="dashboard-panel" aria-selected="false" role="tab" title="Dashboard phân tích">
+                                    <span class="tab-plate" aria-hidden="true"></span>
+                                    <span class="scope-icon" aria-hidden="true"><i data-feather="bar-chart-2"></i></span>
+                                    <span class="scope-text">Dashboard</span>
+                                    <span class="dashboard-status-indicator" aria-hidden="true"></span>
+                                </button>
+                                <button class="scope-btn result-table-tab ingredient-lookup-tab" type="button" data-view="ingredient-lookup-panel" aria-selected="false" role="tab" title="Tra cứu mã hoạt chất">
+                                    <span class="tab-plate" aria-hidden="true"></span>
+                                    <span class="scope-icon" aria-hidden="true"><i data-feather="search"></i></span>
+                                    <span class="scope-text">Tra cứu mã hoạt chất</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="toolbar-divider" aria-hidden="true"></div>
+                        <div class="workspace-actions toolbar-actions">
+                            <button id="insight-full-search" class="full-search-credit" type="button" aria-label="Tìm kiếm toàn bộ" title="Tìm kiếm toàn bộ">
+                                <i data-feather="zap" aria-hidden="true"></i>
+                                <span aria-hidden="true">×</span>
+                                <strong id="insight-full-search-label">0</strong>
+                            </button>
+                            <button class="btn-meta-simple" id="open-run-history" type="button" aria-label="Lịch sử cập nhật" title="Lịch sử cập nhật">
+                                <i data-feather="refresh-ccw" aria-hidden="true"></i>
+                            </button>
+                            <button class="btn-meta-simple bulk-search-action-btn" id="open-bulk-search-modal" type="button" aria-label="Tìm kiếm hàng loạt" title="Tìm kiếm hàng loạt">
+                                <i data-feather="list" aria-hidden="true"></i>
+                            </button>
+                            <button class="action-btn" id="open-filter-panel" type="button" aria-label="Tìm kiếm nâng cao" title="Tìm kiếm nâng cao">
+                                <i data-feather="search" aria-hidden="true"></i>
+                            </button>
+                            <button class="action-btn" id="open-ai-search" type="button" aria-label="Tìm kiếm bằng AI" title="Tìm kiếm bằng AI" aria-controls="ai-search-chat" aria-expanded="false">
+                                <span class="ai-search-toolbar-label" aria-hidden="true">Ai</span>
+                            </button>
+                        </div>
+                        <div class="workspace-status">
+                            <div id="duplicate-warning" class="result-warning result-warning-duplicate" style="display: none;">
+                                <strong>Cảnh báo dữ liệu trùng</strong><br>
+                                Có dòng trùng trong kết quả hiện tại.
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Bảng DF1 -->
+                    <section class="data-section-vertical result-panel active" id="df1-panel">
+                        <div class="data-card df1">
+                            <div class="data-card-header">
+                                <div class="data-card-heading">
+                                    <h2 class="data-card-title-df1">
+                                        <span class="data-card-icon blue">
+                                            <i data-feather="shield"></i>
+                                        </span>
+                                        KẾT QUẢ MUA SẮM THUỐC
+                                    </h2>
+                                </div>
+                            </div>
+                            <div class="table-wrapper" data-table-id="standard-table">
+                                <div class="table-meta-bar">
+                                    <div class="table-hover-controls" data-table-id="standard-table">
+                                        <div class="table-tool-group">
+                                            <button class="table-tool-btn" type="button" data-action="toggle-columns" data-table-id="standard-table" aria-haspopup="true" aria-expanded="false" title="Ẩn/hiện cột">
+                                                <i data-feather="eye"></i>
+                                            </button>
+                                            <div class="table-columns-popover" hidden></div>
+                                        </div>
+                                        <button class="table-tool-btn" type="button" data-action="download" data-table-id="standard-table" title="Tải Excel" aria-label="Tải Excel">
+                                            <i data-feather="download"></i>
+                                        </button>
+                                        <button class="table-tool-btn" type="button" data-action="fullscreen" data-table-id="standard-table" title="Toàn màn hình">
+                                            <i data-feather="maximize"></i>
+                                        </button>
+                                    </div>
+                                    <span class="table-meta-divider" aria-hidden="true"></span>
+                                    <div class="cell-display-bar" id="std-cell-bar">
+                                        <span class="cell-display-label"></span>
+                                        <span class="cell-display-value" id="std-cell-value"></span>
+                                    </div>
+                                </div>
+                                <div class="table-scroll">
+                                    <table class="data-table" id="standard-table">
+                                        <thead>
+                                            <tr>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="standard-data">
+                                            <tr>
+                                                <td colspan="26" class="table-empty-state">
+                                                    Chưa có dữ liệu. Thực hiện tìm kiếm để hiển thị kết quả theo biểu mẫu thuốc.
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Bảng DF2 -->
+                    <section class="data-section-vertical result-panel" id="df2-panel">
+                        <div class="data-card df2">
+                            <div class="data-card-header">
+                                <div class="data-card-heading">
+                                    <h2 class="data-card-title-df2">
+                                        <span class="data-card-icon purple">
+                                            <i data-feather="layers"></i>
+                                        </span>
+                                        KẾT QUẢ MUA SẮM HÀNG HÓA
+                                    </h2>
+                                </div>
+                            </div>
+                            <div class="table-wrapper" data-table-id="extended-table">
+                                <div class="table-meta-bar">
+                                    <div class="table-hover-controls" data-table-id="extended-table">
+                                        <div class="table-tool-group">
+                                            <button class="table-tool-btn" type="button" data-action="toggle-columns" data-table-id="extended-table" aria-haspopup="true" aria-expanded="false" title="Ẩn/hiện cột">
+                                                <i data-feather="eye"></i>
+                                            </button>
+                                            <div class="table-columns-popover" hidden></div>
+                                        </div>
+                                        <button class="table-tool-btn" type="button" data-action="download" data-table-id="extended-table" title="Tải Excel" aria-label="Tải Excel">
+                                            <i data-feather="download"></i>
+                                        </button>
+                                        <button class="table-tool-btn" type="button" data-action="fullscreen" data-table-id="extended-table" title="Toàn màn hình">
+                                            <i data-feather="maximize"></i>
+                                        </button>
+                                    </div>
+                                    <span class="table-meta-divider" aria-hidden="true"></span>
+                                    <div class="cell-display-bar" id="ext-cell-bar">
+                                        <span class="cell-display-label"></span>
+                                        <span class="cell-display-value" id="ext-cell-value"></span>
+                                    </div>
+                                </div>
+                                <div class="table-scroll">
+                                    <table class="data-table" id="extended-table" >
+                                        <thead>
+                                            <tr>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="extended-data">
+                                            <tr>
+                                                <td colspan="25" class="table-empty-state">
+                                                    Chưa có dữ liệu. Thực hiện tìm kiếm để hiển thị kết quả theo biểu mẫu hàng hóa.
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Bảng dược liệu / vị thuốc cổ truyền -->
+                    <section class="data-section-vertical result-panel" id="df3-panel">
+                        <div class="data-card df3">
+                            <div class="data-card-header">
+                                <div class="data-card-heading">
+                                    <h2 class="data-card-title-df3">
+                                        <span class="data-card-icon green">
+                                            <i data-feather="leaf"></i>
+                                        </span>
+                                        KẾT QUẢ MUA SẮM DƯỢC LIỆU / VỊ THUỐC CỔ TRUYỀN
+                                    </h2>
+                                </div>
+                            </div>
+                            <div class="table-wrapper" data-table-id="traditional-table">
+                                <div class="table-meta-bar">
+                                    <div class="table-hover-controls" data-table-id="traditional-table">
+                                        <div class="table-tool-group">
+                                            <button class="table-tool-btn" type="button" data-action="toggle-columns" data-table-id="traditional-table" aria-haspopup="true" aria-expanded="false" title="Ẩn/hiện cột">
+                                                <i data-feather="eye"></i>
+                                            </button>
+                                            <div class="table-columns-popover" hidden></div>
+                                        </div>
+                                        <button class="table-tool-btn" type="button" data-action="download" data-table-id="traditional-table" title="Tải Excel" aria-label="Tải Excel">
+                                            <i data-feather="download"></i>
+                                        </button>
+                                        <button class="table-tool-btn" type="button" data-action="fullscreen" data-table-id="traditional-table" title="Toàn màn hình">
+                                            <i data-feather="maximize"></i>
+                                        </button>
+                                    </div>
+                                    <span class="table-meta-divider" aria-hidden="true"></span>
+                                    <div class="cell-display-bar" id="trad-cell-bar">
+                                        <span class="cell-display-label"></span>
+                                        <span class="cell-display-value" id="trad-cell-value"></span>
+                                    </div>
+                                </div>
+                                <div class="table-scroll">
+                                    <table class="data-table" id="traditional-table">
+                                        <thead><tr></tr></thead>
+                                        <tbody id="traditional-data">
+                                            <tr><td colspan="25" class="table-empty-state">Chưa có dữ liệu. Thực hiện tìm kiếm để hiển thị kết quả theo biểu mẫu dược liệu và vị thuốc.</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="data-section-vertical result-panel dashboard-panel" id="dashboard-panel" aria-labelledby="dashboard-title">
+                        <div class="dashboard-shell-card">
+                            <div class="dashboard-header-row">
+                                <header class="dashboard-header">
+                                    <span class="dashboard-title-icon" aria-hidden="true"><i data-feather="bar-chart-2"></i></span>
+                                    <div class="dashboard-title-copy">
+                                        <h2 id="dashboard-title">Dashboard phân tích kết quả tìm kiếm</h2>
+                                        <p class="dashboard-subtitle">Tổng quan dữ liệu từ bộ lọc hiện tại</p>
+                                    </div>
+                                </header>
+                                <div class="dashboard-header-context">
+                                    <div class="dashboard-context-bar">
+                                        <span class="dashboard-context-icon" aria-hidden="true"><i data-feather="filter"></i></span>
+                                        <span class="dashboard-context-label">Từ khóa:</span>
+                                        <div class="dashboard-context" id="dashboard-base-context" aria-label="Bộ lọc hiện tại"></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="dashboard-grid dashboard-kpi-grid">
+                                <article class="dashboard-kpi-card" data-dashboard-widget="summary">
+                                    <span class="dashboard-kpi-icon" aria-hidden="true"><i data-feather="dollar-sign"></i></span>
+                                    <div class="dashboard-kpi-copy">
+                                        <span class="dashboard-kpi-label">Tổng giá trị trúng thầu</span>
+                                        <strong data-dashboard-kpi="total_awarded_value">—</strong>
+                                    </div>
+                                </article>
+                                <article class="dashboard-kpi-card" data-dashboard-widget="summary">
+                                    <span class="dashboard-kpi-icon" aria-hidden="true"><i data-feather="package"></i></span>
+                                    <div class="dashboard-kpi-copy">
+                                        <span class="dashboard-kpi-label">Số gói thầu</span>
+                                        <strong data-dashboard-kpi="package_count">—</strong>
+                                    </div>
+                                </article>
+                                <article class="dashboard-kpi-card" data-dashboard-widget="summary">
+                                    <span class="dashboard-kpi-icon" aria-hidden="true"><i data-feather="users"></i></span>
+                                    <div class="dashboard-kpi-copy">
+                                        <span class="dashboard-kpi-label">Số nhà thầu</span>
+                                        <strong data-dashboard-kpi="bidder_count">—</strong>
+                                    </div>
+                                </article>
+                                <article class="dashboard-kpi-card" data-dashboard-widget="summary">
+                                    <span class="dashboard-kpi-icon" aria-hidden="true"><i data-feather="briefcase"></i></span>
+                                    <div class="dashboard-kpi-copy">
+                                        <span class="dashboard-kpi-label">Số chủ đầu tư</span>
+                                        <strong data-dashboard-kpi="investor_count">—</strong>
+                                    </div>
+                                </article>
+                            </div>
+
+                            <div class="dashboard-grid dashboard-main-grid">
+                                <article class="dashboard-widget dashboard-map-widget" data-dashboard-widget="geography">
+                                    <div class="dashboard-widget-head">
+                                        <div>
+                                            <h3 class="dashboard-widget-title"><i data-feather="map-pin" aria-hidden="true"></i><span>Tổng giá trị trúng thầu theo tỉnh/thành</span></h3>
+                                        </div>
+                                    </div>
+                                    <div class="dashboard-widget-body dashboard-map-body" id="dashboard-province-map" role="img" aria-label="Bản đồ tổng giá trị trúng thầu theo tỉnh/thành"></div>
+                                </article>
+                                <article class="dashboard-widget dashboard-products-widget" data-dashboard-widget="top_products">
+                                    <div class="dashboard-widget-head">
+                                        <div>
+                                            <h3 class="dashboard-widget-title"><i data-feather="bar-chart-2" aria-hidden="true"></i><span>Top 10 sản phẩm xuất hiện nhiều nhất</span></h3>
+                                        </div>
+                                    </div>
+                                    <div class="dashboard-widget-body dashboard-products" id="dashboard-top-products"></div>
+                                </article>
+                            </div>
+
+                            <div class="dashboard-grid dashboard-secondary-grid">
+                                <article class="dashboard-widget dashboard-trend-widget" data-dashboard-widget="timeline">
+                                    <div class="dashboard-widget-head">
+                                        <h3 class="dashboard-widget-title"><i data-feather="trending-up" aria-hidden="true"></i><span>Tổng giá trị trúng thầu theo thời gian</span></h3>
+                                        <select class="dashboard-trend-grain" id="dashboard-trend-grain" aria-label="Mức thời gian của biểu đồ xu hướng">
+                                            <option value="year" selected>Theo năm</option>
+                                            <option value="quarter">Theo quý</option>
+                                            <option value="month">Theo tháng</option>
+                                        </select>
+                                    </div>
+                                    <div class="dashboard-widget-body dashboard-chart-body"><canvas id="dashboard-timeline-chart"></canvas></div>
+                                </article>
+                                <article class="dashboard-widget dashboard-price-widget" data-dashboard-widget="bidder_price_bands">
+                                    <div class="dashboard-widget-head">
+                                        <div>
+                                            <h3 class="dashboard-widget-title"><i data-feather="bar-chart-2" aria-hidden="true"></i><span>Top nhà thầu trúng thầu</span></h3>
+                                        </div>
+                                    </div>
+                                    <div class="dashboard-widget-body dashboard-investors-wrap dashboard-price-bands-wrap">
+                                        <table class="dashboard-investors-table dashboard-price-band-table dashboard-resizable-table">
+                                            <colgroup>
+                                                <col data-min-width="40" style="width: 10%">
+                                                <col data-min-width="96" style="width: 33%">
+                                                <col data-min-width="92" style="width: 31%">
+                                                <col data-min-width="76" style="width: 26%">
+                                            </colgroup>
+                                            <thead><tr>
+                                                <th scope="col">#</th>
+                                                <th scope="col">Tên nhà thầu<span class="dashboard-column-resizer" data-column-resize="1" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Đổi độ rộng cột Tên nhà thầu"></span></th>
+                                                <th scope="col">Đơn giá phổ biến<span class="dashboard-column-resizer" data-column-resize="2" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Đổi độ rộng cột Đơn giá phổ biến"></span></th>
+                                                <th scope="col">Tổng giá trị</th>
+                                            </tr></thead>
+                                            <tbody id="dashboard-bidder-price-bands"></tbody>
+                                        </table>
+                                    </div>
+                                </article>
+                                <article class="dashboard-widget dashboard-investors-widget" data-dashboard-widget="top_investors">
+                                    <div class="dashboard-widget-head">
+                                        <div><h3 class="dashboard-widget-title"><i data-feather="briefcase" aria-hidden="true"></i><span>Top chủ đầu tư</span></h3></div>
+                                        <button class="dashboard-link-btn" id="dashboard-show-all-investors" type="button" hidden>Xem tất cả</button>
+                                    </div>
+                                    <div class="dashboard-widget-body dashboard-investors-wrap">
+                                        <table class="dashboard-investors-table dashboard-resizable-table">
+                                            <colgroup>
+                                                <col data-min-width="40" style="width: 10%">
+                                                <col data-min-width="96" style="width: 44%">
+                                                <col data-min-width="70" style="width: 22%">
+                                                <col data-min-width="76" style="width: 24%">
+                                            </colgroup>
+                                            <thead><tr>
+                                                <th scope="col">#</th>
+                                                <th scope="col">Tên chủ đầu tư<span class="dashboard-column-resizer" data-column-resize="1" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Đổi độ rộng cột Tên chủ đầu tư"></span></th>
+                                                <th scope="col">Số gói thầu<span class="dashboard-column-resizer" data-column-resize="2" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Đổi độ rộng cột Số gói thầu"></span></th>
+                                                <th scope="col">Tổng giá trị</th>
+                                            </tr></thead>
+                                            <tbody id="dashboard-top-investors"></tbody>
+                                        </table>
+                                    </div>
+                                </article>
+                            </div>
+                        </div>
+                    </section>
+                    <section class="result-panel ingredient-lookup-panel" id="ingredient-lookup-panel" aria-labelledby="ingredient-lookup-title">
+                        <header class="ingredient-lookup-header">
+                            <span class="ingredient-lookup-icon" aria-hidden="true"><i data-feather="link-2"></i></span>
+                            <div>
+                                <h2 id="ingredient-lookup-title">Tra cứu mã hoạt chất</h2>
+                                <p>Dữ liệu được thu thập từ eLMIS (<a href="https://quanlythuoc.vss.gov.vn/kqdt" target="_blank" rel="noopener noreferrer">https://quanlythuoc.vss.gov.vn/kqdt</a>) - Cổng thông tin thuốc trúng thầu do Bảo hiểm Xã hội Việt Nam quản lý.</p>
+                            </div>
+                        </header>
+                        <form class="ingredient-lookup-filters" id="ingredient-lookup-form">
+                            <label>Số đăng ký<input name="registration" type="text" maxlength="120" placeholder="VD: VN-12345-20"></label>
+                            <label>Tên thuốc<input name="drug" type="text" maxlength="120" placeholder="VD: Efferalgan"></label>
+                            <label>Tên hoạt chất<input name="ingredient" type="text" maxlength="120" placeholder="VD: Paracetamol"></label>
+                            <label>Đường dùng<input name="route" type="text" maxlength="120" placeholder="VD: Uống"></label>
+                            <label>Năm công bố<input name="year" type="text" maxlength="20" placeholder="VD: 2026"></label>
+                            <div class="ingredient-lookup-actions">
+                                <button class="ingredient-lookup-search" type="submit"><i data-feather="search" aria-hidden="true"></i>Tra cứu</button>
+                                <button id="ingredient-lookup-clear" type="button"><i data-feather="rotate-ccw" aria-hidden="true"></i>Xóa điều kiện</button>
+                            </div>
+                        </form>
+                        <div class="ingredient-lookup-results">
+                            <div class="ingredient-lookup-results-head">
+                                <h3><i data-feather="grid" aria-hidden="true"></i>Kết quả tra cứu</h3>
+                                <button id="ingredient-lookup-export" type="button" disabled><i data-feather="download" aria-hidden="true"></i>Xuất Excel</button>
+                            </div>
+                            <div class="ingredient-lookup-table-wrap">
+                                <table id="ingredient-lookup-table" aria-label="Kết quả tra cứu mã hoạt chất">
+                                    <thead><tr><th>#</th><th data-sort="ma">Mã hoạt chất</th><th data-sort="hoatchat">Tên hoạt chất</th><th data-sort="ten">Tên thuốc</th><th data-sort="sodk">Số đăng ký</th><th data-sort="duongdung">Đường dùng</th><th data-sort="nam_congbo">Năm công bố</th><th data-sort="occurrences" aria-sort="descending">Số lần xuất hiện ↓</th><th data-sort="percentage">Tỷ lệ (%)</th></tr></thead>
+                                    <tbody id="ingredient-lookup-body"><tr><td class="ingredient-lookup-message" colspan="9">Chưa có dữ liệu, thực hiện tìm kiếm để hiển thị kết quả</td></tr></tbody>
+                                </table>
+                            </div>
+                            <div class="ingredient-lookup-footer">
+                                <span id="ingredient-lookup-range"></span>
+                                <nav id="ingredient-lookup-pages" aria-label="Phân trang tra cứu mã hoạt chất"></nav>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+
+                <nav class="legacy-pagination" id="legacy-pagination" aria-label="Phân trang kết quả">
+                    <button type="button" id="legacy-prev-page" disabled>‹ Trang trước</button>
+                    <span id="legacy-page-label">Trang 1</span>
+                    <button type="button" id="legacy-next-page" disabled>Trang sau ›</button>
+                </nav>
+
+                <div class="legacy-row-detail" id="legacy-row-detail" hidden aria-hidden="true">
+                    <div class="legacy-detail-backdrop" data-close-legacy-row-detail></div>
+                    <section class="legacy-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="legacy-row-detail-title">
+                        <div class="legacy-row-detail-header">
+                            <h3 id="legacy-row-detail-title">Chi tiết kết quả</h3>
+                            <button type="button" id="close-legacy-row-detail" aria-label="Đóng chi tiết">×</button>
+                        </div>
+                        <dl id="legacy-row-detail-fields"></dl>
+                    </section>
+                </div>
+
+            </main>
+        </div>
+
+        <!-- ========== FILTER PANEL (POPUP) ========== -->
+        <div id="filter-panel" class="side-panel">
+            <div class="panel-header">
+                <div class="panel-title-group">
+                    <h3><i data-feather="search"></i>Tìm kiếm nâng cao</h3>
+                </div>
+                <button id="close-filter-panel" class="btn-close window-close-button" type="button" aria-label="Đóng">
+                    <i data-feather="x"></i>
+                </button>
+            </div>
+            <div class="panel-body">
+                <typesense-search-form></typesense-search-form>
+            </div>
+        </div>
+
+        <!-- Overlay -->
+        <div id="panel-overlay" class="panel-overlay"></div>
+        
+        <!-- FOOTER -->
+        <footer class="app-footer">
+            © 2026 Hệ thống quản lý dữ liệu đấu thầu y tế
+        </footer>
+    </div>
+
+    <dialog id="search-login-notice" class="search-login-notice" aria-labelledby="search-login-notice-title" aria-describedby="search-login-notice-description">
+        <h2 id="search-login-notice-title">Bạn cần đăng nhập để tiếp tục tìm kiếm</h2>
+        <p id="search-login-notice-description">Từ khóa vừa nhập sẽ được giữ lại để tiếp tục sau khi đăng nhập.</p>
+        <div class="search-login-notice-actions">
+            <button id="search-login-notice-later" type="button">Để sau</button>
+            <button id="search-login-notice-continue" type="button">Đăng nhập / Đăng ký</button>
+        </div>
+    </dialog>
+
+    <div id="auth-modal" class="auth-modal" aria-hidden="true">
+        <div class="auth-overlay"></div>
+        <div class="auth-dialog" role="dialog" aria-modal="true" aria-labelledby="auth-dialog-title">
+            <button class="btn-close window-close-button auth-close" id="auth-close-btn" type="button" aria-label="Đóng">
+                <i data-feather="x"></i>
+            </button>
+
+            <div class="auth-grid">
+                <aside class="auth-brand-panel">
+                    <div id="auth-brand-guest-view">
+                        <img class="auth-brand-logo" src="./assets/logo_v2.png" alt="BIDFinder" />
+                        <p class="auth-brand-kicker">Tạo tài khoản miễn phí</p>
+                        <h2 id="auth-dialog-title">
+                            <span>Hệ thống quản lý dữ liệu</span>
+                            <span>đấu thầu y tế</span>
+                        </h2>
+                        <p class="auth-brand-desc">
+                            Khám phá các tính năng của BIDFinder dành cho cá nhân và tổ chức.
+                        </p>
+
+                        <div class="auth-brand-card">
+                            <ul class="auth-feature-list" aria-label="Lợi ích khi dùng BIDFinder">
+                                <li class="auth-feature-item">
+                                    <span class="auth-feature-icon" aria-hidden="true"></span>
+                                    <span>Miễn phí</span>
+                                </li>
+                                <li class="auth-feature-item">
+                                    <span class="auth-feature-icon" aria-hidden="true"></span>
+                                    <span>Tăng tốc độ tìm kiếm</span>
+                                </li>
+                                <li class="auth-feature-item">
+                                    <span class="auth-feature-icon" aria-hidden="true"></span>
+                                    <span>Thao tác không giới hạn</span>
+                                </li>
+                                <li class="auth-feature-item">
+                                    <span class="auth-feature-icon" aria-hidden="true"></span>
+                                    <span>Bao gồm dữ liệu từ văn bản scan</span>
+                                </li>
+                                <li class="auth-feature-item">
+                                    <span class="auth-feature-icon" aria-hidden="true"></span>
+                                    <span>Cập nhật liên tục</span>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div id="auth-brand-profile-view" hidden>
+                        <p class="auth-brand-kicker">Tài khoản</p>
+                        <h2 class="auth-account-name" id="account-sidebar-name">Người dùng BIDFinder</h2>
+
+                        <div class="auth-account-card">
+                            <div class="auth-account-row">
+                                <span>Email</span>
+                                <strong id="account-sidebar-email">user@bidfinder.vn</strong>
+                            </div>
+                            <div class="auth-account-row">
+                                <span>Đơn vị công tác</span>
+                                <strong id="account-sidebar-work-unit">Chưa cập nhật</strong>
+                            </div>
+                            <div class="auth-account-row">
+                                <span>Vị trí</span>
+                                <strong id="account-sidebar-position">Chưa cập nhật</strong>
+                            </div>
+                        </div>
+
+                        
+                    </div>
+                </aside>
+
+                <section class="auth-content-panel">
+                    <div id="auth-alert" class="auth-alert" hidden></div>
+
+                    <div id="auth-guest-view">
+                        <div class="auth-mode-switch" role="tablist" aria-label="Chọn chế độ xác thực">
+                            <button class="auth-mode-btn active" type="button" data-auth-mode="register">Đăng ký</button>
+                            <button class="auth-mode-btn" type="button" data-auth-mode="login">Đăng nhập</button>
+                        </div>
+
+                        <div class="auth-mode-panel active" id="auth-register-panel" data-auth-panel="register">
+
+                            <div class="auth-google-block" id="google-register-block">
+                                <div id="google-auth-slot-register" class="google-auth-slot"></div>
+                            </div>
+
+                            <div class="auth-divider"><span>hoặc</span></div>
+
+                            <form id="auth-register-form" class="auth-form" novalidate>
+                                <label class="auth-field">
+                                    <span>Họ và tên <span class="auth-required">*</span></span>
+                                    <input id="register-full-name" name="full_name" type="text" autocomplete="name" placeholder="Họ và tên" required />
+                                </label>
+
+                                <label class="auth-field">
+                                    <span>Đơn vị công tác</span>
+                                    <input id="register-work-unit" name="work_unit" type="text" placeholder="Đơn vị công tác" />
+                                </label>
+
+                                <label class="auth-field">
+                                    <span>Vị trí</span>
+                                    <select id="register-position" name="position" placeholder="Vị trí">
+                                        <option value="" disabled selected hidden>Vị trí</option>
+                                    </select>
+                                </label>
+
+                                <label class="auth-field">
+                                    <span>Email <span class="auth-required">*</span></span>
+                                    <input id="register-email" name="email" type="email" autocomplete="email" placeholder="Email" required />
+                                </label>
+
+                                <div class="auth-field">
+                                    <span>Mật khẩu <span class="auth-required">*</span></span>
+                                    <div class="auth-password-control">
+                                        <input id="register-password" name="password" type="password" autocomplete="new-password" placeholder="Mật khẩu" required />
+                                        <button class="auth-password-toggle" type="button" data-password-toggle="register-password" aria-controls="register-password" aria-pressed="false">Hiện mật khẩu</button>
+                                    </div>
+                                    <p class="auth-field-note" id="register-password-note">Mật khẩu phải có ít nhất 9 ký tự, bao gồm ít nhất 1 chữ số và 1 chữ cái in hoa.</p>
+                                </div>
+
+                                <button class="auth-submit-btn" type="submit">Tạo tài khoản</button>
+                            </form>
+                        </div>
+
+                        <div class="auth-mode-panel" id="auth-login-panel" data-auth-panel="login" hidden>
+                            <div class="auth-google-block" id="google-login-block">
+                                <div id="google-auth-slot-login" class="google-auth-slot"></div>
+                            </div>
+
+                            <div class="auth-divider"><span>hoặc</span></div>
+
+                            <form id="auth-login-form" class="auth-form" novalidate>
+                                <label class="auth-field">
+                                    <span>Email</span>
+                                    <input id="login-email" name="email" type="email" autocomplete="email" placeholder="Email" required />
+                                </label>
+
+                                <div class="auth-field">
+                                    <span>Mật khẩu</span>
+                                    <div class="auth-password-control">
+                                        <input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="Mật khẩu" required />
+                                        <button class="auth-password-toggle" type="button" data-password-toggle="login-password" aria-controls="login-password" aria-pressed="false">Hiện mật khẩu</button>
+                                    </div>
+                                </div>
+
+                                <div class="auth-inline-actions">
+                                    <button class="auth-text-btn" id="auth-forgot-password-btn" type="button">Quên mật khẩu?</button>
+                                </div>
+
+                                <button class="auth-submit-btn" type="submit">Đăng nhập</button>
+                            </form>
+                        </div>
+
+                        <div class="auth-mode-panel" id="auth-forgot-password-panel" data-auth-panel="forgot-password" hidden>
+                            <div class="auth-panel-head">
+                                <h3>Quên mật khẩu</h3>
+                                <p>Nhập email đã đăng ký. Hệ thống sẽ gửi liên kết để bạn tạo mật khẩu mới.</p>
+                            </div>
+
+                            <form id="auth-forgot-password-form" class="auth-form" novalidate>
+                                <label class="auth-field">
+                                    <span>Email</span>
+                                    <input id="forgot-password-email" name="email" type="email" autocomplete="email" placeholder="Email" required />
+                                </label>
+
+                                <div class="auth-inline-actions">
+                                    <button class="auth-text-btn" id="auth-back-to-login-btn" type="button">Quay lại đăng nhập</button>
+                                </div>
+
+                                <button class="auth-submit-btn" type="submit">Gửi email đặt lại mật khẩu</button>
+                            </form>
+                        </div>
+
+                        <div class="auth-mode-panel" id="auth-reset-password-panel" data-auth-panel="reset-password" hidden>
+                            <div class="auth-panel-head">
+                                <h3>Đặt lại mật khẩu</h3>
+                                <p>Nhập mật khẩu mới cho tài khoản của bạn.</p>
+                            </div>
+
+                            <form id="auth-reset-password-form" class="auth-form" novalidate>
+                                <div class="auth-field">
+                                    <span>Mật khẩu mới</span>
+                                    <div class="auth-password-control">
+                                        <input id="reset-password-new" name="new_password" type="password" autocomplete="new-password" placeholder="Mật khẩu mới" required />
+                                        <button class="auth-password-toggle" type="button" data-password-toggle="reset-password-new" aria-controls="reset-password-new" aria-pressed="false">Hiện mật khẩu</button>
+                                    </div>
+                                    <p class="auth-field-note" id="reset-password-note">Mật khẩu phải có ít nhất 9 ký tự, bao gồm ít nhất 1 chữ số và 1 chữ cái in hoa.</p>
+                                </div>
+
+                                <div class="auth-field">
+                                    <span>Nhập lại mật khẩu mới</span>
+                                    <div class="auth-password-control">
+                                        <input id="reset-password-confirm" name="confirm_password" type="password" autocomplete="new-password" placeholder="Nhập lại mật khẩu mới" required />
+                                        <button class="auth-password-toggle" type="button" data-password-toggle="reset-password-confirm" aria-controls="reset-password-confirm" aria-pressed="false">Hiện mật khẩu</button>
+                                    </div>
+                                </div>
+
+                                <button class="auth-submit-btn" type="submit">Cập nhật mật khẩu</button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <div id="auth-profile-view" hidden>
+                        <div class="auth-profile-head">
+
+                            <h3>Quản lý tài khoản</h3>
+                            
+                        </div>
+
+                        <div class="auth-account-sections">
+                            <section class="auth-account-section">
+                                <button
+                                    class="auth-account-toggle"
+                                    id="auth-profile-section-toggle"
+                                    type="button"
+                                    data-account-section="profile"
+                                    aria-expanded="false"
+                                >
+                                    <span class="auth-account-toggle-copy">
+                                        <strong>Cập nhật thông tin</strong>
+                                    </span>
+                                    <span class="auth-account-toggle-icon" aria-hidden="true"></span>
+                                </button>
+
+                                <div class="auth-account-detail" id="auth-profile-section-detail" hidden>
+                                    <form id="auth-profile-form" class="auth-form" novalidate>
+                                        <label class="auth-field">
+                                            <span>Họ và tên</span>
+                                            <input id="profile-full-name" name="full_name" type="text" autocomplete="name" placeholder="Họ và tên" required />
+                                        </label>
+
+                                        <label class="auth-field">
+                                            <span>Đơn vị công tác</span>
+                                            <input id="profile-work-unit" name="work_unit" type="text" placeholder="Đơn vị công tác" />
+                                        </label>
+
+                                        <label class="auth-field">
+                                            <span>Vị trí</span>
+                                            <select id="profile-position" name="position">
+                                                <option value="" disabled selected hidden>Vị trí</option>
+                                            </select>
+                                        </label>
+
+                                        <div class="auth-profile-actions">
+                                            <button class="auth-submit-btn" type="submit">Lưu hồ sơ</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </section>
+
+                            <section class="auth-account-section">
+                                <button
+                                    class="auth-account-toggle"
+                                    id="auth-password-section-toggle"
+                                    type="button"
+                                    data-account-section="password"
+                                    aria-expanded="false"
+                                >
+                                    <span class="auth-account-toggle-copy">
+                                        <strong id="auth-password-title">Đổi mật khẩu</strong>
+                                    </span>
+                                    <span class="auth-account-toggle-icon" aria-hidden="true"></span>
+                                </button>
+
+                                <div class="auth-account-detail" id="auth-password-section-detail" hidden>
+                                    <form id="auth-change-password-form" class="auth-form" novalidate>
+                                        <div class="auth-field" id="change-password-current-field">
+                                            <span>Mật khẩu hiện tại</span>
+                                            <div class="auth-password-control">
+                                                <input id="change-password-current" name="current_password" type="password" autocomplete="current-password" placeholder="Mật khẩu hiện tại" />
+                                                <button class="auth-password-toggle" type="button" data-password-toggle="change-password-current" aria-controls="change-password-current" aria-pressed="false">Hiện mật khẩu</button>
+                                            </div>
+                                        </div>
+
+                                        <div class="auth-field">
+                                            <span>Mật khẩu mới</span>
+                                            <div class="auth-password-control">
+                                                <input id="change-password-new" name="new_password" type="password" autocomplete="new-password" placeholder="Mật khẩu mới" required />
+                                                <button class="auth-password-toggle" type="button" data-password-toggle="change-password-new" aria-controls="change-password-new" aria-pressed="false">Hiện mật khẩu</button>
+                                            </div>
+                                            <p class="auth-field-note" id="change-password-note">Mật khẩu phải có ít nhất 9 ký tự, bao gồm ít nhất 1 chữ số và 1 chữ cái in hoa.</p>
+                                        </div>
+
+                                        <div class="auth-field">
+                                            <span>Nhập lại mật khẩu mới</span>
+                                            <div class="auth-password-control">
+                                                <input id="change-password-confirm" name="confirm_password" type="password" autocomplete="new-password" placeholder="Nhập lại mật khẩu mới" required />
+                                                <button class="auth-password-toggle" type="button" data-password-toggle="change-password-confirm" aria-controls="change-password-confirm" aria-pressed="false">Hiện mật khẩu</button>
+                                            </div>
+                                        </div>
+
+                                        <div class="auth-profile-actions">
+                                            <button class="auth-submit-btn" type="submit">Lưu mật khẩu</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </section>
+                        </div>
+
+                        <div class="auth-account-footer">
+                            <button class="auth-secondary-btn auth-secondary-btn-danger" id="auth-logout-btn" type="button">Đăng xuất</button>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </div>
+
+    <!-- README MODAL -->
+    <div id="readme-modal" class="readme-modal">
+        <div class="readme-overlay"></div>
+        <div class="readme-content">
+            <button class="btn-close readme-close" id="close-readme" aria-label="Đóng">
+                <i data-feather="x"></i>
+            </button>
+
+            
+            <div class="readme-header">
+                <h1>Chào mừng đến với Hệ thống quản lý dữ liệu đấu thầu y tế</h1>
+            </div>
+
+            <div class="readme-body">
+                <section class="readme-section">
+                    <h2>Về ứng dụng</h2>
+                    <p>Hệ thống quản lý dữ liệu đấu thầu y tế tại Việt Nam. Dữ liệu được thu thập và cập nhật từ <strong>Hệ thống mạng đấu thầu quốc gia</strong> (<a href="https://muasamcong.mpi.gov.vn" target="_blank">muasamcong.mpi.gov.vn</a>) - nền tảng chính thức do Bộ Tài chính quản lý.</p>
+                </section>
+
+                <section class="readme-section">
+                    <h2>Dữ liệu cung cấp</h2>
+                    <div class="readme-info-grid">
+                        <div class="readme-info-card">
+                            <div class="info-icon">💊</div>
+                            <h3>Thông tin thuốc</h3>
+                            <p>Tên thuốc, tên hoạt chất, nồng độ, hàm lượng, đường dùng, dạng bào chế, quy cách, nhóm thuốc, số đăng ký, cơ sở sản xuất, nước sản xuất</p>
+                        </div>
+                        <div class="readme-info-card">
+                            <div class="info-icon">📦</div>
+                            <h3>Thông tin sản phẩm thầu</h3>
+                            <p>Đơn vị tính, số lượng, đơn giá trúng thầu, thành tiền, nhà thầu trúng thầu</p>
+                        </div>
+                        <div class="readme-info-card">
+                            <div class="info-icon">📋</div>
+                            <h3>Thông tin thầu</h3>
+                            <p>Mã TBMT, chủ đầu tư, ngày phê duyệt, số quyết định phê duyệt, hình thức lựa chọn nhà thầu, địa điểm, tình trạng hiệu lực</p>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="readme-section">
+                    <h2>Mục đích</h2>
+                    <p>Hỗ trợ cơ quan y tế, doanh nghiệp dược tìm kiếm thông tin thuốc trúng thầu nhanh chóng từ nguồn dữ liệu chính thống.</p>
+                </section>
+                
+                <!-- <section class="readme-section">
+                    <h2>Lưu ý</h2>
+                    <p><strong>Giá trị sử dụng của hai bảng:</strong> Hai bảng phản ánh hai quy trình mua sắm khác nhau và có giá trị nghiệp vụ tương đương khi tìm kiếm, đối chiếu kết quả trúng thầu.</p>
+                    <p><strong>Biểu mẫu thuốc chuyên biệt:</strong> Đối với đấu thầu rộng rãi, đấu thầu hạn chế và chào hàng cạnh tranh, Hệ thống áp dụng biểu mẫu chuyên biệt cho thuốc nên nhiều thuộc tính dược học được tách thành cột riêng.</p>
+                    <p><strong>Biểu mẫu hàng hóa chuẩn:</strong> Đối với chào giá trực tuyến theo quy trình rút gọn, hệ thống dùng webform hàng hóa chung nên đặc tính của thuốc thường được gộp trong trường thông số kỹ thuật.</p>
+                    <p><strong>Dữ liệu chuẩn hóa:</strong> Các gói thầu có các trường thông tin được tách riêng và được điền tương đối nhất quán (tên thuốc, tên hoạt chất, hàm lượng, đường dùng…), nên hệ thống có thể lọc theo từng tiêu chí rõ ràng.</p>
+                    <p><strong>Dữ liệu tổng hợp:</strong> Các gói thầu dùng một biến gộp chứa nhiều thông tin và được điền không nhất quán nên cấu trúc không thống nhất. Việc tách, chuẩn hóa nội dung từ biến gộp này vượt quá khả năng xử lý nên hệ thống giữ nguyên để người dùng tìm kiếm, đối chiếu bổ sung.</p>
+                    <p><strong>Tìm kiếm:</strong> Kết quả tìm kiếm phụ thuộc vào cách sử dụng từ khóa (xem thêm phần <strong><em>“Mẹo tìm kiếm”</em></strong>).</p>
+                </section> -->
+
+            </div>
+
+            <div class="readme-footer">
+                <label class="readme-checkbox">
+                    <input type="checkbox" id="dont-show-checkbox">
+                    <span>Không hiển thị lại lần sau</span>
+                </label>
+                <button class="btn-readme-primary" id="got-it-btn">Đã hiểu</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Contact Modal -->
+    <div id="contact-modal" class="readme-modal">
+        <div class="readme-overlay"></div>
+        <div class="readme-content contact-content">
+            <button class="btn-close readme-close" id="close-contact" aria-label="Đóng">
+                <i data-feather="x"></i>
+            </button>
+
+            <div class="readme-header">
+                <!-- <div class="readme-icon-header">👥</div> -->
+                <h1>Thông tin về đội ngũ phát triển ứng dụng</h1>
+                <!-- <p class="readme-subtitle">Thông tin về đội ngũ phát triển ứng dụng</p> -->
+            </div>
+
+            <div class="readme-body">
+                <section class="readme-section">
+                    <h2>Giới thiệu</h2>
+                    <p>Ứng dụng được phát triển bởi nhóm nghiên cứu chuyên về phân tích dữ liệu y tế và đấu thầu công 
+                        nhằm cung cấp công cụ tìm kiếm minh bạch và hiệu quả cho cộng đồng y tế.</p>
+                    <p>Một số tính năng, giao diện có thể chưa hoàn thiện và được thay đổi trong các phiên bản tiếp theo. 
+                        Mọi góp ý xin gửi về hòm thư của nhóm tác giả.</p>
+                </section>
+
+                <section class="readme-section">
+                    <h2>Thông tin liên hệ</h2>
+                    <div class="contact-info">
+                        <div class="contact-item">
+                            <!-- <span class="contact-icon">📧</span> -->
+                            <div>
+                                <strong>Email</strong>
+                                <p>bidfinder.app@gmail.com</p>
+                            </div>
+                        </div>
+                        <div class="contact-item">
+                            <!-- <span class="contact-icon">🌐</span> -->
+                            <div>
+                                <strong>Website</strong>
+                                <p><a href="https://bidfinder.vn" target="_blank">bidfinder.vn</a></p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </div>
+
+    <!-- HISTORY MODAL -->
+    <div id="history-modal" class="history-modal">
+        <div class="history-overlay"></div>
+        <div class="history-content">
+            <div class="history-header">
+                <h3>
+                    <i data-feather="refresh-ccw"></i>
+                    Lịch sử cập nhật
+                </h3>
+                <button class="btn-close window-close-button" id="close-history" type="button" aria-label="Đóng">
+                    <i data-feather="x"></i>
+                </button>
+            </div>
+            <div class="history-body">
+                <div class="history-chart-shell">
+                    <div class="history-daily-summary" id="history-daily-summary" aria-live="polite">
+                        <div class="history-summary-period" id="history-summary-period">Đang tải thống kê…</div>
+                        <article class="history-summary-card history-summary-card-count">
+                            <div class="history-summary-heading">
+                                <i data-feather="check-circle"></i>
+                                <span>Số gói thầu được phê duyệt</span>
+                            </div>
+                            <strong id="history-summary-approved-count">—</strong>
+                            <span class="history-summary-detail" id="history-summary-approved-detail">Đang tải dữ liệu…</span>
+                        </article>
+                        <article class="history-summary-card history-summary-card-package">
+                            <div class="history-summary-heading">
+                                <i data-feather="award"></i>
+                                <span>Gói thầu có giá trị cao nhất</span>
+                            </div>
+                            <strong id="history-summary-package-value">—</strong>
+                            <span class="history-summary-detail" id="history-summary-package-detail">Chưa có dữ liệu trong ngày</span>
+                        </article>
+                        <article class="history-summary-card history-summary-card-goods">
+                            <div class="history-summary-heading">
+                                <i data-feather="package"></i>
+                                <span>Sản phẩm có đơn giá cao nhất</span>
+                            </div>
+                            <strong id="history-summary-goods-value">—</strong>
+                            <span class="history-summary-detail" id="history-summary-goods-detail">Chưa có dữ liệu trong ngày</span>
+                        </article>
+                    </div>
+                    <div class="history-chart-toolbar">
+                        <div class="history-chart-copy">
+                            <strong>Số gói thầu được phê duyệt theo ngày</strong>
+                            <span>Xem xu hướng theo khoảng thời gian gần đây.</span>
+                        </div>
+                        <div class="history-range-switch" role="tablist" aria-label="Chọn khoảng thời gian">
+                            <button class="history-range-btn active" type="button" data-history-range="30">30 ngày</button>
+                            <button class="history-range-btn" type="button" data-history-range="90">90 ngày</button>
+                            <button class="history-range-btn" type="button" data-history-range="180">180 ngày</button>
+                        </div>
+                    </div>
+                    <div id="history-list" class="history-chart-container">
+                        <canvas id="history-timeline-chart" aria-label="Biểu đồ số gói thầu được phê duyệt theo ngày"></canvas>
+                        <div class="history-empty">
+                            <i data-feather="clock"></i>
+                            <p>Chưa có dữ liệu lịch sử phê duyệt gói thầu</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- BULK SEARCH MODAL -->
+    <div id="bulk-search-modal" class="bulk-search-modal" aria-hidden="true">
+        <div class="bulk-search-overlay"></div>
+        <div class="bulk-search-dialog" role="dialog" aria-modal="true" aria-labelledby="bulk-search-title">
+            <div class="bulk-search-header">
+                <h3 id="bulk-search-title">
+                    <i data-feather="list"></i>
+                    Tìm kiếm hàng loạt
+                </h3>
+                <button class="btn-close window-close-button" id="close-bulk-search-modal" type="button" aria-label="Đóng">
+                    <i data-feather="x"></i>
+                </button>
+            </div>
+            <div class="bulk-search-body">
+                <div class="bulk-price-section">
+                    <span class="bulk-section-title">Giới hạn kết quả cho mỗi dòng tìm kiếm</span>
+                    <div class="bulk-limit-row">
+                        <div class="bulk-price-options" role="radiogroup" aria-label="Đa dạng giá">
+                            <label><input type="radio" name="bulk-diversity-limit" value="price:3" checked> Tối đa 3 giá</label>
+                            <label><input type="radio" name="bulk-diversity-limit" value="price:5"> Tối đa 5 giá</label>
+                            <label><input type="radio" name="bulk-diversity-limit" value="price:10"> Tối đa 10 giá</label>
+                        </div>
+                        <div class="bulk-price-options bulk-product-options" role="radiogroup" aria-label="Đa dạng sản phẩm">
+                            <label><input type="radio" name="bulk-diversity-limit" value="product:3"> Tối đa 3 sản phẩm</label>
+                            <label><input type="radio" name="bulk-diversity-limit" value="product:5"> Tối đa 5 sản phẩm</label>
+                            <label><input type="radio" name="bulk-diversity-limit" value="product:10"> Tối đa 10 sản phẩm</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="bulk-field-columns">
+                    <span class="bulk-field-columns-title">Cột tham chiếu</span>
+                    <div id="bulk-field-panels" class="bulk-field-panels" aria-live="polite">
+                        <p class="bulk-contract-status" id="bulk-contract-status">Đang tải danh mục trường tìm kiếm…</p>
+                    </div>
+                </div>
+                <div class="bulk-import-card" id="bulk-import-card">
+                    <div class="bulk-import-dropzone" id="bulk-excel-dropzone">
+                        <input id="bulk-excel-file" type="file" accept=".xlsx,.xls,.csv" hidden>
+                        <div class="bulk-import-row">
+                            <button class="btn-feedback-secondary bulk-excel-action" id="bulk-import-excel" type="button">
+                                <i data-feather="upload"></i>
+                                Chọn file Excel
+                            </button>
+                            <span class="bulk-import-hint">hoặc kéo thả file Excel vào đây</span>
+                        </div>
+                        <span class="bulk-import-requirement">File Excel phải có đủ các cột tham chiếu đã chọn</span>
+                        <div class="bulk-import-selected" id="bulk-import-selected" hidden>
+                            <span class="bulk-import-file-name" id="bulk-import-file-name">Chưa chọn file</span>
+                            <button class="btn-feedback-secondary bulk-excel-action" id="download-bulk-excel" type="button" disabled hidden>
+                                <i data-feather="download"></i>
+                                Tải file Excel
+                            </button>
+                            <div class="bulk-download-copy" id="bulk-download-copy" hidden>
+                                <strong id="bulk-download-title"></strong>
+                                <span id="bulk-download-summary"></span>
+                            </div>
+                            <button class="bulk-clear-file-btn" id="bulk-clear-excel" type="button" aria-label="Xóa file Excel đã upload" title="Xóa file đã upload" hidden>
+                                <i data-feather="trash-2"></i>
+                            </button>
+                        </div>
+                        <div class="bulk-inline-status" id="bulk-inline-status" aria-live="polite"></div>
+                    </div>
+                </div>
+                <div class="bulk-search-warnings" id="bulk-search-warnings" hidden></div>
+                <p class="bulk-search-status" id="bulk-search-status" aria-live="polite"></p>
+            </div>
+            <div class="bulk-search-footer">
+                <button class="btn-feedback-primary" id="run-bulk-search" type="button">Tìm kiếm hàng loạt</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- FEEDBACK MODAL -->
+    <div id="feedback-modal" class="feedback-modal" aria-hidden="true">
+        <div class="feedback-overlay"></div>
+        <div class="feedback-dialog" role="dialog" aria-modal="true" aria-labelledby="feedback-title">
+            <div class="feedback-header">
+                <div>
+                    <h3 id="feedback-title">
+                        <i data-feather="bell"></i>
+                        Thông báo
+                    </h3>
+                    <p>Theo dõi thông báo và cập nhật mới nhất từ BIDFinder.</p>
+                </div>
+                <button class="btn-close window-close-button" id="close-feedback-modal" type="button" aria-label="Đóng">
+                    <i data-feather="x"></i>
+                </button>
+            </div>
+            <div class="feedback-body">
+                <aside class="feedback-board-sidebar">
+                    <div class="feedback-topic-filter">
+                        <button class="feedback-topic-filter-button" id="feedback-topic-filter-button" type="button" aria-haspopup="listbox" aria-expanded="false">
+                            <span id="feedback-topic-filter-label">Tất cả</span>
+                            <i data-feather="chevron-down"></i>
+                        </button>
+                        <div class="feedback-topic-filter-menu" id="feedback-topic-filter-menu" role="listbox" hidden>
+                            <button class="active" type="button" data-feedback-filter-value="all" role="option" aria-selected="true">Tất cả</button>
+                            <button type="button" data-feedback-filter-value="admin" role="option" aria-selected="false">BIDFinder</button>
+                        </div>
+                    </div>
+                    <div class="feedback-topic-list" id="feedback-topic-list" aria-label="Danh sách chủ đề"></div>
+                    <div class="feedback-board-toolbar">
+                        <button class="btn-feedback-primary" id="new-feedback-topic" type="button">Tạo bài viết</button>
+                    </div>
+                </aside>
+                <section class="feedback-board-detail">
+                    <div class="feedback-topic-detail" id="feedback-topic-detail" hidden>
+                        <div class="feedback-discussion-scroll">
+                            <div class="feedback-topic-head">
+                                <span class="feedback-topic-status" id="feedback-topic-status"></span>
+                                <h4 id="feedback-topic-title"></h4>
+                                <p id="feedback-topic-body"></p>
+                                <div class="feedback-topic-actions" id="feedback-topic-actions" hidden>
+                                    <button class="btn-feedback-secondary" id="reopen-feedback-topic" type="button">Mở lại</button>
+                                    <button class="btn-feedback-danger" id="close-feedback-topic" type="button">Đóng chủ đề</button>
+                                </div>
+                            </div>
+                            <div class="feedback-reply-list" id="feedback-reply-list"></div>
+                        </div>
+                        <div class="feedback-reply-form feedback-comment-composer">
+                            <div class="feedback-composer-row">
+                                <span class="feedback-avatar" id="feedback-current-avatar">B</span>
+                                <textarea id="feedback-reply-body" rows="2" maxlength="1600" placeholder="Viết bình luận..."></textarea>
+                                <button class="btn-feedback-primary feedback-comment-send" id="send-feedback-reply" type="button" aria-label="Gửi bình luận" disabled>
+                                    <i data-feather="send"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <form class="feedback-topic-form" id="feedback-topic-form" hidden>
+                        <div class="feedback-row">
+                            <label class="feedback-field">
+                                <span>Danh mục chủ đề</span>
+                                <select id="feedback-category-input">
+                                    <option value="data">Dữ liệu</option>
+                                    <option value="bug">Lỗi</option>
+                                    <option value="idea">Ý tưởng</option>
+                                    <option value="question">Câu hỏi</option>
+                                    <option value="other">Khác</option>
+                                </select>
+                            </label>
+
+                            <label class="feedback-field">
+                                <span>Tiêu đề</span>
+                                <input id="feedback-topic-input"
+                                    maxlength="180"
+                                    placeholder="Viết tên chủ đề...">
+                            </label>
+                        </div>
+                        <label class="feedback-field">
+                            <span>Nội dung</span>
+                            <textarea id="feedback-topic-body-input" rows="6" maxlength="4000" placeholder="Viết nội dung chi tiết..."></textarea>
+                        </label>
+                        <div class="feedback-form-actions">
+                            <button class="btn-feedback-secondary" id="cancel-feedback-topic" type="button">Hủy</button>
+                            <button class="btn-feedback-primary" id="send-feedback-topic" type="submit">Đăng chủ đề</button>
+                        </div>
+                    </form>
+                </section>
+            </div>
+        </div>
+    </div>
+
+    <aside id="ai-search-chat" class="ai-search-chat" hidden role="dialog" aria-modal="false" aria-labelledby="ai-search-chat-title">
+        <header class="ai-chat-header">
+            <div class="ai-chat-identity">
+                <span class="ai-chat-avatar" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M12 2l1.7 6.3L20 10l-6.3 1.7L12 18l-1.7-6.3L4 10l6.3-1.7L12 2zm7 13l.7 2.3L22 18l-2.3.7L19 21l-.7-2.3L16 18l2.3-.7L19 15z" fill="currentColor"/></svg></span>
+                <div class="ai-chat-title-wrap">
+                    <h2 id="ai-search-chat-title">Tìm kiếm bằng AI</h2>
+                    <div id="ai-chat-usage" class="ai-chat-usage" aria-live="polite"></div>
+                </div>
+            </div>
+            <div class="ai-chat-header-actions">
+                <button type="button" class="ai-chat-icon-button window-close-button" data-ai-chat-close aria-label="Đóng" title="Đóng"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+            </div>
+        </header>
+        <div id="ai-chat-messages" class="ai-chat-messages" aria-live="polite"></div>
+        <form id="ai-chat-composer" class="ai-chat-composer">
+            <div id="ai-chat-groups" class="ai-chat-groups" role="group" aria-label="Nhóm tìm kiếm">
+                <button type="button" data-ai-chat-group="goods" aria-pressed="false">Hàng hóa</button>
+                <button type="button" data-ai-chat-group="medicines" class="active" aria-pressed="true">Thuốc</button>
+                <button type="button" data-ai-chat-group="traditional" aria-pressed="false">Dược liệu</button>
+            </div>
+            <div class="ai-chat-input-row">
+                <label class="sr-only" for="ai-chat-input">Nhập yêu cầu tìm kiếm</label>
+                <textarea id="ai-chat-input" rows="1" maxlength="4000" placeholder="Nhập yêu cầu tìm kiếm…" autocomplete="off"></textarea>
+                <button type="submit" class="ai-chat-send" aria-label="Gửi yêu cầu" title="Gửi yêu cầu"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z" fill="currentColor"/></svg></button>
+            </div>
+        </form>
+    </aside>
+
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="analytics-config.js"></script>
+    <script src="analytics.js"></script>
+    <script src="config.js"></script>
+    <script src="auth.js?v=search-login-notice-20260926"></script>
+    <script src="typesense-search-form.js?v=estimate-status-20260928"></script>
+    <script src="script.js?v=lookup-copy-layer-20260930"></script>
+    <script src="ingredient-lookup.js?v=lookup-shared-copy-20260930"></script>
+    <script src="ai-search-chat.js"></script>
+    <script>
+        feather.replace();
+    </script>
+    
+    <script>
+    // README/Contact modal flow retired in favor of the landing page.
+    </script>
+
+</body>
+</html>

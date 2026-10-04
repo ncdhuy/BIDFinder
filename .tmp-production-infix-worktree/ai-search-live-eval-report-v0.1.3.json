@@ -1,0 +1,380 @@
+{
+  "status": "FAIL",
+  "total_cases": 28,
+  "passed": 25,
+  "failed": 3,
+  "pass_rate": 0.8929,
+  "aggregate_latency_ms": 106220.05,
+  "average_latency_ms": 3793.56,
+  "cases": [
+    {
+      "id": "goods_core_iol_recent",
+      "group": "goods",
+      "passed": false,
+      "latency_ms": 7748.91,
+      "failure_reason": [
+        "missing 'vàng' in item_name",
+        "missing '4 càng' in item_name"
+      ],
+      "returned_plan": {
+        "version": "1",
+        "group": "goods",
+        "clauses": [
+          {
+            "field": "item_name",
+            "concepts": [
+              {
+                "alternatives": [
+                  "thủy tinh thể nhân tạo"
+                ],
+                "match": "text"
+              },
+              {
+                "alternatives": [
+                  "mềm"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          },
+          {
+            "field": "technical_specification",
+            "concepts": [
+              {
+                "alternatives": [
+                  "đơn tiêu",
+                  "đơn tiêu cự"
+                ],
+                "match": "text"
+              },
+              {
+                "alternatives": [
+                  "kéo dài tiêu điểm"
+                ],
+                "match": "text"
+              },
+              {
+                "alternatives": [
+                  "màu vàng"
+                ],
+                "match": "text"
+              },
+              {
+                "alternatives": [
+                  "4 càng"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          },
+          {
+            "field": "procuring_entity_name",
+            "concepts": [
+              {
+                "alternatives": [
+                  "Bệnh viện Nguyễn Trãi"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          }
+        ],
+        "date_constraints": [
+          {
+            "field": "decision_issued_at",
+            "period": {
+              "kind": "relative",
+              "amount": 6,
+              "unit": "months",
+              "direction": "previous"
+            },
+            "inclusive": true
+          }
+        ],
+        "warnings": [],
+        "explanation": [
+          "item_name: thủy tinh thể nhân tạo mềm",
+          "technical_specification: đơn tiêu, kéo dài tiêu điểm, màu vàng, 4 càng",
+          "procuring_entity_name: Bệnh viện Nguyễn Trãi",
+          "decision_issued_at: 6 tháng gần nhất"
+        ]
+      }
+    },
+    {
+      "id": "goods_exact_tbmt",
+      "group": "goods",
+      "passed": true,
+      "latency_ms": 3608.39
+    },
+    {
+      "id": "goods_device_model_brand_hospital",
+      "group": "goods",
+      "passed": true,
+      "latency_ms": 4548.36
+    },
+    {
+      "id": "goods_categorical_attributes",
+      "group": "goods",
+      "passed": true,
+      "latency_ms": 2732.03
+    },
+    {
+      "id": "goods_technical_model_manufacturer",
+      "group": "goods",
+      "passed": false,
+      "latency_ms": 3739.24,
+      "failure_reason": [
+        "missing 'Bosch' in manufacturer"
+      ],
+      "returned_plan": {
+        "version": "1",
+        "group": "goods",
+        "clauses": [
+          {
+            "field": "item_name",
+            "concepts": [
+              {
+                "alternatives": [
+                  "Máy siêu âm"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          },
+          {
+            "field": "model",
+            "concepts": [
+              {
+                "alternatives": [
+                  "ACME-900"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          },
+          {
+            "field": "technical_specification",
+            "concepts": [
+              {
+                "alternatives": [
+                  "IP65"
+                ],
+                "match": "text"
+              },
+              {
+                "alternatives": [
+                  "220V"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          },
+          {
+            "field": "brand",
+            "concepts": [
+              {
+                "alternatives": [
+                  "Bosch"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          }
+        ],
+        "date_constraints": [],
+        "warnings": [],
+        "explanation": [
+          "item_name: Máy siêu âm",
+          "model: ACME-900",
+          "technical_specification: IP65 và 220V",
+          "brand: Bosch"
+        ]
+      }
+    },
+    {
+      "id": "goods_noise_numeric_metadata",
+      "group": "goods",
+      "passed": true,
+      "latency_ms": 3554.79
+    },
+    {
+      "id": "goods_selection_location",
+      "group": "goods",
+      "passed": true,
+      "latency_ms": 2355.62
+    },
+    {
+      "id": "goods_exact_identifiers",
+      "group": "goods",
+      "passed": true,
+      "latency_ms": 2726.81
+    },
+    {
+      "id": "goods_explicit_result_date",
+      "group": "goods",
+      "passed": true,
+      "latency_ms": 3194.64
+    },
+    {
+      "id": "goods_generic_current_year",
+      "group": "goods",
+      "passed": true,
+      "latency_ms": 2044.7
+    },
+    {
+      "id": "medicine_salts_strength_bidder_location",
+      "group": "medicines",
+      "passed": true,
+      "latency_ms": 7022.8
+    },
+    {
+      "id": "medicine_meropenem_form_route",
+      "group": "medicines",
+      "passed": true,
+      "latency_ms": 2793.42
+    },
+    {
+      "id": "medicine_metformin_no_invention",
+      "group": "medicines",
+      "passed": false,
+      "latency_ms": 2328.74,
+      "failure_reason": [
+        "missing 'XR' in medicine_name,dosage_form"
+      ],
+      "returned_plan": {
+        "version": "1",
+        "group": "medicines",
+        "clauses": [
+          {
+            "field": "active_ingredient_or_herbal_component",
+            "concepts": [
+              {
+                "alternatives": [
+                  "Metformin"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          },
+          {
+            "field": "strength",
+            "concepts": [
+              {
+                "alternatives": [
+                  "500 mg"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          }
+        ],
+        "date_constraints": [],
+        "warnings": [],
+        "explanation": [
+          "Metformin → active ingredient",
+          "500 mg → strength"
+        ]
+      }
+    },
+    {
+      "id": "medicine_mixed_english_permit",
+      "group": "medicines",
+      "passed": true,
+      "latency_ms": 3511.03
+    },
+    {
+      "id": "medicine_packaging_shelf_life_group",
+      "group": "medicines",
+      "passed": true,
+      "latency_ms": 4579.31
+    },
+    {
+      "id": "medicine_country_manufacturer",
+      "group": "medicines",
+      "passed": true,
+      "latency_ms": 6258.93
+    },
+    {
+      "id": "medicine_hospital_location",
+      "group": "medicines",
+      "passed": true,
+      "latency_ms": 3976.83
+    },
+    {
+      "id": "medicine_salt_alternative",
+      "group": "medicines",
+      "passed": true,
+      "latency_ms": 2328.62
+    },
+    {
+      "id": "medicine_explicit_result_date",
+      "group": "medicines",
+      "passed": true,
+      "latency_ms": 2250.46
+    },
+    {
+      "id": "medicine_exact_registration",
+      "group": "medicines",
+      "passed": true,
+      "latency_ms": 3250.61
+    },
+    {
+      "id": "traditional_common_scientific_parts_processing",
+      "group": "traditional",
+      "passed": true,
+      "latency_ms": 2826.08
+    },
+    {
+      "id": "traditional_material_processing_origin",
+      "group": "traditional",
+      "passed": true,
+      "latency_ms": 6558.29
+    },
+    {
+      "id": "traditional_manufacturer_hospital_location",
+      "group": "traditional",
+      "passed": true,
+      "latency_ms": 3588.13
+    },
+    {
+      "id": "traditional_explicit_manufacturer_hospital_location",
+      "group": "traditional",
+      "passed": true,
+      "latency_ms": 5110.82
+    },
+    {
+      "id": "traditional_origin_processing",
+      "group": "traditional",
+      "passed": true,
+      "latency_ms": 2505.34
+    },
+    {
+      "id": "traditional_permit_group_unit",
+      "group": "traditional",
+      "passed": true,
+      "latency_ms": 2313.36
+    },
+    {
+      "id": "traditional_location_numeric_noise",
+      "group": "traditional",
+      "passed": true,
+      "latency_ms": 5230.45
+    },
+    {
+      "id": "traditional_explicit_result_date_location",
+      "group": "traditional",
+      "passed": true,
+      "latency_ms": 3533.06
+    }
+  ],
+  "model": "gpt-5.6-luna"
+}

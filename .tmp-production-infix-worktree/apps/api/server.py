@@ -1,0 +1,5552 @@
+from collections import defaultdict, deque
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Optional, List, Dict, Any, Literal, Mapping
+import time
+import copy
+import hashlib
+import logging
+from datetime import date, datetime, timedelta, timezone, time as datetime_time
+import secrets
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+import asyncio
+import asyncpg
+import ipaddress
+import json
+import math
+import os
+import ssl
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlsplit
+from urllib.request import Request as URLRequest, urlopen
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+from ingredient_lookup import IngredientLookupStore, lookup_page, lookup_suggestions
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=False)
+
+from auth_utils import (
+    change_password,
+    clear_auth_session_cookie,
+    extract_session_token,
+    get_auth_config_payload,
+    get_authenticated_user,
+    login_with_email,
+    login_with_google,
+    logout_current_session,
+    request_password_reset,
+    register_with_email,
+    reset_password_with_token,
+    require_authenticated_user,
+    set_auth_session_cookie,
+    update_user_profile,
+)
+from typesense_shadow import (
+    AutocompleteQuery,
+    PostgresSearchRepository,
+    physical_collection_name,
+    QUERY_CONTRACT_FAILURE,
+    SHADOW_INFRA_ERROR,
+    TypesenseSearchRepository,
+    TypesenseShadowError,
+    aggregate_dashboard_documents,
+    build_dashboard_selection_clauses,
+    filter_dashboard_columns,
+    build_bulk_canonical_query,
+    build_canonical_query,
+    schedule_shadow_autocomplete,
+    schedule_shadow_comparison,
+)
+from typesense_contract import (
+    canonical_field_for,
+    get_procurement_backend_config,
+    get_search_contract as get_typesense_search_contract,
+    normalize_group,
+)
+from ai_search_planner import (
+    AIPlanRequest,
+    AISearchPreviewRequest,
+    AIPlannerConfigurationError,
+    AIPlannerInputError,
+    AIPlannerProviderError,
+    AIPlannerValidationError,
+    PLANNER_VERSION,
+    create_search_plan,
+    get_planner_settings,
+    normalize_usage_units,
+    serialize_plan,
+    validate_serialized_ai_search_plan,
+)
+from ai_usage import AIUsageStore, snapshot_payload
+from ai_search_query_compiler import (
+    AIQueryCompilationError,
+    compile_ai_search_plan,
+    safe_broaden_ai_query,
+)
+
+logger = logging.getLogger("bidfinder.api")
+logger.setLevel(os.getenv("BIDFINDER_LOG_LEVEL", "INFO").upper())
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+db_pool: Optional[asyncpg.Pool] = None
+db_pool_lock = asyncio.Lock()
+rate_limit_lock = asyncio.Lock()
+rate_limit_buckets: Dict[str, deque] = defaultdict(deque)
+anonymous_full_query_usage_lock = asyncio.Lock()
+anonymous_full_query_usage: Dict[str, Dict[str, int]] = defaultdict(dict)
+full_search_usage_lock = asyncio.Lock()
+full_search_usage: Dict[str, Dict[str, int]] = defaultdict(dict)
+cache_lock = asyncio.Lock()
+preview_cache: Dict[str, Dict[str, Any]] = {}
+autocomplete_cache: Dict[str, Dict[str, Any]] = {}
+metadata_cache: Dict[str, Dict[str, Any]] = {}
+update_dashboard_cache: Dict[str, Dict[str, Any]] = {}
+SERVING_REPORT_PATH = os.getenv("BIDFINDER_SERVING_REPORT_PATH", "").strip()
+
+
+def get_env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def get_env_int(name: str, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        value = default
+    else:
+        raw_text = raw.strip()
+        try:
+            value = int(raw_text)
+        except (TypeError, ValueError):
+            logger.warning("Invalid integer env %s=%r; using default %s", name, raw, default)
+            value = default
+    if minimum is not None:
+        value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
+    return value
+
+
+def get_env_float(name: str, default: float, minimum: float | None = None) -> float:
+    raw = os.getenv(name)
+    try:
+        value = float(raw.strip()) if raw is not None else float(default)
+    except (TypeError, ValueError):
+        logger.warning("Invalid float env %s=%r; using default %s", name, raw, default)
+        value = float(default)
+    if not math.isfinite(value):
+        logger.warning("Invalid non-finite float env %s=%r; using default %s", name, raw, default)
+        value = float(default)
+    if minimum is not None:
+        value = max(minimum, value)
+    return value
+
+
+def normalize_anonymous_access_level(value: str) -> str:
+    cleaned = str(value or "").strip().lower()
+    if cleaned in {"none", "preview", "full"}:
+        return cleaned
+    return "preview"
+
+
+def build_db_ssl_config() -> ssl.SSLContext | bool:
+    if get_env_flag("DB_SSL_DISABLE", False):
+        return False
+
+    ca_file = os.getenv("DB_SSL_CA_FILE")
+    cert_file = os.getenv("DB_SSL_CERT_FILE")
+    key_file = os.getenv("DB_SSL_KEY_FILE")
+
+    context = ssl.create_default_context(cafile=ca_file or None)
+    if cert_file and key_file:
+        context.load_cert_chain(certfile=cert_file, keyfile=key_file)
+    return context
+
+
+LEGACY_AUTH_REQUIRED_FOR_DATA_ACCESS = get_env_flag("AUTH_REQUIRED_FOR_DATA_ACCESS", False)
+ANONYMOUS_ACCESS_LEVEL = normalize_anonymous_access_level(
+    os.getenv(
+        "ANONYMOUS_ACCESS_LEVEL",
+        "none" if LEGACY_AUTH_REQUIRED_FOR_DATA_ACCESS else "preview",
+    )
+)
+PUBLIC_URL = os.getenv("BIDFINDER_PUBLIC_URL", "").strip()
+try:
+    _public_url = urlsplit(PUBLIC_URL)
+    PUBLIC_ORIGIN = (
+        f"{_public_url.scheme}://{_public_url.netloc}"
+        if _public_url.scheme and _public_url.netloc
+        else ""
+    )
+    PUBLIC_HOSTNAME = _public_url.hostname or ""
+except ValueError:
+    PUBLIC_ORIGIN = ""
+    PUBLIC_HOSTNAME = ""
+
+TRUST_PROXY_HEADERS = get_env_flag("TRUST_PROXY_HEADERS", bool(PUBLIC_ORIGIN))
+TRUSTED_PROXY_IPS = {
+    ipaddress.ip_address(value.strip())
+    for value in os.getenv("TRUSTED_PROXY_IPS", "127.0.0.1,::1").split(",")
+    if value.strip()
+}
+ANONYMOUS_AUTOCOMPLETE_ENABLED = get_env_flag(
+    "ANONYMOUS_AUTOCOMPLETE_ENABLED",
+    ANONYMOUS_ACCESS_LEVEL in {"preview", "full"},
+)
+ANONYMOUS_METADATA_ENABLED = get_env_flag(
+    "ANONYMOUS_METADATA_ENABLED",
+    ANONYMOUS_ACCESS_LEVEL in {"preview", "full"},
+)
+ANONYMOUS_SINGLE_CHAR_NUMERIC_ONLY = get_env_flag(
+    "ANONYMOUS_SINGLE_CHAR_NUMERIC_ONLY",
+    True,
+)
+AUTH_REQUIRED_FOR_DATA_ACCESS = ANONYMOUS_ACCESS_LEVEL == "none"
+AUTH_REQUIRED_FOR_FULL_QUERY = ANONYMOUS_ACCESS_LEVEL != "full"
+db_ssl_config = build_db_ssl_config()
+
+DEFAULT_ALLOWED_ORIGINS = [
+    # A frontend opened directly as file:// sends the opaque Origin "null".
+    "null",
+    "https://bidfinder.vn",
+    "https://www.bidfinder.vn",
+    "https://bidfinder.netlify.app",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5500",
+    "http://127.0.0.1:5500",
+    "http://localhost:5501",
+    "http://127.0.0.1:5501",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
+]
+
+FRONTEND_URL = os.getenv("FRONTEND_URL", "").strip()
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in ",".join(
+        [
+            os.getenv("ALLOWED_ORIGINS", ",".join(DEFAULT_ALLOWED_ORIGINS)),
+            FRONTEND_URL,
+            PUBLIC_ORIGIN,
+        ]
+    ).split(",")
+    if origin.strip()
+]
+CONFIGURED_ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv("BIDFINDER_ALLOWED_HOSTS", "").split(",")
+    if host.strip()
+]
+ALLOWED_HOSTS = CONFIGURED_ALLOWED_HOSTS or (
+    ["localhost", "127.0.0.1", "::1", PUBLIC_HOSTNAME]
+    if PUBLIC_HOSTNAME
+    else ["*"]
+)
+RATE_LIMIT_WINDOW_SECONDS = get_env_int("RATE_LIMIT_WINDOW_SECONDS", 60, minimum=10)
+QUERY_RATE_LIMIT_PER_MINUTE = get_env_int("QUERY_RATE_LIMIT_PER_MINUTE", 30, minimum=1)
+DASHBOARD_ANALYTICS_MAX_ROWS = get_env_int("BIDFINDER_DASHBOARD_ANALYTICS_MAX_ROWS", 10000, minimum=1)
+AUTOCOMPLETE_RATE_LIMIT_PER_MINUTE = get_env_int("AUTOCOMPLETE_RATE_LIMIT_PER_MINUTE", 120, minimum=1)
+PREVIEW_RATE_LIMIT_PER_MINUTE = get_env_int("PREVIEW_RATE_LIMIT_PER_MINUTE", 90, minimum=1)
+METADATA_RATE_LIMIT_PER_MINUTE = get_env_int("METADATA_RATE_LIMIT_PER_MINUTE", 20, minimum=1)
+FILTER_CONFIG_RATE_LIMIT_PER_MINUTE = get_env_int("FILTER_CONFIG_RATE_LIMIT_PER_MINUTE", 30, minimum=1)
+AUTH_RATE_LIMIT_PER_MINUTE = get_env_int("AUTH_RATE_LIMIT_PER_MINUTE", 20, minimum=1)
+AUTH_CONFIG_RATE_LIMIT_PER_MINUTE = get_env_int("AUTH_CONFIG_RATE_LIMIT_PER_MINUTE", 60, minimum=1)
+AI_SEARCH_LUNA_RATE_LIMIT_PER_MINUTE = get_env_int(
+    "BIDFINDER_AI_LUNA_RATE_LIMIT_PER_MINUTE",
+    5,
+    minimum=1,
+)
+AI_SEARCH_PREVIEW_RATE_LIMIT_PER_MINUTE = get_env_int(
+    "BIDFINDER_AI_PREVIEW_RATE_LIMIT_PER_MINUTE",
+    10,
+    minimum=1,
+)
+AI_DAILY_USAGE_BUDGET_ANON = get_env_float(
+    "BIDFINDER_AI_DAILY_USAGE_BUDGET_ANON",
+    30000,
+    minimum=0,
+)
+AI_DAILY_USAGE_BUDGET_AUTH = get_env_float(
+    "BIDFINDER_AI_DAILY_USAGE_BUDGET_AUTH",
+    120000,
+    minimum=0,
+)
+AI_USAGE_INPUT_WEIGHT = get_env_float("BIDFINDER_AI_USAGE_INPUT_WEIGHT", 1.0, minimum=0)
+AI_USAGE_CACHED_INPUT_WEIGHT = get_env_float("BIDFINDER_AI_USAGE_CACHED_INPUT_WEIGHT", 0.25, minimum=0)
+AI_USAGE_OUTPUT_WEIGHT = get_env_float("BIDFINDER_AI_USAGE_OUTPUT_WEIGHT", 2.0, minimum=0)
+AI_ANONYMOUS_COOKIE_NAME = "bidfinder_ai_anon"
+FEEDBACK_RATE_LIMIT_PER_MINUTE = get_env_int("FEEDBACK_RATE_LIMIT_PER_MINUTE", 10, minimum=1)
+FEEDBACK_READ_RATE_LIMIT_PER_MINUTE = get_env_int(
+    "FEEDBACK_READ_RATE_LIMIT_PER_MINUTE",
+    60,
+    minimum=1,
+)
+ADMIN_EMAILS = {
+    email.strip().lower()
+    for email in os.getenv("ADMIN_EMAILS", "").split(",")
+    if email.strip()
+}
+# Standard and Full Search ceilings are configurable through the environment,
+# while remaining inside the product's supported bounds.
+DEFAULT_QUERY_LIMIT = get_env_int("DEFAULT_QUERY_LIMIT", 1000, minimum=1000, maximum=5000)
+MAX_QUERY_LIMIT = get_env_int("MAX_QUERY_LIMIT", 5000, minimum=DEFAULT_QUERY_LIMIT, maximum=5000)
+DEFAULT_QUERY_PAGE_SIZE = 50
+MAX_QUERY_PAGE_SIZE = 250
+BULK_EXPORT_QUERY_LIMIT = 1000
+FULL_SEARCH_DAILY_LIMIT = get_env_int("FULL_SEARCH_DAILY_LIMIT", 3, minimum=0)
+PREVIEW_BUCKET_LIMIT = get_env_int("PREVIEW_BUCKET_LIMIT", 100, minimum=10)
+DB_POOL_MAX_SIZE = get_env_int("DB_POOL_MAX_SIZE", 4, minimum=1)
+DB_POOL_MIN_SIZE = get_env_int("DB_POOL_MIN_SIZE", 0, minimum=0, maximum=DB_POOL_MAX_SIZE)
+DB_POOL_MAX_INACTIVE_CONNECTION_LIFETIME = get_env_int(
+    "DB_POOL_MAX_INACTIVE_CONNECTION_LIFETIME",
+    60,
+    minimum=10,
+)
+PREVIEW_CACHE_TTL_SECONDS = get_env_int("PREVIEW_CACHE_TTL_SECONDS", 15, minimum=1)
+AUTOCOMPLETE_CACHE_TTL_SECONDS = get_env_int("AUTOCOMPLETE_CACHE_TTL_SECONDS", 20, minimum=1)
+METADATA_CACHE_TTL_SECONDS = get_env_int("METADATA_CACHE_TTL_SECONDS", 300, minimum=1)
+CACHE_MAX_ENTRIES = get_env_int("CACHE_MAX_ENTRIES", 500, minimum=50)
+MAX_REQUEST_BODY_BYTES = get_env_int(
+    "BIDFINDER_MAX_REQUEST_BODY_BYTES",
+    2 * 1024 * 1024,
+    minimum=64 * 1024,
+    maximum=10 * 1024 * 1024,
+)
+MAX_BULK_QUERY_CHILD_QUERIES = get_env_int(
+    "BIDFINDER_MAX_BULK_QUERY_CHILD_QUERIES",
+    100,
+    minimum=1,
+    maximum=500,
+)
+MAX_BULK_QUERY_FIELDS = get_env_int(
+    "BIDFINDER_MAX_BULK_QUERY_FIELDS",
+    20,
+    minimum=1,
+    maximum=100,
+)
+STANDARD_QUERY_EXACT_COUNT_ENABLED = get_env_flag("STANDARD_QUERY_EXACT_COUNT_ENABLED", False)
+SERVER_ERROR_MESSAGE = "Hệ thống đang bận hoặc gặp lỗi nội bộ. Vui lòng thử lại sau."
+SEARCH_UNAVAILABLE_MESSAGE = "Dịch vụ tìm kiếm tạm thời không khả dụng. Vui lòng thử lại sau."
+DRUG_GROUP_UNKNOWN = "UNKNOWN"
+DRUG_GROUP_CANONICAL = ("BDG", "N1", "N2", "N3", "N4", "N5")
+DRUG_GROUP_UI_OPTIONS = [
+    {"value": "BDG", "label": "Biệt dược gốc"},
+    {"value": "N1", "label": "Nhóm 1"},
+    {"value": "N2", "label": "Nhóm 2"},
+    {"value": "N3", "label": "Nhóm 3"},
+    {"value": "N4", "label": "Nhóm 4"},
+    {"value": "N5", "label": "Nhóm 5"},
+    {"value": DRUG_GROUP_UNKNOWN, "label": "Chưa xác định được"},
+]
+APP_TIMEZONE_NAME = os.getenv("APP_TIMEZONE", "Asia/Ho_Chi_Minh").strip() or "Asia/Ho_Chi_Minh"
+try:
+    APP_TIMEZONE = ZoneInfo(APP_TIMEZONE_NAME)
+except ZoneInfoNotFoundError:
+    APP_TIMEZONE = ZoneInfo("UTC")
+try:
+    AI_USAGE_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
+except ZoneInfoNotFoundError:
+    AI_USAGE_TIMEZONE = timezone(timedelta(hours=7), "Asia/Ho_Chi_Minh")
+ANONYMOUS_FULL_QUERY_DAILY_LIMIT = max(
+    0,
+    get_env_int("ANONYMOUS_FULL_QUERY_DAILY_LIMIT", 3),
+)
+ANONYMOUS_FULL_QUERY_LIMIT_MESSAGE = (
+    f"Bạn đã dùng hết {ANONYMOUS_FULL_QUERY_DAILY_LIMIT} lượt tra cứu hôm nay. "
+    "Vui lòng đăng nhập để tiếp tục."
+)
+FULL_SEARCH_LIMIT_MESSAGE = (
+    f"Bạn đã dùng hết {FULL_SEARCH_DAILY_LIMIT} lượt full search hôm nay. "
+    "Vui lòng quay lại vào ngày mai."
+)
+
+
+# =========================
+# DATASETS / CTE
+# =========================
+
+DF1_CTE = """
+WITH df1_full AS (
+    SELECT
+        m.id AS "__row_id",
+        EXISTS (
+            SELECT 1
+            FROM processed_duplicate_flags f
+            WHERE f.dataset_scope = 'medicine'
+              AND f.processed_row_id = m.id
+        ) AS "__has_duplicate_warning",
+        'medicine' AS "_dataset",
+        m.ma_tbmt AS "Mã TBMT",
+        COALESCE(NULLIF(m.qd_display, ''), m.so_qd) AS "Quyết định phê duyệt",
+        m.version AS "Version",
+        m.ma_thuoc AS "Mã thuốc",
+        m.ten_thuoc AS "Tên thuốc",
+        m.ten_hoat_chat AS "Tên hoạt chất",
+        m.nong_do_ham_luong AS "Nồng độ, hàm lượng",
+        m.duong_dung AS "Đường dùng",
+        m.dang_bao_che AS "Dạng bào chế",
+        m.quy_cach AS "Quy cách",
+        m.nhom_thuoc AS "Nhóm thuốc",
+        COALESCE(m.nhom_thuoc_filter, ARRAY[]::TEXT[]) AS "__drug_group_filter",
+        m.han_dung AS "Hạn dùng",
+        m.so_dk_gpnk AS "GĐKLH hoặc GPNK",
+        m.co_so_san_xuat AS "Cơ sở sản xuất",
+        m.xuat_xu AS "Xuất xứ",
+        m.don_vi_tinh AS "Đơn vị tính",
+        m.so_luong AS "Số lượng",
+        m.don_gia_trung_thau AS "Đơn giá trúng thầu (VND)",
+        m.thanh_tien AS "Thành tiền (VND)",
+        m.nha_thau_trung_thau AS "Nhà thầu trúng thầu",
+        p.chu_dau_tu AS "Chủ đầu tư",
+        p.ngay_phe_duyet AS "Ngày phê duyệt",
+        COALESCE(
+            p.ngay_phe_duyet_date,
+            CASE
+                WHEN p.ngay_phe_duyet ~ '^\\d{2}/\\d{2}/\\d{4}$' THEN TO_DATE(p.ngay_phe_duyet, 'DD/MM/YYYY')
+                ELSE NULL
+            END
+        ) AS "__approval_date",
+        p.hinh_thuc_lcnt AS "Hình thức LCNT",
+        p.dia_diem AS "Địa điểm",
+        m.created_at AS "Ngày cập nhật DB",
+        TO_CHAR(p.ngay_het_hieu_luc, 'DD/MM/YYYY') AS "Ngày hết hiệu lực",
+        p.ngay_het_hieu_luc AS "__expiry_date",
+        COALESCE(
+            NULLIF(
+                CASE
+                    WHEN p.tinh_trang_hieu_luc = 'CÒN HIỆU LỰC' THEN 'Còn hiệu lực'
+                    WHEN p.tinh_trang_hieu_luc = 'HẾT HIỆU LỰC' THEN 'Hết hiệu lực'
+                    WHEN p.tinh_trang_hieu_luc = 'KHÔNG XÁC ĐỊNH' THEN 'Chưa xác định'
+                    ELSE p.tinh_trang_hieu_luc
+                END,
+                ''
+            ),
+            CASE
+                WHEN p.ngay_het_hieu_luc IS NULL THEN 'Chưa xác định'
+                WHEN p.ngay_het_hieu_luc >= CURRENT_DATE THEN 'Còn hiệu lực'
+                ELSE 'Hết hiệu lực'
+            END
+        ) AS "Tình trạng hiệu lực"
+    FROM processed_medicines m
+    LEFT JOIN package_metadata p
+        ON m.ma_tbmt = p.ma_tbmt
+       AND m.so_qd = p.so_qd
+       AND m.version = p.version
+)
+"""
+
+DF2_CTE = """
+WITH df2_full AS (
+    SELECT
+        g.id AS "__row_id",
+        EXISTS (
+            SELECT 1
+            FROM processed_duplicate_flags f
+            WHERE f.dataset_scope = 'goods'
+              AND f.processed_row_id = g.id
+        ) AS "__has_duplicate_warning",
+        'goods' AS "_dataset",
+        g.ma_tbmt AS "Mã TBMT",
+        COALESCE(NULLIF(g.qd_display, ''), g.so_qd) AS "Quyết định phê duyệt",
+        g.version AS "Version",
+        g.ma_phan_lo AS "Mã phần/lô",
+        g.ten_phan_lo AS "Tên phần/lô",
+        g.nha_thau_trung_thau AS "Nhà thầu trúng thầu",
+        g.danh_muc_hang_hoa AS "Danh mục hàng hóa",
+        g.ky_ma_hieu AS "Ký mã hiệu",
+        g.nhan_hieu AS "Nhãn hiệu",
+        g.hang_san_xuat AS "Hãng sản xuất",
+        g.mat_hang_du_thau AS "Mặt hàng dự thầu",
+        g.don_vi_tinh AS "Đơn vị tính",
+        g.khoi_luong AS "Khối lượng",
+        g.xuat_xu AS "Xuất xứ",
+        g.nam_san_xuat AS "Năm sản xuất",
+        g.tinh_nang_ky_thuat AS "Tính năng kỹ thuật",
+        g.don_gia_trung_thau AS "Đơn giá trúng thầu (VND)",
+        g.thanh_tien AS "Thành tiền (VND)",
+        p.chu_dau_tu AS "Chủ đầu tư",
+        p.ngay_phe_duyet AS "Ngày phê duyệt",
+        COALESCE(
+            p.ngay_phe_duyet_date,
+            CASE
+                WHEN p.ngay_phe_duyet ~ '^\\d{2}/\\d{2}/\\d{4}$' THEN TO_DATE(p.ngay_phe_duyet, 'DD/MM/YYYY')
+                ELSE NULL
+            END
+        ) AS "__approval_date",
+        p.hinh_thuc_lcnt AS "Hình thức LCNT",
+        p.dia_diem AS "Địa điểm",
+        g.created_at AS "Ngày cập nhật DB",
+        TO_CHAR(p.ngay_het_hieu_luc, 'DD/MM/YYYY') AS "Ngày hết hiệu lực",
+        p.ngay_het_hieu_luc AS "__expiry_date",
+        COALESCE(
+            NULLIF(
+                CASE
+                    WHEN p.tinh_trang_hieu_luc = 'CÒN HIỆU LỰC' THEN 'Còn hiệu lực'
+                    WHEN p.tinh_trang_hieu_luc = 'HẾT HIỆU LỰC' THEN 'Hết hiệu lực'
+                    WHEN p.tinh_trang_hieu_luc = 'KHÔNG XÁC ĐỊNH' THEN 'Chưa xác định'
+                    ELSE p.tinh_trang_hieu_luc
+                END,
+                ''
+            ),
+            CASE
+                WHEN p.ngay_het_hieu_luc IS NULL THEN 'Chưa xác định'
+                WHEN p.ngay_het_hieu_luc >= CURRENT_DATE THEN 'Còn hiệu lực'
+                ELSE 'Hết hiệu lực'
+            END
+        ) AS "Tình trạng hiệu lực",
+        (
+            COALESCE(g.ten_phan_lo, '') || ' | ' ||
+            COALESCE(g.danh_muc_hang_hoa, '') || ' | ' ||
+            COALESCE(g.ky_ma_hieu, '') || ' | ' ||
+            COALESCE(g.nhan_hieu, '') || ' | ' ||
+            COALESCE(g.mat_hang_du_thau, '') || ' | ' ||
+            COALESCE(g.tinh_nang_ky_thuat, '')
+        ) AS "Search blob"
+    FROM processed_goods g
+    LEFT JOIN package_metadata p
+        ON g.ma_tbmt = p.ma_tbmt
+       AND g.so_qd = p.so_qd
+       AND g.version = p.version
+)
+"""
+
+DF1_SEARCH_CTE = """
+WITH df1_search AS (
+    SELECT
+        m.id AS "__row_id",
+        m.ma_tbmt AS "Mã TBMT",
+        COALESCE(NULLIF(m.qd_display, ''), m.so_qd) AS "Quyết định phê duyệt",
+        m.version AS "Version",
+        m.ma_thuoc AS "Mã thuốc",
+        m.ten_thuoc AS "Tên thuốc",
+        m.ten_hoat_chat AS "Tên hoạt chất",
+        m.nong_do_ham_luong AS "Nồng độ, hàm lượng",
+        m.duong_dung AS "Đường dùng",
+        m.dang_bao_che AS "Dạng bào chế",
+        m.quy_cach AS "Quy cách",
+        m.nhom_thuoc AS "Nhóm thuốc",
+        COALESCE(m.nhom_thuoc_filter, ARRAY[]::TEXT[]) AS "__drug_group_filter",
+        m.so_dk_gpnk AS "GĐKLH hoặc GPNK",
+        m.co_so_san_xuat AS "Cơ sở sản xuất",
+        m.xuat_xu AS "Xuất xứ",
+        m.don_vi_tinh AS "Đơn vị tính",
+        m.so_luong AS "Số lượng",
+        m.don_gia_trung_thau AS "Đơn giá trúng thầu (VND)",
+        m.thanh_tien AS "Thành tiền (VND)",
+        m.nha_thau_trung_thau AS "Nhà thầu trúng thầu",
+        p.chu_dau_tu AS "Chủ đầu tư",
+        p.ngay_phe_duyet AS "Ngày phê duyệt",
+        COALESCE(
+            p.ngay_phe_duyet_date,
+            CASE
+                WHEN p.ngay_phe_duyet ~ '^\\d{2}/\\d{2}/\\d{4}$' THEN TO_DATE(p.ngay_phe_duyet, 'DD/MM/YYYY')
+                ELSE NULL
+            END
+        ) AS "__approval_date",
+        p.hinh_thuc_lcnt AS "Hình thức LCNT",
+        p.dia_diem AS "Địa điểm",
+        p.ngay_het_hieu_luc AS "__expiry_date",
+        COALESCE(
+            NULLIF(
+                CASE
+                    WHEN p.tinh_trang_hieu_luc = 'CÒN HIỆU LỰC' THEN 'Còn hiệu lực'
+                    WHEN p.tinh_trang_hieu_luc = 'HẾT HIỆU LỰC' THEN 'Hết hiệu lực'
+                    WHEN p.tinh_trang_hieu_luc = 'KHÔNG XÁC ĐỊNH' THEN 'Chưa xác định'
+                    ELSE p.tinh_trang_hieu_luc
+                END,
+                ''
+            ),
+            CASE
+                WHEN p.ngay_het_hieu_luc IS NULL THEN 'Chưa xác định'
+                WHEN p.ngay_het_hieu_luc >= CURRENT_DATE THEN 'Còn hiệu lực'
+                ELSE 'Hết hiệu lực'
+            END
+        ) AS "Tình trạng hiệu lực"
+    FROM processed_medicines m
+    LEFT JOIN package_metadata p
+        ON m.ma_tbmt = p.ma_tbmt
+       AND m.so_qd = p.so_qd
+       AND m.version = p.version
+)
+"""
+
+DF2_SEARCH_CTE = """
+WITH df2_search AS (
+    SELECT
+        g.id AS "__row_id",
+        g.ma_tbmt AS "Mã TBMT",
+        COALESCE(NULLIF(g.qd_display, ''), g.so_qd) AS "Quyết định phê duyệt",
+        g.version AS "Version",
+        g.ma_phan_lo AS "Mã phần/lô",
+        g.ten_phan_lo AS "Tên phần/lô",
+        g.nha_thau_trung_thau AS "Nhà thầu trúng thầu",
+        g.danh_muc_hang_hoa AS "Danh mục hàng hóa",
+        g.ky_ma_hieu AS "Ký mã hiệu",
+        g.nhan_hieu AS "Nhãn hiệu",
+        g.hang_san_xuat AS "Hãng sản xuất",
+        g.mat_hang_du_thau AS "Mặt hàng dự thầu",
+        g.don_vi_tinh AS "Đơn vị tính",
+        g.khoi_luong AS "Khối lượng",
+        g.xuat_xu AS "Xuất xứ",
+        g.nam_san_xuat AS "Năm sản xuất",
+        g.tinh_nang_ky_thuat AS "Tính năng kỹ thuật",
+        g.don_gia_trung_thau AS "Đơn giá trúng thầu (VND)",
+        g.thanh_tien AS "Thành tiền (VND)",
+        p.chu_dau_tu AS "Chủ đầu tư",
+        p.ngay_phe_duyet AS "Ngày phê duyệt",
+        COALESCE(
+            p.ngay_phe_duyet_date,
+            CASE
+                WHEN p.ngay_phe_duyet ~ '^\\d{2}/\\d{2}/\\d{4}$' THEN TO_DATE(p.ngay_phe_duyet, 'DD/MM/YYYY')
+                ELSE NULL
+            END
+        ) AS "__approval_date",
+        p.hinh_thuc_lcnt AS "Hình thức LCNT",
+        p.dia_diem AS "Địa điểm",
+        p.ngay_het_hieu_luc AS "__expiry_date",
+        COALESCE(
+            NULLIF(
+                CASE
+                    WHEN p.tinh_trang_hieu_luc = 'CÒN HIỆU LỰC' THEN 'Còn hiệu lực'
+                    WHEN p.tinh_trang_hieu_luc = 'HẾT HIỆU LỰC' THEN 'Hết hiệu lực'
+                    WHEN p.tinh_trang_hieu_luc = 'KHÔNG XÁC ĐỊNH' THEN 'Chưa xác định'
+                    ELSE p.tinh_trang_hieu_luc
+                END,
+                ''
+            ),
+            CASE
+                WHEN p.ngay_het_hieu_luc IS NULL THEN 'Chưa xác định'
+                WHEN p.ngay_het_hieu_luc >= CURRENT_DATE THEN 'Còn hiệu lực'
+                ELSE 'Hết hiệu lực'
+            END
+        ) AS "Tình trạng hiệu lực",
+        (
+            COALESCE(g.ten_phan_lo, '') || ' | ' ||
+            COALESCE(g.danh_muc_hang_hoa, '') || ' | ' ||
+            COALESCE(g.ky_ma_hieu, '') || ' | ' ||
+            COALESCE(g.nhan_hieu, '') || ' | ' ||
+            COALESCE(g.mat_hang_du_thau, '') || ' | ' ||
+            COALESCE(g.tinh_nang_ky_thuat, '')
+        ) AS "Search blob"
+    FROM processed_goods g
+    LEFT JOIN package_metadata p
+        ON g.ma_tbmt = p.ma_tbmt
+       AND g.so_qd = p.so_qd
+       AND g.version = p.version
+)
+"""
+
+DF1_PREVIEW_CTE = """
+WITH df1_preview AS (
+    SELECT
+        COALESCE(NULLIF(m.qd_display, ''), m.so_qd) AS "Quyết định phê duyệt",
+        m.ten_thuoc AS "Tên thuốc",
+        m.ten_hoat_chat AS "Tên hoạt chất",
+        m.nong_do_ham_luong AS "Nồng độ, hàm lượng",
+        m.duong_dung AS "Đường dùng",
+        m.dang_bao_che AS "Dạng bào chế",
+        m.quy_cach AS "Quy cách",
+        m.nhom_thuoc AS "Nhóm thuốc",
+        COALESCE(m.nhom_thuoc_filter, ARRAY[]::TEXT[]) AS "__drug_group_filter",
+        m.so_dk_gpnk AS "GĐKLH hoặc GPNK",
+        m.don_vi_tinh AS "Đơn vị tính",
+        m.co_so_san_xuat AS "Cơ sở sản xuất",
+        m.xuat_xu AS "Xuất xứ",
+        m.nha_thau_trung_thau AS "Nhà thầu trúng thầu",
+        p.chu_dau_tu AS "Chủ đầu tư",
+        p.ngay_phe_duyet AS "Ngày phê duyệt",
+        COALESCE(
+            p.ngay_phe_duyet_date,
+            CASE
+                WHEN p.ngay_phe_duyet ~ '^\\d{2}/\\d{2}/\\d{4}$' THEN TO_DATE(p.ngay_phe_duyet, 'DD/MM/YYYY')
+                ELSE NULL
+            END
+        ) AS "__approval_date",
+        p.hinh_thuc_lcnt AS "Hình thức LCNT",
+        p.dia_diem AS "Địa điểm",
+        COALESCE(
+            NULLIF(
+                CASE
+                    WHEN p.tinh_trang_hieu_luc = 'CÒN HIỆU LỰC' THEN 'Còn hiệu lực'
+                    WHEN p.tinh_trang_hieu_luc = 'HẾT HIỆU LỰC' THEN 'Hết hiệu lực'
+                    WHEN p.tinh_trang_hieu_luc = 'KHÔNG XÁC ĐỊNH' THEN 'Chưa xác định'
+                    ELSE p.tinh_trang_hieu_luc
+                END,
+                ''
+            ),
+            CASE
+                WHEN p.ngay_het_hieu_luc IS NULL THEN 'Chưa xác định'
+                WHEN p.ngay_het_hieu_luc >= CURRENT_DATE THEN 'Còn hiệu lực'
+                ELSE 'Hết hiệu lực'
+            END
+        ) AS "Tình trạng hiệu lực"
+    FROM processed_medicines m
+    LEFT JOIN package_metadata p
+        ON m.ma_tbmt = p.ma_tbmt
+       AND m.so_qd = p.so_qd
+       AND m.version = p.version
+)
+"""
+
+DF2_PREVIEW_CTE = """
+WITH df2_preview AS (
+    SELECT
+        COALESCE(NULLIF(g.qd_display, ''), g.so_qd) AS "Quyết định phê duyệt",
+        g.nha_thau_trung_thau AS "Nhà thầu trúng thầu",
+        g.don_vi_tinh AS "Đơn vị tính",
+        g.hang_san_xuat AS "Hãng sản xuất",
+        g.xuat_xu AS "Xuất xứ",
+        p.chu_dau_tu AS "Chủ đầu tư",
+        p.ngay_phe_duyet AS "Ngày phê duyệt",
+        COALESCE(
+            p.ngay_phe_duyet_date,
+            CASE
+                WHEN p.ngay_phe_duyet ~ '^\\d{2}/\\d{2}/\\d{4}$' THEN TO_DATE(p.ngay_phe_duyet, 'DD/MM/YYYY')
+                ELSE NULL
+            END
+        ) AS "__approval_date",
+        p.hinh_thuc_lcnt AS "Hình thức LCNT",
+        p.dia_diem AS "Địa điểm",
+        COALESCE(
+            NULLIF(
+                CASE
+                    WHEN p.tinh_trang_hieu_luc = 'CÒN HIỆU LỰC' THEN 'Còn hiệu lực'
+                    WHEN p.tinh_trang_hieu_luc = 'HẾT HIỆU LỰC' THEN 'Hết hiệu lực'
+                    WHEN p.tinh_trang_hieu_luc = 'KHÔNG XÁC ĐỊNH' THEN 'Chưa xác định'
+                    ELSE p.tinh_trang_hieu_luc
+                END,
+                ''
+            ),
+            CASE
+                WHEN p.ngay_het_hieu_luc IS NULL THEN 'Chưa xác định'
+                WHEN p.ngay_het_hieu_luc >= CURRENT_DATE THEN 'Còn hiệu lực'
+                ELSE 'Hết hiệu lực'
+            END
+        ) AS "Tình trạng hiệu lực",
+        (
+            COALESCE(g.ten_phan_lo, '') || ' | ' ||
+            COALESCE(g.danh_muc_hang_hoa, '') || ' | ' ||
+            COALESCE(g.ky_ma_hieu, '') || ' | ' ||
+            COALESCE(g.nhan_hieu, '') || ' | ' ||
+            COALESCE(g.mat_hang_du_thau, '') || ' | ' ||
+            COALESCE(g.tinh_nang_ky_thuat, '')
+        ) AS "Search blob"
+    FROM processed_goods g
+    LEFT JOIN package_metadata p
+        ON g.ma_tbmt = p.ma_tbmt
+       AND g.so_qd = p.so_qd
+       AND g.version = p.version
+)
+"""
+
+
+# =========================
+# MODELS
+# =========================
+
+class TokenFilterItem(BaseModel):
+    value: str
+    op: Literal["OR", "AND", "NOT"] = "OR"
+
+
+class TokenFilterGroup(BaseModel):
+    alternatives: List[str] = Field(default_factory=list)
+
+
+class TokenFilter(BaseModel):
+    tokens: List[TokenFilterItem] = Field(default_factory=list)
+    groups: List[TokenFilterGroup] = Field(default_factory=list)
+
+
+class FilterRequest(BaseModel):
+    investor: Optional[TokenFilter] = None
+    approvalDecision: Optional[TokenFilter] = None
+    winner: Optional[TokenFilter] = None
+    drugName: Optional[TokenFilter] = None
+    activeIngredient: Optional[TokenFilter] = None
+    concentration: Optional[TokenFilter] = None
+    route: Optional[TokenFilter] = None
+    dosageForm: Optional[TokenFilter] = None
+    specification: Optional[TokenFilter] = None
+    drugGroup: Optional[Any] = None
+    regNo: Optional[TokenFilter] = None
+    unit: Optional[TokenFilter] = None
+    manufacturer: Optional[TokenFilter] = None
+    country: Optional[TokenFilter] = None
+    goodsKeyword: Optional[TokenFilter] = None
+    crossGroupProductKeyword: Optional[TokenFilter] = None
+
+    selectionMethod: Optional[List[str]] = None
+    place: Optional[List[str]] = None
+    validity: Optional[str] = None
+    dateFrom: Optional[str] = None
+    dateTo: Optional[str] = None
+
+
+class SortRule(BaseModel):
+    column: str
+    order: Literal["asc", "desc"] = "desc"
+
+
+class QueryRequest(BaseModel):
+    scope: Literal["all", "medicine", "goods", "traditional"] = "all"
+    group: Optional[Literal["goods", "medicines", "traditional", "traditional_medicine"]] = None
+    sourceTypes: List[str] = Field(default_factory=list)
+    filters: Optional[FilterRequest] = None
+    text: str = ""
+    searchFields: List[str] = Field(default_factory=list)
+    structuredFilters: Dict[str, Any] = Field(default_factory=dict)
+    ranges: Dict[str, Any] = Field(default_factory=dict)
+    dateRanges: Dict[str, Any] = Field(default_factory=dict)
+    exactIdentifiers: Dict[str, Any] = Field(default_factory=dict)
+    sort: Optional[List[SortRule]] = None
+    limit: int = DEFAULT_QUERY_PAGE_SIZE
+    page: int = 1
+    searchMode: Literal["standard", "full"] = "standard"
+    queryMode: Literal["search", "exact"] = "search"
+    crossGroupSearch: bool = False
+    crossGroupSearchFields: List[str] = Field(default_factory=list)
+
+
+class QueryPreviewRequest(BaseModel):
+    scope: Literal["all", "medicine", "goods", "traditional"] = "all"
+    group: Optional[Literal["goods", "medicines", "traditional", "traditional_medicine"]] = None
+    sourceTypes: List[str] = Field(default_factory=list)
+    filters: Optional[FilterRequest] = None
+    text: str = ""
+    searchFields: List[str] = Field(default_factory=list)
+    structuredFilters: Dict[str, Any] = Field(default_factory=dict)
+    ranges: Dict[str, Any] = Field(default_factory=dict)
+    dateRanges: Dict[str, Any] = Field(default_factory=dict)
+    exactIdentifiers: Dict[str, Any] = Field(default_factory=dict)
+    crossGroupSearch: bool = False
+    crossGroupSearchFields: List[str] = Field(default_factory=list)
+
+
+class DashboardSelection(BaseModel):
+    product: Optional[str] = None
+    province: Optional[str] = None
+    investor: Optional[str] = None
+    bidder: Optional[str] = None
+
+
+class DashboardAnalyticsRequest(QueryPreviewRequest):
+    dashboardSelection: DashboardSelection = Field(default_factory=DashboardSelection)
+    # Kept separate from canonical backend filters. These are table-scoped
+    # exploratory filters and are applied only when the dashboard requests them.
+    columnFilters: Dict[str, Any] = Field(default_factory=dict)
+
+
+class BulkQueryRequest(BaseModel):
+    scope: Literal["medicine", "goods", "traditional"]
+    group: Optional[Literal["goods", "medicines", "traditional", "traditional_medicine"]] = None
+    sourceTypes: List[str] = Field(default_factory=list, max_length=7)
+    fields: List[str] = Field(default_factory=list, max_length=MAX_BULK_QUERY_FIELDS)
+    rows: List[Dict[str, Any]] = Field(default_factory=list, max_length=MAX_BULK_QUERY_CHILD_QUERIES)
+    filters: Dict[str, Any] = Field(default_factory=dict)
+    sort: List[SortRule] = Field(default_factory=list)
+    page: int = 1
+    diversityMode: Literal["price", "product"] = "price"
+    priceLimit: int = 3
+    productLimit: int = 3
+    limit: int = DEFAULT_QUERY_LIMIT
+    searchMode: Literal["standard", "full"] = "standard"
+
+
+class AutocompleteRequest(BaseModel):
+    scope: Optional[str] = "all"
+    group: Optional[Literal["goods", "medicines", "traditional", "traditional_medicine"]] = None
+    sourceTypes: List[str] = Field(default_factory=list)
+    searchFields: List[str] = Field(default_factory=list)
+    field: str
+    keyword: str
+    filters: Optional[Dict[str, Any]] = None
+    excludeSelf: Optional[bool] = True
+    limit: Optional[int] = 10
+
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    full_name: str
+    work_unit: Optional[str] = None
+    position: Optional[str] = None
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class GoogleLoginRequest(BaseModel):
+    credential: str
+
+
+class ProfileUpdateRequest(BaseModel):
+    full_name: Optional[str] = None
+    work_unit: Optional[str] = None
+    position: Optional[str] = None
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: Optional[str] = None
+    new_password: str
+
+
+class FeedbackAnswer(BaseModel):
+    question: str
+    answer: str
+
+
+class FeedbackRequest(BaseModel):
+    answers: List[FeedbackAnswer] = Field(default_factory=list)
+    task: Optional[str] = None
+    note: Optional[str] = None
+    context: Dict[str, Any] = Field(default_factory=dict)
+
+
+class FeedbackTopicCreateRequest(BaseModel):
+    title: str
+    body: str
+    category: Optional[str] = "idea"
+
+
+class FeedbackReplyCreateRequest(BaseModel):
+    body: str
+
+
+class FeedbackTopicUpdateRequest(BaseModel):
+    status: Literal["open", "planned", "in_progress", "resolved", "closed"]
+
+
+# =========================
+# FIELD REGISTRY
+# =========================
+
+FIELD_REGISTRY: Dict[str, Dict[str, Any]] = {
+    "investor": {
+        "type": "token",
+        "medicine_column": '"Chủ đầu tư"',
+        "goods_column": '"Chủ đầu tư"',
+        "autocomplete": True,
+    },
+        "approvalDecision": {
+        "type": "token",
+        "medicine_column": '"Quyết định phê duyệt"',
+        "goods_column": '"Quyết định phê duyệt"',
+        "autocomplete": True,
+    },
+    "selectionMethod": {
+        "type": "fixed_list",
+        "medicine_column": '"Hình thức LCNT"',
+        "goods_column": '"Hình thức LCNT"',
+    },
+    "place": {
+        "type": "fixed_list",
+        "medicine_column": '"Địa điểm"',
+        "goods_column": '"Địa điểm"',
+    },
+    "validity": {
+        "type": "fixed_single",
+        "medicine_column": '"Tình trạng hiệu lực"',
+        "goods_column": '"Tình trạng hiệu lực"',
+    },
+    "winner": {
+        "type": "token",
+        "medicine_column": '"Nhà thầu trúng thầu"',
+        "goods_column": '"Nhà thầu trúng thầu"',
+        "autocomplete": True,
+    },
+    "drugName": {
+        "type": "token",
+        "medicine_column": '"Tên thuốc"',
+        "goods_column": None,
+        "goods_blob_fallback": '"Search blob"',
+        "autocomplete": True,
+    },
+    "activeIngredient": {
+        "type": "token",
+        "medicine_column": '"Tên hoạt chất"',
+        "goods_column": None,
+        "goods_blob_fallback": '"Search blob"',
+        "autocomplete": True,
+    },
+    "concentration": {
+        "type": "token",
+        "medicine_column": '"Nồng độ, hàm lượng"',
+        "goods_column": None,
+        "goods_blob_fallback": '"Search blob"',
+        "autocomplete": True,
+    },
+    "route": {
+        "type": "token",
+        "medicine_column": '"Đường dùng"',
+        "goods_column": None,
+        "goods_blob_fallback": '"Search blob"',
+        "autocomplete": True,
+    },
+    "dosageForm": {
+        "type": "token",
+        "medicine_column": '"Dạng bào chế"',
+        "goods_column": None,
+        "goods_blob_fallback": '"Search blob"',
+        "autocomplete": True,
+    },
+    "specification": {
+        "type": "token",
+        "medicine_column": '"Quy cách"',
+        "goods_column": None,
+        "goods_blob_fallback": '"Search blob"',
+        "autocomplete": True,
+    },
+    "drugGroup": {
+        "type": "drug_group",
+        "medicine_column": '"Nhóm thuốc"',
+        "goods_column": None,
+        "goods_blob_fallback": '"Search blob"',
+        "options": DRUG_GROUP_UI_OPTIONS,
+    },
+    "regNo": {
+        "type": "token",
+        "medicine_column": '"GĐKLH hoặc GPNK"',
+        "goods_column": None,
+        "goods_blob_fallback": '"Search blob"',
+        "autocomplete": True,
+    },
+    "unit": {
+        "type": "token",
+        "medicine_column": '"Đơn vị tính"',
+        "goods_column": '"Đơn vị tính"',
+        "autocomplete": True,
+    },
+    "manufacturer": {
+        "type": "token",
+        "medicine_column": '"Cơ sở sản xuất"',
+        "goods_column": '"Hãng sản xuất"',
+        "autocomplete": True,
+    },
+    "country": {
+        "type": "token",
+        "medicine_column": '"Xuất xứ"',
+        "goods_column": '"Xuất xứ"',
+        "autocomplete": True,
+    }
+}
+
+
+BASE_SORT_MAP = {
+    "ma_tbmt": '"Mã TBMT"',
+    "investor": '"Chủ đầu tư"',
+    "approvalDecision": '"Quyết định phê duyệt"',
+    "approvalDate": '"__approval_date"',
+    "expiryDate": '"__expiry_date"',
+    "unit": '"Đơn vị tính"',
+    "unitPrice": '"Đơn giá trúng thầu (VND)"',
+    "amount": '"Thành tiền (VND)"',
+    "origin": '"Xuất xứ"',
+    "winner": '"Nhà thầu trúng thầu"',
+    "method": '"Hình thức LCNT"',
+    "place": '"Địa điểm"',
+    "validity": '"Tình trạng hiệu lực"',
+}
+
+ALLOWED_SORT_DF1 = {
+    **BASE_SORT_MAP,
+    "quantity": '"Số lượng"',
+    "drugName": '"Tên thuốc"',
+    "activeIngredient": '"Tên hoạt chất"',
+    "strength": '"Nồng độ, hàm lượng"',
+    "route": '"Đường dùng"',
+    "dosageForm": '"Dạng bào chế"',
+    "packaging": '"Quy cách"',
+    "drugGroup": '"Nhóm thuốc"',
+    "license": '"GĐKLH hoặc GPNK"',
+    "manufacturer": '"Cơ sở sản xuất"',
+}
+
+ALLOWED_SORT_DF2 = {
+    **BASE_SORT_MAP,
+    "quantity": '"Khối lượng"',
+    "lotName": '"Tên phần/lô"',
+    "drugName": '"Danh mục hàng hóa"',
+    "bidItem": '"Mặt hàng dự thầu"',
+    "brand": '"Nhãn hiệu"',
+    "model": '"Ký mã hiệu"',
+    "technicalSpec": '"Tính năng kỹ thuật"',
+    "manufacturer": '"Hãng sản xuất"',
+}
+
+BULK_SEARCH_FIELDS: Dict[str, Dict[str, str]] = {
+    "medicine": {
+        "drugName": '"Tên thuốc"',
+        "activeIngredient": '"Tên hoạt chất"',
+        "concentration": '"Nồng độ, hàm lượng"',
+        "route": '"Đường dùng"',
+        "dosageForm": '"Dạng bào chế"',
+        "drugGroup": '"Nhóm thuốc"',
+        "unit": '"Đơn vị tính"',
+        "regNo": '"GĐKLH hoặc GPNK"',
+        "specification": '"Quy cách"',
+        "manufacturer": '"Cơ sở sản xuất"',
+        "country": '"Xuất xứ"',
+    },
+    "goods": {
+        "lotName": '"Tên phần/lô"',
+        "goodsName": '"Danh mục hàng hóa"',
+        "technicalSpec": '"Tính năng kỹ thuật"',
+        "bidItem": '"Mặt hàng dự thầu"',
+        "model": '"Ký mã hiệu"',
+        "brand": '"Nhãn hiệu"',
+        "country": '"Xuất xứ"',
+        "manufacturer": '"Hãng sản xuất"',
+        "unit": '"Đơn vị tính"',
+    },
+}
+
+
+# =========================
+# DB HELPERS
+# =========================
+
+async def setup_connection(conn):
+    await conn.set_type_codec("json", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
+
+
+async def get_db_pool():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL is missing")
+    return await asyncpg.create_pool(
+        dsn=DATABASE_URL,
+        min_size=DB_POOL_MIN_SIZE,
+        max_size=DB_POOL_MAX_SIZE,
+        command_timeout=60,
+        max_inactive_connection_lifetime=DB_POOL_MAX_INACTIVE_CONNECTION_LIFETIME,
+        setup=setup_connection,
+        ssl=db_ssl_config,
+    )
+
+
+async def ensure_db_pool() -> asyncpg.Pool:
+    global db_pool
+
+    if db_pool is not None:
+        return db_pool
+
+    async with db_pool_lock:
+        if db_pool is None:
+            db_pool = await get_db_pool()
+
+    return db_pool
+
+
+async def _ai_usage_pool():
+    return await ensure_db_pool()
+
+
+ai_usage_store = AIUsageStore(_ai_usage_pool)
+
+
+def anonymous_access_allows(requirement: Literal["preview", "full_query", "autocomplete", "metadata"]) -> bool:
+    if requirement == "full_query":
+        return ANONYMOUS_ACCESS_LEVEL == "full"
+    if requirement == "autocomplete":
+        return ANONYMOUS_ACCESS_LEVEL in {"preview", "full"} and ANONYMOUS_AUTOCOMPLETE_ENABLED
+    if requirement == "metadata":
+        return ANONYMOUS_ACCESS_LEVEL in {"preview", "full"} and ANONYMOUS_METADATA_ENABLED
+    return ANONYMOUS_ACCESS_LEVEL in {"preview", "full"}
+
+
+@asynccontextmanager
+async def optional_db_connection(
+    request: Request,
+    requirement: Literal["preview", "full_query", "autocomplete", "metadata"],
+):
+    # History metadata reads its daily rollups from Postgres for every visitor.
+    if requirement != "metadata" and not extract_session_token(request) and anonymous_access_allows(requirement):
+        yield None
+        return
+    pool = await ensure_db_pool()
+    async with pool.acquire() as conn:
+        yield conn
+
+
+def clean_value(val):
+    if val is None:
+        return None
+    if isinstance(val, (int, float, str, bool)):
+        return val
+    if hasattr(val, "isoformat"):
+        return val.isoformat()
+    return str(val)
+
+
+def clean_records(records):
+    cleaned_records = []
+    for record in records:
+        normalized = {}
+        for key, value in dict(record).items():
+            if key in {"__price_rank", "__product_rank", "__product_row_rank", "__recency_bucket", "__drug_group_filter"}:
+                continue
+            normalized[key] = clean_value(value)
+        cleaned_records.append(normalized)
+    return cleaned_records
+
+
+def get_client_ip(request: Request) -> str:
+    peer_host = getattr(request.client, "host", "") or ""
+    try:
+        trusted_peer = ipaddress.ip_address(peer_host) in TRUSTED_PROXY_IPS
+    except ValueError:
+        trusted_peer = False
+
+    if TRUST_PROXY_HEADERS and trusted_peer:
+        forwarded_for = request.headers.get("x-forwarded-for", "").strip()
+        if forwarded_for:
+            return forwarded_for.split(",")[0].strip()
+
+        real_ip = request.headers.get("x-real-ip", "").strip()
+        if real_ip:
+            return real_ip
+
+    return getattr(request.client, "host", "") or "unknown"
+
+
+def get_rate_limit_client_key(request: Request, *, include_user_agent: bool = True) -> str:
+    client_ip = get_client_ip(request)
+    if not include_user_agent:
+        return client_ip
+    user_agent = request.headers.get("user-agent", "").strip().lower()
+    user_agent_hash = hashlib.sha256(user_agent.encode("utf-8")).hexdigest()[:16] if user_agent else "no-ua"
+    return f"{client_ip}:{user_agent_hash}"
+
+
+def get_usage_day_key() -> str:
+    return datetime.now(APP_TIMEZONE).date().isoformat()
+
+
+def _ai_usage_day_key() -> str:
+    return datetime.now(AI_USAGE_TIMEZONE).date().isoformat()
+
+
+def _ai_reset_at() -> str:
+    now = datetime.now(AI_USAGE_TIMEZONE)
+    return (now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).isoformat()
+
+
+def _ai_request_cookie(request: Request, name: str) -> str:
+    try:
+        return str((getattr(request, "cookies", {}) or {}).get(name) or "").strip()
+    except (AttributeError, TypeError):
+        return ""
+
+
+def _ai_session_token(request: Request) -> str:
+    try:
+        return extract_session_token(request) or ""
+    except (AttributeError, TypeError):
+        return ""
+
+
+def _is_valid_ai_anonymous_cookie(value: str) -> bool:
+    return 32 <= len(value) <= 128 and all(char.isalnum() or char in "-_" for char in value)
+
+
+async def resolve_ai_usage_identity(request: Request) -> tuple[str, bool, str | None]:
+    session_token = _ai_session_token(request)
+    if session_token:
+        try:
+            pool = await ensure_db_pool()
+            async with pool.acquire() as conn:
+                user = await get_authenticated_user(conn, session_token)
+            if user and user.get("id") is not None:
+                return f"user:{int(user['id'])}", True, None
+        except Exception:
+            logger.warning("ai_usage_identity category=auth_lookup_failed")
+
+    cookie_value = _ai_request_cookie(request, AI_ANONYMOUS_COOKIE_NAME)
+    new_cookie = None
+    if not _is_valid_ai_anonymous_cookie(cookie_value):
+        cookie_value = secrets.token_urlsafe(32)
+        new_cookie = cookie_value
+    identity_hash = hashlib.sha256(cookie_value.encode("utf-8")).hexdigest()
+    return f"anon:{identity_hash}", False, new_cookie
+
+
+def _ai_usage_budget(authenticated: bool) -> float:
+    return AI_DAILY_USAGE_BUDGET_AUTH if authenticated else AI_DAILY_USAGE_BUDGET_ANON
+
+
+class AIUsageStorageError(RuntimeError):
+    pass
+
+
+AI_USAGE_UNAVAILABLE_MESSAGE = "Hạn mức AI hiện không khả dụng. Vui lòng thử lại sau."
+
+
+async def _ai_usage_snapshot(identity_key: str, authenticated: bool):
+    try:
+        return await ai_usage_store.snapshot(
+            identity_key,
+            _ai_usage_day_key(),
+            _ai_usage_budget(authenticated),
+            _ai_reset_at(),
+        )
+    except Exception as exc:
+        log_server_exception("AI usage storage read failed", exc)
+        raise AIUsageStorageError from exc
+
+
+async def get_ai_usage_payload(identity_key: str, authenticated: bool, *, counted: bool = False) -> dict[str, Any]:
+    return snapshot_payload(await _ai_usage_snapshot(identity_key, authenticated), counted=counted)
+
+
+async def record_ai_provider_usage(
+    identity_key: str,
+    authenticated: bool,
+    provider_usage: Mapping[str, Any] | None,
+    *,
+    provider_invoked: bool,
+) -> dict[str, Any]:
+    usage_units = normalize_usage_units(
+        provider_usage,
+        input_weight=AI_USAGE_INPUT_WEIGHT,
+        cached_input_weight=AI_USAGE_CACHED_INPUT_WEIGHT,
+        output_weight=AI_USAGE_OUTPUT_WEIGHT,
+    )
+    if usage_units is None:
+        if provider_invoked:
+            logger.warning(
+                "ai_usage_accounting authenticated=%s category=missing_provider_usage",
+                authenticated,
+            )
+        return await get_ai_usage_payload(identity_key, authenticated)
+
+    try:
+        await ai_usage_store.add_units(identity_key, _ai_usage_day_key(), usage_units)
+        snapshot = await _ai_usage_snapshot(identity_key, authenticated)
+    except AIUsageStorageError:
+        raise
+    except Exception as exc:
+        log_server_exception("AI usage storage write failed", exc)
+        raise AIUsageStorageError from exc
+    logger.info(
+        "ai_usage_accounting authenticated=%s category=charged usage_units=%.3f used_percent=%s",
+        authenticated,
+        usage_units,
+        snapshot.used_percent,
+    )
+    return snapshot_payload(snapshot, counted=True)
+
+
+def _provider_usage_from(value: Any) -> Mapping[str, Any] | None:
+    usage = getattr(value, "_provider_usage", None)
+    if isinstance(usage, Mapping):
+        return usage
+    usage = getattr(value, "provider_usage", None)
+    return usage if isinstance(usage, Mapping) else None
+
+
+def _set_ai_anonymous_cookie(response: JSONResponse, request: Request, cookie_value: str | None) -> None:
+    if not cookie_value:
+        return
+    try:
+        scheme = str(getattr(getattr(request, "url", None), "scheme", "")).lower()
+        forwarded_scheme = str(request.headers.get("x-forwarded-proto", "")).lower()
+    except AttributeError:
+        scheme = forwarded_scheme = ""
+    response.set_cookie(
+        AI_ANONYMOUS_COOKIE_NAME,
+        cookie_value,
+        max_age=60 * 60 * 24 * 365,
+        httponly=True,
+        secure=scheme == "https" or forwarded_scheme == "https",
+        samesite="lax",
+        path="/",
+    )
+
+
+async def build_ai_error_response(
+    request: Request,
+    identity_key: str,
+    authenticated: bool,
+    cookie_value: str | None,
+    *,
+    category: str,
+    message: str,
+    status_code: int,
+    provider_usage: Mapping[str, Any] | None = None,
+    provider_invoked: bool = False,
+) -> JSONResponse:
+    usage = await record_ai_provider_usage(
+        identity_key,
+        authenticated,
+        provider_usage,
+        provider_invoked=provider_invoked,
+    )
+    response = JSONResponse(
+        status_code=status_code,
+        content={"success": False, "error": category, "message": message, "ai_usage": usage},
+    )
+    _set_ai_anonymous_cookie(response, request, cookie_value)
+    return response
+
+
+def prune_anonymous_full_query_usage(current_day: str) -> None:
+    expired_days = [day_key for day_key in list(anonymous_full_query_usage.keys()) if day_key != current_day]
+    for day_key in expired_days:
+        anonymous_full_query_usage.pop(day_key, None)
+
+
+async def get_anonymous_full_query_usage_snapshot(request: Request) -> Dict[str, int]:
+    if ANONYMOUS_FULL_QUERY_DAILY_LIMIT <= 0:
+        return {"used": 0, "remaining": 0, "limit": 0}
+
+    day_key = get_usage_day_key()
+    client_key = get_rate_limit_client_key(request)
+
+    async with anonymous_full_query_usage_lock:
+        prune_anonymous_full_query_usage(day_key)
+        used = int(anonymous_full_query_usage.get(day_key, {}).get(client_key, 0))
+
+    remaining = max(0, ANONYMOUS_FULL_QUERY_DAILY_LIMIT - used)
+    return {
+        "used": used,
+        "remaining": remaining,
+        "limit": ANONYMOUS_FULL_QUERY_DAILY_LIMIT,
+    }
+
+
+async def consume_anonymous_full_query_usage(request: Request) -> Dict[str, int]:
+    if ANONYMOUS_FULL_QUERY_DAILY_LIMIT <= 0:
+        return {"used": 0, "remaining": 0, "limit": 0}
+
+    day_key = get_usage_day_key()
+    client_key = get_rate_limit_client_key(request)
+
+    async with anonymous_full_query_usage_lock:
+        prune_anonymous_full_query_usage(day_key)
+        day_bucket = anonymous_full_query_usage.setdefault(day_key, {})
+        used = int(day_bucket.get(client_key, 0)) + 1
+        day_bucket[client_key] = used
+
+    remaining = max(0, ANONYMOUS_FULL_QUERY_DAILY_LIMIT - used)
+    return {
+        "used": used,
+        "remaining": remaining,
+        "limit": ANONYMOUS_FULL_QUERY_DAILY_LIMIT,
+    }
+
+
+def prune_full_search_usage(current_day: str) -> None:
+    expired_days = [day_key for day_key in list(full_search_usage.keys()) if day_key != current_day]
+    for day_key in expired_days:
+        full_search_usage.pop(day_key, None)
+
+
+def get_full_search_actor_key(request: Request, user: Optional[Dict[str, Any]]) -> str:
+    if user and user.get("id") is not None:
+        return f"user:{int(user['id'])}"
+    return f"client:{get_rate_limit_client_key(request)}"
+
+
+async def get_full_search_usage_snapshot(request: Request, user: Optional[Dict[str, Any]]) -> Dict[str, int]:
+    if FULL_SEARCH_DAILY_LIMIT <= 0:
+        return {"used": 0, "remaining": 0, "limit": 0}
+
+    day_key = get_usage_day_key()
+    actor_key = get_full_search_actor_key(request, user)
+
+    async with full_search_usage_lock:
+        prune_full_search_usage(day_key)
+        used = int(full_search_usage.get(day_key, {}).get(actor_key, 0))
+
+    remaining = max(0, FULL_SEARCH_DAILY_LIMIT - used)
+    return {
+        "used": used,
+        "remaining": remaining,
+        "limit": FULL_SEARCH_DAILY_LIMIT,
+    }
+
+
+async def consume_full_search_usage(request: Request, user: Optional[Dict[str, Any]]) -> Dict[str, int]:
+    if FULL_SEARCH_DAILY_LIMIT <= 0:
+        return {"used": 0, "remaining": 0, "limit": 0}
+
+    day_key = get_usage_day_key()
+    actor_key = get_full_search_actor_key(request, user)
+
+    async with full_search_usage_lock:
+        prune_full_search_usage(day_key)
+        day_bucket = full_search_usage.setdefault(day_key, {})
+        used = int(day_bucket.get(actor_key, 0)) + 1
+        day_bucket[actor_key] = used
+
+    remaining = max(0, FULL_SEARCH_DAILY_LIMIT - used)
+    return {
+        "used": used,
+        "remaining": remaining,
+        "limit": FULL_SEARCH_DAILY_LIMIT,
+    }
+
+
+async def build_full_search_quota_payload(
+    request: Optional[Request],
+    *,
+    user: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "full_search_enabled": True,
+        "full_search_daily_limit": FULL_SEARCH_DAILY_LIMIT,
+        "full_search_daily_used": 0,
+        "full_search_daily_remaining": FULL_SEARCH_DAILY_LIMIT,
+        "full_search_limit_message": FULL_SEARCH_LIMIT_MESSAGE,
+    }
+
+    if FULL_SEARCH_DAILY_LIMIT <= 0:
+        payload["full_search_daily_remaining"] = 0
+        payload["full_search_enabled"] = False
+        return payload
+
+    if request is None:
+        return payload
+
+    usage = await get_full_search_usage_snapshot(request, user)
+    payload.update({
+        "full_search_daily_used": usage["used"],
+        "full_search_daily_remaining": usage["remaining"],
+    })
+    return payload
+
+
+async def build_anonymous_full_query_quota_payload(
+    request: Optional[Request],
+    *,
+    is_authenticated: bool,
+) -> Dict[str, Any]:
+    enabled = ANONYMOUS_ACCESS_LEVEL == "full" and ANONYMOUS_FULL_QUERY_DAILY_LIMIT > 0
+    payload: Dict[str, Any] = {
+        "anonymous_full_query_daily_limit": ANONYMOUS_FULL_QUERY_DAILY_LIMIT,
+        "anonymous_full_query_daily_used": 0,
+        "anonymous_full_query_daily_remaining": ANONYMOUS_FULL_QUERY_DAILY_LIMIT,
+        "anonymous_full_query_login_required": False,
+        "anonymous_full_query_limit_message": ANONYMOUS_FULL_QUERY_LIMIT_MESSAGE,
+    }
+
+    if not enabled:
+        payload["anonymous_full_query_daily_remaining"] = 0
+        return payload
+
+    if is_authenticated:
+        return payload
+
+    if request is None:
+        return payload
+
+    usage = await get_anonymous_full_query_usage_snapshot(request)
+    payload.update({
+        "anonymous_full_query_daily_used": usage["used"],
+        "anonymous_full_query_daily_remaining": usage["remaining"],
+        "anonymous_full_query_login_required": usage["remaining"] <= 0,
+    })
+    return payload
+
+
+def log_server_exception(context: str, exc: Exception) -> None:
+    logger.exception("%s: %s", context, exc)
+
+
+def internal_error_response(message: str = SERVER_ERROR_MESSAGE) -> JSONResponse:
+    return validation_error_response(message, status_code=500)
+
+
+async def enforce_rate_limit(
+    request: Request,
+    bucket_name: str,
+    limit: int,
+    *,
+    include_user_agent: bool = True,
+) -> Optional[JSONResponse]:
+    cache_key = f"{bucket_name}:{get_rate_limit_client_key(request, include_user_agent=include_user_agent)}"
+    now = time.time()
+    cutoff = now - RATE_LIMIT_WINDOW_SECONDS
+
+    async with rate_limit_lock:
+        bucket = rate_limit_buckets[cache_key]
+        while bucket and bucket[0] <= cutoff:
+            bucket.popleft()
+
+        if len(bucket) >= limit:
+            retry_after = max(1, int(RATE_LIMIT_WINDOW_SECONDS - (now - bucket[0])))
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "success": False,
+                    "error": "Too many requests",
+                    "message": f"Bạn đang gửi quá nhiều request tới {bucket_name}. Vui lòng thử lại sau.",
+                    "retry_after_seconds": retry_after,
+                },
+                headers={"Retry-After": str(retry_after)},
+            )
+
+        bucket.append(now)
+
+    return None
+
+
+def normalize_ws(value: Any) -> str:
+    return " ".join(str(value or "").split())
+
+def extract_goods_snippet(text: str, keyword: str, max_len: int = 100) -> str:
+    raw = normalize_ws(text)
+    if not raw:
+        return ""
+
+    parts = [normalize_ws(p) for p in raw.split("|") if normalize_ws(p)]
+    kw = normalize_ws(keyword).lower()
+
+    best_part = ""
+    for part in parts:
+        if kw and kw in part.lower():
+            best_part = part
+            break
+
+    if not best_part:
+        best_part = parts[0] if parts else raw
+
+    if len(best_part) <= max_len:
+        return best_part
+
+    idx = best_part.lower().find(kw) if kw else -1
+    if idx < 0:
+        return best_part[:max_len].rstrip() + "…"
+
+    start = max(0, idx - 30)
+    end = min(len(best_part), idx + len(keyword) + 40)
+    snippet = best_part[start:end].strip()
+
+    if start > 0:
+        snippet = "…" + snippet
+    if end < len(best_part):
+        snippet = snippet + "…"
+
+    return snippet[:max_len]
+
+
+def next_param(params: List[Any], value: Any) -> str:
+    params.append(value)
+    return f"${len(params)}"
+
+
+def build_token_condition(column: str, token_filter: TokenFilter, params: List[Any]) -> Optional[str]:
+    if not token_filter or (not token_filter.tokens and not token_filter.groups):
+        return None
+
+    and_parts = []
+    or_parts = []
+    not_parts = []
+
+    for item in token_filter.tokens:
+        value = (item.value or "").strip()
+        if not value:
+            continue
+
+        p = next_param(params, f"%{value}%")
+        expr = f"{column} ILIKE {p}"
+
+        if item.op == "NOT":
+            not_parts.append(f"{column} NOT ILIKE {p}")
+        elif item.op == "AND":
+            and_parts.append(expr)
+        else:
+            or_parts.append(expr)
+
+    clauses = []
+    if and_parts:
+        clauses.append("(" + " AND ".join(and_parts) + ")")
+    if or_parts:
+        clauses.append("(" + " OR ".join(or_parts) + ")")
+    clauses.extend(not_parts)
+
+    for group in token_filter.groups:
+        alternatives = []
+        for value in group.alternatives:
+            value = (value or "").strip()
+            if not value:
+                continue
+            p = next_param(params, f"%{value}%")
+            alternatives.append(f"{column} ILIKE {p}")
+        if alternatives:
+            clauses.append("(" + " OR ".join(alternatives) + ")")
+
+    return " AND ".join(clauses) if clauses else None
+
+
+def normalize_drug_group_filter_values(value: Any) -> List[str]:
+    raw_values: List[str] = []
+    if isinstance(value, list):
+        raw_values = value
+    elif isinstance(value, dict) and isinstance(value.get("tokens"), list):
+        raw_values = [item.get("value", "") for item in value["tokens"] if isinstance(item, dict)]
+    elif isinstance(value, TokenFilter):
+        raw_values = [item.value for item in value.tokens]
+
+    normalized: List[str] = []
+    labels = {
+        "BIET DUOC GOC": "BDG",
+        "BIỆT DƯỢC GỐC": "BDG",
+        "NHOM 1": "N1",
+        "NHÓM 1": "N1",
+        "NHOM 2": "N2",
+        "NHÓM 2": "N2",
+        "NHOM 3": "N3",
+        "NHÓM 3": "N3",
+        "NHOM 4": "N4",
+        "NHÓM 4": "N4",
+        "NHOM 5": "N5",
+        "NHÓM 5": "N5",
+        "KHONG XAC DINH": DRUG_GROUP_UNKNOWN,
+        "KHÔNG XÁC ĐỊNH": DRUG_GROUP_UNKNOWN,
+        "CHUA XAC DINH DUOC": DRUG_GROUP_UNKNOWN,
+        "CHƯA XÁC ĐỊNH ĐƯỢC": DRUG_GROUP_UNKNOWN,
+    }
+    allowed = set(DRUG_GROUP_CANONICAL) | {DRUG_GROUP_UNKNOWN}
+
+    for item in raw_values:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        upper = " ".join(text.upper().split())
+        value = labels.get(upper, upper)
+        if value in allowed and value not in normalized:
+            normalized.append(value)
+    return normalized
+
+
+def build_medicine_drug_group_condition(value: Any, params: List[Any]) -> Optional[str]:
+    selected = normalize_drug_group_filter_values(value)
+    canonical = [item for item in selected if item in DRUG_GROUP_CANONICAL]
+    include_unknown = DRUG_GROUP_UNKNOWN in selected
+    clauses = []
+
+    if canonical:
+        p = next_param(params, canonical)
+        clauses.append(f'"__drug_group_filter" && {p}::TEXT[]')
+
+    if include_unknown:
+        p = next_param(params, list(DRUG_GROUP_CANONICAL))
+        clauses.append(f'NOT ("__drug_group_filter" && {p}::TEXT[])')
+
+    if not clauses:
+        return None
+    return "(" + " OR ".join(clauses) + ")"
+
+
+def build_goods_drug_group_condition(blob_col: str, value: Any, params: List[Any]) -> Optional[str]:
+    selected = normalize_drug_group_filter_values(value)
+    canonical = [item for item in selected if item in DRUG_GROUP_CANONICAL]
+    if not canonical:
+        return "FALSE" if DRUG_GROUP_UNKNOWN in selected else None
+
+    pattern_map = {
+        "BDG": ["%BDG%", "%BGD%", "% BD %", "%Biệt dược%", "%Biet duoc%", "%G2%"],
+        "N1": ["%N1%", "%N 1%", "%G1N1%", "%G1 N1%", "%G1 Nhóm 1%"],
+        "N2": ["%N2%", "%N 2%", "%G1N2%", "%G1 N2%", "%G1 Nhóm 2%"],
+        "N3": ["%N3%", "%N 3%", "%G1N3%", "%G1 N3%", "%G1 Nhóm 3%"],
+        "N4": ["%N4%", "%N 4%", "%G1N4%", "%G1 N4%", "%G1 Nhóm 4%"],
+        "N5": ["%N5%", "%N 5%", "%G1N5%", "%G1 N5%", "%G1 Nhóm 5%"],
+    }
+    parts = []
+    for item in canonical:
+        item_parts = []
+        for pattern in pattern_map[item]:
+            p = next_param(params, pattern)
+            item_parts.append(f"{blob_col} ILIKE {p}")
+        if item.startswith("N"):
+            number = item[1]
+            p = next_param(
+                params,
+                rf"(nhóm|nhom)\s*([1-5]\s*[,;/]\s*)*{number}(\s*[,;/]\s*[1-5])*([^0-9]|$)",
+            )
+            item_parts.append(f"{blob_col} ~* {p}")
+        parts.append("(" + " OR ".join(item_parts) + ")")
+    return "(" + " OR ".join(parts) + ")"
+
+
+def get_column_for_scope(field_name: str, scope_name: str) -> Optional[str]:
+    conf = FIELD_REGISTRY.get(field_name)
+    if not conf:
+        return None
+    return conf.get("medicine_column") if scope_name == "medicine" else conf.get("goods_column")
+
+
+def get_blob_fallback_for_scope(field_name: str, scope_name: str) -> Optional[str]:
+    conf = FIELD_REGISTRY.get(field_name)
+    if not conf:
+        return None
+    if scope_name == "goods":
+        return conf.get("goods_blob_fallback")
+    return None
+
+
+def build_scope_filters(scope_name: str, filters: Optional[FilterRequest], params: List[Any], exclude_field: Optional[str] = None) -> List[str]:
+    if not filters:
+        return []
+
+    conditions = []
+
+    for field_name, conf in FIELD_REGISTRY.items():
+        if field_name == exclude_field:
+            continue
+
+        field_value = getattr(filters, field_name, None)
+        if field_value is None:
+            continue
+
+        field_type = conf["type"]
+        column = get_column_for_scope(field_name, scope_name)
+
+        if field_type == "drug_group":
+            if scope_name == "medicine":
+                cond = build_medicine_drug_group_condition(field_value, params)
+            else:
+                blob_col = get_blob_fallback_for_scope(field_name, scope_name)
+                cond = build_goods_drug_group_condition(blob_col, field_value, params) if blob_col else None
+            if cond:
+                conditions.append(cond)
+
+        elif field_type == "token":
+            if column:
+                cond = build_token_condition(column, field_value, params)
+                if cond:
+                    conditions.append(cond)
+            else:
+                blob_col = get_blob_fallback_for_scope(field_name, scope_name)
+                if blob_col and field_value:
+                    cond = build_token_condition(blob_col, field_value, params)
+                    if cond:
+                        conditions.append(cond)
+
+        elif field_type == "fixed_list" and isinstance(field_value, list) and field_value and column:
+            p = next_param(params, field_value)
+            conditions.append(f"{column} = ANY({p}::text[])")
+
+        elif field_type == "fixed_single" and isinstance(field_value, str) and field_value.strip() and column:
+            p = next_param(params, field_value.strip())
+            conditions.append(f"{column} = {p}")
+
+    if filters.dateFrom:
+        p = next_param(params, filters.dateFrom)
+        conditions.append(f'"__approval_date" >= TO_DATE({p}, \'YYYY-MM-DD\')')
+
+    if filters.dateTo:
+        p = next_param(params, filters.dateTo)
+        conditions.append(f'"__approval_date" <= TO_DATE({p}, \'YYYY-MM-DD\')')
+
+    return conditions
+
+
+def build_sort_order_parts(scope_name: str, sort_rules: List[SortRule]) -> List[str]:
+    sort_map = ALLOWED_SORT_DF1 if scope_name == "medicine" else ALLOWED_SORT_DF2
+    order_parts = []
+    for rule in sort_rules or []:
+        if rule.column in sort_map:
+            order_parts.append(f"{sort_map[rule.column]} {'DESC' if rule.order == 'desc' else 'ASC'}")
+
+    if order_parts:
+        return order_parts
+
+    return ['"__approval_date" DESC NULLS LAST', '"Mã TBMT" ASC']
+
+
+def prefix_sort_order_parts(order_parts: List[str], table_alias: str) -> List[str]:
+    prefixed = []
+    prefix = f'{table_alias}.'
+    for part in order_parts:
+        prefixed.append(part.replace('"', prefix + '"', 1) if part.startswith('"') else part)
+    return prefixed
+
+
+def build_result_query(
+    scope_name: str,
+    filters: Optional[FilterRequest],
+    sort_rules: List[SortRule],
+    limit: int,
+    include_overflow_probe: bool = False,
+    *,
+    diversify_prices: bool = False,
+):
+    params: List[Any] = []
+    search_cte, search_table_name = get_scope_query_parts(scope_name, variant="search")
+    full_cte, full_table_name = get_scope_query_parts(scope_name, variant="full")
+    conditions = build_scope_filters(scope_name, filters, params)
+    where_clause = ""
+    if conditions:
+        where_clause = " WHERE " + " AND ".join(conditions)
+
+    order_parts = build_sort_order_parts(scope_name, sort_rules)
+    order_clause = ", ".join(order_parts)
+    selected_order_clause = ", ".join(prefix_sort_order_parts(order_parts, "selected_rows"))
+    effective_limit = int(limit) + (1 if include_overflow_probe else 0)
+
+    full_cte_body = full_cte.lstrip().removeprefix("WITH ")
+
+    query = f"""
+    {search_cte},
+    selected_rows AS MATERIALIZED (
+        SELECT *
+        FROM {search_table_name}
+        {where_clause}
+        ORDER BY {order_clause}
+        LIMIT {effective_limit}
+    ),
+    {full_cte_body}
+    SELECT full_rows.*
+    FROM {full_table_name} full_rows
+    JOIN selected_rows
+      ON full_rows."__row_id" = selected_rows."__row_id"
+    ORDER BY {selected_order_clause}
+    """
+
+    return query, params
+
+
+def build_bulk_item_query(
+    scope_name: str,
+    selected_fields: List[str],
+    row_values: Dict[str, Any],
+    diversity_mode: str,
+    price_limit: int,
+    product_limit: int,
+    row_index: int,
+    include_overflow_probe: bool = False,
+):
+    params: List[Any] = []
+    cte, table_name = get_scope_query_parts(scope_name, variant="full")
+    field_map = BULK_SEARCH_FIELDS[scope_name]
+    conditions: List[str] = []
+    label_parts: List[str] = []
+
+    for field_name in selected_fields:
+        if field_name not in field_map:
+            continue
+        raw_value = str(row_values.get(field_name) or "").strip()
+        if not raw_value:
+            continue
+
+        label_parts.append(raw_value)
+        if scope_name == "medicine" and field_name == "drugGroup":
+            cond = build_medicine_drug_group_condition([raw_value], params)
+        else:
+            token_filter = TokenFilter(tokens=[TokenFilterItem(value=raw_value)])
+            cond = build_token_condition(field_map[field_name], token_filter, params)
+        if cond:
+            conditions.append(cond)
+
+    if not conditions:
+        return None, []
+
+    where_clause = " WHERE " + " AND ".join(conditions)
+    safe_price_limit = max(1, min(int(price_limit), 10))
+    safe_product_limit = max(1, min(int(product_limit), 10))
+    effective_price_limit = safe_price_limit + (1 if include_overflow_probe else 0)
+    effective_product_limit = safe_product_limit + (1 if include_overflow_probe else 0)
+    product_partition_column = '"Tên thuốc"' if scope_name == "medicine" else '"Search blob"'
+    if diversity_mode == "product":
+        query = f"""
+        {cte}
+        SELECT *
+        FROM (
+            SELECT
+                ranked_base.*,
+                ROW_NUMBER() OVER (
+                    PARTITION BY LOWER(COALESCE(ranked_base.{product_partition_column}, ''))
+                    ORDER BY ranked_base."__approval_date" DESC NULLS LAST, ranked_base."Đơn giá trúng thầu (VND)" ASC NULLS LAST, ranked_base."Mã TBMT" ASC
+                ) AS "__product_row_rank",
+                DENSE_RANK() OVER (
+                    ORDER BY LOWER(COALESCE(ranked_base.{product_partition_column}, '')), ranked_base."Mã TBMT" ASC
+                ) AS "__product_rank"
+            FROM {table_name} ranked_base
+            {where_clause}
+              AND ranked_base."Đơn giá trúng thầu (VND)" IS NOT NULL
+        ) ranked
+        WHERE "__product_rank" <= {effective_product_limit}
+          AND "__product_row_rank" = 1
+        ORDER BY "__product_rank" ASC, "__approval_date" DESC NULLS LAST, "Đơn giá trúng thầu (VND)" ASC, "Mã TBMT" ASC
+        LIMIT {effective_product_limit}
+        """
+        return query, params
+
+    query = f"""
+    {cte}
+    SELECT *
+    FROM (
+        SELECT
+            ranked_base.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY ranked_base."Đơn giá trúng thầu (VND)"
+                ORDER BY ranked_base."__approval_date" DESC NULLS LAST, ranked_base."Mã TBMT" ASC
+            ) AS "__price_rank"
+        FROM {table_name} ranked_base
+        {where_clause}
+          AND ranked_base."Đơn giá trúng thầu (VND)" IS NOT NULL
+    ) ranked
+    WHERE "__price_rank" = 1
+    ORDER BY "__approval_date" DESC NULLS LAST, "Đơn giá trúng thầu (VND)" ASC, "Mã TBMT" ASC
+    LIMIT {effective_price_limit}
+    """
+    return query, params
+
+
+def build_bulk_item_count_query(
+    scope_name: str,
+    selected_fields: List[str],
+    row_values: Dict[str, Any],
+    diversity_mode: str,
+    price_limit: int,
+    product_limit: int,
+    row_index: int,
+):
+    query, params = build_bulk_item_query(
+        scope_name,
+        selected_fields,
+        row_values,
+        diversity_mode,
+        price_limit,
+        product_limit,
+        row_index,
+    )
+    if not query:
+        return None, []
+
+    return f"SELECT COUNT(*) AS total_count FROM ({query}) bulk_counted", params
+
+
+def build_total_count_query(scope_name: str, filters: Optional[FilterRequest]):
+    params: List[Any] = []
+    cte, table_name = get_scope_query_parts(scope_name, variant="search")
+    query = f"{cte} SELECT COUNT(*) AS total_count FROM {table_name}"
+    conditions = build_scope_filters(scope_name, filters, params)
+
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+
+    return query, params
+
+
+def allocate_probe_full_search_limits(*, scope: str, total_limit: int) -> Dict[str, int]:
+    safe_total_limit = max(1, int(total_limit))
+
+    if scope == "medicine":
+        return {"medicine": safe_total_limit}
+    if scope == "goods":
+        return {"goods": safe_total_limit}
+
+    medicine_limit = max(1, safe_total_limit // 2)
+    return {
+        "medicine": medicine_limit,
+        "goods": safe_total_limit - medicine_limit,
+    }
+
+
+def get_scope_query_parts(scope_name: str, variant: Literal["full", "preview", "search"] = "full"):
+    query_map = {
+        "medicine": {
+            "full": (DF1_CTE, "df1_full"),
+            "preview": (DF1_PREVIEW_CTE, "df1_preview"),
+            "search": (DF1_SEARCH_CTE, "df1_search"),
+        },
+        "goods": {
+            "full": (DF2_CTE, "df2_full"),
+            "preview": (DF2_PREVIEW_CTE, "df2_preview"),
+            "search": (DF2_SEARCH_CTE, "df2_search"),
+        },
+    }
+    return query_map[scope_name][variant]
+
+
+def build_preview_query(scope_name: str, filters: Optional[FilterRequest], bucket_limit: int):
+    params: List[Any] = []
+    cte, table_name = get_scope_query_parts(scope_name, variant="preview")
+
+    query = f"{cte} SELECT 1 FROM {table_name}"
+    conditions = build_scope_filters(scope_name, filters, params)
+
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+
+    query += f" LIMIT {int(bucket_limit) + 1}"
+    return query, params
+
+
+def to_cache_data(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if hasattr(value, "model_dump"):
+        return to_cache_data(value.model_dump(exclude_none=True))
+    if isinstance(value, dict):
+        return {str(k): to_cache_data(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [to_cache_data(item) for item in value]
+    return str(value)
+
+
+def make_cache_key(prefix: str, payload: Dict[str, Any]) -> str:
+    serialized = json.dumps(to_cache_data(payload), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return f"{prefix}:{serialized}"
+
+
+def build_count_meta(count: int, exact: bool) -> Dict[str, Any]:
+    safe_count = max(0, int(count))
+    return {
+        "count": safe_count,
+        "exact": bool(exact),
+        "label": str(safe_count) if exact else f"{safe_count}+",
+        "summary": str(safe_count) if exact else f"hơn {safe_count}",
+    }
+
+
+def combine_count_meta(items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    total_count = sum(int(item.get("count") or 0) for item in items)
+    total_exact = all(bool(item.get("exact")) for item in items) if items else True
+    return build_count_meta(total_count, total_exact)
+
+
+def combine_preview_count_meta(items: List[Dict[str, Any]], bucket_limit: int) -> Dict[str, Any]:
+    safe_limit = max(1, int(bucket_limit))
+    total_count = sum(int(item.get("count") or 0) for item in items)
+    total_exact = all(bool(item.get("exact")) for item in items) if items else True
+
+    if total_exact and total_count <= safe_limit:
+        return build_count_meta(total_count, exact=True)
+
+    return build_count_meta(safe_limit, exact=False)
+
+
+async def get_cached_payload(cache: Dict[str, Dict[str, Any]], key: str) -> Optional[Any]:
+    now = time.monotonic()
+    async with cache_lock:
+        entry = cache.get(key)
+        if not entry:
+            return None
+        if entry["expires_at"] <= now:
+            cache.pop(key, None)
+            return None
+        return copy.deepcopy(entry["value"])
+
+
+async def set_cached_payload(cache: Dict[str, Dict[str, Any]], key: str, value: Any, ttl_seconds: int) -> None:
+    now = time.monotonic()
+    expires_at = now + max(1, int(ttl_seconds))
+    payload = copy.deepcopy(value)
+
+    async with cache_lock:
+        expired_keys = [cache_key for cache_key, entry in cache.items() if entry["expires_at"] <= now]
+        for cache_key in expired_keys:
+            cache.pop(cache_key, None)
+
+        if len(cache) >= CACHE_MAX_ENTRIES and cache:
+            oldest_key = min(cache.items(), key=lambda item: item[1]["expires_at"])[0]
+            cache.pop(oldest_key, None)
+
+        cache[key] = {
+            "expires_at": expires_at,
+            "value": payload,
+        }
+
+
+def build_autocomplete_query(req: AutocompleteRequest, scope_name: str):
+    conf = FIELD_REGISTRY.get(req.field)
+    if not conf or not conf.get("autocomplete"):
+        return None, None
+
+    column = get_column_for_scope(req.field, scope_name)
+    if not column:
+        return None, None
+
+    cte, table_name = get_scope_query_parts(scope_name, variant="preview")
+
+    params: List[Any] = []
+    conditions = build_scope_filters(
+        scope_name=scope_name,
+        filters=req.filters,
+        params=params,
+        exclude_field=req.field if req.excludeSelf else None
+    )
+
+    keyword = (req.keyword or "").strip()
+    if keyword:
+        p = next_param(params, f"%{keyword}%")
+        conditions.append(f"{column} ILIKE {p}")
+
+    conditions.append(f"{column} IS NOT NULL")
+    conditions.append(f"TRIM({column}) <> ''")
+
+    q = f"""
+    {cte}
+    SELECT DISTINCT {column} AS suggestion
+    FROM {table_name}
+    WHERE {" AND ".join(conditions)}
+    ORDER BY suggestion
+    LIMIT {int(req.limit)}
+    """
+    return q, params
+
+
+async def fetch_autocomplete_suggestions(conn, req: AutocompleteRequest, scope_name: str) -> List[str]:
+    conf = FIELD_REGISTRY.get(req.field)
+    if not conf or not conf.get("autocomplete"):
+        return []
+
+    keyword = (req.keyword or "").strip()
+    if not keyword:
+        return []
+
+    cache_key = make_cache_key(
+        "autocomplete",
+        {
+            "scope": scope_name,
+            "field": req.field,
+            "keyword": keyword.lower(),
+            "filters": req.filters,
+            "exclude_self": bool(req.excludeSelf),
+            "limit": int(req.limit or 10),
+        },
+    )
+    cached = await get_cached_payload(autocomplete_cache, cache_key)
+    if cached is not None:
+        return cached
+
+    params: List[Any] = []
+    cte, table_name = get_scope_query_parts(scope_name, variant="preview")
+
+    conditions = build_scope_filters(
+        scope_name=scope_name,
+        filters=req.filters,
+        params=params,
+        exclude_field=req.field if req.excludeSelf else None,
+    )
+
+    seen = set()
+    results: List[str] = []
+    candidate_limit = max(30, int(req.limit or 10) * 8)
+    blob_candidate_limit = max(60, int(req.limit or 10) * 10)
+
+    def push(val: Any):
+        text = normalize_ws(val)
+        if not text:
+            return
+        key = text.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        results.append(text)
+
+    if scope_name == "medicine":
+        med_col = conf.get("medicine_column")
+        if med_col:
+            p = next_param(params, f"%{keyword}%")
+            q = f"""
+            {cte}
+            SELECT {med_col} AS suggestion
+            FROM {table_name}
+            WHERE {" AND ".join(conditions + [f"{med_col} IS NOT NULL", f"TRIM({med_col}) <> ''", f"{med_col} ILIKE {p}"])}
+            LIMIT {candidate_limit}
+            """
+            rows = await conn.fetch(q, *params)
+            for row in rows:
+                push(row["suggestion"])
+                if len(results) >= int(req.limit or 10):
+                    await set_cached_payload(autocomplete_cache, cache_key, results, AUTOCOMPLETE_CACHE_TTL_SECONDS)
+                    return results
+
+    if scope_name == "goods":
+        goods_col = conf.get("goods_column")
+        blob_col = conf.get("goods_blob_fallback")
+
+        if goods_col:
+            params_goods = list(params)
+            p = next_param(params_goods, f"%{keyword}%")
+            q = f"""
+            {cte}
+            SELECT {goods_col} AS suggestion
+            FROM {table_name}
+            WHERE {" AND ".join(conditions + [f"{goods_col} IS NOT NULL", f"TRIM({goods_col}) <> ''", f"{goods_col} ILIKE {p}"])}
+            LIMIT {candidate_limit}
+            """
+            rows = await conn.fetch(q, *params_goods)
+            for row in rows:
+                push(row["suggestion"])
+                if len(results) >= int(req.limit or 10):
+                    await set_cached_payload(autocomplete_cache, cache_key, results, AUTOCOMPLETE_CACHE_TTL_SECONDS)
+                    return results
+
+        if blob_col:
+            params_blob = list(params)
+            p = next_param(params_blob, f"%{keyword}%")
+            q = f"""
+            {cte}
+            SELECT {blob_col} AS suggestion
+            FROM {table_name}
+            WHERE {" AND ".join(conditions + [f"{blob_col} IS NOT NULL", f"TRIM({blob_col}) <> ''", f"{blob_col} ILIKE {p}"])}
+            LIMIT {blob_candidate_limit}
+            """
+            rows = await conn.fetch(q, *params_blob)
+            for row in rows:
+                push(extract_goods_snippet(row["suggestion"], keyword))
+                if len(results) >= int(req.limit or 10):
+                    await set_cached_payload(autocomplete_cache, cache_key, results, AUTOCOMPLETE_CACHE_TTL_SECONDS)
+                    return results
+
+    await set_cached_payload(autocomplete_cache, cache_key, results, AUTOCOMPLETE_CACHE_TTL_SECONDS)
+    return results
+
+
+async def fetch_preview_bucket(conn: asyncpg.Connection, scope_name: str, filters: Optional[FilterRequest], bucket_limit: int) -> Dict[str, Any]:
+    query, params = build_preview_query(scope_name, filters, bucket_limit)
+    rows = await conn.fetch(query, *params)
+    exact = len(rows) <= bucket_limit
+    count = len(rows) if exact else bucket_limit
+    return build_count_meta(count, exact)
+
+
+async def fetch_preview_bucket_cached(
+    conn: asyncpg.Connection,
+    scope_name: str,
+    filters: Optional[FilterRequest],
+    bucket_limit: int,
+) -> Dict[str, Any]:
+    cache_key = make_cache_key(
+        "preview",
+        {
+            "scope": scope_name,
+            "filters": filters,
+            "bucket_limit": int(bucket_limit),
+        },
+    )
+    cached = await get_cached_payload(preview_cache, cache_key)
+    if cached is not None:
+        return cached
+
+    preview = await fetch_preview_bucket(conn, scope_name, filters, bucket_limit)
+    await set_cached_payload(preview_cache, cache_key, preview, PREVIEW_CACHE_TTL_SECONDS)
+    return preview
+
+
+async def fetch_combined_preview_meta(
+    conn: asyncpg.Connection,
+    filters: Optional[FilterRequest],
+    bucket_limit: int,
+) -> Dict[str, Any]:
+    medicine_preview = await fetch_preview_bucket_cached(conn, "medicine", filters, bucket_limit)
+    if not medicine_preview.get("exact"):
+        return build_count_meta(bucket_limit, exact=False)
+
+    remaining_probe = max(0, int(bucket_limit) - int(medicine_preview.get("count") or 0))
+    goods_bucket_limit = max(1, remaining_probe)
+    goods_preview = await fetch_preview_bucket_cached(conn, "goods", filters, goods_bucket_limit)
+
+    total_count = int(medicine_preview.get("count") or 0) + int(goods_preview.get("count") or 0)
+    if not goods_preview.get("exact") or total_count > bucket_limit:
+        return build_count_meta(bucket_limit, exact=False)
+
+    return build_count_meta(total_count, exact=True)
+
+
+async def fetch_result_page(
+    conn: asyncpg.Connection,
+    scope_name: str,
+    filters: Optional[FilterRequest],
+    sort_rules: List[SortRule],
+    limit: int,
+    *,
+    diversify_prices: bool = False,
+    exact_count_enabled: bool = False,
+) -> Dict[str, Any]:
+    query, params = build_result_query(
+        scope_name=scope_name,
+        filters=filters,
+        sort_rules=sort_rules,
+        limit=limit,
+        include_overflow_probe=True,
+        diversify_prices=diversify_prices,
+    )
+    rows = await conn.fetch(query, *params)
+    has_more = len(rows) > limit
+    visible_rows = rows[:limit]
+
+    if has_more and exact_count_enabled:
+        count_query, count_params = build_total_count_query(scope_name, filters)
+        total_count = int(await conn.fetchval(count_query, *count_params) or 0)
+        count_meta = build_count_meta(total_count, exact=True)
+    elif has_more:
+        count_meta = build_count_meta(limit, exact=False)
+    else:
+        count_meta = build_count_meta(len(visible_rows), exact=True)
+
+    return {
+        "data": clean_records(visible_rows),
+        "count": int(count_meta["count"]),
+        "count_exact": bool(count_meta["exact"]),
+        "count_label": count_meta["label"],
+        "count_summary": count_meta["summary"],
+        "displayed": len(visible_rows),
+        "has_more": has_more,
+        "approx_total": None if count_meta["exact"] else int(count_meta["count"]),
+    }
+
+
+async def _fetch_primary_canonical_page(conn: asyncpg.Connection, query, *, exact_count_enabled: bool = False) -> Dict[str, Any]:
+    query_group = normalize_group(query.group)
+    if query_group == "traditional_medicine":
+        raise TypesenseShadowError(
+            "Postgres fallback does not cover the traditional procurement group",
+            QUERY_CONTRACT_FAILURE,
+        )
+    if (
+        query.source_types
+        or query.text
+        or query.search_fields
+        or query.structured_filters
+        or query.ranges
+        or query.date_ranges
+        or query.exact_identifiers
+    ):
+        raise TypesenseShadowError(
+            "Postgres fallback cannot satisfy the complete canonical query contract",
+            QUERY_CONTRACT_FAILURE,
+        )
+    scope_name = "medicine" if query_group == "medicines" else "goods"
+    filters = FilterRequest(**query.filters)
+    sort_rules = [SortRule(column=rule.field, order=rule.order) for rule in query.sort]
+    return await fetch_result_page(
+        conn,
+        scope_name,
+        filters,
+        sort_rules,
+        query.limit,
+        exact_count_enabled=exact_count_enabled,
+    )
+
+
+postgres_search_repository = PostgresSearchRepository(_fetch_primary_canonical_page)
+typesense_search_repository = TypesenseSearchRepository()
+PROCUREMENT_FALLBACK_EVENT = "DEGRADED_POSTGRES_FALLBACK"
+
+
+def procurement_backend_config():
+    """Read centralized backend switch without scattering environment checks."""
+
+    return get_procurement_backend_config()
+
+
+def record_procurement_fallback(endpoint: str, group: str, reason: str) -> None:
+    logger.warning(
+        "%s endpoint=%s group=%s reason=%s coverage=legacy_postgres_subset",
+        PROCUREMENT_FALLBACK_EVENT,
+        endpoint,
+        group,
+        reason,
+    )
+
+
+async def fetch_backend_page(
+    conn: asyncpg.Connection | None,
+    query,
+    *,
+    exact_count_enabled: bool = False,
+) -> Dict[str, Any]:
+    config = procurement_backend_config()
+    if not config.typesense_primary:
+        page = await postgres_search_repository.search(conn, query, exact_count_enabled=exact_count_enabled)
+        return cap_standard_query_page(page, query)
+    try:
+        can_use_document_lookup = bool(query.exact_identifiers) and not any((
+            query.source_types,
+            query.text,
+            query.search_fields,
+            query.filters,
+            query.structured_filters,
+            query.ranges,
+            query.date_ranges,
+        ))
+        result = (
+            await typesense_search_repository.exact_lookup(query)
+            if can_use_document_lookup
+            else await typesense_search_repository.search(query)
+        )
+        return cap_standard_query_page(result.to_api_page(), query)
+    except TypesenseShadowError as exc:
+        if not (config.fallback_enabled and exc.code == SHADOW_INFRA_ERROR):
+            raise
+        try:
+            if conn is not None:
+                page = await asyncio.wait_for(
+                    postgres_search_repository.search(conn, query, exact_count_enabled=exact_count_enabled),
+                    timeout=config.fallback_timeout_seconds,
+                )
+            elif not isinstance(postgres_search_repository, PostgresSearchRepository):
+                # Preserve lightweight adapter tests that provide their own repository.
+                page = await asyncio.wait_for(
+                    postgres_search_repository.search(None, query, exact_count_enabled=exact_count_enabled),
+                    timeout=config.fallback_timeout_seconds,
+                )
+            else:
+                pool = await ensure_db_pool()
+                async with pool.acquire() as fallback_conn:
+                    page = await asyncio.wait_for(
+                        postgres_search_repository.search(fallback_conn, query, exact_count_enabled=exact_count_enabled),
+                        timeout=config.fallback_timeout_seconds,
+                    )
+        except Exception as fallback_exc:
+            # The legacy SQL path cannot represent the complete Typesense
+            # contract. Preserve that diagnostic in logs and return a truthful
+            # transient-unavailable response instead of a misleading 500.
+            log_server_exception("Typesense fallback failed", fallback_exc)
+            raise HTTPException(status_code=503, detail=SEARCH_UNAVAILABLE_MESSAGE) from exc
+        record_procurement_fallback(query.endpoint, query.group, "typesense_infrastructure")
+        page["backend_fallback"] = {
+            "event": PROCUREMENT_FALLBACK_EVENT,
+            "from": "typesense",
+            "to": "postgres",
+            "reason": "typesense_infrastructure",
+            "classification": SHADOW_INFRA_ERROR,
+        }
+        return cap_standard_query_page(page, query)
+
+
+def _query_groups(payload: QueryRequest) -> list[str]:
+    if payload.group:
+        return [payload.group]
+    if payload.scope == "medicine":
+        return ["medicines"]
+    if payload.scope == "goods":
+        return ["goods"]
+    if payload.scope == "traditional":
+        return ["traditional"]
+    return ["medicines", "goods", "traditional"]
+
+
+def cap_standard_query_page(page: Mapping[str, Any], query) -> Dict[str, Any]:
+    """Keep standard pagination inside the 1,000-row result window."""
+    if getattr(query, "search_mode", "standard") != "standard":
+        return dict(page)
+
+    page_size = max(1, int(query.limit or 1))
+    page_number = max(1, int(query.page or 1))
+    offset = (page_number - 1) * page_size
+    remaining = max(0, DEFAULT_QUERY_LIMIT - offset)
+    visible = list(page.get("data") or [])[:remaining]
+    capped = dict(page)
+    capped["data"] = visible
+    capped["displayed"] = len(visible)
+    capped["has_more"] = bool(page.get("has_more")) and offset + len(visible) < DEFAULT_QUERY_LIMIT
+    return capped
+
+
+def page_bounded_working_set(
+    page: Mapping[str, Any],
+    *,
+    page_number: int,
+    page_size: int,
+    working_set_limit: int,
+) -> Dict[str, Any]:
+    """Expose one page while retaining the bounded ordered result set for UI filters."""
+
+    working_set = [dict(row) for row in list(page.get("data") or [])[:working_set_limit]]
+    safe_page = max(1, int(page_number or 1))
+    safe_size = max(1, min(int(page_size or DEFAULT_QUERY_PAGE_SIZE), MAX_QUERY_PAGE_SIZE))
+    offset = (safe_page - 1) * safe_size
+    visible = working_set[offset:offset + safe_size]
+    bounded = dict(page)
+    bounded.update({
+        "data": visible,
+        "displayed": len(visible),
+        "has_more": offset + len(visible) < len(working_set),
+        "page": safe_page,
+        "limit": safe_size,
+        "working_set": working_set,
+        "working_set_count": len(working_set),
+        "working_set_limit": int(working_set_limit),
+        "working_set_truncated": bool(page.get("has_more")) or int(page.get("count") or 0) > len(working_set),
+    })
+    return bounded
+
+
+async def query_typesense_primary(request: Request, payload: QueryRequest) -> JSONResponse:
+    """Serve complete canonical groups when Phase 4C switch is explicitly enabled."""
+
+    filters = payload.filters or FilterRequest()
+    sort_rules = payload.sort or []
+    search_mode = payload.searchMode if payload.searchMode in {"standard", "full"} else "standard"
+    page_size = max(1, min(int(payload.limit or DEFAULT_QUERY_PAGE_SIZE), MAX_QUERY_PAGE_SIZE))
+    working_limit = MAX_QUERY_LIMIT if search_mode == "full" else DEFAULT_QUERY_LIMIT
+    groups = _query_groups(payload)
+    result: Dict[str, Any] = {
+        "success": True,
+        "search_mode": search_mode,
+        "backend": "typesense",
+        "diversify_prices": False,
+        "applied_limit_per_scope": working_limit,
+        "applied_total_limit": working_limit * len(groups),
+        "page_size": page_size,
+    }
+    count_parts: list[dict[str, Any]] = []
+    async with optional_db_connection(request, "full_query") as conn:
+        user = await enforce_data_access_policy(conn, request, "full_query")
+        if user is None and ANONYMOUS_ACCESS_LEVEL == "full" and ANONYMOUS_FULL_QUERY_DAILY_LIMIT > 0:
+            quota = await get_anonymous_full_query_usage_snapshot(request)
+            if quota["remaining"] <= 0:
+                raise HTTPException(status_code=401, detail=ANONYMOUS_FULL_QUERY_LIMIT_MESSAGE)
+        if search_mode == "full":
+            quota = await get_full_search_usage_snapshot(request, user)
+            if quota["remaining"] <= 0:
+                raise HTTPException(status_code=429, detail=FULL_SEARCH_LIMIT_MESSAGE)
+        for group in groups:
+            query = build_canonical_query(
+                group,
+                filters,
+                sort_rules,
+                working_limit,
+                page=1,
+                search_mode=search_mode,
+                source_types=payload.sourceTypes,
+                text=payload.text,
+                search_fields=payload.searchFields,
+                structured_filters=payload.structuredFilters,
+                ranges=payload.ranges,
+                date_ranges=payload.dateRanges,
+                exact_identifiers=payload.exactIdentifiers,
+                query_mode=payload.queryMode,
+                cross_group_search=payload.crossGroupSearch,
+                cross_group_search_fields=payload.crossGroupSearchFields,
+            )
+            page = await fetch_backend_page(conn, query, exact_count_enabled=False)
+            page = page_bounded_working_set(
+                page,
+                page_number=payload.page,
+                page_size=page_size,
+                working_set_limit=working_limit,
+            )
+            key = {"medicines": "df1", "goods": "df2", "traditional_medicine": "df3"}[query.group]
+            result[key] = page
+            count_parts.append({"count": page["count"], "exact": page["count_exact"]})
+        if user is None and ANONYMOUS_ACCESS_LEVEL == "full" and ANONYMOUS_FULL_QUERY_DAILY_LIMIT > 0:
+            quota = await consume_anonymous_full_query_usage(request)
+            result["anonymous_full_query_daily_used"] = quota["used"]
+            result["anonymous_full_query_daily_remaining"] = quota["remaining"]
+        if search_mode == "full":
+            quota = await consume_full_search_usage(request, user)
+            result["full_search_daily_used"] = quota["used"]
+            result["full_search_daily_remaining"] = quota["remaining"]
+        result["auth"] = await build_auth_config(request, user=user)
+    combined = combine_count_meta(count_parts)
+    result.update({
+        "total_count": int(combined["count"]),
+        "total_count_exact": bool(combined["exact"]),
+        "total_count_label": combined["label"],
+        "total_count_summary": combined["summary"],
+    })
+    return JSONResponse(content=result)
+
+
+async def autocomplete_typesense_primary(request: Request, payload: AutocompleteRequest) -> JSONResponse:
+    keyword = (payload.keyword or "").strip()
+    limit = max(1, min(int(payload.limit or 10), 20))
+    if not keyword:
+        return JSONResponse(content={"success": True, "field": payload.field, "data": [], "backend": "typesense"})
+    group_names = [payload.group] if payload.group else (
+        ["medicines"] if payload.scope == "medicine" else
+        ["goods"] if payload.scope == "goods" else
+        ["traditional"] if payload.scope == "traditional" else
+        ["medicines", "goods", "traditional"]
+    )
+    filters = payload.filters if isinstance(payload.filters, dict) else {}
+    filters_obj = FilterRequest(**filters)
+    values: list[str] = []
+    seen: set[str] = set()
+    fallback_used = False
+    typesense_latency_ms = 0.0
+
+    def push(value: Any) -> None:
+        text = normalize_ws(value)
+        if text and text.casefold() not in seen:
+            seen.add(text.casefold())
+            values.append(text)
+
+    push(keyword)
+    async with optional_db_connection(request, "autocomplete") as conn:
+        user = await enforce_data_access_policy(conn, request, "autocomplete")
+        for group in group_names:
+            query = AutocompleteQuery(
+                group=group,
+                field=payload.field,
+                keyword=keyword,
+                filters=filters_obj.model_dump(exclude_none=True),
+                limit=limit,
+                source_types=tuple(payload.sourceTypes),
+                search_fields=tuple(payload.searchFields),
+            )
+            try:
+                started = time.perf_counter()
+                suggestions = await typesense_search_repository.suggest(query)
+                typesense_latency_ms += (time.perf_counter() - started) * 1000
+            except TypesenseShadowError as exc:
+                config = procurement_backend_config()
+                if not (config.fallback_enabled and exc.code == SHADOW_INFRA_ERROR):
+                    raise
+                group_key = normalize_group(group)
+                if group_key == "traditional_medicine":
+                    raise
+                legacy_scope = "medicine" if group_key == "medicines" else "goods"
+                record_procurement_fallback("/api/autocomplete", group, "typesense_infrastructure")
+                fallback_used = True
+                typesense_latency_ms = 0.0
+                fallback_request = AutocompleteRequest(
+                    scope=legacy_scope, field=payload.field, keyword=keyword, filters=filters,
+                    limit=limit,
+                )
+                if conn is not None:
+                    suggestions = await asyncio.wait_for(
+                        fetch_autocomplete_suggestions(conn, fallback_request, legacy_scope),
+                        timeout=config.fallback_timeout_seconds,
+                    )
+                else:
+                    pool = await ensure_db_pool()
+                    async with pool.acquire() as fallback_conn:
+                        suggestions = await asyncio.wait_for(
+                            fetch_autocomplete_suggestions(fallback_conn, fallback_request, legacy_scope),
+                            timeout=config.fallback_timeout_seconds,
+                        )
+            for suggestion in suggestions:
+                push(suggestion)
+            if len(values) >= limit:
+                break
+        auth = await build_auth_config(request, user=user)
+    return JSONResponse(content={
+        "success": True,
+        "field": payload.field,
+        "data": values[:limit],
+        "backend": "postgres" if fallback_used else "typesense",
+        "backend_fallback": {"event": PROCUREMENT_FALLBACK_EVENT, "from": "typesense", "to": "postgres"} if fallback_used else None,
+        "typesense_latency_ms": round(typesense_latency_ms, 3) if not fallback_used else None,
+        "auth": auth,
+    })
+
+
+async def preview_typesense_primary(request: Request, payload: QueryPreviewRequest) -> JSONResponse:
+    groups = [payload.group] if payload.group else (
+        ["medicines"] if payload.scope == "medicine" else
+        ["goods"] if payload.scope == "goods" else
+        ["traditional"] if payload.scope == "traditional" else
+        ["medicines", "goods", "traditional"]
+    )
+    filters = payload.filters or FilterRequest()
+    pages: dict[str, dict[str, Any]] = {}
+    async with optional_db_connection(request, "preview") as conn:
+        user = await enforce_data_access_policy(conn, request, "preview")
+        for group in groups:
+            query = build_canonical_query(
+                group,
+                filters,
+                limit=PREVIEW_BUCKET_LIMIT,
+                page=1,
+                endpoint="/api/query-preview",
+                source_types=payload.sourceTypes,
+                text=payload.text,
+                search_fields=payload.searchFields,
+                structured_filters=payload.structuredFilters,
+                ranges=payload.ranges,
+                date_ranges=payload.dateRanges,
+                exact_identifiers=payload.exactIdentifiers,
+                cross_group_search=payload.crossGroupSearch,
+                cross_group_search_fields=payload.crossGroupSearchFields,
+            )
+            pages[query.group] = await fetch_backend_page(conn, query)
+        auth = await build_auth_config(request, user=user)
+    combined = combine_count_meta([
+        {"count": page["count"], "exact": page["count_exact"]}
+        for page in pages.values()
+    ])
+    result: dict[str, Any] = {
+        "success": True,
+        "backend": "typesense",
+        "total": int(combined["count"]),
+        "exact": bool(combined["exact"]),
+        "display": combined["label"],
+        "summary": combined["summary"],
+        "total_estimate": combined,
+        "is_estimated": not bool(combined["exact"]),
+        "bucket_limit": PREVIEW_BUCKET_LIMIT,
+        "auth": auth,
+    }
+    if "medicines" in pages:
+        result["df1"] = pages["medicines"]
+        result["medicine_estimate"] = pages["medicines"]
+    if "goods" in pages:
+        result["df2"] = pages["goods"]
+        result["goods_estimate"] = pages["goods"]
+    if "traditional_medicine" in pages:
+        result["df3"] = pages["traditional_medicine"]
+        result["traditional_estimate"] = pages["traditional_medicine"]
+    return JSONResponse(content=result)
+
+
+async def bulk_typesense_primary(request: Request, payload: BulkQueryRequest) -> JSONResponse:
+    group = payload.group or {"medicine": "medicines", "goods": "goods", "traditional": "traditional"}[payload.scope]
+    contract_fields = {field["name"] for field in get_typesense_search_contract()["groups"]["traditional" if group == "traditional_medicine" else group]["fields"]}
+    legacy_fields = set(BULK_SEARCH_FIELDS.get(payload.scope, {}))
+    selected_fields = [field for field in payload.fields if field in contract_fields or field in legacy_fields]
+    if not selected_fields:
+        raise HTTPException(status_code=422, detail="At least one supported search field is required")
+    rows = [row for row in payload.rows if isinstance(row, dict)]
+    if not rows:
+        raise HTTPException(status_code=422, detail="At least one bulk query row is required")
+    diversity_mode = payload.diversityMode if payload.diversityMode in {"price", "product"} else "price"
+    child_limit = max(1, min(int(payload.productLimit if diversity_mode == "product" else payload.priceLimit), 10))
+    result_limit = max(1, min(int(payload.limit or BULK_EXPORT_QUERY_LIMIT), BULK_EXPORT_QUERY_LIMIT))
+    result_rows: list[dict[str, Any]] = []
+    matched_input_count = 0
+    child_errors: list[dict[str, Any]] = []
+    truncated = False
+    async with optional_db_connection(request, "full_query") as conn:
+        user = await enforce_data_access_policy(conn, request, "full_query")
+        # ponytail: sequential child work caps bulk concurrency at 1; add workers only with measured need.
+        for index, row in enumerate(rows, start=1):
+            if len(result_rows) >= result_limit:
+                truncated = True
+                break
+            child_group = row.get("group", group)
+            child_source_types = row.get("sourceTypes", payload.sourceTypes)
+            try:
+                query = build_bulk_canonical_query(
+                    child_group,
+                    selected_fields,
+                    row,
+                    limit=child_limit,
+                    source_types=child_source_types,
+                    sort=payload.sort,
+                    page=payload.page,
+                )
+                if payload.filters:
+                    query = build_canonical_query(
+                        query.group,
+                        query.filters,
+                        payload.sort,
+                        child_limit,
+                        page=payload.page,
+                        source_types=child_source_types,
+                        structured_filters=payload.filters,
+                        endpoint="/api/bulk-query",
+                    )
+                page = await fetch_backend_page(conn, query)
+            except (ValueError, TypesenseShadowError) as exc:
+                child_errors.append({"index": index, "classification": "QUERY_CONTRACT_FAILURE" if isinstance(exc, ValueError) or getattr(exc, "code", "") != SHADOW_INFRA_ERROR else SHADOW_INFRA_ERROR})
+                continue
+            visible = page["data"][:child_limit]
+            if visible:
+                matched_input_count += 1
+            label = " | ".join(str(row.get(field) or "").strip() for field in selected_fields if str(row.get(field) or "").strip())
+            for item in visible:
+                if len(result_rows) >= result_limit:
+                    truncated = True
+                    break
+                item = dict(item)
+                item["Bulk query"] = index
+                item["Bulk query row"] = label
+                result_rows.append(item)
+            if page.get("has_more"):
+                truncated = True
+        auth = await build_auth_config(request, user=user)
+    count_meta = build_count_meta(result_limit if truncated else len(result_rows), exact=not truncated)
+    scope_key = "medicine" if group == "medicines" else "goods" if group == "goods" else "traditional"
+    empty = {"data": [], "count": 0, "count_exact": True, "count_label": "0", "count_summary": "0", "displayed": 0, "has_more": False, "approx_total": None}
+    populated = {"data": result_rows, "count": count_meta["count"], "count_exact": count_meta["exact"], "count_label": count_meta["label"], "count_summary": count_meta["summary"], "displayed": len(result_rows), "has_more": truncated, "approx_total": None, "backend": "typesense"}
+    return JSONResponse(content={
+        "success": True,
+        "search_mode": "bulk",
+        "backend": "typesense",
+        "bulk": {"scope": scope_key, "search_mode": "bulk", "diversity_mode": diversity_mode, "input_count": len(rows), "matched_count": count_meta["count"], "matched_input_count": matched_input_count, "fields": selected_fields, "result_limit": result_limit, "truncated": truncated, "child_errors": child_errors},
+        "total_count": count_meta["count"], "total_count_exact": count_meta["exact"], "total_count_label": count_meta["label"], "total_count_summary": count_meta["summary"], "applied_total_limit": result_limit,
+        "df1": populated if group == "medicines" else empty,
+        "df2": populated if group == "goods" else empty,
+        "df3": populated if group in {"traditional", "traditional_medicine"} else empty,
+        "auth": auth,
+    })
+
+
+# =========================
+# APP
+# =========================
+
+RUNTIME_GROUPS = ("goods", "medicines", "traditional_medicine")
+
+
+def _typesense_json(path: str) -> Dict[str, Any]:
+    config = typesense_search_repository.config
+    if not config.api_key:
+        raise RuntimeError("Typesense API key is not configured")
+    request = URLRequest(
+        f"{config.base_url}{path}",
+        method="GET",
+        headers={"Accept": "application/json", "X-TYPESENSE-API-KEY": config.api_key},
+    )
+    with urlopen(request, timeout=max(1.0, float(config.timeout_seconds))) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Typesense returned a non-object response")
+    return payload
+
+
+ingredient_lookup_store = IngredientLookupStore()
+
+
+def _ingredient_documents(collection: str):
+    config = typesense_search_repository.config
+    if not config.api_key:
+        raise RuntimeError("Typesense API key is not configured")
+    request = URLRequest(
+        f"{config.base_url}/collections/{quote(collection, safe='')}/documents/export",
+        method="GET",
+        headers={"X-TYPESENSE-API-KEY": config.api_key},
+    )
+    with urlopen(request, timeout=60) as response:
+        for line in response:
+            if line.strip():
+                yield json.loads(line)
+
+
+def typesense_runtime_status() -> Dict[str, Any]:
+    config = typesense_search_repository.config
+    generation = config.serving_generation
+    collections: Dict[str, int] = {}
+    try:
+        health = _typesense_json("/health")
+        for group in RUNTIME_GROUPS:
+            collection = physical_collection_name(group, generation)
+            payload = _typesense_json(f"/collections/{quote(collection, safe='')}")
+            collections[group] = int(payload.get("num_documents", 0))
+        return {
+            "status": "ok" if health.get("ok") is True else "unavailable",
+            "generation": generation,
+            "generation_available": len(collections) == len(RUNTIME_GROUPS),
+            "collections": collections,
+            "endpoint": f"{config.host}:{config.port}",
+        }
+    except HTTPError as exc:
+        return {
+            "status": "unavailable",
+            "generation": generation,
+            "generation_available": False,
+            "collections": collections,
+            "endpoint": f"{config.host}:{config.port}",
+            "error_type": f"http_{exc.code}",
+        }
+    except (URLError, TimeoutError, OSError, RuntimeError, ValueError, TypeError) as exc:
+        return {
+            "status": "unavailable",
+            "generation": generation,
+            "generation_available": False,
+            "collections": collections,
+            "endpoint": f"{config.host}:{config.port}",
+            "error_type": type(exc).__name__,
+        }
+
+
+def freshness_status() -> Dict[str, Any]:
+    if not SERVING_REPORT_PATH:
+        return {"status": "unknown", "reason": "BIDFINDER_SERVING_REPORT_PATH is not configured"}
+    report_path = Path(SERVING_REPORT_PATH)
+    if not report_path.is_file():
+        return {"status": "unknown", "reason": "serving report is missing"}
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        coverage = report.get("coverage_through")
+        latest_closed = (datetime.now(APP_TIMEZONE).date() - timedelta(days=1)).isoformat()
+        lag_days = None
+        next_expected = None
+        if coverage:
+            covered_day = datetime.fromisoformat(str(coverage)).date()
+            lag_days = (datetime.fromisoformat(latest_closed).date() - covered_day).days
+            next_expected = (covered_day + timedelta(days=1)).isoformat()
+        return {
+            "status": "ok" if not report.get("unresolved_errors") else "degraded",
+            "serving_generation": report.get("serving_generation"),
+            "coverage_through": coverage,
+            "latest_closed_day": latest_closed,
+            "freshness_lag_days": lag_days,
+            "next_expected_date": next_expected,
+            "last_successful_incremental_run": report.get("last_successful_incremental_run"),
+            "unresolved_errors": len(report.get("unresolved_errors") or []),
+        }
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        return {"status": "unknown", "reason": type(exc).__name__}
+
+
+async def postgres_runtime_status() -> Dict[str, Any]:
+    if not DATABASE_URL:
+        return {"status": "unavailable", "reason": "DATABASE_URL is not configured"}
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            await conn.fetchval("SELECT 1")
+        return {"status": "ok"}
+    except Exception as exc:
+        return {"status": "unavailable", "error_type": type(exc).__name__}
+
+
+async def runtime_status() -> Dict[str, Any]:
+    backend = procurement_backend_config()
+    typesense = await asyncio.to_thread(typesense_runtime_status)
+    postgres = await postgres_runtime_status()
+    freshness = freshness_status()
+    primary_ready = bool(
+        backend.typesense_primary
+        and typesense["status"] == "ok"
+        and typesense["generation_available"]
+    )
+    fallback_ready = bool(
+        postgres["status"] == "ok"
+        and ((not backend.typesense_primary) or backend.fallback_enabled)
+    )
+    ready = primary_ready or fallback_ready
+    return {
+        "status": "ready" if primary_ready else "degraded" if fallback_ready else "unavailable",
+        "liveness": "ok",
+        "backend": backend.mode,
+        "fallback_enabled": backend.fallback_enabled,
+        "procurement_ready": ready,
+        "typesense": typesense,
+        "postgres": postgres,
+        "freshness": freshness,
+    }
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global db_pool
+    logger.info(
+        "Startup auth config: ANONYMOUS_ACCESS_LEVEL=%s, AUTH_REQUIRED_FOR_DATA_ACCESS=%s, AUTH_REQUIRED_FOR_FULL_QUERY=%s, ANONYMOUS_FULL_QUERY_DAILY_LIMIT=%s",
+        ANONYMOUS_ACCESS_LEVEL,
+        AUTH_REQUIRED_FOR_DATA_ACCESS,
+        AUTH_REQUIRED_FOR_FULL_QUERY,
+        ANONYMOUS_FULL_QUERY_DAILY_LIMIT,
+    )
+    auth_config_payload = get_auth_config_payload()
+    logger.info(
+        "Startup login config: google_status=%s, password_reset_status=%s",
+        auth_config_payload.get("google_status"),
+        auth_config_payload.get("password_reset_status"),
+    )
+    startup_status = await runtime_status()
+    logger.warning(
+        "Startup procurement: backend=%s fallback_enabled=%s serving_generation=%s typesense=%s generation_available=%s postgres=%s freshness=%s",
+        startup_status["backend"],
+        startup_status["fallback_enabled"],
+        startup_status["typesense"]["generation"],
+        startup_status["typesense"]["status"],
+        startup_status["typesense"]["generation_available"],
+        startup_status["postgres"]["status"],
+        startup_status["freshness"].get("coverage_through"),
+    )
+    if startup_status["status"] != "ready":
+        logger.warning(
+            "Startup procurement is degraded: status=%s fallback_enabled=%s",
+            startup_status["status"],
+            startup_status["fallback_enabled"],
+        )
+    yield
+    if db_pool:
+        await db_pool.close()
+
+
+app = FastAPI(lifespan=lifespan)
+
+
+@app.get("/api/ingredient-lookup")
+async def ingredient_lookup(
+    registration: str = Query("", max_length=120),
+    drug: str = Query("", max_length=120),
+    ingredient: str = Query("", max_length=120),
+    route: str = Query("", max_length=120),
+    year: str = Query("", max_length=20),
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=250),
+    include_totals: bool = Query(True),
+    sort_by: Optional[Literal["ma", "hoatchat", "ten", "sodk", "duongdung", "nam_congbo", "occurrences", "percentage"]] = Query(None),
+    sort_order: Literal["asc", "desc"] = Query("asc"),
+):
+    try:
+        return await asyncio.to_thread(lookup_page, ingredient_lookup_store, _typesense_json, _ingredient_documents, {
+            "registration": registration, "drug": drug, "ingredient": ingredient,
+            "route": route, "year": year,
+        }, page, limit, include_totals, sort_by, sort_order)
+    except (HTTPError, URLError, TimeoutError, OSError, RuntimeError, ValueError, KeyError) as exc:
+        logger.warning("eLMIS Typesense lookup unavailable: %s", type(exc).__name__)
+        raise HTTPException(503, "Dữ liệu eLMIS trên Typesense chưa sẵn sàng.") from exc
+
+
+@app.get("/api/ingredient-lookup/suggest")
+async def ingredient_lookup_suggest(
+    field: Literal["registration", "drug", "ingredient", "route", "year"],
+    q: str = Query("", max_length=120),
+    registration: str = Query("", max_length=120),
+    drug: str = Query("", max_length=120),
+    ingredient: str = Query("", max_length=120),
+    route: str = Query("", max_length=120),
+    year: str = Query("", max_length=20),
+):
+    if not q.strip():
+        return {"data": []}
+    try:
+        suggestions = await asyncio.to_thread(
+            lookup_suggestions, ingredient_lookup_store, _typesense_json, _ingredient_documents,
+            field, q, {"registration": registration, "drug": drug, "ingredient": ingredient,
+                       "route": route, "year": year},
+        )
+        return {"data": suggestions}
+    except (HTTPError, URLError, TimeoutError, OSError, RuntimeError, ValueError, KeyError) as exc:
+        logger.warning("eLMIS Typesense suggestions unavailable: %s", type(exc).__name__)
+        raise HTTPException(503, "Gợi ý eLMIS chưa sẵn sàng.") from exc
+
+
+@app.exception_handler(AIUsageStorageError)
+async def ai_usage_storage_error_handler(_request: Request, _exc: AIUsageStorageError):
+    return JSONResponse(
+        status_code=503,
+        content={
+            "success": False,
+            "error": "ai_usage_unavailable",
+            "message": AI_USAGE_UNAVAILABLE_MESSAGE,
+        },
+    )
+
+
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PATCH", "HEAD"],
+    allow_headers=["Content-Type", "Authorization"],
+    max_age=600,
+)
+
+
+@app.middleware("http")
+async def enforce_request_size(request: Request, call_next):
+    raw_length = request.headers.get("content-length", "").strip()
+    if raw_length:
+        try:
+            content_length = int(raw_length)
+        except ValueError:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "error": "Invalid request headers", "message": "Invalid request headers"},
+            )
+        if content_length < 0:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "error": "Invalid request headers", "message": "Invalid request headers"},
+            )
+        if content_length > MAX_REQUEST_BODY_BYTES:
+            return JSONResponse(
+                status_code=413,
+                content={"success": False, "error": "Request body too large", "message": "Request body too large"},
+            )
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    response.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
+    if request.url.scheme == "https":
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
+
+
+@app.api_route("/health", methods=["GET", "HEAD"])
+async def health(request: Request):
+    if request.method == "HEAD":
+        return Response(status_code=200)
+    return {"status": "ok", "service": "bidfinder-api"}
+
+
+@app.get("/ready")
+async def ready():
+    try:
+        status = await runtime_status()
+        typesense_status = status.get("typesense")
+        if isinstance(typesense_status, dict):
+            typesense_status.pop("endpoint", None)
+        code = 200 if status["procurement_ready"] else 503
+        return JSONResponse(status_code=code, content=status)
+    except Exception as exc:
+        log_server_exception("readiness check failed", exc)
+        return JSONResponse(status_code=503, content={"status": "unavailable", "liveness": "ok"})
+
+
+def auth_error_response(exc: HTTPException) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "success": False,
+            "error": exc.detail,
+            "message": exc.detail,
+        },
+    )
+
+
+def validation_error_response(message: str, status_code: int = 400) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "success": False,
+            "error": message,
+            "message": message,
+        },
+    )
+
+
+@app.get("/config.js", include_in_schema=False)
+async def public_config():
+    # The tunneled frontend and API share one origin. The checked-in static
+    # file remains the fallback for file:// and separately hosted deployments.
+    return Response(
+        content="window.BIDFINDER_API_BASE_URL = window.location.origin;\n",
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+async def unhandled_exception(request: Request, exc: Exception):
+    logger.exception("Unhandled public request error path=%s type=%s", request.url.path, type(exc).__name__)
+    return internal_error_response()
+
+
+app.add_exception_handler(Exception, unhandled_exception)
+
+
+async def get_optional_authenticated_user(conn: asyncpg.Connection, request: Request) -> Optional[Dict[str, Any]]:
+    raw_token = extract_session_token(request)
+    if not raw_token:
+        return None
+    return await get_authenticated_user(conn, raw_token)
+
+
+FEATURE_INTRO_KEY = "new_features_20260925"
+feature_intro_table_ready = False
+feature_intro_table_lock = asyncio.Lock()
+
+
+async def ensure_feature_intro_table(conn: asyncpg.Connection) -> None:
+    global feature_intro_table_ready
+    if feature_intro_table_ready:
+        return
+    async with feature_intro_table_lock:
+        if not feature_intro_table_ready:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS app_feature_intro_seen (
+                    intro_key TEXT NOT NULL,
+                    identity_key TEXT NOT NULL,
+                    seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (intro_key, identity_key)
+                )
+            """)
+            feature_intro_table_ready = True
+
+
+async def feature_intro_context(conn: asyncpg.Connection, request: Request) -> tuple[list[str], bool]:
+    ip_hash = hashlib.sha256(get_client_ip(request).encode("utf-8")).hexdigest()
+    identities = [f"ip:{ip_hash}"]
+    user = await get_optional_authenticated_user(conn, request)
+    if user and user.get("id") is not None:
+        identities.append(f"user:{user['id']}")
+    return identities, is_feedback_admin(user)
+
+
+@app.get("/api/feature-intro")
+async def get_feature_intro_status(request: Request):
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            identities, is_admin = await feature_intro_context(conn, request)
+            if is_admin:
+                return {"show": True, "repeatable": True}
+            await ensure_feature_intro_table(conn)
+            seen = await conn.fetchval(
+                "SELECT 1 FROM app_feature_intro_seen WHERE intro_key = $1 AND identity_key = ANY($2::text[]) LIMIT 1",
+                FEATURE_INTRO_KEY, identities,
+            )
+        return {"show": not bool(seen)}
+    except Exception as exc:
+        log_server_exception("get_feature_intro_status failed", exc)
+        return internal_error_response()
+
+
+@app.post("/api/feature-intro/claim")
+async def claim_feature_intro(request: Request):
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            identities, is_admin = await feature_intro_context(conn, request)
+            if is_admin:
+                return {"show": True, "repeatable": True}
+            await ensure_feature_intro_table(conn)
+            claimed = await conn.fetch("""
+                INSERT INTO app_feature_intro_seen (intro_key, identity_key)
+                SELECT $1, UNNEST($2::text[])
+                ON CONFLICT DO NOTHING
+                RETURNING identity_key
+            """, FEATURE_INTRO_KEY, identities)
+        return {"show": len(claimed) == len(identities)}
+    except Exception as exc:
+        log_server_exception("claim_feature_intro failed", exc)
+        return internal_error_response()
+
+
+async def build_auth_success_response(
+    request: Request,
+    *,
+    message: str,
+    user: Dict[str, Any],
+    token: Optional[str] = None,
+) -> JSONResponse:
+    response = JSONResponse(
+        content={
+            "success": True,
+            "message": message,
+            "token": None,
+            "legacy_token": None,
+            "user": user,
+            "auth": await build_auth_config(request, user=user),
+        }
+    )
+    if token:
+        set_auth_session_cookie(response, token, request)
+    return response
+
+
+async def build_auth_config(
+    request: Optional[Request] = None,
+    *,
+    user: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    quota_payload = await build_anonymous_full_query_quota_payload(
+        request,
+        is_authenticated=bool(user),
+    )
+    full_search_payload = await build_full_search_quota_payload(
+        request,
+        user=user,
+    )
+    require_auth_for_full_query = AUTH_REQUIRED_FOR_FULL_QUERY
+    if ANONYMOUS_ACCESS_LEVEL == "full" and not user:
+        require_auth_for_full_query = bool(quota_payload["anonymous_full_query_login_required"])
+
+    return {
+        **get_auth_config_payload(),
+        "require_auth_for_data_access": AUTH_REQUIRED_FOR_DATA_ACCESS,
+        "require_auth_for_full_query": require_auth_for_full_query,
+        "anonymous_access_level": ANONYMOUS_ACCESS_LEVEL,
+        "allow_anonymous_preview": ANONYMOUS_ACCESS_LEVEL in {"preview", "full"},
+        "allow_anonymous_autocomplete": ANONYMOUS_AUTOCOMPLETE_ENABLED,
+        "allow_anonymous_metadata": ANONYMOUS_METADATA_ENABLED,
+        "anonymous_single_char_numeric_only": ANONYMOUS_SINGLE_CHAR_NUMERIC_ONLY,
+        "auth_transport": "cookie",
+        **quota_payload,
+        **full_search_payload,
+    }
+
+
+async def enforce_data_access_policy(
+    conn: asyncpg.Connection | None,
+    request: Request,
+    requirement: Literal["preview", "full_query", "autocomplete", "metadata"],
+) -> Optional[Dict[str, Any]]:
+    token = extract_session_token(request) or ""
+    current_user = await get_authenticated_user(conn, token) if conn is not None and token else None
+
+    if requirement == "full_query":
+        if current_user:
+            return current_user
+        if ANONYMOUS_ACCESS_LEVEL == "full":
+            quota = await build_anonymous_full_query_quota_payload(request, is_authenticated=False)
+            if quota["anonymous_full_query_login_required"]:
+                raise HTTPException(status_code=401, detail=quota["anonymous_full_query_limit_message"])
+            return None
+        if conn is None:
+            raise RuntimeError("database connection required for authenticated data access")
+        return await require_authenticated_user(conn, request)
+
+    if requirement == "preview":
+        if ANONYMOUS_ACCESS_LEVEL in {"preview", "full"}:
+            return current_user
+        if conn is None:
+            raise RuntimeError("database connection required for authenticated data access")
+        return current_user or await require_authenticated_user(conn, request)
+
+    if requirement == "autocomplete":
+        if ANONYMOUS_ACCESS_LEVEL in {"preview", "full"} and ANONYMOUS_AUTOCOMPLETE_ENABLED:
+            return current_user
+        if conn is None:
+            raise RuntimeError("database connection required for authenticated data access")
+        return current_user or await require_authenticated_user(conn, request)
+
+    if requirement == "metadata":
+        if ANONYMOUS_ACCESS_LEVEL in {"preview", "full"} and ANONYMOUS_METADATA_ENABLED:
+            return current_user
+        if conn is None:
+            raise RuntimeError("database connection required for authenticated data access")
+        return current_user or await require_authenticated_user(conn, request)
+
+    if not AUTH_REQUIRED_FOR_DATA_ACCESS:
+        return current_user
+    if conn is None:
+        raise RuntimeError("database connection required for authenticated data access")
+    return current_user or await require_authenticated_user(conn, request)
+
+
+def is_feedback_admin(user: Optional[Dict[str, Any]]) -> bool:
+    email = str((user or {}).get("email") or "").strip().lower()
+    return bool(email and email in ADMIN_EMAILS)
+
+
+def is_feedback_admin_email(email: Optional[str]) -> bool:
+    normalized = str(email or "").strip().lower()
+    return bool(normalized and normalized in ADMIN_EMAILS)
+
+
+feedback_topic_reads_table_ready = False
+feedback_topic_reads_table_lock = asyncio.Lock()
+
+
+async def ensure_feedback_topic_reads_table(conn: asyncpg.Connection) -> None:
+    global feedback_topic_reads_table_ready
+    if feedback_topic_reads_table_ready:
+        return
+    async with feedback_topic_reads_table_lock:
+        if not feedback_topic_reads_table_ready:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS app_feedback_topic_reads (
+                    user_id BIGINT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+                    topic_id BIGINT NOT NULL REFERENCES app_feedback_topics(id) ON DELETE CASCADE,
+                    read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (user_id, topic_id)
+                )
+            """)
+            feedback_topic_reads_table_ready = True
+
+
+async def count_unread_feedback_topics(conn: asyncpg.Connection, user_id: int) -> int:
+    count = await conn.fetchval("""
+        SELECT COUNT(*)
+        FROM app_feedback_topics t
+        WHERE (t.is_admin_topic OR LOWER(BTRIM(t.user_email)) = ANY($2::text[]))
+          AND NOT EXISTS (
+              SELECT 1
+              FROM app_feedback_topic_reads r
+              WHERE r.user_id = $1
+                AND r.topic_id = t.id
+          )
+    """, user_id, sorted(ADMIN_EMAILS))
+    return int(count or 0)
+
+
+def serialize_feedback_topic(row: asyncpg.Record) -> Dict[str, Any]:
+    keys = set(row.keys())
+    return {
+        "id": int(row["id"]),
+        "title": row["title"],
+        "body": row["body"] if "body" in keys else "",
+        "category": row["category"],
+        "status": row["status"],
+        "is_admin_topic": (
+            (bool(row["is_admin_topic"]) if "is_admin_topic" in keys else False)
+            or is_feedback_admin_email(row["user_email"])
+        ),
+        "is_read": bool(row["is_read"]) if "is_read" in keys else False,
+        "reply_count": int(row["reply_count"] or 0),
+        "user_email": row["user_email"],
+        "author_name": row["author_name"] if "author_name" in keys else None,
+        "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+        "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+        "last_activity_at": row["last_activity_at"].isoformat() if row["last_activity_at"] else None,
+    }
+
+
+def serialize_feedback_reply(row: asyncpg.Record) -> Dict[str, Any]:
+    keys = set(row.keys())
+    return {
+        "id": int(row["id"]),
+        "topic_id": int(row["topic_id"]),
+        "body": row["body"],
+        "user_email": row["user_email"],
+        "author_name": row["author_name"] if "author_name" in keys else None,
+        "is_admin": bool(row["is_admin"]),
+        "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+    }
+
+
+@app.get("/api/auth/config")
+async def get_auth_config(request: Request):
+    limited = await enforce_rate_limit(request, "auth-config", AUTH_CONFIG_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    return {
+        "success": True,
+        **await build_auth_config(request),
+    }
+
+
+@app.post("/api/auth/register")
+async def register_user(request: Request, payload: RegisterRequest):
+    limited = await enforce_rate_limit(request, "auth-register", AUTH_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            result = await register_with_email(
+                conn,
+                request,
+                email=payload.email,
+                password=payload.password,
+                full_name=payload.full_name,
+                work_unit=payload.work_unit,
+                position=payload.position,
+            )
+
+        return await build_auth_success_response(
+            request,
+            message="Tạo tài khoản thành công.",
+            user=result["user"],
+            token=result["token"],
+        )
+    except ValueError as exc:
+        return validation_error_response(str(exc))
+    except Exception as exc:
+        log_server_exception("register_user failed", exc)
+        return internal_error_response()
+
+
+@app.post("/api/auth/login")
+async def login_user(request: Request, payload: LoginRequest):
+    limited = await enforce_rate_limit(request, "auth-login", AUTH_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            result = await login_with_email(
+                conn,
+                request,
+                email=payload.email,
+                password=payload.password,
+            )
+
+        return await build_auth_success_response(
+            request,
+            message="Đăng nhập thành công.",
+            user=result["user"],
+            token=result["token"],
+        )
+    except ValueError as exc:
+        return validation_error_response(str(exc), status_code=401)
+    except Exception as exc:
+        log_server_exception("login_user failed", exc)
+        return internal_error_response()
+
+
+@app.post("/api/auth/google")
+async def login_user_with_google(request: Request, payload: GoogleLoginRequest):
+    limited = await enforce_rate_limit(request, "auth-google", AUTH_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            result = await login_with_google(
+                conn,
+                request,
+                credential=payload.credential,
+            )
+
+        return await build_auth_success_response(
+            request,
+            message="Đăng nhập Google thành công.",
+            user=result["user"],
+            token=result["token"],
+        )
+    except ValueError as exc:
+        return validation_error_response(str(exc), status_code=401)
+    except Exception as exc:
+        log_server_exception("login_user_with_google failed", exc)
+        return internal_error_response()
+
+
+@app.get("/api/auth/me")
+async def get_current_user(request: Request):
+    limited = await enforce_rate_limit(request, "auth-me", AUTH_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            user = await require_authenticated_user(conn, request)
+
+        return JSONResponse(content={
+            "success": True,
+            "user": user,
+            "auth": await build_auth_config(request, user=user),
+        })
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        log_server_exception("get_current_user failed", exc)
+        return internal_error_response()
+
+
+@app.post("/api/auth/logout")
+async def logout_user(request: Request):
+    limited = await enforce_rate_limit(request, "auth-logout", AUTH_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            await require_authenticated_user(conn, request)
+            await logout_current_session(conn, request)
+
+        response = JSONResponse(content={
+            "success": True,
+            "message": "Đã đăng xuất.",
+        })
+        clear_auth_session_cookie(response, request)
+        return response
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        log_server_exception("logout_user failed", exc)
+        return internal_error_response()
+
+
+@app.patch("/api/auth/profile")
+async def patch_profile(request: Request, payload: ProfileUpdateRequest):
+    limited = await enforce_rate_limit(request, "auth-profile", AUTH_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            user = await require_authenticated_user(conn, request)
+            updated_user = await update_user_profile(
+                conn,
+                user_id=int(user["id"]),
+                full_name=payload.full_name,
+                work_unit=payload.work_unit,
+                position=payload.position,
+            )
+
+        return JSONResponse(content={
+            "success": True,
+            "message": "Cập nhật hồ sơ thành công.",
+            "user": updated_user,
+            "auth": await build_auth_config(request, user=updated_user),
+        })
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except ValueError as exc:
+        return validation_error_response(str(exc))
+    except Exception as exc:
+        log_server_exception("patch_profile failed", exc)
+        return internal_error_response()
+
+
+@app.post("/api/auth/forgot-password")
+async def forgot_password(request: Request, payload: ForgotPasswordRequest):
+    limited = await enforce_rate_limit(request, "auth-forgot-password", AUTH_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            await request_password_reset(conn, request, payload.email)
+
+        return JSONResponse(content={
+            "success": True,
+            "message": "Đã gửi email hướng dẫn đặt lại mật khẩu.",
+        })
+    except ValueError as exc:
+        return validation_error_response(str(exc))
+    except Exception as exc:
+        log_server_exception("forgot_password failed", exc)
+        return internal_error_response()
+
+
+@app.post("/api/auth/reset-password")
+async def reset_password(request: Request, payload: ResetPasswordRequest):
+    limited = await enforce_rate_limit(request, "auth-reset-password", AUTH_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            result = await reset_password_with_token(
+                conn,
+                request,
+                token=payload.token,
+                new_password=payload.new_password,
+            )
+
+        return await build_auth_success_response(
+            request,
+            message="Đặt lại mật khẩu thành công.",
+            user=result["user"],
+            token=result["token"],
+        )
+    except ValueError as exc:
+        return validation_error_response(str(exc))
+    except Exception as exc:
+        log_server_exception("reset_password failed", exc)
+        return internal_error_response()
+
+
+@app.post("/api/auth/change-password")
+async def patch_password(request: Request, payload: ChangePasswordRequest):
+    limited = await enforce_rate_limit(request, "auth-change-password", AUTH_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            user = await require_authenticated_user(conn, request)
+            updated_user = await change_password(
+                conn,
+                request,
+                user_id=int(user["id"]),
+                current_password=payload.current_password,
+                new_password=payload.new_password,
+            )
+
+        return JSONResponse(content={
+            "success": True,
+            "message": "Đổi mật khẩu thành công.",
+            "user": updated_user,
+            "auth": await build_auth_config(request, user=updated_user),
+        })
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except ValueError as exc:
+        return validation_error_response(str(exc))
+    except Exception as exc:
+        log_server_exception("patch_password failed", exc)
+        return internal_error_response()
+
+
+@app.post("/api/feedback")
+async def create_feedback(request: Request, payload: FeedbackRequest):
+    limited = await enforce_rate_limit(request, "feedback", FEEDBACK_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    answers = [
+        {
+            "question": str(item.question or "").strip()[:500],
+            "answer": str(item.answer or "").strip()[:50],
+        }
+        for item in payload.answers
+        if str(item.question or "").strip()
+    ]
+    task = (payload.task or "").strip()
+    note = (payload.note or "").strip()
+
+    if not answers and not task and not note:
+        return validation_error_response("Vui lòng chọn hoặc nhập ít nhất một nội dung góp ý.")
+
+    context = payload.context if isinstance(payload.context, dict) else {}
+    page_url = str(context.get("url") or "")[:2000]
+    filter_context = context.get("filters") if isinstance(context.get("filters"), dict) else {}
+    user_agent = request.headers.get("user-agent", "")[:500]
+    client_ip = get_client_ip(request)
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            current_user = await get_optional_authenticated_user(conn, request)
+            feedback_id = await conn.fetchval(
+                """
+                INSERT INTO app_feedback (
+                    user_id,
+                    user_email,
+                    answers,
+                    task,
+                    note,
+                    page_url,
+                    filter_context,
+                    user_agent,
+                    client_ip
+                )
+                VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7::jsonb, $8, $9)
+                RETURNING id
+                """,
+                current_user.get("id") if current_user else None,
+                current_user.get("email") if current_user else None,
+                json.dumps(answers, ensure_ascii=False),
+                task[:4000] or None,
+                note[:3000] or None,
+                page_url or None,
+                json.dumps(filter_context, ensure_ascii=False),
+                user_agent,
+                client_ip,
+            )
+
+        return {
+            "success": True,
+            "id": feedback_id,
+            "message": "Cảm ơn bạn đã góp ý. BIDFinder đã ghi nhận phản hồi của bạn.",
+        }
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        log_server_exception("create_feedback failed", exc)
+        return validation_error_response("Không thể lưu góp ý lúc này, vui lòng thử lại sau.", 500)
+
+
+@app.get("/api/feedback/topics")
+async def list_feedback_topics(request: Request):
+    limited = await enforce_rate_limit(request, "feedback-topics", FEEDBACK_READ_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            current_user = await get_optional_authenticated_user(conn, request)
+            await ensure_feedback_topic_reads_table(conn)
+            rows = await conn.fetch(
+                """
+                SELECT t.id, t.user_id, t.user_email, u.full_name AS author_name,
+                       t.title, t.category, t.status, t.is_admin_topic,
+                       t.reply_count, t.created_at, t.updated_at, t.last_activity_at,
+                       (r.topic_id IS NOT NULL) AS is_read
+                FROM app_feedback_topics t
+                LEFT JOIN app_users u ON u.id = t.user_id
+                LEFT JOIN app_feedback_topic_reads r
+                       ON r.topic_id = t.id AND r.user_id = $1::bigint
+                ORDER BY t.created_at DESC, t.id DESC
+                LIMIT 100
+                """,
+                current_user.get("id") if current_user else None,
+            )
+        return {
+            "success": True,
+            "topics": [serialize_feedback_topic(row) for row in rows],
+            "is_admin": is_feedback_admin(current_user),
+        }
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        log_server_exception("list_feedback_topics failed", exc)
+        return internal_error_response()
+
+
+@app.get("/api/feedback/notifications/unread-count")
+async def get_feedback_notification_unread_count(request: Request):
+    limited = await enforce_rate_limit(request, "feedback-notification-count", FEEDBACK_READ_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            current_user = await get_optional_authenticated_user(conn, request)
+            if not current_user:
+                return {"success": True, "unread_count": 0}
+            await ensure_feedback_topic_reads_table(conn)
+            unread_count = await count_unread_feedback_topics(conn, int(current_user["id"]))
+        return {"success": True, "unread_count": unread_count}
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        log_server_exception("get_feedback_notification_unread_count failed", exc)
+        return internal_error_response()
+
+
+@app.post("/api/feedback/topics")
+async def create_feedback_topic(request: Request, payload: FeedbackTopicCreateRequest):
+    limited = await enforce_rate_limit(request, "feedback-create-topic", FEEDBACK_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    title = str(payload.title or "").strip()
+    body = str(payload.body or "").strip()
+    category = str(payload.category or "idea").strip().lower()
+    if category not in {"idea", "bug", "question", "data", "other"}:
+        category = "idea"
+    if len(title) < 6:
+        return validation_error_response("Tiêu đề chủ đề cần ít nhất 6 ký tự.")
+    if len(body) < 10:
+        return validation_error_response("Nội dung chủ đề cần ít nhất 10 ký tự.")
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            current_user = await require_authenticated_user(conn, request)
+            is_admin_topic = is_feedback_admin(current_user)
+            row = await conn.fetchrow(
+                """
+                INSERT INTO app_feedback_topics (
+                    user_id, user_email, title, body, category, is_admin_topic
+                )
+                VALUES ($1, $2, $3, $4, $5, $6)
+                RETURNING id, user_id, user_email, title, body, category, status, is_admin_topic,
+                          reply_count, created_at, updated_at, last_activity_at
+                """,
+                int(current_user["id"]),
+                current_user.get("email"),
+                title[:180],
+                body[:4000],
+                category,
+                is_admin_topic,
+            )
+        return {"success": True, "topic": serialize_feedback_topic(row), "message": "Đã tạo chủ đề."}
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        log_server_exception("create_feedback_topic failed", exc)
+        return internal_error_response()
+
+
+@app.get("/api/feedback/topics/{topic_id}")
+async def get_feedback_topic(request: Request, topic_id: int):
+    limited = await enforce_rate_limit(request, "feedback-topic-detail", FEEDBACK_READ_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        try:
+            comments_limit = int(request.query_params.get("comments_limit", "20"))
+            comments_offset = int(request.query_params.get("comments_offset", "0"))
+        except (TypeError, ValueError):
+            comments_limit = 20
+            comments_offset = 0
+        comments_limit = min(max(comments_limit, 1), 50)
+        comments_offset = max(comments_offset, 0)
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            current_user = await get_optional_authenticated_user(conn, request)
+            topic = await conn.fetchrow(
+                """
+                SELECT t.id, t.user_id, t.user_email, u.full_name AS author_name,
+                       t.title, t.body, t.category, t.status, t.is_admin_topic,
+                       t.reply_count, t.created_at, t.updated_at, t.last_activity_at
+                FROM app_feedback_topics t
+                LEFT JOIN app_users u ON u.id = t.user_id
+                WHERE t.id = $1
+                """,
+                topic_id,
+            )
+            if not topic:
+                raise HTTPException(status_code=404, detail="Không tìm thấy chủ đề.")
+            replies = await conn.fetch(
+                """
+                SELECT r.id, r.topic_id, r.user_id, r.user_email, u.full_name AS author_name,
+                       r.body, r.is_admin, r.created_at
+                FROM app_feedback_replies r
+                LEFT JOIN app_users u ON u.id = r.user_id
+                WHERE r.topic_id = $1
+                ORDER BY r.created_at ASC, r.id ASC
+                LIMIT $2 OFFSET $3
+                """,
+                topic_id,
+                comments_limit + 1,
+                comments_offset,
+            )
+            replies_has_more = len(replies) > comments_limit
+            replies_page = replies[:comments_limit]
+        return {
+            "success": True,
+            "topic": serialize_feedback_topic(topic),
+            "replies": [serialize_feedback_reply(row) for row in replies_page],
+            "replies_has_more": replies_has_more,
+            "replies_next_offset": comments_offset + len(replies_page),
+            "is_admin": is_feedback_admin(current_user),
+        }
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        log_server_exception("get_feedback_topic failed", exc)
+        return internal_error_response()
+
+
+@app.post("/api/feedback/topics/{topic_id}/read")
+async def mark_feedback_topic_read(request: Request, topic_id: int):
+    limited = await enforce_rate_limit(request, "feedback-topic-read", FEEDBACK_READ_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            current_user = await require_authenticated_user(conn, request)
+            await ensure_feedback_topic_reads_table(conn)
+            is_app_topic = await conn.fetchval("""
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM app_feedback_topics t
+                    WHERE t.id = $1
+                      AND (t.is_admin_topic OR LOWER(BTRIM(t.user_email)) = ANY($2::text[]))
+                )
+            """, topic_id, sorted(ADMIN_EMAILS))
+            if not is_app_topic:
+                raise HTTPException(status_code=404, detail="Không tìm thấy thông báo.")
+            marked_topic_id = await conn.fetchval("""
+                INSERT INTO app_feedback_topic_reads (user_id, topic_id)
+                VALUES ($1, $2)
+                ON CONFLICT (user_id, topic_id) DO NOTHING
+                RETURNING topic_id
+            """, int(current_user["id"]), topic_id)
+        return {"success": True, "marked_read": marked_topic_id is not None}
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        log_server_exception("mark_feedback_topic_read failed", exc)
+        return internal_error_response()
+
+
+@app.patch("/api/feedback/topics/{topic_id}")
+async def update_feedback_topic(request: Request, topic_id: int, payload: FeedbackTopicUpdateRequest):
+    limited = await enforce_rate_limit(request, "feedback-topic-update", FEEDBACK_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            current_user = await require_authenticated_user(conn, request)
+            if not is_feedback_admin(current_user):
+                return validation_error_response("Bạn không có quyền cập nhật chủ đề này.", 403)
+            topic = await conn.fetchrow(
+                """
+                UPDATE app_feedback_topics
+                SET status = $2, updated_at = NOW(), last_activity_at = NOW()
+                WHERE id = $1
+                RETURNING id, user_id, user_email, title, body, category, status, is_admin_topic,
+                          reply_count, created_at, updated_at, last_activity_at
+                """,
+                topic_id,
+                payload.status,
+            )
+            if not topic:
+                raise HTTPException(status_code=404, detail="Không tìm thấy chủ đề.")
+
+        return {
+            "success": True,
+            "topic": serialize_feedback_topic(topic),
+            "message": "Đã cập nhật trạng thái chủ đề.",
+        }
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        log_server_exception("update_feedback_topic failed", exc)
+        return internal_error_response()
+
+
+@app.post("/api/feedback/topics/{topic_id}/replies")
+async def create_feedback_reply(request: Request, topic_id: int, payload: FeedbackReplyCreateRequest):
+    limited = await enforce_rate_limit(request, "feedback-reply", FEEDBACK_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    body = str(payload.body or "").strip()
+    if len(body) < 2:
+        return validation_error_response("")
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            current_user = await require_authenticated_user(conn, request)
+            topic = await conn.fetchrow("SELECT id, status FROM app_feedback_topics WHERE id = $1", topic_id)
+            if not topic:
+                raise HTTPException(status_code=404, detail="Không tìm thấy chủ đề.")
+
+            is_admin = is_feedback_admin(current_user)
+            if topic["status"] == "closed" and not is_admin:
+                return validation_error_response("Chủ đề đã đóng, không thể bình luận thêm.")
+
+            async with conn.transaction():
+                reply = await conn.fetchrow(
+                    """
+                    INSERT INTO app_feedback_replies (
+                        topic_id, user_id, user_email, body, is_admin
+                    )
+                    VALUES ($1, $2, $3, $4, $5)
+                    RETURNING id, topic_id, user_id, user_email, body, is_admin, created_at
+                    """,
+                    topic_id,
+                    int(current_user["id"]),
+                    current_user.get("email"),
+                    body[:4000],
+                    is_admin,
+                )
+                await conn.execute(
+                    """
+                    UPDATE app_feedback_topics
+                    SET reply_count = reply_count + 1,
+                        updated_at = NOW(), last_activity_at = NOW()
+                    WHERE id = $1
+                    """,
+                    topic_id,
+                )
+        return {"success": True, "reply": serialize_feedback_reply(reply), "message": "Đã gửi phản hồi."}
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        log_server_exception("create_feedback_reply failed", exc)
+        return internal_error_response()
+
+
+@app.get("/api/filter-config")
+async def get_filter_config(request: Request):
+    limited = await enforce_rate_limit(request, "filter-config", FILTER_CONFIG_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            await enforce_data_access_policy(conn, request, "preview")
+
+        return {
+            "success": True,
+            "fields": FIELD_REGISTRY
+        }
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        log_server_exception("get_filter_config failed", exc)
+        return internal_error_response()
+
+
+@app.get("/api/search-contract")
+async def get_search_contract(request: Request):
+    limited = await enforce_rate_limit(request, "search-contract", METADATA_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+    try:
+        return JSONResponse(content={
+            "success": True,
+            "contract": get_typesense_search_contract(),
+            "backend": procurement_backend_config().mode,
+        })
+    except Exception as exc:
+        log_server_exception("get_search_contract failed", exc)
+        return internal_error_response()
+
+
+@app.post("/api/ai/search-plan")
+async def create_ai_search_plan(request: Request, payload: AIPlanRequest):
+    started = time.perf_counter()
+    settings = get_planner_settings()
+    limited = await enforce_rate_limit(
+        request,
+        "ai-search-luna",
+        AI_SEARCH_LUNA_RATE_LIMIT_PER_MINUTE,
+        include_user_agent=False,
+    )
+    if limited:
+        logger.warning(
+            "ai_search_plan group=%s model=%s latency_ms=%.1f success=false category=rate_limited",
+            payload.group,
+            settings.model,
+            (time.perf_counter() - started) * 1000,
+        )
+        return limited
+
+    identity_key, authenticated, cookie_value = await resolve_ai_usage_identity(request)
+    usage_snapshot = await _ai_usage_snapshot(identity_key, authenticated)
+    if usage_snapshot.used_units >= usage_snapshot.budget_units:
+        return await build_ai_error_response(
+            request,
+            identity_key,
+            authenticated,
+            cookie_value,
+            category="ai_daily_usage_exhausted",
+            message="\u0042\u1ea1n \u0111\u00e3 s\u1eed d\u1ee5ng h\u1ebft AI h\u00f4m nay. H\u1ea1n m\u1ee9c s\u1ebd \u0111\u01b0\u1ee3c \u0111\u1eb7t l\u1ea1i v\u00e0o ng\u00e0y mai.",
+            status_code=429,
+        )
+
+    try:
+        plan = await create_search_plan(payload.group, payload.message)
+    except AIPlannerInputError as exc:
+        logger.warning(
+            "ai_search_plan group=%s model=%s latency_ms=%.1f success=false category=%s",
+            payload.group,
+            settings.model,
+            (time.perf_counter() - started) * 1000,
+            exc.category,
+        )
+        return validation_error_response("Yêu cầu lập kế hoạch tìm kiếm không hợp lệ.")
+    except AIPlannerConfigurationError as exc:
+        logger.warning(
+            "ai_search_plan group=%s model=%s latency_ms=%.1f success=false category=%s",
+            payload.group,
+            settings.model,
+            (time.perf_counter() - started) * 1000,
+            exc.category,
+        )
+        return validation_error_response("AI search planner hiện không khả dụng.", status_code=503)
+    except AIPlannerValidationError as exc:
+        logger.warning(
+            "ai_search_plan group=%s model=%s latency_ms=%.1f success=false category=%s",
+            payload.group,
+            settings.model,
+            (time.perf_counter() - started) * 1000,
+            exc.category,
+        )
+        await record_ai_provider_usage(
+            identity_key,
+            authenticated,
+            getattr(exc, "provider_usage", None),
+            provider_invoked=True,
+        )
+        return validation_error_response("AI search planner trả về kế hoạch không hợp lệ.", status_code=502)
+    except AIPlannerProviderError as exc:
+        logger.warning(
+            "ai_search_plan group=%s model=%s latency_ms=%.1f success=false category=%s",
+            payload.group,
+            settings.model,
+            (time.perf_counter() - started) * 1000,
+            exc.category,
+        )
+        await record_ai_provider_usage(
+            identity_key,
+            authenticated,
+            getattr(exc, "provider_usage", None),
+            provider_invoked=True,
+        )
+        status_code = 504 if exc.category == "provider_transport" else 502
+        return validation_error_response("Không thể hoàn tất AI search planner lúc này.", status_code=status_code)
+    except Exception as exc:
+        log_server_exception("create_ai_search_plan failed", exc)
+        return internal_error_response("AI search planner hiện không khả dụng.")
+
+    ai_usage = await record_ai_provider_usage(
+        identity_key,
+        authenticated,
+        _provider_usage_from(plan),
+        provider_invoked=True,
+    )
+    logger.info(
+        "ai_search_plan group=%s model=%s latency_ms=%.1f success=true",
+        payload.group,
+        settings.model,
+        (time.perf_counter() - started) * 1000,
+    )
+    response = JSONResponse(content={
+        "success": True,
+        "plan": serialize_plan(plan),
+        "ai_usage": ai_usage,
+        "meta": {
+            "model": settings.model,
+            "planner_version": PLANNER_VERSION,
+        },
+    })
+    _set_ai_anonymous_cookie(response, request, cookie_value)
+    return response
+
+
+@app.get("/api/ai/usage")
+async def get_ai_usage(request: Request):
+    limited = await enforce_rate_limit(request, "ai-usage", AUTH_CONFIG_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+    identity_key, authenticated, cookie_value = await resolve_ai_usage_identity(request)
+    response = JSONResponse(content={
+        "success": True,
+        "ai_usage": await get_ai_usage_payload(identity_key, authenticated),
+    })
+    _set_ai_anonymous_cookie(response, request, cookie_value)
+    return response
+
+
+def _preview_response_payload(response: JSONResponse) -> dict[str, Any]:
+    try:
+        payload = json.loads(response.body.decode("utf-8"))
+    except (AttributeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("preview returned an invalid response payload") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("preview returned a non-object response payload")
+    return payload
+
+
+def _response_with_ai_usage(response: JSONResponse, ai_usage: dict[str, Any]) -> JSONResponse:
+    payload = _preview_response_payload(response)
+    payload["ai_usage"] = ai_usage
+    return JSONResponse(status_code=response.status_code, content=payload)
+
+
+async def _execute_ai_search_preview(
+    request: Request,
+    plan,
+    settings,
+    *,
+    planner_invoked: bool,
+) -> JSONResponse:
+    if not procurement_backend_config().typesense_primary:
+        return validation_error_response(
+            "AI search preview hiện yêu cầu Typesense backend.",
+            status_code=503,
+        )
+
+    compiled = compile_ai_search_plan(plan)
+    strict_request = QueryPreviewRequest(**compiled.to_payload())
+    strict_preview = await execute_query_preview(request, strict_request)
+    if getattr(strict_preview, "status_code", 200) >= 400:
+        return strict_preview
+    strict_payload = _preview_response_payload(strict_preview)
+    strict_count = int(strict_payload.get("total", 0) or 0)
+    rounds: list[dict[str, Any]] = [{
+        "round": 0,
+        "kind": "strict",
+        "preview_count": strict_count,
+    }]
+    selected_round = 0 if strict_count > 0 else None
+    selected_query = compiled
+    selected_preview = strict_payload
+    optimization_outcome = "matched" if strict_count > 0 else "no_match"
+
+    if strict_count == 0:
+        broadened = safe_broaden_ai_query(compiled)
+        if broadened is not None:
+            broadened_query, changes = broadened
+            broadened_request = QueryPreviewRequest(**broadened_query.to_payload())
+            broadened_preview = await execute_query_preview(request, broadened_request)
+            if getattr(broadened_preview, "status_code", 200) >= 400:
+                return broadened_preview
+            broadened_payload = _preview_response_payload(broadened_preview)
+            broadened_count = int(broadened_payload.get("total", 0) or 0)
+            rounds.append({
+                "round": 1,
+                "kind": "safe_broadening",
+                "preview_count": broadened_count,
+                "changes": changes,
+            })
+            if broadened_count > 0:
+                selected_round = 1
+                selected_query = broadened_query
+                selected_preview = broadened_payload
+                optimization_outcome = "matched_after_safe_broadening"
+
+    result = {
+        "success": True,
+        "status": "no_match" if selected_round is None else "ok",
+        "plan": serialize_plan(plan),
+        "compiled_request": selected_query.to_payload(),
+        "preview": selected_preview,
+        "optimization": {
+            "selected_round": selected_round,
+            "outcome": optimization_outcome,
+            "rounds": rounds,
+        },
+        "meta": {
+            "model": settings.model,
+            "planner_version": PLANNER_VERSION,
+            "planner_invoked": planner_invoked,
+        },
+    }
+    return JSONResponse(content=result)
+
+
+@app.post("/api/ai/search-preview")
+async def create_ai_search_preview(request: Request, payload: AISearchPreviewRequest):
+    started = time.perf_counter()
+    settings = get_planner_settings()
+    planner_invoked = False
+    message_mode = payload.message is not None
+    if (payload.message is None) == (payload.plan is None):
+        return validation_error_response("preview request must contain exactly one of message or plan")
+    limited = await enforce_rate_limit(
+        request,
+        "ai-search-luna" if message_mode else "ai-search-edited-plan",
+        AI_SEARCH_LUNA_RATE_LIMIT_PER_MINUTE if message_mode else AI_SEARCH_PREVIEW_RATE_LIMIT_PER_MINUTE,
+        include_user_agent=not message_mode,
+    )
+    if limited:
+        return limited
+
+    identity_key, authenticated, cookie_value = await resolve_ai_usage_identity(request)
+    if message_mode:
+        usage_snapshot = await _ai_usage_snapshot(identity_key, authenticated)
+        if usage_snapshot.used_units >= usage_snapshot.budget_units:
+            return await build_ai_error_response(
+                request,
+                identity_key,
+                authenticated,
+                cookie_value,
+                category="ai_daily_usage_exhausted",
+            message="\u0042\u1ea1n \u0111\u00e3 s\u1eed d\u1ee5ng h\u1ebft AI h\u00f4m nay. H\u1ea1n m\u1ee9c s\u1ebd \u0111\u01b0\u1ee3c \u0111\u1eb7t l\u1ea1i v\u00e0o ng\u00e0y mai.",
+                status_code=429,
+            )
+
+    plan = None
+    try:
+        if (payload.message is None) == (payload.plan is None):
+            raise AIPlannerInputError(
+                "preview request must contain exactly one of message or plan",
+                category="preview_mode",
+            )
+        if payload.message is not None:
+            planner_invoked = True
+            plan = await create_search_plan(payload.group, payload.message)
+        else:
+            plan = validate_serialized_ai_search_plan(payload.plan or {}, requested_group=payload.group)
+        response = await _execute_ai_search_preview(
+            request,
+            plan,
+            settings,
+            planner_invoked=planner_invoked,
+        )
+        ai_usage = await record_ai_provider_usage(
+            identity_key,
+            authenticated,
+            _provider_usage_from(plan),
+            provider_invoked=planner_invoked,
+        )
+        if getattr(response, "status_code", 200) >= 400:
+            response = _response_with_ai_usage(response, ai_usage)
+            _set_ai_anonymous_cookie(response, request, cookie_value)
+            return response
+        logger.info(
+            "ai_search_preview group=%s model=%s latency_ms=%.1f success=true planner_invoked=%s",
+            payload.group,
+            settings.model,
+            (time.perf_counter() - started) * 1000,
+            planner_invoked,
+        )
+        response = _response_with_ai_usage(response, ai_usage)
+        _set_ai_anonymous_cookie(response, request, cookie_value)
+        return response
+    except AIPlannerInputError as exc:
+        logger.warning("ai_search_preview group=%s category=%s", payload.group, exc.category)
+        return validation_error_response("Yêu cầu lập kế hoạch tìm kiếm không hợp lệ.")
+    except AIPlannerConfigurationError as exc:
+        logger.warning("ai_search_preview group=%s category=%s", payload.group, exc.category)
+        return validation_error_response("AI search planner hiện không khả dụng.", status_code=503)
+    except AIPlannerValidationError as exc:
+        logger.warning("ai_search_preview group=%s category=%s", payload.group, exc.category)
+        await record_ai_provider_usage(
+            identity_key,
+            authenticated,
+            getattr(exc, "provider_usage", None),
+            provider_invoked=planner_invoked,
+        )
+        return validation_error_response(
+            "AI search planner trả về kế hoạch không hợp lệ." if planner_invoked else "Bản diễn giải AI không hợp lệ.",
+            status_code=502 if planner_invoked else 422,
+        )
+    except AIPlannerProviderError as exc:
+        logger.warning("ai_search_preview group=%s category=%s", payload.group, exc.category)
+        await record_ai_provider_usage(
+            identity_key,
+            authenticated,
+            getattr(exc, "provider_usage", None),
+            provider_invoked=planner_invoked,
+        )
+        status_code = 504 if exc.category == "provider_transport" else 502
+        return validation_error_response("Không thể hoàn tất AI search planner lúc này.", status_code=status_code)
+    except AIQueryCompilationError as exc:
+        logger.warning("ai_search_preview group=%s compilation_category=%s", payload.group, exc.category)
+        await record_ai_provider_usage(
+            identity_key,
+            authenticated,
+            _provider_usage_from(plan),
+            provider_invoked=planner_invoked,
+        )
+        return validation_error_response("AI search plan không thể chuyển thành truy vấn hỗ trợ.", status_code=422)
+    except HTTPException as exc:
+        await record_ai_provider_usage(
+            identity_key,
+            authenticated,
+            _provider_usage_from(plan),
+            provider_invoked=planner_invoked,
+        )
+        return auth_error_response(exc)
+    except Exception as exc:
+        log_server_exception("create_ai_search_preview failed", exc)
+        await record_ai_provider_usage(
+            identity_key,
+            authenticated,
+            _provider_usage_from(plan),
+            provider_invoked=planner_invoked,
+        )
+        return internal_error_response()
+
+
+@app.post("/api/dashboard-analytics")
+async def dashboard_analytics(request: Request, payload: DashboardAnalyticsRequest):
+    limited = await enforce_rate_limit(request, "dashboard-analytics", QUERY_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+    if not procurement_backend_config().typesense_primary:
+        raise HTTPException(status_code=503, detail="Dashboard analytics requires Typesense backend")
+
+    filters = payload.filters or FilterRequest()
+    groups = _query_groups(payload)
+    group_limits = {
+        group: DASHBOARD_ANALYTICS_MAX_ROWS // len(groups) + (index < DASHBOARD_ANALYTICS_MAX_ROWS % len(groups))
+        for index, group in enumerate(groups)
+    }
+    selection = payload.dashboardSelection.model_dump(exclude_none=True)
+    include_fields_by_group = {
+        "medicines": (
+            "id", "medicine_name", "unit", "quantity", "winning_unit_price", "winning_bidder_id", "winning_bidder_name",
+            "bid_invitation_code", "decision_number", "procuring_entity_id", "procuring_entity_name", "location",
+            "result_posted_at", "decision_issued_at",
+        ),
+        "goods": (
+            "id", "item_name", "unit", "quantity", "winning_unit_price", "winning_bidder_id", "winning_bidder_name",
+            "bid_invitation_code", "decision_number", "procuring_entity_id", "procuring_entity_name", "location",
+            "result_posted_at", "decision_issued_at",
+        ),
+        "traditional": (
+            "id", "item_name", "unit", "quantity", "winning_unit_price", "winning_bidder_id", "winning_bidder_name",
+            "bid_invitation_code", "decision_number", "procuring_entity_id", "procuring_entity_name", "location",
+            "result_posted_at", "decision_issued_at",
+        ),
+    }
+    include_fields_by_group["traditional_medicine"] = include_fields_by_group["traditional"]
+
+    # Dashboard is an aggregate projection of the active search/filter state.
+    # It must use the same anonymous preview boundary as search preview instead
+    # of introducing a separate login gate. The capped matching window is
+    # aggregated server-side; raw documents are never returned.
+    async with optional_db_connection(request, "preview") as conn:
+        await enforce_data_access_policy(conn, request, "preview")
+
+        async def fetch_group(group: str) -> tuple[str, list[Mapping[str, Any]], bool, int]:
+            query = build_canonical_query(
+                group,
+                filters,
+                sort=[],
+                limit=250,
+                page=1,
+                search_mode="standard",
+                endpoint="/api/dashboard-analytics",
+                source_types=payload.sourceTypes,
+                text=payload.text,
+                search_fields=payload.searchFields,
+                structured_filters=payload.structuredFilters,
+                ranges=payload.ranges,
+                date_ranges=payload.dateRanges,
+                exact_identifiers=payload.exactIdentifiers,
+                query_mode="search",
+                cross_group_search=payload.crossGroupSearch,
+                cross_group_search_fields=payload.crossGroupSearchFields,
+            )
+            scoped_column_filters = payload.columnFilters.get(group) or payload.columnFilters.get(query.group) or {}
+            if query.group == "traditional_medicine":
+                scoped_column_filters = scoped_column_filters or payload.columnFilters.get("traditional") or {}
+            filter_dashboard_columns(query.group, (), scoped_column_filters)
+            if any(
+                rule == [] or (isinstance(rule, dict) and rule.get("values") == [])
+                for rule in scoped_column_filters.values()
+            ):
+                return query.group, [], False, 0
+            if group_limits[group] == 0:
+                return query.group, [], True, 0
+            clauses = build_dashboard_selection_clauses(query.group, selection)
+            filter_fields = tuple(canonical_field_for(query.group, name) or name for name in scoped_column_filters)
+            found, documents = await typesense_search_repository.analytics_documents(
+                query,
+                additional_filter_clauses=clauses,
+                include_fields=(*include_fields_by_group.get(group, include_fields_by_group["goods"]), *filter_fields),
+                max_documents=group_limits[group],
+                with_found=True,
+            )
+            filtered = await asyncio.to_thread(filter_dashboard_columns, query.group, documents, scoped_column_filters)
+            return query.group, filtered, found > len(documents), len(documents)
+
+        async def wait_for_disconnect() -> None:
+            while not await request.is_disconnected():
+                await asyncio.sleep(0.1)
+
+        group_tasks = [asyncio.create_task(fetch_group(group)) for group in groups]
+        group_task = asyncio.gather(*group_tasks)
+        disconnect_task = asyncio.create_task(wait_for_disconnect())
+        try:
+            done, _ = await asyncio.wait({group_task, disconnect_task}, return_when=asyncio.FIRST_COMPLETED)
+            if disconnect_task in done and group_task not in done:
+                disconnect_task.result()
+                group_task.cancel()
+                await asyncio.gather(group_task, return_exceptions=True)
+                return Response(status_code=499)
+            group_results = await group_task
+        except TypesenseShadowError as exc:
+            status_code = 503 if exc.code == SHADOW_INFRA_ERROR else 422
+            raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+        finally:
+            disconnect_task.cancel()
+            for task in group_tasks:
+                task.cancel()
+            await asyncio.gather(disconnect_task, *group_tasks, return_exceptions=True)
+
+    group_documents = {group: documents for group, documents, _truncated, _scanned in group_results}
+    truncated = any(group_truncated for _group, _documents, group_truncated, _scanned in group_results)
+    scanned_count = sum(scanned for _group, _documents, _truncated, scanned in group_results)
+    analytics = await asyncio.to_thread(
+        aggregate_dashboard_documents,
+        group_documents,
+        selected_product=selection.get("product"),
+        selected_bidder=selection.get("bidder"),
+        selected_investor=selection.get("investor"),
+    )
+    analytics["meta"].update({
+        "complete": not truncated,
+        "scan_limit": DASHBOARD_ANALYTICS_MAX_ROWS,
+        "scanned_documents": scanned_count,
+        "scan_limits_by_group": group_limits,
+    })
+    return JSONResponse(content={
+        "success": True,
+        "backend": "typesense",
+        "analytics_complete": not truncated,
+        "result_universe": "capped_matching_documents" if truncated else "all_matching_documents",
+        "scan_limit": DASHBOARD_ANALYTICS_MAX_ROWS,
+        "scanned_documents": scanned_count,
+        **analytics,
+    })
+
+
+@app.post("/api/query")
+async def query_data(request: Request, payload: QueryRequest):
+    limited = await enforce_rate_limit(request, "query", QUERY_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        backend_config = procurement_backend_config()
+        if backend_config.typesense_primary:
+            return await query_typesense_primary(request, payload)
+        if payload.group in {"traditional", "traditional_medicine"} or payload.scope == "traditional":
+            raise HTTPException(status_code=503, detail="traditional search requires Typesense backend")
+        pool = await ensure_db_pool()
+        filters = payload.filters or FilterRequest()
+        sort_rules = payload.sort or []
+        search_mode = payload.searchMode if payload.searchMode in {"standard", "full"} else "standard"
+        is_full_search = search_mode == "full"
+        page_size = max(1, min(int(payload.limit or DEFAULT_QUERY_PAGE_SIZE), MAX_QUERY_PAGE_SIZE))
+        requested_total_limit = MAX_QUERY_LIMIT if is_full_search else DEFAULT_QUERY_LIMIT
+        limit = requested_total_limit
+
+        result = {
+            "success": True,
+            "search_mode": search_mode,
+            "diversify_prices": False,
+            "applied_limit_per_scope": limit,
+            "applied_total_limit": limit * 2 if payload.scope == "all" and not is_full_search else limit,
+            "page_size": page_size,
+        }
+        count_parts: List[Dict[str, Any]] = []
+        current_user: Optional[Dict[str, Any]] = None
+        shadow_postgres_latencies: Dict[str, float] = {}
+
+        async with pool.acquire() as conn:
+            current_user = await enforce_data_access_policy(conn, request, "full_query")
+
+            if is_full_search:
+                quota_snapshot = await get_full_search_usage_snapshot(request, current_user)
+                if quota_snapshot["remaining"] <= 0:
+                    raise HTTPException(status_code=429, detail=FULL_SEARCH_LIMIT_MESSAGE)
+
+                allocation = allocate_probe_full_search_limits(
+                    scope=payload.scope,
+                    total_limit=requested_total_limit,
+                )
+            else:
+                allocation = {
+                    "medicine": limit,
+                    "goods": limit,
+                }
+
+            if payload.scope in ("all", "medicine"):
+                primary_started = time.perf_counter()
+                page = await postgres_search_repository.search(
+                    conn,
+                    build_canonical_query("medicines", filters, sort_rules, allocation["medicine"], search_mode=search_mode),
+                    exact_count_enabled=STANDARD_QUERY_EXACT_COUNT_ENABLED and not is_full_search,
+                )
+                shadow_postgres_latencies["medicines"] = (time.perf_counter() - primary_started) * 1000
+                result["df1"] = page
+                count_parts.append({
+                    "count": page["count"],
+                    "exact": page["count_exact"],
+                })
+
+            if payload.scope in ("all", "goods"):
+                primary_started = time.perf_counter()
+                page = await postgres_search_repository.search(
+                    conn,
+                    build_canonical_query("goods", filters, sort_rules, allocation["goods"], search_mode=search_mode),
+                    exact_count_enabled=STANDARD_QUERY_EXACT_COUNT_ENABLED and not is_full_search,
+                )
+                shadow_postgres_latencies["goods"] = (time.perf_counter() - primary_started) * 1000
+                result["df2"] = page
+                count_parts.append({
+                    "count": page["count"],
+                    "exact": page["count_exact"],
+                })
+
+            if is_full_search:
+                if payload.scope == "all":
+                    medicine_page = result.get("df1")
+                    goods_page = result.get("df2")
+                    medicine_unused = max(0, int(allocation.get("medicine", 0)) - int(medicine_page.get("displayed", 0))) if medicine_page else 0
+                    goods_unused = max(0, int(allocation.get("goods", 0)) - int(goods_page.get("displayed", 0))) if goods_page else 0
+
+                    if medicine_page and goods_page and medicine_page.get("has_more") and goods_unused > 0:
+                        allocation["medicine"] = int(allocation.get("medicine", 0)) + goods_unused
+                        allocation["goods"] = int(goods_page.get("displayed", 0))
+                        primary_started = time.perf_counter()
+                        result["df1"] = await postgres_search_repository.search(
+                            conn,
+                            build_canonical_query("medicines", filters, sort_rules, allocation["medicine"], search_mode=search_mode),
+                            exact_count_enabled=False,
+                        )
+                        shadow_postgres_latencies["medicines"] = (time.perf_counter() - primary_started) * 1000
+                    elif medicine_page and goods_page and goods_page.get("has_more") and medicine_unused > 0:
+                        allocation["goods"] = int(allocation.get("goods", 0)) + medicine_unused
+                        allocation["medicine"] = int(medicine_page.get("displayed", 0))
+                        primary_started = time.perf_counter()
+                        result["df2"] = await postgres_search_repository.search(
+                            conn,
+                            build_canonical_query("goods", filters, sort_rules, allocation["goods"], search_mode=search_mode),
+                            exact_count_enabled=False,
+                        )
+                        shadow_postgres_latencies["goods"] = (time.perf_counter() - primary_started) * 1000
+
+                    medicine_page = result.get("df1")
+                    goods_page = result.get("df2")
+                    if medicine_page and not medicine_page.get("has_more"):
+                        allocation["medicine"] = int(medicine_page.get("displayed", 0))
+                    if goods_page and not goods_page.get("has_more"):
+                        allocation["goods"] = int(goods_page.get("displayed", 0))
+
+                    count_parts = [
+                        {"count": result["df1"]["count"], "exact": result["df1"]["count_exact"]},
+                        {"count": result["df2"]["count"], "exact": result["df2"]["count_exact"]},
+                    ]
+
+                quota = await consume_full_search_usage(request, current_user)
+                result["full_search_daily_used"] = quota["used"]
+                result["full_search_daily_remaining"] = quota["remaining"]
+                result["applied_limit_per_scope"] = max(
+                    int(allocation.get("medicine", 0)),
+                    int(allocation.get("goods", 0)),
+                )
+                result["applied_total_limit"] = int(allocation.get("medicine", 0)) + int(allocation.get("goods", 0))
+                result["applied_scope_limits"] = {
+                    "medicine": int(allocation.get("medicine", 0)),
+                    "goods": int(allocation.get("goods", 0)),
+                }
+
+            if current_user is None and ANONYMOUS_ACCESS_LEVEL == "full" and ANONYMOUS_FULL_QUERY_DAILY_LIMIT > 0:
+                quota = await consume_anonymous_full_query_usage(request)
+                result["anonymous_full_query_daily_used"] = quota["used"]
+                result["anonymous_full_query_daily_remaining"] = quota["remaining"]
+            result["auth"] = await build_auth_config(request, user=current_user)
+
+        combined_meta = combine_count_meta(count_parts)
+        result["total_count"] = int(combined_meta["count"])
+        result["total_count_exact"] = bool(combined_meta["exact"])
+        result["total_count_label"] = combined_meta["label"]
+        result["total_count_summary"] = combined_meta["summary"]
+
+        for group, response_key in (("medicines", "df1"), ("goods", "df2"), ("traditional_medicine", "df3")):
+            if response_key not in result:
+                continue
+            allocation_key = "medicine" if group == "medicines" else "goods" if group == "goods" else "traditional"
+            result[response_key] = page_bounded_working_set(
+                result[response_key],
+                page_number=payload.page,
+                page_size=page_size,
+                working_set_limit=int(allocation.get(allocation_key, limit)),
+            )
+
+        shadow_queries = []
+        shadow_results: Dict[str, Any] = {}
+        for group, response_key in (("medicines", "df1"), ("goods", "df2")):
+            if response_key not in result:
+                continue
+            shadow_queries.append(build_canonical_query(
+                group,
+                filters,
+                sort_rules,
+                max(1, int(allocation.get("medicine" if group == "medicines" else "goods", limit))),
+                search_mode=search_mode,
+            ))
+            shadow_results[group] = result[response_key]
+        if shadow_queries:
+            schedule_shadow_comparison(
+                shadow_queries,
+                shadow_results,
+                postgres_latencies_ms=shadow_postgres_latencies,
+            )
+
+        return JSONResponse(content=result)
+
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as e:
+        log_server_exception("query_data failed", e)
+        return internal_error_response()
+
+
+@app.post("/api/bulk-query")
+async def bulk_query_data(request: Request, payload: BulkQueryRequest):
+    limited = await enforce_rate_limit(request, "bulk-query", QUERY_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        if procurement_backend_config().typesense_primary:
+            return await bulk_typesense_primary(request, payload)
+        if payload.group in {"traditional", "traditional_medicine"} or payload.scope == "traditional":
+            raise HTTPException(status_code=503, detail="traditional bulk search requires Typesense backend")
+    except HTTPException as exc:
+        return auth_error_response(exc)
+
+    scope_name = payload.scope
+    selected_fields = [field for field in payload.fields if field in BULK_SEARCH_FIELDS[scope_name]]
+    diversity_mode = payload.diversityMode if payload.diversityMode in {"price", "product"} else "price"
+    price_limit = max(1, min(int(payload.priceLimit or 3), 10))
+    product_limit = max(1, min(int(payload.productLimit or 3), 10))
+    search_mode = "standard"
+    is_full_search = False
+    result_limit = max(1, min(int(payload.limit or BULK_EXPORT_QUERY_LIMIT), BULK_EXPORT_QUERY_LIMIT))
+    rows = [row for row in payload.rows if isinstance(row, dict)]
+
+    if not selected_fields:
+        return validation_error_response("Vui lòng chọn ít nhất một trường tra cứu.")
+    if not rows:
+        return validation_error_response("Vui lòng nhập ít nhất một dòng tra cứu.")
+
+    try:
+        pool = await ensure_db_pool()
+        result_rows: List[Dict[str, Any]] = []
+        total_matched = 0
+        matched_input_count = 0
+        result_truncated = False
+        diversity_truncated = False
+        current_user: Optional[Dict[str, Any]] = None
+        bulk_primary_by_index: Dict[int, List[Dict[str, Any]]] = {}
+        bulk_row_has_more: Dict[int, bool] = {}
+
+        async with pool.acquire() as conn:
+            current_user = await enforce_data_access_policy(conn, request, "full_query")
+            if is_full_search:
+                quota_snapshot = await get_full_search_usage_snapshot(request, current_user)
+                if quota_snapshot["remaining"] <= 0:
+                    raise HTTPException(status_code=429, detail=FULL_SEARCH_LIMIT_MESSAGE)
+
+            for index, row_values in enumerate(rows, start=1):
+                remaining_result_slots = result_limit - len(result_rows)
+                if remaining_result_slots <= 0:
+                    result_truncated = True
+                    continue
+
+                query, params = build_bulk_item_query(
+                    scope_name,
+                    selected_fields,
+                    row_values,
+                    diversity_mode,
+                    price_limit,
+                    product_limit,
+                    index,
+                    include_overflow_probe=True,
+                )
+                if not query:
+                    continue
+
+                records = await conn.fetch(query, *params)
+                per_row_limit = product_limit if diversity_mode == "product" else price_limit
+                row_has_more = len(records) > per_row_limit
+                visible_records = records[:per_row_limit]
+                cleaned = clean_records(visible_records)
+                row_visible_count = len(cleaned)
+                total_matched += row_visible_count
+                if row_visible_count > 0 or row_has_more:
+                    matched_input_count += 1
+                if len(cleaned) > remaining_result_slots:
+                    cleaned = cleaned[:remaining_result_slots]
+                    result_truncated = True
+                if row_has_more:
+                    diversity_truncated = True
+                bulk_primary_by_index[index] = list(cleaned)
+                bulk_row_has_more[index] = row_has_more
+                query_label = " | ".join(
+                    str(row_values.get(field) or "").strip()
+                    for field in selected_fields
+                    if str(row_values.get(field) or "").strip()
+                )
+                for item in cleaned:
+                    item["Tra cứu hàng loạt"] = index
+                    item["Dòng tra cứu"] = query_label
+                    result_rows.append(item)
+
+                if len(result_rows) >= result_limit and index < len(rows):
+                    result_truncated = True
+
+            if is_full_search:
+                quota = await consume_full_search_usage(request, current_user)
+
+        result_count = result_limit if result_truncated else total_matched
+        result_count_meta = build_count_meta(result_count, exact=not result_truncated)
+
+        empty_scope = {
+            "data": [],
+            "count": 0,
+            "count_exact": True,
+            "count_label": "0",
+            "count_summary": "0",
+            "displayed": 0,
+            "has_more": False,
+            "approx_total": None,
+        }
+        populated_scope = {
+            "data": result_rows,
+            "count": int(result_count_meta["count"]),
+            "count_exact": bool(result_count_meta["exact"]),
+            "count_label": result_count_meta["label"],
+            "count_summary": result_count_meta["summary"],
+            "displayed": len(result_rows),
+            "has_more": result_truncated,
+            "approx_total": None,
+        }
+        response_payload = {
+            "success": True,
+            "search_mode": "bulk",
+            "bulk": {
+                "scope": scope_name,
+                "search_mode": search_mode,
+                "diversity_mode": diversity_mode,
+                "input_count": len(rows),
+                "matched_count": int(result_count_meta["count"]),
+                "matched_input_count": matched_input_count,
+                "price_limit": price_limit,
+                "product_limit": product_limit,
+                "fields": selected_fields,
+                "result_limit": result_limit,
+                "truncated": result_truncated,
+                "diversity_truncated": diversity_truncated,
+            },
+            "total_count": int(result_count_meta["count"]),
+            "total_count_exact": bool(result_count_meta["exact"]),
+            "total_count_label": result_count_meta["label"],
+            "total_count_summary": result_count_meta["summary"],
+            "applied_total_limit": result_limit,
+            "applied_limit_per_scope": result_limit,
+            "df1": populated_scope if scope_name == "medicine" else empty_scope,
+            "df2": populated_scope if scope_name == "goods" else empty_scope,
+            "auth": await build_auth_config(request, user=current_user),
+        }
+        if is_full_search:
+            response_payload["full_search_daily_used"] = quota["used"]
+            response_payload["full_search_daily_remaining"] = quota["remaining"]
+
+        bulk_group = "medicines" if scope_name == "medicine" else "goods"
+        bulk_limit = product_limit if diversity_mode == "product" else price_limit
+        for index, row in enumerate(rows[:20], start=1):
+            shadow_query = build_bulk_canonical_query(
+                bulk_group,
+                selected_fields,
+                row,
+                limit=bulk_limit,
+            )
+            child_rows = bulk_primary_by_index.get(index, [])
+            schedule_shadow_comparison(
+                [shadow_query],
+                {
+                    bulk_group: {
+                        "data": child_rows,
+                        "count": len(child_rows),
+                        "count_exact": not bulk_row_has_more.get(index, False),
+                    }
+                },
+            )
+        return response_payload
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as e:
+        log_server_exception("bulk_query_data failed", e)
+        return internal_error_response()
+
+
+async def execute_query_preview(request: Request, payload: QueryPreviewRequest) -> JSONResponse:
+    """Run the authoritative preview path for both public preview endpoints."""
+
+    if procurement_backend_config().typesense_primary:
+        return await preview_typesense_primary(request, payload)
+    if payload.group in {"traditional", "traditional_medicine"} or payload.scope == "traditional":
+        raise HTTPException(status_code=503, detail="traditional preview requires Typesense backend")
+    pool = await ensure_db_pool()
+    filters = payload.filters or FilterRequest()
+    result = {"success": True}
+
+    async with pool.acquire() as conn:
+        await enforce_data_access_policy(conn, request, "preview")
+
+        if payload.scope == "medicine":
+            total_meta = await fetch_preview_bucket_cached(conn, "medicine", filters, PREVIEW_BUCKET_LIMIT)
+            result["df1"] = total_meta
+            result["medicine_estimate"] = total_meta
+        elif payload.scope == "goods":
+            total_meta = await fetch_preview_bucket_cached(conn, "goods", filters, PREVIEW_BUCKET_LIMIT)
+            result["df2"] = total_meta
+            result["goods_estimate"] = total_meta
+        else:
+            total_meta = await fetch_combined_preview_meta(conn, filters, PREVIEW_BUCKET_LIMIT)
+
+    result["total"] = int(total_meta["count"])
+    result["exact"] = bool(total_meta["exact"])
+    result["display"] = total_meta["label"]
+    result["summary"] = total_meta["summary"]
+    result["total_estimate"] = total_meta
+    result["is_estimated"] = not bool(total_meta["exact"])
+    result["bucket_limit"] = PREVIEW_BUCKET_LIMIT
+
+    preview_queries = [
+        build_canonical_query(
+            group,
+            filters,
+            limit=PREVIEW_BUCKET_LIMIT,
+            endpoint="/api/query-preview",
+        )
+        for group, api_scope in (("medicines", "medicine"), ("goods", "goods"))
+        if payload.scope in {"all", api_scope}
+    ]
+    if preview_queries:
+        preview_primary = {}
+        if payload.scope == "medicine":
+            preview_primary["medicines"] = {"count": total_meta["count"], "count_exact": total_meta["exact"], "data": []}
+        elif payload.scope == "goods":
+            preview_primary["goods"] = {"count": total_meta["count"], "count_exact": total_meta["exact"], "data": []}
+        schedule_shadow_comparison(preview_queries, preview_primary)
+
+    return JSONResponse(content=result)
+
+
+@app.post("/api/query-preview")
+async def preview_query(request: Request, payload: QueryPreviewRequest):
+    limited = await enforce_rate_limit(request, "query-preview", PREVIEW_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        return await execute_query_preview(request, payload)
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        log_server_exception("preview_query failed", exc)
+        return internal_error_response()
+
+
+@app.get("/api/warmup")
+async def warmup_database(request: Request):
+    limited = await enforce_rate_limit(request, "warmup", METADATA_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    started = time.perf_counter()
+    try:
+        pool = await ensure_db_pool()
+        async with pool.acquire() as conn:
+            await enforce_data_access_policy(conn, request, "metadata")
+            query_started = time.perf_counter()
+            await conn.fetchval("SELECT 1")
+
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        query_ms = int((time.perf_counter() - query_started) * 1000)
+        return JSONResponse(content={
+            "success": True,
+            "elapsed_ms": elapsed_ms,
+            "query_ms": query_ms,
+            "suspected_wake": elapsed_ms >= 1000,
+        })
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as exc:
+        log_server_exception("warmup_database failed", exc)
+        return internal_error_response()
+
+
+@app.post("/api/autocomplete")
+async def autocomplete(request: Request, payload: AutocompleteRequest):
+    started = time.perf_counter()
+    limited = await enforce_rate_limit(request, "autocomplete", AUTOCOMPLETE_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        if procurement_backend_config().typesense_primary:
+            return await autocomplete_typesense_primary(request, payload)
+        timings: Dict[str, int] = {}
+        pool_started = time.perf_counter()
+        pool = await ensure_db_pool()
+        timings["pool_ms"] = int((time.perf_counter() - pool_started) * 1000)
+        keyword = (payload.keyword or "").strip()
+        if len(keyword) < 1:
+            return JSONResponse(content={
+                "success": True,
+                "field": payload.field,
+                "data": [],
+                "timing_ms": {
+                    "total": int((time.perf_counter() - started) * 1000),
+                    **timings,
+                },
+            })
+
+        raw_filters = payload.filters or {}
+        filters_obj = FilterRequest(**raw_filters) if isinstance(raw_filters, dict) else FilterRequest()
+        req = AutocompleteRequest(
+            scope=payload.scope or "all",
+            field=payload.field,
+            keyword=keyword,
+            filters=raw_filters,
+            excludeSelf=payload.excludeSelf if payload.excludeSelf is not None else True,
+            limit=max(1, min(int(payload.limit or 10), 20))
+        )
+        req.filters = filters_obj
+
+        merged: List[str] = []
+        seen = set()
+
+        def push(val: Any):
+            text = normalize_ws(val)
+            if not text:
+                return
+            key = text.lower()
+            if key in seen:
+                return
+            seen.add(key)
+            merged.append(text)
+
+        push(keyword)
+
+        db_started = time.perf_counter()
+        async with pool.acquire() as conn:
+            auth_started = time.perf_counter()
+            user = await enforce_data_access_policy(conn, request, "autocomplete")
+            timings["auth_ms"] = int((time.perf_counter() - auth_started) * 1000)
+
+            if (
+                user is None
+                and len(keyword) == 1
+                and ANONYMOUS_SINGLE_CHAR_NUMERIC_ONLY
+                and not keyword.isdigit()
+            ):
+                return validation_error_response(
+                    "Autocomplete 1 ký tự cho khách chưa đăng nhập chỉ hỗ trợ chữ số. "
+                    "Vui lòng nhập thêm ký tự hoặc đăng nhập để tiếp tục."
+                )
+
+            if req.scope in ("all", "medicine"):
+                medicine_started = time.perf_counter()
+                for item in await fetch_autocomplete_suggestions(conn, req, "medicine"):
+                    push(item)
+                timings["medicine_ms"] = int((time.perf_counter() - medicine_started) * 1000)
+
+            if len(merged) < int(req.limit or 10) and req.scope in ("all", "goods"):
+                goods_started = time.perf_counter()
+                for item in await fetch_autocomplete_suggestions(conn, req, "goods"):
+                    push(item)
+                timings["goods_ms"] = int((time.perf_counter() - goods_started) * 1000)
+        timings["db_ms"] = int((time.perf_counter() - db_started) * 1000)
+
+        autocomplete_queries = [
+            AutocompleteQuery(
+                group=group,
+                field=payload.field,
+                keyword=keyword,
+                filters=filters_obj.model_dump(exclude_none=True),
+                limit=int(req.limit or 10),
+            )
+            for group, api_scope in (("medicines", "medicine"), ("goods", "goods"))
+            if req.scope in ("all", api_scope)
+        ]
+        if autocomplete_queries:
+            schedule_shadow_autocomplete(
+                autocomplete_queries,
+                merged[: int(req.limit or 10)],
+                postgres_latency_ms=float(timings.get("db_ms", 0)),
+            )
+
+        return JSONResponse(content={
+            "success": True,
+            "field": payload.field,
+            "data": merged[: int(req.limit or 10)],
+            "timing_ms": {
+                "total": int((time.perf_counter() - started) * 1000),
+                **timings,
+            },
+        })
+
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as e:
+        log_server_exception("autocomplete failed", e)
+        return JSONResponse(status_code=500, content={"success": False, "error": SERVER_ERROR_MESSAGE, "data": []})
+
+
+WEEKDAY_UPDATE_SCHEDULE = tuple(
+    (datetime_time(hour=hour, minute=minute), f"{hour:02d}:{minute:02d}")
+    for hour in range(7, 17)
+    for minute in (0, 30)
+) + ((datetime_time(hour=17), "17:00"),)
+WEEKEND_UPDATE_SCHEDULE = (
+    (datetime_time(hour=8), "08:00"),
+    (datetime_time(hour=17), "17:00"),
+)
+
+
+def get_update_schedule(day: date) -> tuple[tuple[datetime_time, str], ...]:
+    return WEEKEND_UPDATE_SCHEDULE if day.weekday() >= 5 else WEEKDAY_UPDATE_SCHEDULE
+
+
+def get_update_snapshot(now: datetime | None = None) -> tuple[date, bool, str]:
+    """Return the dashboard day and latest completed scheduled update time."""
+    if now is None:
+        current = datetime.now(AI_USAGE_TIMEZONE)
+    elif now.tzinfo is None:
+        current = now.replace(tzinfo=AI_USAGE_TIMEZONE)
+    else:
+        current = now.astimezone(AI_USAGE_TIMEZONE)
+    current_time = current.timetz().replace(tzinfo=None)
+    schedule = get_update_schedule(current.date())
+    if current_time < schedule[0][0]:
+        return current.date() - timedelta(days=1), False, schedule[-1][1]
+    for slot, label in reversed(schedule):
+        if current_time >= slot:
+            return current.date(), True, label
+    return current.date() - timedelta(days=1), False, schedule[-1][1]
+
+
+def get_update_display_day(now: datetime | None = None) -> tuple[date, bool]:
+    """Return the Vietnam business day represented by the history dashboard."""
+    display_day, is_current_day, _ = get_update_snapshot(now)
+    return display_day, is_current_day
+
+
+def has_update_summary_data(summary: Mapping[str, Any]) -> bool:
+    return bool(
+        summary.get("approved_package_count")
+        or summary.get("highest_package")
+        or summary.get("highest_goods")
+    )
+
+
+async def fetch_approval_timeline(
+    conn: asyncpg.Connection | None,
+    through_day: date,
+    start_day: date,
+) -> list[dict[str, Any]]:
+    """Read the precomputed daily rollup, with a Typesense transition fallback."""
+    if conn is not None:
+        serving_generation = getattr(typesense_search_repository.config, "serving_generation", None)
+        try:
+            if serving_generation:
+                rows = await conn.fetch(
+                    """
+                    SELECT data_date, approved_package_count
+                    FROM daily_approval_summary
+                    WHERE data_date BETWEEN $1 AND $2
+                      AND serving_generation = $3
+                    ORDER BY data_date
+                    """,
+                    start_day,
+                    through_day,
+                    serving_generation + ":decision_date",
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    SELECT data_date, approved_package_count
+                    FROM daily_approval_summary
+                    WHERE data_date BETWEEN $1 AND $2
+                    ORDER BY data_date
+                    """,
+                    start_day,
+                    through_day,
+                )
+        except asyncpg.UndefinedTableError:
+            rows = []
+
+        stored_counts = {
+            row["data_date"]: int(row["approved_package_count"])
+            for row in rows
+        }
+        missing_ranges = []
+        missing_start = None
+        current_day = start_day
+        while current_day <= through_day:
+            if current_day not in stored_counts:
+                if missing_start is None:
+                    missing_start = current_day
+            elif missing_start is not None:
+                missing_ranges.append((missing_start, current_day - timedelta(days=1)))
+                missing_start = None
+            current_day += timedelta(days=1)
+        if missing_start is not None:
+            missing_ranges.append((missing_start, through_day))
+
+        if not missing_ranges:
+            return [
+                {"date": day.isoformat(), "count": stored_counts[day]}
+                for day in sorted(stored_counts)
+            ]
+
+        logger.warning(
+            "daily approval summary incomplete; scanning missing dates in Typesense",
+            extra={
+                "start_day": start_day.isoformat(),
+                "through_day": through_day.isoformat(),
+                "rows": len(rows),
+                "missing_days": sum((end - start).days + 1 for start, end in missing_ranges),
+            },
+        )
+        for missing_start, missing_end in missing_ranges:
+            fallback_rows = await typesense_search_repository.update_timeline(
+                today=missing_end,
+                start_day=missing_start,
+            )
+            for row in fallback_rows:
+                day = date.fromisoformat(row["date"])
+                if missing_start <= day <= missing_end:
+                    stored_counts[day] = int(row["count"])
+        return [
+            {"date": day.isoformat(), "count": stored_counts.get(day, 0)}
+            for day in (start_day + timedelta(days=offset) for offset in range((through_day - start_day).days + 1))
+        ]
+    return await typesense_search_repository.update_timeline(today=through_day, start_day=start_day)
+
+
+async def fetch_update_dashboard(
+    conn: asyncpg.Connection | None,
+    display_day: date,
+    *,
+    is_current_day: bool = True,
+    snapshot_time: str = "08:00",
+) -> dict[str, Any]:
+    async def read_summary(day: date) -> dict[str, Any]:
+        if conn is not None:
+            try:
+                stored = await conn.fetchval(
+                    """
+                    SELECT summary
+                    FROM daily_update_dashboard
+                    WHERE data_date = $1 AND serving_generation = $2
+                    """,
+                    day,
+                    typesense_search_repository.config.serving_generation + ":decision_date",
+                )
+            except asyncpg.UndefinedTableError:
+                stored = None
+            if stored is not None:
+                summary = json.loads(stored) if isinstance(stored, str) else dict(stored)
+                if (
+                    "primary_data_available" not in summary
+                    and summary.get("approved_package_count")
+                    and not summary.get("highest_package")
+                    and not summary.get("highest_goods")
+                ):
+                    try:
+                        return await typesense_search_repository.daily_summary(day)
+                    except TypesenseShadowError:
+                        logger.warning("Could not refresh legacy daily dashboard summary for %s", day)
+                return summary
+        return await typesense_search_repository.daily_summary(day)
+
+    data_day = display_day
+    typesense_summary = await read_summary(data_day)
+    if is_current_day and not has_update_summary_data(typesense_summary):
+        fallback_day = display_day - timedelta(days=1)
+        fallback_summary = await read_summary(fallback_day)
+        if has_update_summary_data(fallback_summary):
+            data_day = fallback_day
+            typesense_summary = fallback_summary
+
+    typesense_package = typesense_summary.get("highest_package")
+    highest_goods = typesense_summary.get("highest_goods")
+    typesense_count = int(typesense_summary.get("approved_package_count") or 0)
+    if conn is None:
+        return {
+            "date": display_day.isoformat(),
+            "data_date": data_day.isoformat(),
+            "timezone": "Asia/Ho_Chi_Minh",
+            "cutoff": snapshot_time,
+            "is_current_day": is_current_day,
+            "used_fallback_data": data_day != display_day,
+            "approved_package_count": typesense_count,
+            "highest_package": typesense_package,
+            "highest_goods": highest_goods,
+            "data_available": bool(typesense_count or typesense_package or highest_goods),
+        }
+
+    highest_package = await conn.fetchrow(
+        """
+        WITH parsed AS (
+            SELECT
+                ma_tbmt,
+                chu_dau_tu,
+                ten_goi_thau,
+                NULLIF(regexp_replace(COALESCE(gia_goi_thau, ''), '[^0-9]', '', 'g'), '')::numeric AS value_num
+            FROM package_metadata
+            WHERE ngay_phe_duyet_date = $1
+        )
+        SELECT ma_tbmt, chu_dau_tu, ten_goi_thau, value_num
+        FROM parsed
+        WHERE value_num IS NOT NULL AND value_num > 0
+        ORDER BY value_num DESC, ma_tbmt
+        LIMIT 1
+        """,
+        data_day,
+    )
+    package_payload = None
+    if typesense_package:
+        package_payload = dict(typesense_package)
+    if highest_package and (
+        (package_payload is None and not typesense_summary.get("primary_data_available"))
+        or (package_payload is not None and package_payload.get("bid_invitation_code") == str(highest_package["ma_tbmt"] or "").strip())
+    ):
+        value = highest_package["value_num"]
+        if package_payload is None:
+            package_payload = {
+                "value": int(value) if value == value.to_integral_value() else float(value),
+                "owner": str(highest_package["chu_dau_tu"] or "").strip() or None,
+                "name": str(highest_package["ten_goi_thau"] or "").strip() or None,
+                "bid_invitation_code": str(highest_package["ma_tbmt"] or "").strip() or None,
+                "date": data_day.isoformat(),
+            }
+        else:
+            package_payload["owner"] = str(highest_package["chu_dau_tu"] or "").strip() or package_payload.get("owner")
+            package_payload["name"] = str(highest_package["ten_goi_thau"] or "").strip() or package_payload.get("name")
+
+    return {
+        "date": display_day.isoformat(),
+        "data_date": data_day.isoformat(),
+        "timezone": "Asia/Ho_Chi_Minh",
+        "cutoff": snapshot_time,
+        "is_current_day": is_current_day,
+        "used_fallback_data": data_day != display_day,
+        "approved_package_count": typesense_count,
+        "highest_package": package_payload,
+        "highest_goods": highest_goods,
+        "data_available": bool(typesense_count or package_payload or highest_goods),
+    }
+
+
+@app.get("/api/metadata")
+async def get_metadata(request: Request, history_days: int = 30):
+    limited = await enforce_rate_limit(request, "metadata", METADATA_RATE_LIMIT_PER_MINUTE)
+    if limited:
+        return limited
+
+    try:
+        async with optional_db_connection(request, "metadata") as conn:
+            await enforce_data_access_policy(conn, request, "metadata")
+            display_day, is_current_day, snapshot_time = get_update_snapshot()
+            history_days = min(max(int(history_days), 30), 180)
+            start_day = display_day - timedelta(days=history_days - 1)
+            cache_key = f"metadata:typesense-v2:{display_day.isoformat()}:{snapshot_time}:{history_days}"
+            cached = await get_cached_payload(metadata_cache, cache_key)
+            if cached is not None:
+                return JSONResponse(content=cached)
+
+            dashboard_cache_key = f"update-dashboard:v1:{display_day.isoformat()}:{snapshot_time}"
+            update_dashboard = await get_cached_payload(update_dashboard_cache, dashboard_cache_key)
+            if update_dashboard is None:
+                if conn is None:
+                    update_timeline, update_dashboard = await asyncio.gather(
+                        fetch_approval_timeline(conn, display_day, start_day),
+                        fetch_update_dashboard(
+                            conn,
+                            display_day,
+                            is_current_day=is_current_day,
+                            snapshot_time=snapshot_time,
+                        ),
+                    )
+                else:
+                    update_timeline = await fetch_approval_timeline(conn, display_day, start_day)
+                    update_dashboard = await fetch_update_dashboard(
+                        conn,
+                        display_day,
+                        is_current_day=is_current_day,
+                        snapshot_time=snapshot_time,
+                    )
+                await set_cached_payload(
+                    update_dashboard_cache,
+                    dashboard_cache_key,
+                    update_dashboard,
+                    METADATA_CACHE_TTL_SECONDS,
+                )
+            else:
+                update_timeline = await fetch_approval_timeline(conn, display_day, start_day)
+
+        payload = {
+            "success": True,
+            "source": "typesense+postgres",
+            "history": [],
+            "update_timeline": update_timeline,
+            "update_dashboard": update_dashboard,
+            "last_run": None,
+            "total_runs": 0,
+        }
+        await set_cached_payload(metadata_cache, cache_key, payload, METADATA_CACHE_TTL_SECONDS)
+        return JSONResponse(content=payload)
+
+    except HTTPException as exc:
+        return auth_error_response(exc)
+    except Exception as e:
+        log_server_exception("get_metadata failed", e)
+        return internal_error_response()
+
+
+WEB_ROOT = Path(__file__).resolve().parents[2] / "apps" / "web"
+if WEB_ROOT.is_dir():
+    app.mount("/", StaticFiles(directory=WEB_ROOT, html=True), name="web")

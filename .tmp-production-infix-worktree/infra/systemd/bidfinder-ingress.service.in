@@ -1,0 +1,24 @@
+[Unit]
+Description=BIDFinder Cloudflare Tunnel ingress
+Wants=network-online.target bidfinder-api.service
+After=network-online.target bidfinder-api.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.config/bidfinder/ingress.env
+ExecStart=/usr/bin/env bash @BIDFINDER_REPO@/infra/ingress/bidfinder-cloudflared.sh run
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=20s
+KillSignal=SIGTERM
+SendSIGKILL=no
+NoNewPrivileges=true
+PrivateTmp=true
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bidfinder-ingress
+
+[Install]
+WantedBy=default.target

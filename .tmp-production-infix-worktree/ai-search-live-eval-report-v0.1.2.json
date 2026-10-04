@@ -1,0 +1,547 @@
+{
+  "status": "FAIL",
+  "total_cases": 28,
+  "passed": 23,
+  "failed": 5,
+  "pass_rate": 0.8214,
+  "aggregate_latency_ms": 86965.73,
+  "average_latency_ms": 3105.91,
+  "cases": [
+    {
+      "id": "goods_core_iol_recent",
+      "group": "goods",
+      "passed": false,
+      "latency_ms": 7281.35,
+      "failure_reason": [
+        "missing 'Nguyễn Trãi' in procuring_entity_name"
+      ],
+      "returned_plan": {
+        "version": "1",
+        "group": "goods",
+        "clauses": [
+          {
+            "field": "item_name",
+            "concepts": [
+              {
+                "alternatives": [
+                  "thủy tinh thể nhân tạo",
+                  "kính nội nhãn"
+                ],
+                "match": "text"
+              },
+              {
+                "alternatives": [
+                  "mềm"
+                ],
+                "match": "text"
+              },
+              {
+                "alternatives": [
+                  "đơn tiêu",
+                  "đơn tiêu cự"
+                ],
+                "match": "text"
+              },
+              {
+                "alternatives": [
+                  "kéo dài tiêu điểm",
+                  "extended depth of focus"
+                ],
+                "match": "text"
+              },
+              {
+                "alternatives": [
+                  "màu vàng"
+                ],
+                "match": "text"
+              },
+              {
+                "alternatives": [
+                  "4 càng",
+                  "4 haptic"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          },
+          {
+            "field": "winning_bidder_name",
+            "concepts": [
+              {
+                "alternatives": [
+                  "Bệnh viện Nguyễn Trãi"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          }
+        ],
+        "date_constraints": [
+          {
+            "field": "decision_issued_at",
+            "period": {
+              "kind": "relative",
+              "amount": 6,
+              "unit": "months",
+              "direction": "previous"
+            },
+            "inclusive": true
+          }
+        ],
+        "warnings": [
+          "“Bệnh viện Nguyễn Trãi” được hiểu là nhà thầu trúng thầu theo quy tắc mặc định cho tổ chức không kèm chỉ dẫn vai trò; nếu là chủ đầu tư, cần уточ định lại trường tìm kiếm."
+        ],
+        "explanation": [
+          "Tên hàng hóa và các đặc tính được ánh xạ vào item_name.",
+          "Bệnh viện Nguyễn Trãi được ánh xạ vào winning_bidder_name.",
+          "“6 tháng gần nhất” được ánh xạ vào decision_issued_at."
+        ]
+      }
+    },
+    {
+      "id": "goods_exact_tbmt",
+      "group": "goods",
+      "passed": true,
+      "latency_ms": 2349.66
+    },
+    {
+      "id": "goods_device_model_brand_hospital",
+      "group": "goods",
+      "passed": false,
+      "latency_ms": 5153.16,
+      "failure_reason": [
+        "missing 'Chợ Rẫy' in procuring_entity_name"
+      ],
+      "returned_plan": {
+        "version": "1",
+        "group": "goods",
+        "clauses": [
+          {
+            "field": "item_name",
+            "concepts": [
+              {
+                "alternatives": [
+                  "máy theo dõi bệnh nhân"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          },
+          {
+            "field": "model",
+            "concepts": [
+              {
+                "alternatives": [
+                  "IntelliVue MX450"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          },
+          {
+            "field": "brand",
+            "concepts": [
+              {
+                "alternatives": [
+                  "Philips"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          },
+          {
+            "field": "winning_bidder_name",
+            "concepts": [
+              {
+                "alternatives": [
+                  "Chợ Rẫy"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          }
+        ],
+        "date_constraints": [],
+        "warnings": [
+          "Tên bệnh viện được diễn giải theo mặc định là nhà thầu trúng thầu do không có chỉ dấu rõ ràng về chủ đầu tư."
+        ],
+        "explanation": [
+          "item_name: máy theo dõi bệnh nhân",
+          "model: IntelliVue MX450",
+          "brand: Philips",
+          "winning_bidder_name: Chợ Rẫy"
+        ]
+      }
+    },
+    {
+      "id": "goods_categorical_attributes",
+      "group": "goods",
+      "passed": true,
+      "latency_ms": 2651.2
+    },
+    {
+      "id": "goods_technical_model_manufacturer",
+      "group": "goods",
+      "passed": true,
+      "latency_ms": 3448.83
+    },
+    {
+      "id": "goods_noise_numeric_metadata",
+      "group": "goods",
+      "passed": true,
+      "latency_ms": 2684.64
+    },
+    {
+      "id": "goods_selection_location",
+      "group": "goods",
+      "passed": true,
+      "latency_ms": 3060.62
+    },
+    {
+      "id": "goods_exact_identifiers",
+      "group": "goods",
+      "passed": true,
+      "latency_ms": 2517.86
+    },
+    {
+      "id": "goods_explicit_result_date",
+      "group": "goods",
+      "passed": true,
+      "latency_ms": 3018.93
+    },
+    {
+      "id": "goods_generic_current_year",
+      "group": "goods",
+      "passed": true,
+      "latency_ms": 2720.73
+    },
+    {
+      "id": "medicine_salts_strength_bidder_location",
+      "group": "medicines",
+      "passed": false,
+      "latency_ms": 3941.59,
+      "failure_reason": [
+        "missing independent concept {'alternatives_all': ['clavulanic', 'clavulanat']} in active_ingredient_or_herbal_component"
+      ],
+      "returned_plan": {
+        "version": "1",
+        "group": "medicines",
+        "clauses": [
+          {
+            "field": "active_ingredient_or_herbal_component",
+            "concepts": [
+              {
+                "alternatives": [
+                  "Acid clavulanic"
+                ],
+                "match": "text"
+              },
+              {
+                "alternatives": [
+                  "Amoxicilin"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          },
+          {
+            "field": "strength",
+            "concepts": [
+              {
+                "alternatives": [
+                  "62,5mg"
+                ],
+                "match": "text"
+              },
+              {
+                "alternatives": [
+                  "500mg"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          },
+          {
+            "field": "winning_bidder_name",
+            "concepts": [
+              {
+                "alternatives": [
+                  "Hậu Giang"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          },
+          {
+            "field": "location",
+            "concepts": [
+              {
+                "alternatives": [
+                  "Hà Nội"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          }
+        ],
+        "date_constraints": [],
+        "warnings": [
+          "Cụm “Gói 2g thuốc chứa” được hiểu là mô tả ngữ cảnh, không dùng làm điều kiện quy cách đóng gói."
+        ],
+        "explanation": [
+          "Hoạt chất: Acid clavulanic và Amoxicilin",
+          "Hàm lượng: 62,5mg và 500mg",
+          "Nhà thầu trúng thầu: Hậu Giang",
+          "Địa điểm: Hà Nội"
+        ]
+      }
+    },
+    {
+      "id": "medicine_meropenem_form_route",
+      "group": "medicines",
+      "passed": false,
+      "latency_ms": 2107.96,
+      "failure_reason": [
+        "missing one of ['lọ'] in packaging,dosage_form"
+      ],
+      "returned_plan": {
+        "version": "1",
+        "group": "medicines",
+        "clauses": [
+          {
+            "field": "medicine_name",
+            "concepts": [
+              {
+                "alternatives": [
+                  "Meropenem"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          },
+          {
+            "field": "strength",
+            "concepts": [
+              {
+                "alternatives": [
+                  "1g",
+                  "1 g"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          },
+          {
+            "field": "dosage_form",
+            "concepts": [
+              {
+                "alternatives": [
+                  "bột pha tiêm"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          },
+          {
+            "field": "route_of_administration",
+            "concepts": [
+              {
+                "alternatives": [
+                  "tĩnh mạch"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          }
+        ],
+        "date_constraints": [],
+        "warnings": [],
+        "explanation": [
+          "medicine_name: Meropenem",
+          "strength: 1g",
+          "dosage_form: bột pha tiêm",
+          "route_of_administration: tĩnh mạch"
+        ]
+      }
+    },
+    {
+      "id": "medicine_metformin_no_invention",
+      "group": "medicines",
+      "passed": true,
+      "latency_ms": 2189.39
+    },
+    {
+      "id": "medicine_mixed_english_permit",
+      "group": "medicines",
+      "passed": true,
+      "latency_ms": 3986.18
+    },
+    {
+      "id": "medicine_packaging_shelf_life_group",
+      "group": "medicines",
+      "passed": true,
+      "latency_ms": 2386.7
+    },
+    {
+      "id": "medicine_country_manufacturer",
+      "group": "medicines",
+      "passed": true,
+      "latency_ms": 3459.06
+    },
+    {
+      "id": "medicine_hospital_location",
+      "group": "medicines",
+      "passed": true,
+      "latency_ms": 2083.7
+    },
+    {
+      "id": "medicine_salt_alternative",
+      "group": "medicines",
+      "passed": true,
+      "latency_ms": 1809.22
+    },
+    {
+      "id": "medicine_explicit_result_date",
+      "group": "medicines",
+      "passed": true,
+      "latency_ms": 1929.37
+    },
+    {
+      "id": "medicine_exact_registration",
+      "group": "medicines",
+      "passed": true,
+      "latency_ms": 1695.7
+    },
+    {
+      "id": "traditional_common_scientific_parts_processing",
+      "group": "traditional",
+      "passed": true,
+      "latency_ms": 2345.74
+    },
+    {
+      "id": "traditional_material_processing_origin",
+      "group": "traditional",
+      "passed": true,
+      "latency_ms": 4678.3
+    },
+    {
+      "id": "traditional_manufacturer_hospital_location",
+      "group": "traditional",
+      "passed": true,
+      "latency_ms": 4285.77
+    },
+    {
+      "id": "traditional_explicit_manufacturer_hospital_location",
+      "group": "traditional",
+      "passed": false,
+      "latency_ms": 4341.29,
+      "failure_reason": [
+        "missing 'Y học cổ truyền Trung ương' in procuring_entity_name"
+      ],
+      "returned_plan": {
+        "version": "1",
+        "group": "traditional",
+        "clauses": [
+          {
+            "field": "item_name",
+            "concepts": [
+              {
+                "alternatives": [
+                  "đan sâm"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          },
+          {
+            "field": "manufacturer",
+            "concepts": [
+              {
+                "alternatives": [
+                  "Dược Traphaco",
+                  "Traphaco"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          },
+          {
+            "field": "winning_bidder_name",
+            "concepts": [
+              {
+                "alternatives": [
+                  "Bệnh viện Y học cổ truyền Trung ương"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          },
+          {
+            "field": "location",
+            "concepts": [
+              {
+                "alternatives": [
+                  "Hà Nội"
+                ],
+                "match": "text"
+              }
+            ],
+            "join": "AND"
+          }
+        ],
+        "date_constraints": [],
+        "warnings": [
+          "Vai trò của Bệnh viện Y học cổ truyền Trung ương không được nêu rõ; đã mặc định là nhà thầu trúng thầu theo quy tắc ngữ cảnh."
+        ],
+        "explanation": [
+          "đan sâm → item_name",
+          "nhà sản xuất Công ty cổ phần Dược Traphaco → manufacturer",
+          "Bệnh viện Y học cổ truyền Trung ương → winning_bidder_name",
+          "Hà Nội → location"
+        ]
+      }
+    },
+    {
+      "id": "traditional_origin_processing",
+      "group": "traditional",
+      "passed": true,
+      "latency_ms": 2060.71
+    },
+    {
+      "id": "traditional_permit_group_unit",
+      "group": "traditional",
+      "passed": true,
+      "latency_ms": 2803.29
+    },
+    {
+      "id": "traditional_location_numeric_noise",
+      "group": "traditional",
+      "passed": true,
+      "latency_ms": 3094.07
+    },
+    {
+      "id": "traditional_explicit_result_date_location",
+      "group": "traditional",
+      "passed": true,
+      "latency_ms": 2880.37
+    }
+  ],
+  "model": "gpt-5.6-luna"
+}

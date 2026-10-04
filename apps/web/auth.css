@@ -1054,12 +1054,11 @@ body.auth-state-guest #open-login-nav {
   }
 
   .auth-dialog {
-    width: min(1120px, calc(100vw - 24px));
     max-height: calc(100dvh - 24px);
   }
 
   .auth-grid {
-    grid-template-columns: minmax(330px, 0.86fr) minmax(520px, 1.14fr);
+    grid-template-columns: minmax(280px, 0.86fr) minmax(360px, 1.14fr);
     min-height: 0;
   }
 
@@ -1192,7 +1191,8 @@ body.auth-state-guest #open-login-nav {
   #auth-login-form,
   #auth-forgot-password-form,
   #auth-reset-password-form {
-    max-width: 420px;
+    width: 100%;
+    max-width: min(100%, 30rem);
   }
 }
 
@@ -1202,7 +1202,6 @@ body.auth-state-guest #open-login-nav {
   }
 
   .auth-dialog {
-    width: min(920px, calc(100vw - 20px));
     max-height: calc(100dvh - 20px);
   }
 
@@ -1327,7 +1326,8 @@ body.auth-state-guest #open-login-nav {
   #auth-login-form,
   #auth-forgot-password-form,
   #auth-reset-password-form {
-    max-width: 420px;
+    width: 100%;
+    max-width: min(100%, 30rem);
   }
 
   .auth-modal.is-profile .auth-dialog {
@@ -1359,7 +1359,6 @@ body.auth-state-guest #open-login-nav {
   }
 
   .auth-dialog {
-    width: calc(100vw - 16px);
     max-height: calc(100vh - 16px);
   }
 

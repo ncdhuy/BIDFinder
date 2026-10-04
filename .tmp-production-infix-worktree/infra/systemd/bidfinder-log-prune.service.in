@@ -1,0 +1,8 @@
+[Unit]
+Description=BIDFinder bounded journal retention
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env bash @BIDFINDER_REPO@/infra/runtime/bidfinder-log-prune.sh
+StandardOutput=journal
+StandardError=journal
