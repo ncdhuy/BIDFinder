@@ -288,7 +288,7 @@
                     flex: 0 0 auto;
                     flex-direction: column;
                     gap: 8px;
-                    margin-top: 16px;
+                    margin-top: 0;
                     padding: 12px 14px;
                     background: var(--c-surface);
                     border: 1px solid var(--c-border-strong);
@@ -299,6 +299,16 @@
                 .search-conditions-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
                 .search-conditions-title { margin: 0; color: var(--c-primary-hover); font-size: 14px; font-weight: 800; line-height: 1.35; }
                 .search-conditions-list { min-width: 0; min-height: 40px; max-height: 96px; overflow-y: auto; text-align: left; }
+                .keyword-search-guide { flex: 0 0 auto; margin-top: 0; padding: 10px 12px; border: 1px solid var(--c-border); border-radius: var(--radius-sm); background: var(--c-surface-2); color: var(--c-sub); font-size: 12.5px; line-height: 1.45; }
+                .keyword-search-guide-title { margin: 0 0 7px; color: var(--c-primary-hover); font-size: 13px; font-weight: 800; }
+                .keyword-search-examples { display: grid; gap: 5px; }
+                .keyword-search-example { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 6px; margin: 0; }
+                .keyword-search-mark { line-height: 1; }
+                .keyword-search-expression { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 6px; }
+                .keyword-search-expression .token-tag { height: auto; min-height: 28px; line-height: 1.35; white-space: normal; overflow-wrap: anywhere; }
+                .keyword-search-expression .token-operator { cursor: default; pointer-events: none; }
+                .keyword-search-note { margin: 8px 0 0; font-size: 12px; }
+                .keyword-search-note strong { color: var(--c-primary-hover); }
                 .search-conditions-list, .sidebar-column {
                     scrollbar-width: auto;
                     scrollbar-color: var(--table-scroll-thumb, #6f7d86) var(--table-scroll-track, #e6ebee);
@@ -354,7 +364,7 @@
                     align-items: stretch;
                     gap: 5px;
                     min-height: 320px;
-                    height: min(500px, calc(100dvh - 250px));
+                    height: min(550px, calc(100dvh - 80px));
                     padding: 4px;
                     overflow: hidden;
                     background: var(--c-surface);
@@ -402,8 +412,8 @@
 
                 .filter-content { display: flex; grid-column: 3; min-width: 0; min-height: 0; flex: 1; flex-direction: column; overflow: auto; padding: 12px 20px 18px 14px; background: var(--c-surface); }
                 .filter-pane { display: none; animation: fadeIn 0.22s ease; }
-                .filter-pane.active { display: flex; min-height: 100%; flex-direction: column; }
-                .filter-pane h3 { margin: 0 0 6px; color: var(--c-text); font-size: 20px; font-weight: 750; letter-spacing: -0.3px; }
+                .filter-pane.active { display: flex; min-height: 100%; flex-direction: column; gap: 10px; }
+                .filter-pane h3 { margin: 0; color: var(--c-text); font-size: 20px; font-weight: 750; letter-spacing: -0.3px; }
                 .pane-desc { margin: 0 0 14px; color: var(--c-sub); font-size: 14px; line-height: 1.55; }
                 .fields-row, .range-row { display: flex; gap: 20px; }
                 .fields-row .field, .range-row > div { min-width: 0; flex: 1; }
@@ -556,10 +566,10 @@
                     font-weight: 750;
                 }
                 .range-row { gap: 20px; }
-                .editor-meta-row { display: flex; min-height: 44px; align-items: center; justify-content: space-between; gap: 12px; margin-top: 7px; }
+                .editor-meta-row { display: flex; min-height: 24px; align-items: center; justify-content: space-between; gap: 12px; margin-top: 0; }
                 .editor-meta-row .preview-estimate { flex: 1 1 auto; margin-top: 0; }
                 .search-tips { position: relative; flex: 0 0 auto; margin-left: auto; }
-                .search-tips-toggle { display: inline-flex; min-height: 44px; align-items: center; gap: 8px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--c-primary); cursor: pointer; font: inherit; font-size: 13px; font-weight: 800; line-height: 24px; }
+                .search-tips-toggle { display: inline-flex; min-height: 24px; align-items: center; gap: 8px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--c-primary); cursor: pointer; font: inherit; font-size: 13px; font-weight: 800; line-height: 20px; }
                 .search-tips-toggle::after { content: ''; width: 7px; height: 7px; flex: 0 0 7px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg) translateY(-2px); transition: transform 0.18s ease; }
                 .search-tips-toggle[aria-expanded="true"] { background: transparent; color: var(--c-primary-hover); }
                 .search-tips-toggle[aria-expanded="true"]::after { transform: rotate(225deg) translateY(-2px); }
@@ -573,7 +583,7 @@
                 .search-tips-logic p { margin: 0 0 5px; }
                 .search-tips-logic p:last-child { margin-bottom: 0; }
                 .search-tips-logic strong { color: var(--c-primary-hover); }
-                .editor-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: auto; padding-top: 16px; }
+                .editor-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 0; padding-top: 0; }
                 .btn { display: inline-flex; align-items: center; justify-content: center; min-width: 120px; min-height: 40px; padding: 10px 16px; border-radius: var(--radius-sm); font-size: 13.5px; font-weight: 650; cursor: pointer; transition: all 0.18s ease; }
                 .btn-primary { border: 0; background: var(--c-primary); color: #fff; box-shadow: 0 6px 16px rgba(10, 97, 123, 0.16); }
                 .btn-primary:hover:not(:disabled) { background: var(--c-primary-hover); box-shadow: 0 10px 22px rgba(10, 97, 123, 0.18); }
@@ -582,7 +592,7 @@
                 .btn-secondary:hover:not(:disabled) { background: var(--c-surface-2); border-color: var(--c-border-strong); }
                 .btn:focus-visible { outline: 2px solid rgba(18, 116, 149, 0.28); outline-offset: 2px; }
                 .btn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
-                .preview-estimate { min-height: 24px; margin-top: 7px; color: var(--c-primary); font-size: 13px; font-weight: 800; line-height: 24px; }
+                .preview-estimate { min-height: 20px; margin-top: 0; color: var(--c-primary); font-size: 13px; font-weight: 800; line-height: 20px; }
                 .preview-estimate.loading { color: var(--c-primary); }
                 .preview-estimate.zero-result { color: #b42318; }
                 .preview-estimate.error { color: #a63d3d; }
@@ -672,7 +682,19 @@
         }
         renderSummary() {
             const chips = this.renderSummaryChips();
-            return `<section class="search-conditions${chips ? '' : ' empty'}" aria-labelledby="search-conditions-title"><div class="search-conditions-heading"><h4 class="search-conditions-title" id="search-conditions-title">Từ khóa</h4></div><div class="search-conditions-list" aria-live="polite">${chips || '<span class="empty-filters">Chưa có từ khóa</span>'}</div></section>`;
+            return `<section class="search-conditions${chips ? '' : ' empty'}" aria-labelledby="search-conditions-title"><div class="search-conditions-heading"><h4 class="search-conditions-title" id="search-conditions-title">Từ khóa</h4></div><div class="search-conditions-list" aria-live="polite">${chips || '<span class="empty-filters">Chưa có từ khóa</span>'}</div></section>${this.renderKeywordSearchGuide()}`;
+        }
+        renderKeywordSearchGuide() {
+            return `<aside class="keyword-search-guide" aria-label="Gợi ý cách viết từ khóa">
+                <h4 class="keyword-search-guide-title">Ví dụ truy vấn</h4>
+                <div class="keyword-search-examples">
+                    <p class="keyword-search-example"><span class="keyword-search-mark" aria-hidden="true">❌</span><span class="keyword-search-expression"><span class="token-tag">amoxicillin + acid clavulanic</span></span></p>
+                    <p class="keyword-search-example"><span class="keyword-search-mark" aria-hidden="true">✅</span><span class="keyword-search-expression"><span class="token-tag">amoxicillin</span><span class="token-operator">AND</span><span class="token-tag">clavulanic</span></span></p>
+                    <p class="keyword-search-example"><span class="keyword-search-mark" aria-hidden="true">❌</span><span class="keyword-search-expression"><span class="token-tag">Đầu dò cơn gò dùng cho máy Monitor sản khoa MT 610 (Toitu)</span></span></p>
+                    <p class="keyword-search-example"><span class="keyword-search-mark" aria-hidden="true">✅</span><span class="keyword-search-expression"><span class="token-tag">Đầu dò cơn gò</span></span></p>
+                </div>
+                <p class="keyword-search-note">Nếu kết quả quá ít, hãy tách cụm từ thành từ khóa ngắn hơn: dùng <strong>OR</strong> để mở rộng kết quả, <strong>AND</strong> để yêu cầu đủ cả hai từ khóa, hoặc <strong>NOT</strong> để loại từ không mong muốn.</p>
+            </aside>`;
         }
         summaryEntries(criteria = this.state.criteria, group = this.state.group) {
             return Object.entries(criteria || {}).map(([name, criterion]) => {

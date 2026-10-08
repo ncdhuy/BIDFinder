@@ -4811,8 +4811,9 @@ body {
 }
 
 .cell-display-bar {
-  min-height: 40px;
-  padding: 9px 14px;
+  min-height: 34px;
+  padding: 4px 14px;
+  line-height: 1.45;
   background: var(--table-chrome-bg);
   border-bottom: 1px solid var(--shell-border);
 }
@@ -8241,7 +8242,7 @@ body.product-journey-active #panel-overlay.show {
   align-items: center;
   width: 100%;
   min-width: 0;
-  min-height: 40px;
+  min-height: 34px;
   background: var(--table-chrome-bg);
   border-bottom: 1px solid var(--shell-border);
   border-radius: 0 !important;
@@ -8251,8 +8252,9 @@ body.product-journey-active #panel-overlay.show {
   order: 1;
   flex: 1 1 auto;
   min-width: 0;
-  min-height: 40px;
-  padding: 9px 14px;
+  min-height: 34px;
+  padding: 4px 14px;
+  line-height: 1.45;
   background: transparent;
   border-bottom: 0;
   border-radius: 0 !important;
@@ -8277,7 +8279,7 @@ body.product-journey-active #panel-overlay.show {
   align-items: center;
   flex: 0 0 auto;
   gap: 2px;
-  padding: 4px 6px;
+  padding: 2px 6px;
   border: 0;
   border-radius: 0 !important;
   background: transparent;
