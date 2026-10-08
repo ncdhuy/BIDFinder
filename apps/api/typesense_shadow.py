@@ -406,6 +406,7 @@ class TypesenseRequestPlan:
     unsupported_filters: tuple[str, ...] = ()
     unsupported_sorts: tuple[str, ...] = ()
     expected_differences: tuple[str, ...] = ()
+    union_search_queries: tuple[str, ...] = ()
 
 
 def _escape_filter_value(value: Any) -> str:
@@ -725,6 +726,56 @@ def _token_clauses(fields: Sequence[str], token_filter: Any) -> str | None:
     return " && ".join(f"({item})" for item in clauses) if clauses else None
 
 
+def _goods_keyword_phrase_query(token_filter: Any) -> tuple[tuple[str, ...] | None, bool]:
+    """Compile phrase-token boolean expressions into exact Typesense queries.
+
+    Each token is an exact phrase. AND and NOT stay in one q expression;
+    OR starts another branch that the repository merges with union search.
+    """
+    plain = _plain(token_filter)
+    tokens = plain.get("tokens", []) if isinstance(plain, Mapping) else []
+    if not isinstance(tokens, list) or not tokens:
+        return None, False
+
+    values = [
+        str(item.get("value") or "").strip()
+        for item in tokens
+        if isinstance(item, Mapping)
+    ]
+    has_phrase = any(any(character.isspace() for character in value) for value in values)
+    if not has_phrase:
+        return None, False
+
+    groups = plain.get("groups", [])
+    if (
+        groups
+        or len(values) != len(tokens)
+        or any(not value or not any(character.isspace() for character in value) for value in values)
+    ):
+        return None, True
+
+    branches: list[dict[str, list[str]]] = [{"include": [values[0]], "exclude": []}]
+    for item, value in zip(tokens[1:], values[1:]):
+        operator = str(item.get("op", "OR")).upper()
+        if operator == "OR":
+            branches.append({"include": [value], "exclude": []})
+        elif operator == "AND":
+            branches[-1]["include"].append(value)
+        elif operator == "NOT":
+            branches[-1]["exclude"].append(value)
+        else:
+            return None, True
+
+    queries = tuple(
+        " ".join([
+            *(json.dumps(value, ensure_ascii=False) for value in branch["include"]),
+            *(f"-{json.dumps(value, ensure_ascii=False)}" for value in branch["exclude"]),
+        ])
+        for branch in branches
+    )
+    return queries, True
+
+
 def _list_clause(field_name: str, values: Any) -> str | None:
     if not isinstance(values, list):
         return None
@@ -893,6 +944,8 @@ def translate_typesense_query(
     unsupported: list[str] = []
     expected_differences: list[str] = []
     mapping = FILTER_FIELD_MAP[schema_group]
+    goods_phrase_search: tuple[tuple[str, ...], tuple[str, ...]] | None = None
+    goods_phrase_queries: tuple[str, ...] = ()
 
     if query.source_types:
         try:
@@ -962,6 +1015,16 @@ def translate_typesense_query(
         if not fields:
             unsupported.append(name)
             continue
+        if schema_group == "goods" and (
+            name == "goodsKeyword" or name in FILTER_FIELD_MAP["goods"]["goodsKeyword"]
+        ):
+            phrase_query, contains_phrase = _goods_keyword_phrase_query(raw_value)
+            if contains_phrase:
+                if phrase_query is None:
+                    unsupported.append("goodsKeyword:phrase_boolean")
+                else:
+                    goods_phrase_search = (phrase_query, tuple(fields))
+                continue
         if name == "selectionMethod":
             clause = _list_clause(fields[0], _selection_method_filter_values(raw_value))
         elif name == "place":
@@ -993,7 +1056,10 @@ def translate_typesense_query(
     if query.cross_group_search and query.cross_group_search_fields:
         scoped_fields = _cross_group_product_fields(schema_group, query.cross_group_search_fields)
         if scoped_fields:
-            requested_search_fields = scoped_fields
+            product_fields = set(CROSS_GROUP_GOODS_PRODUCT_FIELDS + CROSS_GROUP_MEDICINE_PRODUCT_FIELDS)
+            # Preserve non-product fields in the same text query, e.g. procuring_entity_name.
+            additional_fields = [name for name in requested_search_fields if name not in product_fields]
+            requested_search_fields = tuple(dict.fromkeys((*scoped_fields, *additional_fields)))
 
     query_fields = list(QUERY_BY[schema_group])
     unsupported_search_fields: list[str] = []
@@ -1036,13 +1102,23 @@ def translate_typesense_query(
                     unsupported.append(exact_items[0][0])
 
     q = query.text or "*"
-    if not query.text and not query.search_fields and not exact_items:
+    if not query.text and not query.search_fields and not exact_items and goods_phrase_search is None:
         # q=* does not need relevance across every indexed text field.
         query_fields = [QUERY_BY[schema_group][0]]
     if exact_field and exact_value is not None:
         q = str(exact_value)
         query_fields = [exact_field]
-    weights = [1] if not (query.text or query.search_fields or exact_field) else [
+    goods_phrase_search_applied = False
+    if goods_phrase_search is not None:
+        phrase_queries, phrase_fields = goods_phrase_search
+        if query.text or query.search_fields or exact_items or query.cross_group_search:
+            unsupported.append("goodsKeyword:phrase_with_other_query")
+        else:
+            goods_phrase_queries = phrase_queries
+            q = phrase_queries[0]
+            query_fields = list(phrase_fields)
+            goods_phrase_search_applied = True
+    weights = [1] if not (query.text or query.search_fields or exact_field or goods_phrase_search_applied) else [
         get_group_contract(query_group)["full_text"]["weights"][QUERY_BY[schema_group].index(field)]
         if field in QUERY_BY[schema_group] else 1
         for field in query_fields
@@ -1059,6 +1135,12 @@ def translate_typesense_query(
     }
     if exact_field:
         params.update({"num_typos": 0, "prefix": "false", "exhaustive_search": "true"})
+    elif goods_phrase_search_applied:
+        params.update({
+            "prefix": "false",
+            "num_typos": 0,
+            "drop_tokens_threshold": 0,
+        })
     elif query.text or query.search_fields:
         # Keep ordinary search token-friendly: ``par`` must match values such
         # as ``paracetamol`` instead of only a standalone token. Advanced
@@ -1088,6 +1170,7 @@ def translate_typesense_query(
         unsupported_filters=tuple(unsupported),
         unsupported_sorts=tuple(unsupported_sorts),
         expected_differences=tuple(dict.fromkeys(expected_differences)),
+        union_search_queries=goods_phrase_queries if len(goods_phrase_queries) > 1 else (),
     )
 
 
@@ -1872,12 +1955,36 @@ class TypesenseSearchRepository:
             )
             request_params = dict(plan.params)
             request_params.update({"page": typesense_page, "per_page": batch_limit})
-            params = urlencode(request_params, doseq=True)
-            url = f"{self.config.base_url}/collections/{quote(plan.collection, safe='')}/documents/search?{params}"
-            request = Request(url, method="GET", headers={
-                "Accept": "application/json",
-                "X-TYPESENSE-API-KEY": self.config.api_key,
-            })
+            if plan.union_search_queries:
+                outer_params = urlencode({"page": typesense_page, "per_page": batch_limit})
+                url = f"{self.config.base_url}/multi_search?{outer_params}"
+                search_params = {
+                    key: value for key, value in request_params.items()
+                    if key not in {"page", "per_page"}
+                }
+                body = json.dumps({
+                    "union": True,
+                    "searches": [
+                        {
+                            "collection": plan.collection,
+                            **search_params,
+                            "q": phrase_query,
+                        }
+                        for phrase_query in plan.union_search_queries
+                    ],
+                }, ensure_ascii=False).encode("utf-8")
+                request = Request(url, data=body, method="POST", headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                    "X-TYPESENSE-API-KEY": self.config.api_key,
+                })
+            else:
+                params = urlencode(request_params, doseq=True)
+                url = f"{self.config.base_url}/collections/{quote(plan.collection, safe='')}/documents/search?{params}"
+                request = Request(url, method="GET", headers={
+                    "Accept": "application/json",
+                    "X-TYPESENSE-API-KEY": self.config.api_key,
+                })
             try:
                 with self._opener(request, timeout=self.config.timeout_seconds) as response:
                     raw = response.read()

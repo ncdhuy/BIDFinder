@@ -250,7 +250,9 @@ function getLegacyDatasetRequest() {
 function enrichLegacyQueryRequest(payload = {}) {
     const safePayload = payload && typeof payload === 'object' ? payload : {};
     const crossGroupSearch = safePayload.crossGroupSearch === true;
-    const requestedGroup = crossGroupSearch
+    const searchAllTables = crossGroupSearch
+        || (safePayload.scope === 'all' && !normalizeLegacyDatasetGroup(safePayload.group));
+    const requestedGroup = searchAllTables
         ? null
         : (normalizeLegacyDatasetGroup(safePayload.group) || activeLegacyDatasetGroup);
     const definition = legacyDatasetDefinition(requestedGroup);
@@ -270,7 +272,7 @@ function enrichLegacyQueryRequest(payload = {}) {
         delete filters.dateFrom;
         delete filters.dateTo;
     }
-    const sourceTypes = crossGroupSearch
+    const sourceTypes = searchAllTables
         ? []
         : (Array.isArray(safePayload.sourceTypes)
         ? safePayload.sourceTypes
@@ -278,7 +280,7 @@ function enrichLegacyQueryRequest(payload = {}) {
     if (requestedGroup) syncLegacyDatasetControlsFromRequest({ group: requestedGroup, sourceTypes });
     return buildQueryRequest({
         ...safePayload,
-        scope: crossGroupSearch ? 'all' : definition.scope,
+        scope: searchAllTables ? 'all' : definition.scope,
         group: requestedGroup,
         sourceTypes,
         crossGroupSearch,
@@ -1186,6 +1188,19 @@ function getStoredColumnWidths(storageKey) {
     );
 }
 
+function getAutoFitColumnNames(storageKey) {
+    const stored = readJsonStorage(`${storageKey}:autoFit`, []);
+    return new Set(Array.isArray(stored) ? stored.filter(name => typeof name === 'string') : []);
+}
+
+function setColumnAutoFit(storageKey, columnName, enabled) {
+    const names = getAutoFitColumnNames(storageKey);
+    if (names.has(columnName) === enabled) return;
+    if (enabled) names.add(columnName);
+    else names.delete(columnName);
+    writeJsonStorage(`${storageKey}:autoFit`, [...names]);
+}
+
 function syncTableWidthToColumns(table, colgroup) {
     if (!table || !colgroup) return;
 
@@ -1211,6 +1226,7 @@ function syncTableWidthToColumns(table, colgroup) {
 function persistColumnWidth(table, colgroup, storageKey, columnName, columnIndex, width) {
     if (!table || !columnName || !colgroup?.children?.[columnIndex]) return;
 
+    setColumnAutoFit(storageKey, columnName, false);
     colgroup.children[columnIndex].style.width = `${width}px`;
     table.classList.add("user-resized");
 
@@ -1308,10 +1324,7 @@ function initColumnResize(tableId, storageKey) {
         const onAutoFit = (e) => {
             e.preventDefault();
             e.stopPropagation();
-
-            const currentIndex = Array.from(th.parentElement.children).indexOf(th);
-            const autoWidth = getAutoFitColumnWidth(table, currentIndex);
-            persistColumnWidth(table, colgroup, storageKey, th.dataset.colName, currentIndex, autoWidth);
+            autosizeTableColumn(tableId, th.dataset.colName);
         };
 
         handle.addEventListener("mousedown", onDown);
@@ -3970,7 +3983,7 @@ function togglePinnedColumn(tableId, columnName) {
 
 function autosizeTableColumn(tableId, columnName) {
     const table = document.getElementById(tableId);
-    if (!table) return;
+    if (!table || !columnName) return;
 
     const header = table.querySelector(`thead th[data-col-name="${CSS.escape(columnName)}"]`);
     if (!header) return;
@@ -3978,8 +3991,21 @@ function autosizeTableColumn(tableId, columnName) {
     const columnIndex = Array.from(header.parentElement.children).indexOf(header);
     const storageKey = TABLE_COLUMN_WIDTH_KEYS[tableId];
     const colgroup = ensureColGroup(table);
+    const autoFitColumns = getAutoFitColumnNames(storageKey);
+    if (autoFitColumns.has(columnName)) {
+        const storedWidths = getStoredColumnWidths(storageKey);
+        delete storedWidths[columnName];
+        writeJsonStorage(storageKey, storedWidths);
+        setColumnAutoFit(storageKey, columnName, false);
+        table.classList.toggle('user-resized', Object.keys(storedWidths).length > 0);
+        syncStoredColumnWidths(tableId);
+        syncFrozenColumns(tableId);
+        return;
+    }
+
     const autoWidth = getAutoFitColumnWidth(table, columnIndex);
     persistColumnWidth(table, colgroup, storageKey, columnName, columnIndex, autoWidth);
+    setColumnAutoFit(storageKey, columnName, true);
 }
 
 function setTableColumnVisibility(tableId, columnName, shouldShow) {

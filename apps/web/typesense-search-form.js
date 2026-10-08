@@ -917,16 +917,13 @@
             return filters;
         }
         autocompletePayload(field, keyword) {
-            const crossGroup = isCrossGroupProductField(this.state.group, field.name);
             return {
-                scope: crossGroup ? 'all' : GROUP_SCOPE[this.state.group],
-                group: crossGroup ? null : this.state.group,
-                sourceTypes: crossGroup ? [] : [...this.state.sourceTypes],
-                searchFields: crossGroup
-                    ? [...CROSS_GROUP_PRODUCT_SEARCH_FIELDS]
-                    : (this.state.group === 'goods' && GOODS_SHARED_SEARCH_FIELDS.has(field.name)
-                        ? [...GOODS_SHARED_SEARCH_FIELDS]
-                        : [field.name]),
+                scope: GROUP_SCOPE[this.state.group],
+                group: this.state.group,
+                sourceTypes: [...this.state.sourceTypes],
+                searchFields: this.state.group === 'goods' && GOODS_SHARED_SEARCH_FIELDS.has(field.name)
+                    ? [...GOODS_SHARED_SEARCH_FIELDS]
+                    : [field.name],
                 field: field.name,
                 keyword,
                 filters: this.autocompleteFilters(field),
@@ -1108,7 +1105,9 @@
             const operators = ['OR', 'AND', 'NOT'];
             tokens[index].op = operators[(operators.indexOf(tokens[index].op) + 1) % operators.length];
             this.state.criteria[this.state.activeField] = { kind: 'tokens', tokens };
-            this.refreshTokenCriterion(); this.invalidatePreview();
+            this.state.page = 1;
+            this.refreshTokenCriterion();
+            this.requestPreview();
         }
         removeValueToken(index) {
             const tokens = this.criterionTokens(this.state.criteria[this.state.activeField]);
@@ -1157,9 +1156,7 @@
                 }
                 const names = crossGroup
                     ? [...CROSS_GROUP_PRODUCT_SEARCH_FIELDS]
-                    : (this.state.group === 'goods' && GOODS_SHARED_SEARCH_FIELDS.has(name)
-                        ? [...GOODS_SHARED_SEARCH_FIELDS]
-                        : [name]);
+                    : [name];
                 names.forEach(fieldName => { if (!textFields.includes(fieldName)) textFields.push(fieldName); });
             };
             for (const [name, criterion] of Object.entries(this.state.criteria)) {
@@ -1182,7 +1179,11 @@
                 else if (name === 'selection_method') filters.selectionMethod = values;
                 else if (name === 'location') filters.place = values;
                 else if (name === 'medicine_group' || name === 'technical_group') filters.drugGroup = values;
-                else if (criterion.kind === 'tokens' && values.length === 1 && /\s/.test(values[0]) && (field.type === 'string' || field.type === 'string[]')) {
+                else if (
+                    criterion.kind === 'tokens' && values.length === 1 && /\s/.test(values[0]) &&
+                    (field.type === 'string' || field.type === 'string[]') &&
+                    !(this.state.group === 'goods' && legacyFilterKey && !GOODS_SHARED_SEARCH_FIELDS.has(name))
+                ) {
                     addTextFields(name);
                     textValues.push(quoteSearchPhrase(values[0]));
                 }
@@ -1194,9 +1195,10 @@
                     textValues.push(values[0]);
                 }
                 else if (criterion.kind === 'tokens' && legacyFilterKey) {
+                    const goodsProductField = this.state.group === 'goods' && GOODS_SHARED_SEARCH_FIELDS.has(name);
                     const filterKey = isCrossGroupProductField(this.state.group, name)
                         ? 'crossGroupProductKeyword'
-                        : legacyFilterKey;
+                        : (goodsProductField ? name : legacyFilterKey);
                     filters[filterKey] = { tokens: this.criterionTokens(criterion) };
                 }
                 else if (field.filterable) structuredFilters[name] = values.length === 1 ? { eq: values[0] } : { in: values };
@@ -1208,7 +1210,8 @@
             }
             const tenderInfoOnlySearch = activeCriteriaFields.size > 0
                 && [...activeCriteriaFields].every(name => CROSS_TABLE_TENDER_SEARCH_FIELDS.has(name));
-            const searchAllTables = crossGroupSearch || tenderInfoOnlySearch;
+            // Product-field mapping must not widen the selected table scope.
+            const searchAllTables = tenderInfoOnlySearch;
             return {
                 scope: searchAllTables ? 'all' : GROUP_SCOPE[this.state.group],
                 group: searchAllTables ? null : this.state.group,
@@ -1225,7 +1228,7 @@
             };
         }
         requestPreview() {
-            clearTimeout(this.previewTimer);
+            this.cancelPreview();
             if (!Object.keys(this.state.criteria).length) { this.setPreviewResult({ idle: true }); return; }
             this.setPreviewResult({ loading: true });
             this.previewTimer = setTimeout(() => this.dispatchEvent(new CustomEvent('preview-filters', { detail: this.collectFilterPayload(), bubbles: true, composed: true })), 300);
