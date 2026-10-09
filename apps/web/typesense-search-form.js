@@ -1178,7 +1178,9 @@
                 }
                 const names = crossGroup
                     ? [...CROSS_GROUP_PRODUCT_SEARCH_FIELDS]
-                    : [name];
+                    : (this.state.group === 'goods' && GOODS_SHARED_SEARCH_FIELDS.has(name)
+                        ? [...GOODS_SHARED_SEARCH_FIELDS]
+                        : [name]);
                 names.forEach(fieldName => { if (!textFields.includes(fieldName)) textFields.push(fieldName); });
             };
             for (const [name, criterion] of Object.entries(this.state.criteria)) {

@@ -787,8 +787,8 @@ class FilterRequest(BaseModel):
     country: Optional[TokenFilter] = None
     goodsKeyword: Optional[TokenFilter] = None
     crossGroupProductKeyword: Optional[TokenFilter] = None
-    # Keep selected goods product fields distinct so the Typesense translator
-    # can search only the field chosen in the advanced filter UI.
+    # Keep selected goods product criteria separate; Typesense applies each
+    # criterion across the shared goods product fields.
     item_name: Optional[TokenFilter] = None
     model_mark: Optional[TokenFilter] = None
     brand: Optional[TokenFilter] = None

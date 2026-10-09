@@ -859,6 +859,10 @@ FILTER_FIELD_MAP: dict[str, dict[str, tuple[str, ...]]] = {
     "goods": {
         "investor": ("procuring_entity_name",), "approvalDecision": ("decision_number",),
         "winner": ("winning_bidder_name",), "drugName": ("item_name", "model_mark", "brand", "technical_specification"),
+        "item_name": ("item_name", "model_mark", "brand", "technical_specification"),
+        "model_mark": ("item_name", "model_mark", "brand", "technical_specification"),
+        "brand": ("item_name", "model_mark", "brand", "technical_specification"),
+        "technical_specification": ("item_name", "model_mark", "brand", "technical_specification"),
         "goodsKeyword": ("item_name", "model_mark", "brand", "technical_specification"),
         "crossGroupProductKeyword": ("item_name", "model_mark", "brand", "technical_specification"),
         "activeIngredient": ("item_name", "technical_specification"), "concentration": ("item_name", "technical_specification"),
