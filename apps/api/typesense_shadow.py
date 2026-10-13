@@ -684,9 +684,8 @@ def _token_clauses(fields: Sequence[str], token_filter: Any) -> str | None:
     plain = _plain(token_filter)
     tokens = plain.get("tokens", []) if isinstance(plain, Mapping) else []
     groups = plain.get("groups", []) if isinstance(plain, Mapping) else []
-    and_parts: list[str] = []
-    or_parts: list[str] = []
-    not_parts: list[str] = []
+    branches: list[list[str]] = []
+    current_branch: list[str] = []
     for item in tokens:
         if not isinstance(item, Mapping):
             continue
@@ -695,18 +694,21 @@ def _token_clauses(fields: Sequence[str], token_filter: Any) -> str | None:
             continue
         positive = " || ".join(_prefix_clause(name, value) for name in fields)
         op = str(item.get("op", "OR")).upper()
-        if op == "NOT":
-            not_parts.append(" && ".join(_prefix_clause(name, value, negate=True) for name in fields))
-        elif op == "AND":
-            and_parts.append(f"({positive})")
+        if not current_branch:
+            current_branch.append(f"({positive})")
+        elif op == "OR":
+            branches.append(current_branch)
+            current_branch = [f"({positive})"]
+        elif op == "NOT":
+            current_branch.append("(" + " && ".join(_prefix_clause(name, value, negate=True) for name in fields) + ")")
         else:
-            or_parts.append(f"({positive})")
+            current_branch.append(f"({positive})")
+    if current_branch:
+        branches.append(current_branch)
+
     clauses: list[str] = []
-    if and_parts:
-        clauses.append(" && ".join(and_parts))
-    if or_parts:
-        clauses.append(" || ".join(or_parts))
-    clauses.extend(not_parts)
+    if branches:
+        clauses.append(" || ".join("(" + " && ".join(branch) + ")" for branch in branches))
 
     if isinstance(groups, list):
         for group in groups:
@@ -750,7 +752,7 @@ def _goods_keyword_phrase_query(token_filter: Any) -> tuple[tuple[str, ...] | No
     if (
         groups
         or len(values) != len(tokens)
-        or any(not value or not any(character.isspace() for character in value) for value in values)
+        or any(not value for value in values)
     ):
         return None, True
 

@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com https://accounts.google.com https://cdn.jsdelivr.net https://cdn.sheetjs.com https://us-assets.i.posthog.com https://eu-assets.i.posthog.com https://app-assets.i.posthog.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com data:; connect-src 'self' http://127.0.0.1:8002 https://api.bidfinder.vn https://accounts.google.com https://us.i.posthog.com https://eu.i.posthog.com https://app.posthog.com; frame-src https://accounts.google.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self' https://accounts.google.com;">
     <meta name="referrer" content="strict-origin-when-cross-origin">
-    <title>BIDFinder - Hệ thống quản lý dữ liệu đấu thầu y tế</title>
-    <link rel="stylesheet" href="style.css?v=scrollbars-hover-20261004">
-    <link rel="stylesheet" href="ingredient-lookup.css?v=lookup-default-widths-v3-20261004">
-    <link rel="stylesheet" href="auth.css?v=auth-dialog-compact-20261004">
+    <title>BIDFinder - Hệ thống quản lý dữ liệu đấu thầu</title>
+<link rel="stylesheet" href="style.css?v=result-detail-contrast-layout-v10-20261013">
+    <link rel="stylesheet" href="ingredient-lookup.css?v=desktop-fit-v1-20261012">
+    <link rel="stylesheet" href="auth.css?v=auth-password-eye-toggle-v1-20261013">
     <script src="https://unpkg.com/feather-icons"></script>
 </head>
 <body>
@@ -53,7 +53,7 @@
                 <div class="bf-hero-copy">
                     <h1 class="bf-title">
                         BIDFinder
-                        <span>Hệ thống quản lý dữ liệu đấu thầu y tế</span>
+                        <span>Hệ thống quản lý dữ liệu đấu thầu</span>
                     </h1>
 
                     <p class="bf-desc">
@@ -81,7 +81,7 @@
                         <div class="bf-dashboard-meta">
                             <div>
                                 <p class="bf-kicker">BIDFinder Workspace</p>
-                                <!-- <h3>Tìm kiếm kết quả đấu thầu y tế</h3> -->
+                                <!-- <h3>Tìm kiếm kết quả đấu thầu</h3> -->
                             </div>
                             <div class="bf-meta-badge">Tối ưu cho desktop</div>
                         </div>
@@ -93,7 +93,7 @@
 
                     <div class="bf-float bf-float-a">
                         <span>Tìm kiếm tập trung</span>
-                        <strong>Thuốc, thiết bị y tế, thực phẩm chức năng, thực phẩm bảo vệ sức khỏe, mỹ phẩm...</strong>
+                        <strong>Hàng hóa, thuốc, thiết bị y tế, thực phẩm chức năng...</strong>
                     </div>
 
                     <div class="bf-float bf-float-b">
@@ -120,7 +120,7 @@
                             <button class="app-home-trigger" id="app-home-trigger" type="button" aria-label="Quay về landing page">
                                 <img class="app-logo" src="./assets/logo_v3.png" alt="BIDFinder" />
                             </button>
-                            <span class="app-title-text">Hệ thống quản lý dữ liệu đấu thầu y tế</span>
+                            <span class="app-title-text">Hệ thống quản lý dữ liệu đấu thầu</span>
                         </div>
                     </div>
 
@@ -182,6 +182,18 @@
                                 </button>
                             </div>
                         </div>
+                        <div class="mobile-toolbar-dropdown mobile-scope-dropdown" id="mobile-scope-dropdown">
+                            <button class="mobile-toolbar-dropdown-trigger mobile-scope-trigger" id="mobile-scope-trigger" type="button" aria-label="Chọn bảng dữ liệu" aria-haspopup="menu" aria-expanded="false" aria-controls="mobile-scope-menu">
+                                <span class="mobile-scope-menu-icon-wrap" aria-hidden="true">
+                                    <i class="mobile-scope-menu-icon" data-feather="menu"></i>
+                                    <span class="mobile-scope-alert-dot"></span>
+                                </span>
+                                <span class="mobile-scope-current-icon" aria-hidden="true"></span>
+                                <span class="mobile-scope-current-label">Thuốc</span>
+                                <span class="mobile-scope-current-count" aria-hidden="true"></span>
+                            </button>
+                            <div class="mobile-toolbar-dropdown-menu mobile-scope-menu" id="mobile-scope-menu" role="menu" aria-label="Bảng dữ liệu khác"></div>
+                        </div>
                         <div class="toolbar-divider" aria-hidden="true"></div>
                         <div class="workspace-actions toolbar-actions">
                             <button id="insight-full-search" class="full-search-credit" type="button" aria-label="Tìm kiếm toàn bộ" title="Tìm kiếm toàn bộ">
@@ -201,6 +213,12 @@
                             <button class="action-btn" id="open-ai-search" type="button" aria-label="Tìm kiếm bằng AI" title="Tìm kiếm bằng AI" aria-controls="ai-search-chat" aria-expanded="false">
                                 <span class="ai-search-toolbar-label" aria-hidden="true">Ai</span>
                             </button>
+                            <div class="mobile-toolbar-dropdown mobile-search-dropdown" id="mobile-search-dropdown">
+                                <button class="mobile-toolbar-dropdown-trigger mobile-search-trigger" id="mobile-search-trigger" type="button" aria-label="Thêm công cụ tìm kiếm" title="Thêm công cụ tìm kiếm" aria-haspopup="menu" aria-expanded="false" aria-controls="mobile-search-menu">
+                                    <i data-feather="chevron-down" aria-hidden="true"></i>
+                                </button>
+                                <div class="mobile-toolbar-dropdown-menu mobile-search-menu" id="mobile-search-menu" role="menu" aria-label="Công cụ tìm kiếm khác"></div>
+                            </div>
                         </div>
                         <div class="workspace-status">
                             <div id="duplicate-warning" class="result-warning result-warning-duplicate" style="display: none;">
@@ -252,7 +270,7 @@
                                         </thead>
                                         <tbody id="standard-data">
                                             <tr>
-                                                <td colspan="26" class="table-empty-state">
+                                                <td class="table-empty-state">
                                                     Chưa có dữ liệu. Thực hiện tìm kiếm để hiển thị kết quả theo biểu mẫu thuốc.
                                                 </td>
                                             </tr>
@@ -306,7 +324,7 @@
                                         </thead>
                                         <tbody id="extended-data">
                                             <tr>
-                                                <td colspan="25" class="table-empty-state">
+                                                <td class="table-empty-state">
                                                     Chưa có dữ liệu. Thực hiện tìm kiếm để hiển thị kết quả theo biểu mẫu hàng hóa.
                                                 </td>
                                             </tr>
@@ -356,7 +374,11 @@
                                     <table class="data-table" id="traditional-table">
                                         <thead><tr></tr></thead>
                                         <tbody id="traditional-data">
-                                            <tr><td colspan="25" class="table-empty-state">Chưa có dữ liệu. Thực hiện tìm kiếm để hiển thị kết quả theo biểu mẫu dược liệu và vị thuốc.</td></tr>
+                                            <tr>
+                                                <td class="table-empty-state">
+                                                    Chưa có dữ liệu. Thực hiện tìm kiếm để hiển thị kết quả theo biểu mẫu dược liệu và vị thuốc.
+                                                </td>
+                                            </tr>
                                         </tbody>
                                     </table>
                                 </div>
@@ -495,6 +517,7 @@
                         </div>
                     </section>
                     <section class="result-panel ingredient-lookup-panel" id="ingredient-lookup-panel" aria-labelledby="ingredient-lookup-title">
+                        <div class="ingredient-lookup-fit-content">
                         <header class="ingredient-lookup-header">
                             <span class="ingredient-lookup-icon" aria-hidden="true"><i data-feather="link-2"></i></span>
                             <div>
@@ -503,11 +526,19 @@
                             </div>
                         </header>
                         <form class="ingredient-lookup-filters" id="ingredient-lookup-form">
-                            <label>Số đăng ký<input name="registration" type="text" maxlength="120" placeholder="VD: VN-12345-20"></label>
-                            <label>Tên thuốc<input name="drug" type="text" maxlength="120" placeholder="VD: Efferalgan"></label>
-                            <label>Tên hoạt chất<input name="ingredient" type="text" maxlength="120" placeholder="VD: Paracetamol"></label>
-                            <label>Đường dùng<input name="route" type="text" maxlength="120" placeholder="VD: Uống"></label>
-                            <label>Năm công bố<input name="year" type="text" maxlength="20" placeholder="VD: 2026"></label>
+                            <div class="ingredient-lookup-mobile-filter" id="ingredient-lookup-mobile-filter">
+                                <button class="ingredient-lookup-filter-trigger" id="ingredient-lookup-filter-trigger" type="button" aria-expanded="false" aria-controls="ingredient-lookup-filter-menu">
+                                    <span id="ingredient-lookup-filter-summary">Tên thuốc</span>
+                                    <i data-feather="chevron-down" aria-hidden="true"></i>
+                                </button>
+                                <div class="ingredient-lookup-filter-menu" id="ingredient-lookup-filter-menu" role="group" aria-label="Điều kiện tra cứu">
+                                    <label class="ingredient-lookup-field-registration">Số đăng ký<input name="registration" type="text" maxlength="120" placeholder="VD: VN-12345-20"></label>
+                                    <label class="ingredient-lookup-field-ingredient">Tên hoạt chất<input name="ingredient" type="text" maxlength="120" placeholder="VD: Paracetamol"></label>
+                                    <label class="ingredient-lookup-field-route">Đường dùng<input name="route" type="text" maxlength="120" placeholder="VD: Uống"></label>
+                                    <label class="ingredient-lookup-field-year">Năm công bố<input name="year" type="text" maxlength="20" placeholder="VD: 2026"></label>
+                                </div>
+                            </div>
+                            <label class="ingredient-lookup-field-drug">Tên thuốc<input name="drug" type="text" maxlength="120" placeholder="VD: Efferalgan"></label>
                             <div class="ingredient-lookup-actions">
                                 <button class="ingredient-lookup-search" type="submit"><i data-feather="search" aria-hidden="true"></i>Tra cứu</button>
                                 <button id="ingredient-lookup-clear" type="button"><i data-feather="rotate-ccw" aria-hidden="true"></i>Xóa điều kiện</button>
@@ -528,6 +559,7 @@
                                 <span id="ingredient-lookup-range"></span>
                                 <nav id="ingredient-lookup-pages" aria-label="Phân trang tra cứu mã hoạt chất"></nav>
                             </div>
+                        </div>
                         </div>
                     </section>
                 </div>
@@ -572,15 +604,13 @@
         
         <!-- FOOTER -->
         <footer class="app-footer">
-            © 2026 Hệ thống quản lý dữ liệu đấu thầu y tế
+            © 2026 Hệ thống quản lý dữ liệu đấu thầu
         </footer>
     </div>
 
     <dialog id="search-login-notice" class="search-login-notice" aria-labelledby="search-login-notice-title" aria-describedby="search-login-notice-description">
         <h2 id="search-login-notice-title">Bạn cần đăng nhập để tiếp tục tìm kiếm</h2>
-        <p id="search-login-notice-description">Từ khóa vừa nhập sẽ được giữ lại để tiếp tục sau khi đăng nhập.</p>
         <div class="search-login-notice-actions">
-            <button id="search-login-notice-later" type="button">Để sau</button>
             <button id="search-login-notice-continue" type="button">Đăng nhập / Đăng ký</button>
         </div>
     </dialog>
@@ -599,7 +629,7 @@
                         <p class="auth-brand-kicker">Tạo tài khoản miễn phí</p>
                         <h2 id="auth-dialog-title">
                             <span>Hệ thống quản lý dữ liệu</span>
-                            <span>đấu thầu y tế</span>
+                            <span>đấu thầu</span>
                         </h2>
                         <p class="auth-brand-desc">
                             Khám phá các tính năng của BIDFinder dành cho cá nhân và tổ chức.
@@ -694,7 +724,7 @@
                                     <span>Mật khẩu <span class="auth-required">*</span></span>
                                     <div class="auth-password-control">
                                         <input id="register-password" name="password" type="password" autocomplete="new-password" placeholder="Mật khẩu" required />
-                                        <button class="auth-password-toggle" type="button" data-password-toggle="register-password" aria-controls="register-password" aria-pressed="false">Hiện mật khẩu</button>
+                                        <button class="auth-password-toggle" type="button" data-password-toggle="register-password" aria-controls="register-password" aria-label="Hiện mật khẩu" title="Hiện mật khẩu" aria-pressed="false"><svg class="auth-password-toggle-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
                                     </div>
                                     <p class="auth-field-note" id="register-password-note">Mật khẩu phải có ít nhất 9 ký tự, bao gồm ít nhất 1 chữ số và 1 chữ cái in hoa.</p>
                                 </div>
@@ -720,7 +750,7 @@
                                     <span>Mật khẩu</span>
                                     <div class="auth-password-control">
                                         <input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="Mật khẩu" required />
-                                        <button class="auth-password-toggle" type="button" data-password-toggle="login-password" aria-controls="login-password" aria-pressed="false">Hiện mật khẩu</button>
+                                        <button class="auth-password-toggle" type="button" data-password-toggle="login-password" aria-controls="login-password" aria-label="Hiện mật khẩu" title="Hiện mật khẩu" aria-pressed="false"><svg class="auth-password-toggle-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
                                     </div>
                                 </div>
 
@@ -763,7 +793,7 @@
                                     <span>Mật khẩu mới</span>
                                     <div class="auth-password-control">
                                         <input id="reset-password-new" name="new_password" type="password" autocomplete="new-password" placeholder="Mật khẩu mới" required />
-                                        <button class="auth-password-toggle" type="button" data-password-toggle="reset-password-new" aria-controls="reset-password-new" aria-pressed="false">Hiện mật khẩu</button>
+                                        <button class="auth-password-toggle" type="button" data-password-toggle="reset-password-new" aria-controls="reset-password-new" aria-label="Hiện mật khẩu" title="Hiện mật khẩu" aria-pressed="false"><svg class="auth-password-toggle-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
                                     </div>
                                     <p class="auth-field-note" id="reset-password-note">Mật khẩu phải có ít nhất 9 ký tự, bao gồm ít nhất 1 chữ số và 1 chữ cái in hoa.</p>
                                 </div>
@@ -772,7 +802,7 @@
                                     <span>Nhập lại mật khẩu mới</span>
                                     <div class="auth-password-control">
                                         <input id="reset-password-confirm" name="confirm_password" type="password" autocomplete="new-password" placeholder="Nhập lại mật khẩu mới" required />
-                                        <button class="auth-password-toggle" type="button" data-password-toggle="reset-password-confirm" aria-controls="reset-password-confirm" aria-pressed="false">Hiện mật khẩu</button>
+                                        <button class="auth-password-toggle" type="button" data-password-toggle="reset-password-confirm" aria-controls="reset-password-confirm" aria-label="Hiện mật khẩu" title="Hiện mật khẩu" aria-pressed="false"><svg class="auth-password-toggle-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
                                     </div>
                                 </div>
 
@@ -849,7 +879,7 @@
                                             <span>Mật khẩu hiện tại</span>
                                             <div class="auth-password-control">
                                                 <input id="change-password-current" name="current_password" type="password" autocomplete="current-password" placeholder="Mật khẩu hiện tại" />
-                                                <button class="auth-password-toggle" type="button" data-password-toggle="change-password-current" aria-controls="change-password-current" aria-pressed="false">Hiện mật khẩu</button>
+                                    <button class="auth-password-toggle" type="button" data-password-toggle="change-password-current" aria-controls="change-password-current" aria-label="Hiện mật khẩu" title="Hiện mật khẩu" aria-pressed="false"><svg class="auth-password-toggle-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
                                             </div>
                                         </div>
 
@@ -857,7 +887,7 @@
                                             <span>Mật khẩu mới</span>
                                             <div class="auth-password-control">
                                                 <input id="change-password-new" name="new_password" type="password" autocomplete="new-password" placeholder="Mật khẩu mới" required />
-                                                <button class="auth-password-toggle" type="button" data-password-toggle="change-password-new" aria-controls="change-password-new" aria-pressed="false">Hiện mật khẩu</button>
+                                    <button class="auth-password-toggle" type="button" data-password-toggle="change-password-new" aria-controls="change-password-new" aria-label="Hiện mật khẩu" title="Hiện mật khẩu" aria-pressed="false"><svg class="auth-password-toggle-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
                                             </div>
                                             <p class="auth-field-note" id="change-password-note">Mật khẩu phải có ít nhất 9 ký tự, bao gồm ít nhất 1 chữ số và 1 chữ cái in hoa.</p>
                                         </div>
@@ -866,7 +896,7 @@
                                             <span>Nhập lại mật khẩu mới</span>
                                             <div class="auth-password-control">
                                                 <input id="change-password-confirm" name="confirm_password" type="password" autocomplete="new-password" placeholder="Nhập lại mật khẩu mới" required />
-                                                <button class="auth-password-toggle" type="button" data-password-toggle="change-password-confirm" aria-controls="change-password-confirm" aria-pressed="false">Hiện mật khẩu</button>
+                                    <button class="auth-password-toggle" type="button" data-password-toggle="change-password-confirm" aria-controls="change-password-confirm" aria-label="Hiện mật khẩu" title="Hiện mật khẩu" aria-pressed="false"><svg class="auth-password-toggle-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
                                             </div>
                                         </div>
 
@@ -897,13 +927,13 @@
 
             
             <div class="readme-header">
-                <h1>Chào mừng đến với Hệ thống quản lý dữ liệu đấu thầu y tế</h1>
+                <h1>Chào mừng đến với Hệ thống quản lý dữ liệu đấu thầu</h1>
             </div>
 
             <div class="readme-body">
                 <section class="readme-section">
                     <h2>Về ứng dụng</h2>
-                    <p>Hệ thống quản lý dữ liệu đấu thầu y tế tại Việt Nam. Dữ liệu được thu thập và cập nhật từ <strong>Hệ thống mạng đấu thầu quốc gia</strong> (<a href="https://muasamcong.mpi.gov.vn" target="_blank">muasamcong.mpi.gov.vn</a>) - nền tảng chính thức do Bộ Tài chính quản lý.</p>
+                    <p>Hệ thống quản lý dữ liệu đấu thầu tại Việt Nam. Dữ liệu được thu thập và cập nhật từ <strong>Hệ thống mạng đấu thầu quốc gia</strong> (<a href="https://muasamcong.mpi.gov.vn" target="_blank">muasamcong.mpi.gov.vn</a>) - nền tảng chính thức do Bộ Tài chính quản lý.</p>
                 </section>
 
                 <section class="readme-section">
@@ -929,7 +959,7 @@
 
                 <section class="readme-section">
                     <h2>Mục đích</h2>
-                    <p>Hỗ trợ cơ quan y tế, doanh nghiệp dược tìm kiếm thông tin thuốc trúng thầu nhanh chóng từ nguồn dữ liệu chính thống.</p>
+                    <p>Hỗ trợ cơ quan công lập, doanh nghiệp tìm kiếm thông tin trúng thầu nhanh chóng từ nguồn dữ liệu chính thống.</p>
                 </section>
                 
                 <!-- <section class="readme-section">
@@ -971,8 +1001,8 @@
             <div class="readme-body">
                 <section class="readme-section">
                     <h2>Giới thiệu</h2>
-                    <p>Ứng dụng được phát triển bởi nhóm nghiên cứu chuyên về phân tích dữ liệu y tế và đấu thầu công 
-                        nhằm cung cấp công cụ tìm kiếm minh bạch và hiệu quả cho cộng đồng y tế.</p>
+                    <p>Ứng dụng được phát triển bởi nhóm nghiên cứu chuyên về phân tích dữ liệu và đấu thầu công 
+                        nhằm cung cấp công cụ tìm kiếm minh bạch và hiệu quả cho cộng đồng.</p>
                     <p>Một số tính năng, giao diện có thể chưa hoàn thiện và được thay đổi trong các phiên bản tiếp theo. 
                         Mọi góp ý xin gửi về hòm thư của nhóm tác giả.</p>
                 </section>
@@ -1263,11 +1293,11 @@
     <script src="analytics-config.js"></script>
     <script src="analytics.js"></script>
     <script src="config.js"></script>
-    <script src="auth.js?v=search-login-notice-20260926"></script>
-    <script src="typesense-search-form.js?v=cross-group-registration-20261004"></script>
-    <script src="script.js?v=gzip-filter-url-20261004"></script>
-    <script src="ingredient-lookup.js?v=lookup-default-widths-v3-20261004"></script>
-    <script src="ai-search-chat.js"></script>
+    <script src="auth.js?v=auth-password-eye-toggle-v1-20261013"></script>
+<script src="typesense-search-form.js?v=advanced-filter-live-preview-searchable-dropdowns-v1-20261012"></script>
+    <script src="script.js?v=result-detail-contrast-layout-v2-20261013"></script>
+        <script src="ingredient-lookup.js?v=desktop-fit-v1-20261012"></script>
+    <script src="ai-search-chat.js?v=mobile-all-surfaces-viewport-v1-20261011"></script>
     <script>
         feather.replace();
     </script>

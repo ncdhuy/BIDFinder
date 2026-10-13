@@ -1,6 +1,7 @@
 (function () {
     const GROUP_SCOPE = { goods: 'goods', medicines: 'medicine', traditional: 'traditional' };
     const GROUP_LABELS = { goods: 'Hàng hóa', medicines: 'Thuốc', traditional: 'Dược liệu' };
+    const GROUP_DEFAULT_FIELDS = { goods: 'item_name', medicines: 'active_ingredient_or_herbal_component', traditional: 'item_name' };
     const FIELD_ORDER = {
         goods: ['item_name', 'model_mark', 'brand', 'technical_specification', 'unit', 'quantity', 'winning_unit_price', 'winning_bidder_name', 'bid_invitation_code', 'procuring_entity_name', 'decision_number', 'decision_issued_at', 'selection_method', 'manufacturer', 'production_year', 'country_of_origin', 'model', 'registration_or_import_permit_number', 'hs_code', 'winning_bidder_id', 'procuring_entity_id', 'result_posted_at', 'bidder_count', 'location'],
         medicines: ['medicine_name', 'active_ingredient_or_herbal_component', 'strength', 'marketing_authorization_or_import_permit', 'unit', 'quantity', 'winning_unit_price', 'medicine_group', 'winning_bidder_name', 'bid_invitation_code', 'procuring_entity_name', 'decision_number', 'decision_issued_at', 'selection_method', 'route_of_administration', 'dosage_form', 'packaging', 'shelf_life', 'manufacturer', 'production_country', 'winning_bidder_id', 'procuring_entity_id', 'result_posted_at', 'bidder_count', 'location'],
@@ -269,6 +270,9 @@
                     --control-h: 44px;
                     --field-pad-x: 14px;
                     display: block;
+                    width: 100%;
+                    max-width: 100%;
+                    min-width: 0;
                     height: auto;
                     min-height: 0;
                     color: var(--c-text);
@@ -364,7 +368,7 @@
                     align-items: stretch;
                     gap: 5px;
                     min-height: 320px;
-                    height: min(550px, calc(100dvh - 80px));
+                    height: min(565px, calc(100dvh - 80px));
                     padding: 4px;
                     overflow: hidden;
                     background: var(--c-surface);
@@ -486,8 +490,12 @@
                 }
                 .filter-dropdown-menu[hidden] { display: none; }
                 .filter-dropdown-option { display: flex; min-height: 32px; align-items: center; gap: 8px; padding: 5px 7px; border-radius: 4px; color: var(--c-text); cursor: pointer; font-size: 13px; line-height: 1.35; }
+                .filter-dropdown-option[hidden] { display: none; }
                 .filter-dropdown-option:hover { background: var(--c-surface-2); }
                 .filter-dropdown-option input { width: 16px; min-height: 16px; flex: 0 0 16px; accent-color: var(--c-primary); }
+                .filter-dropdown-search { position: sticky; top: -5px; z-index: 1; margin: -5px -5px 4px; padding: 5px; background: var(--c-surface); }
+                .filter-dropdown-search input { width: 100%; min-height: 36px; padding: 7px 9px; border: 1px solid var(--c-border); border-radius: 6px; background: var(--c-surface); color: var(--c-text); font: inherit; font-size: 13px; }
+                .filter-dropdown-empty { padding: 8px; color: var(--c-muted); font-size: 12px; }
                 .date-range-control { display: flex; gap: 12px; }
                 .date-range-field { position: relative; min-width: 0; flex: 1; }
                 .date-range-field label { display: block; margin-bottom: 6px; color: var(--c-sub); font-size: 12px; font-weight: 700; }
@@ -602,16 +610,19 @@
                     .filter-layout { grid-template-columns: 130px minmax(400px, 450px) minmax(0, 1fr); }
                 }
                 @media (max-width: 980px) {
-                    .filter-layout { display: flex; height: auto; max-height: calc(100dvh - 220px); flex-direction: column; padding: 0; }
+                    .filter-layout { display: flex; width: 100%; min-width: 0; max-width: 100%; height: auto; max-height: none; flex-direction: column; padding: 0; overflow: visible; }
                     .filter-sidebar { display: contents; }
-                    .category-panel, .condition-panel, .filter-content { width: 100%; min-width: 0; max-width: none; grid-column: auto; }
-                    .category-panel { max-height: 160px; }
-                    .condition-panel { max-height: 285px; }
-                    .filter-content { min-height: 250px; padding: 12px 16px 16px 14px; }
-                    .search-conditions-list { max-height: 120px; }
+                    .category-panel, .condition-panel, .filter-content { width: 100%; min-width: 0; max-width: none; grid-column: auto; overflow: visible; }
+                    .category-panel, .condition-panel { max-height: none; }
+                    .condition-section, .sidebar-column { min-height: auto; max-height: none; overflow: visible; }
+                    .filter-content { min-height: 0; padding: 12px 16px 16px 14px; }
+                    .filter-pane.active { min-height: 0; }
+                    .search-conditions-list { max-height: none; overflow: visible; }
                     .editor-actions .btn { flex: 1; }
                 }
                 @media (max-width: 600px) {
+                    .condition-panel { grid-template-columns: minmax(0, 1fr); }
+                    .condition-section + .condition-section { margin-top: 8px; padding: 8px 0 0; border-top: 1px solid #cfe2eb; border-left: 0; }
                     .fields-row, .range-row { flex-wrap: wrap; gap: 10px; }
                     .fields-row .field, .range-row > div { flex-basis: 100%; }
                 }
@@ -629,7 +640,12 @@
         fieldLabel(name) { return this.fieldLabelForGroup(this.state.group, name); }
         fieldHint(name) { return GROUP_FIELD_HINTS[this.state.group]?.[name] || FIELD_HINTS[name] || 'VD: chọn hoặc nhập giá trị'; }
         fieldMeta(name) { return this.fields().find(field => field.name === name) || null; }
-        ensureActiveField() { if (!this.fieldMeta(this.state.activeField)) this.state.activeField = this.fields()[0]?.name || ''; }
+        ensureActiveField() {
+            if (!this.fieldMeta(this.state.activeField)) {
+                const preferred = GROUP_DEFAULT_FIELDS[this.state.group];
+                this.state.activeField = this.fieldMeta(preferred) ? preferred : this.fields()[0]?.name || '';
+            }
+        }
         renderFieldButton(field) {
             return `<button type="button" class="sidebar-item ${field.name === this.state.activeField ? 'active' : ''} ${this.state.criteria[field.name] ? 'has-value' : ''}" data-field="${field.name}" aria-current="${field.name === this.state.activeField}"><span class="sidebar-item-main">${html(this.fieldLabel(field.name))}</span><span class="sidebar-item-hint">${html(this.fieldHint(field.name))}</span></button>`;
         }
@@ -690,8 +706,8 @@
                 <div class="keyword-search-examples">
                     <p class="keyword-search-example"><span class="keyword-search-mark" aria-hidden="true">❌</span><span class="keyword-search-expression"><span class="token-tag">amoxicillin + acid clavulanic</span></span></p>
                     <p class="keyword-search-example"><span class="keyword-search-mark" aria-hidden="true">✅</span><span class="keyword-search-expression"><span class="token-tag">amoxicillin</span><span class="token-operator">AND</span><span class="token-tag">clavulanic</span></span></p>
-                    <p class="keyword-search-example"><span class="keyword-search-mark" aria-hidden="true">❌</span><span class="keyword-search-expression"><span class="token-tag">Đầu dò cơn gò dùng cho máy Monitor sản khoa MT 610 (Toitu)</span></span></p>
-                    <p class="keyword-search-example"><span class="keyword-search-mark" aria-hidden="true">✅</span><span class="keyword-search-expression"><span class="token-tag">Đầu dò cơn gò</span></span></p>
+                    <p class="keyword-search-example"><span class="keyword-search-mark" aria-hidden="true">❌</span><span class="keyword-search-expression"><span class="token-tag">Phần mềm Microsoft Windows 11 Pro 64-bit</span></span></p>
+                    <p class="keyword-search-example"><span class="keyword-search-mark" aria-hidden="true">✅</span><span class="keyword-search-expression"><span class="token-tag">Windows 11</span></span></p>
                 </div>
                 <p class="keyword-search-note">Nếu kết quả quá ít, hãy tách cụm từ thành từ khóa ngắn hơn: dùng <strong>OR</strong> để mở rộng kết quả, <strong>AND</strong> để yêu cầu đủ cả hai từ khóa, hoặc <strong>NOT</strong> để loại từ không mong muốn.</p>
             </aside>`;
@@ -732,7 +748,29 @@
             const selectedValues = (criterion?.values || []).map(value => name === 'selection_method' ? this.optionLabel(name, value) : value);
             const selected = new Set(selectedValues);
             const options = this.dropdownOptions(name);
-            return `<div class="filter-dropdown" data-dropdown-field="${name}"><button type="button" class="filter-dropdown-trigger" data-dropdown-toggle="${name}" aria-expanded="false"><span class="filter-dropdown-label" data-dropdown-label="${name}">${html(this.dropdownDisplayLabel(name, [...selected]))}</span><span class="filter-dropdown-chevron" aria-hidden="true">⌄</span></button><div class="filter-dropdown-menu" data-dropdown-menu="${name}" hidden>${options.map(([value, label]) => `<label class="filter-dropdown-option"><input type="checkbox" data-dropdown-option="${name}" value="${html(value)}" ${selected.has(value) ? 'checked' : ''}><span>${html(label)}</span></label>`).join('')}</div></div>`;
+            const searchable = name === 'selection_method' || name === 'location';
+            const searchControl = searchable
+                ? `<div class="filter-dropdown-search"><input type="search" data-dropdown-search="${name}" placeholder="Tìm ${name === 'selection_method' ? 'hình thức LCNT' : 'địa điểm'}..." aria-label="Tìm ${name === 'selection_method' ? 'hình thức LCNT' : 'địa điểm'}"></div>`
+                : '';
+            const emptyState = searchable ? `<div class="filter-dropdown-empty" data-dropdown-empty="${name}" hidden>Không tìm thấy giá trị phù hợp.</div>` : '';
+            return `<div class="filter-dropdown" data-dropdown-field="${name}"><button type="button" class="filter-dropdown-trigger" data-dropdown-toggle="${name}" aria-expanded="false"><span class="filter-dropdown-label" data-dropdown-label="${name}">${html(this.dropdownDisplayLabel(name, [...selected]))}</span><span class="filter-dropdown-chevron" aria-hidden="true">⌄</span></button><div class="filter-dropdown-menu" data-dropdown-menu="${name}" hidden>${searchControl}${options.map(([value, label]) => `<label class="filter-dropdown-option"><input type="checkbox" data-dropdown-option="${name}" value="${html(value)}" ${selected.has(value) ? 'checked' : ''}><span>${html(label)}</span></label>`).join('')}${emptyState}</div></div>`;
+        }
+        normalizeDropdownSearch(value) {
+            return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[đĐ]/g, 'd').toLocaleLowerCase('vi-VN').trim();
+        }
+        filterDropdownOptions(name, query) {
+            const menu = this.shadowRoot?.querySelector(`[data-dropdown-menu="${name}"]`);
+            if (!menu) return;
+            const needle = this.normalizeDropdownSearch(query);
+            let visibleCount = 0;
+            menu.querySelectorAll('.filter-dropdown-option').forEach(option => {
+                const checkbox = option.querySelector('[data-dropdown-option]');
+                const haystack = this.normalizeDropdownSearch(`${checkbox?.value || ''} ${option.textContent || ''}`);
+                option.hidden = Boolean(needle) && !haystack.includes(needle);
+                if (!option.hidden) visibleCount += 1;
+            });
+            const emptyState = menu.querySelector('[data-dropdown-empty]');
+            if (emptyState) emptyState.hidden = visibleCount > 0;
         }
         parseVietnameseDate(raw) {
             const value = String(raw || '').trim();
@@ -779,7 +817,7 @@
             this.state.page = 1;
             this.updateDropdownLabel(name, values);
             this.refreshCriteriaUI();
-            this.invalidatePreview();
+            this.requestPreview();
         }
         updateDropdownLabel(name, values) {
             const label = this.shadowRoot.querySelector(`[data-dropdown-label="${name}"]`);
@@ -832,7 +870,7 @@
             }
             this.state.page = 1;
             this.refreshCriteriaUI();
-            this.invalidatePreview();
+            this.requestPreview();
         }
         criterionTokens(criterion) {
             if (criterion?.kind === 'tokens') return (criterion.tokens || []).map((token, index) => ({ value: String(token.value || '').trim(), op: index ? (['OR', 'AND', 'NOT'].includes(token.op) ? token.op : 'OR') : 'OR' })).filter(token => token.value);
@@ -884,7 +922,7 @@
             root.querySelectorAll('[data-group]').forEach(button => button.addEventListener('click', () => {
                 this.cancelPreview();
                 this._keywordDrafts.clear();
-                this.state.group = button.dataset.group; this.state.sourceTypes = []; this.state.criteria = {}; this.state.activeField = ''; this.state.page = 1; this._previewState = { idle: true }; this.render();
+                this.state.group = button.dataset.group; this.state.sourceTypes = []; this.state.criteria = {}; this.state.activeField = GROUP_DEFAULT_FIELDS[this.state.group] || ''; this.state.page = 1; this._previewState = { idle: true }; this.render(); this.focusActiveField();
             }));
             root.querySelectorAll('[data-field]').forEach(button => button.addEventListener('click', () => {
                 this.selectField(button.dataset.field);
@@ -904,6 +942,7 @@
             });
             root.querySelectorAll('[data-dropdown-toggle]').forEach(button => button.addEventListener('click', event => { event.preventDefault(); this.toggleDropdown(button.dataset.dropdownToggle); }));
             root.querySelectorAll('[data-dropdown-option]').forEach(input => input.addEventListener('change', () => this.syncDropdownField(input.dataset.dropdownOption)));
+            root.querySelectorAll('[data-dropdown-search]').forEach(input => input.addEventListener('input', () => this.filterDropdownOptions(input.dataset.dropdownSearch, input.value)));
             root.querySelectorAll('[data-open-date-picker]').forEach(field => field.addEventListener('click', () => this.openDatePicker(field)));
             root.querySelectorAll('[data-date-picker]').forEach(input => input.addEventListener('change', () => {
                 const text = root.querySelector(`[data-date-text="${input.dataset.datePicker}"]`);
@@ -923,7 +962,7 @@
             root.querySelectorAll('[data-chip-field]').forEach(button => button.addEventListener('click', () => {
                 this.selectField(button.dataset.chipField);
             }));
-            root.querySelectorAll('[data-remove-field]').forEach(button => button.addEventListener('click', () => { delete this.state.criteria[button.dataset.removeField]; this.render(); this.invalidatePreview(); }));
+            root.querySelectorAll('[data-remove-field]').forEach(button => button.addEventListener('click', () => { delete this.state.criteria[button.dataset.removeField]; this.render(); this.requestPreview(); }));
         }
         isAutocompleteField(field) {
             return Boolean(field?.autocomplete);
@@ -1081,8 +1120,8 @@
                 if (event.key === 'Enter' && !event.shiftKey) {
                     event.preventDefault();
                     const active = this.autocompleteItems(scope)[this._autocompleteIndex];
-                    if (active?.dataset?.autocompleteValue) this.appendValueToken(active.dataset.autocompleteValue, true);
-                    else this.appendValueToken(keywordInput.value, true);
+                    if (active?.dataset?.autocompleteValue) this.appendValueToken(active.dataset.autocompleteValue);
+                    else this.appendValueToken(keywordInput.value);
                 } else if (this.handleAutocompleteKey(event, scope)) {
                     return;
                 }
@@ -1111,7 +1150,7 @@
             this.syncEditorActions();
         }
         // State-based port of legacy AdvancedFilterManager's token behavior.
-        appendValueToken(rawValue, estimate = false) {
+        appendValueToken(rawValue) {
             const value = String(rawValue || '').trim();
             if (!value || !this.state.activeField) return;
             this._keywordDrafts.delete(this.state.activeField);
@@ -1119,7 +1158,30 @@
             tokens.push({ value, op: tokens.length ? 'OR' : 'OR' });
             this.state.criteria[this.state.activeField] = { kind: 'tokens', tokens };
             this.state.page = 1; this.refreshTokenCriterion();
-            if (estimate) this.requestPreview(); else this.invalidatePreview();
+            this.requestPreview();
+        }
+        commitPendingKeywordDrafts() {
+            const input = this.shadowRoot?.querySelector('#criterion-keyword');
+            if (input) {
+                const value = String(input.value || '').trim();
+                if (value) this._keywordDrafts.set(this.state.activeField, value);
+                else this._keywordDrafts.delete(this.state.activeField);
+            }
+            let changed = false;
+            for (const [name, rawValue] of this._keywordDrafts) {
+                const value = String(rawValue || '').trim();
+                if (!value) continue;
+                const tokens = this.criterionTokens(this.state.criteria[name]);
+                tokens.push({ value, op: 'OR' });
+                this.state.criteria[name] = { kind: 'tokens', tokens };
+                changed = true;
+            }
+            this._keywordDrafts.clear();
+            if (changed) {
+                this.state.page = 1;
+                this.invalidatePreview();
+                this.refreshTokenCriterion();
+            }
         }
         cycleTokenOperator(index) {
             const tokens = this.criterionTokens(this.state.criteria[this.state.activeField]);
@@ -1137,7 +1199,7 @@
             tokens.splice(index, 1);
             if (tokens[0]) tokens[0].op = 'OR';
             if (tokens.length) this.state.criteria[this.state.activeField] = { kind: 'tokens', tokens }; else delete this.state.criteria[this.state.activeField];
-            this.state.page = 1; this.refreshTokenCriterion(); this.invalidatePreview();
+            this.state.page = 1; this.refreshTokenCriterion(); this.requestPreview();
         }
         moveValueTokenToInputForEditing(index) {
             const tokens = this.criterionTokens(this.state.criteria[this.state.activeField]);
@@ -1146,7 +1208,7 @@
             if (tokens[0]) tokens[0].op = 'OR';
             if (tokens.length) this.state.criteria[this.state.activeField] = { kind: 'tokens', tokens }; else delete this.state.criteria[this.state.activeField];
             this.refreshTokenCriterion(value);
-            this.invalidatePreview();
+            this.requestPreview();
         }
         saveActiveCriterion() {
             const field = this.fieldMeta(this.state.activeField);
@@ -1162,7 +1224,7 @@
                 const values = input?.multiple ? Array.from(input.selectedOptions).map(option => option.value).filter(Boolean) : splitValues(input?.value);
                 if (values.length) this.state.criteria[field.name] = { kind: 'values', values }; else delete this.state.criteria[field.name];
             }
-            this.state.page = 1; this.render(); this.invalidatePreview();
+            this.state.page = 1; this.render(); this.requestPreview();
         }
         collectFilterPayload() {
             const filters = {}, structuredFilters = {}, ranges = {};
@@ -1253,7 +1315,6 @@
         }
         requestPreview() {
             this.cancelPreview();
-            if (!Object.keys(this.state.criteria).length) { this.setPreviewResult({ idle: true }); return; }
             this.setPreviewResult({ loading: true });
             this.previewTimer = setTimeout(() => this.dispatchEvent(new CustomEvent('preview-filters', { detail: this.collectFilterPayload(), bubbles: true, composed: true })), 300);
         }
@@ -1262,6 +1323,7 @@
             this.setPreviewResult({ idle: true });
         }
         submit() {
+            this.commitPendingKeywordDrafts();
             if (!Object.keys(this.state.criteria).length || this.hasZeroPreviewResult()) return;
             this.cancelPreview();
             const request = this.collectFilterPayload();

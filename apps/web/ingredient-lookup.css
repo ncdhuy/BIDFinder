@@ -72,6 +72,38 @@
   background: var(--color-surface);
 }
 
+.ingredient-lookup-fit-content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  gap: 14px;
+}
+
+#data-tab > .ingredient-lookup-panel.active.ingredient-lookup-fit {
+  position: relative;
+  padding: 0;
+  overflow: hidden !important;
+}
+
+#data-tab > .ingredient-lookup-panel.active.ingredient-lookup-fit > .ingredient-lookup-fit-content {
+  position: absolute;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  width: var(--ingredient-lookup-fit-content-width, 100%);
+  height: var(--ingredient-lookup-fit-content-height, auto);
+  max-width: none;
+  padding: 16px;
+  transform: scale(var(--ingredient-lookup-fit-scale, 1));
+  transform-origin: top left;
+}
+
+#data-tab > .ingredient-lookup-panel.active.ingredient-lookup-fit .ingredient-lookup-results {
+  flex: 1 1 360px;
+}
+
 #data-tab:has(.ingredient-lookup-panel.active) + .legacy-pagination { visibility: hidden; }
 
 .ingredient-lookup-header {
@@ -113,6 +145,14 @@
   position: relative;
   z-index: 2;
 }
+.ingredient-lookup-mobile-filter,
+.ingredient-lookup-filter-menu { display: contents; }
+.ingredient-lookup-filters .ingredient-lookup-filter-trigger { display: none; }
+.ingredient-lookup-field-registration { order: 1; }
+.ingredient-lookup-field-drug { order: 2; }
+.ingredient-lookup-field-ingredient { order: 3; }
+.ingredient-lookup-field-route { order: 4; }
+.ingredient-lookup-field-year { order: 5; }
 .ingredient-lookup-filters label {
   position: relative;
   display: flex;
@@ -162,6 +202,7 @@
 .ingredient-lookup-filters input:focus { border: 2px solid #1680e3; outline: none; }
 .ingredient-lookup-panel button:focus-visible { outline: 2px solid #1680e3; outline-offset: 2px; }
 .ingredient-lookup-actions {
+  order: 6;
   grid-column: 1 / -1;
   display: flex;
   justify-content: flex-end;
@@ -302,11 +343,96 @@
   .ingredient-lookup-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 700px) {
-  #data-tab > .ingredient-lookup-panel.active { padding: 12px; }
+  #data-tab > .ingredient-lookup-panel.active {
+    padding: 12px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+
+  #data-tab > .ingredient-lookup-panel.active > .ingredient-lookup-fit-content {
+    flex: 0 0 auto;
+    min-height: 100%;
+  }
+
+  #data-tab > .ingredient-lookup-panel.active > .ingredient-lookup-fit-content > .ingredient-lookup-header,
+  #data-tab > .ingredient-lookup-panel.active > .ingredient-lookup-fit-content > .ingredient-lookup-filters,
+  #data-tab > .ingredient-lookup-panel.active > .ingredient-lookup-fit-content > .ingredient-lookup-results {
+    flex: 0 0 auto;
+  }
+
+  .ingredient-lookup-results {
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .ingredient-lookup-table-wrap {
+    flex: 0 0 auto;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .ingredient-lookup-mobile-filter {
+    position: relative;
+    display: block;
+    grid-column: 1 / -1;
+    min-width: 0;
+    z-index: 5;
+  }
+
+  .ingredient-lookup-filter-trigger {
+    align-items: center;
+    justify-content: space-between;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    min-height: 42px;
+    padding: 0 12px;
+    border: 1px solid #cbd9e7;
+    border-radius: 6px;
+    background: #fff;
+    color: var(--color-text-primary);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .ingredient-lookup-filters .ingredient-lookup-filter-trigger {
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .ingredient-lookup-filter-trigger span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ingredient-lookup-filter-trigger svg { width: 16px; height: 16px; flex: 0 0 16px; }
+
+  .ingredient-lookup-filter-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    z-index: 20;
+    display: none;
+    box-sizing: border-box;
+    max-height: min(60dvh, 420px);
+    overflow: auto;
+    margin: 0;
+    padding: 12px;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: var(--shadow-lg);
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .ingredient-lookup-mobile-filter.is-open .ingredient-lookup-filter-menu { display: grid; }
+  .ingredient-lookup-message { height: clamp(180px, 35dvh, 280px) !important; }
   .ingredient-lookup-header h2 { font-size: 19px; }
-  .ingredient-lookup-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ingredient-lookup-filters { grid-template-columns: minmax(0, 1fr); }
   .ingredient-lookup-footer { align-items: flex-start; flex-direction: column; }
-}
-@media (max-width: 440px) {
-  .ingredient-lookup-filters { grid-template-columns: 1fr; }
 }

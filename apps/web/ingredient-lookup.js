@@ -1,6 +1,90 @@
 (() => {
     const form = document.getElementById('ingredient-lookup-form');
     if (!form) return;
+    const mobileFilter = document.getElementById('ingredient-lookup-mobile-filter');
+    const mobileFilterTrigger = document.getElementById('ingredient-lookup-filter-trigger');
+    const mobileFilterSummary = document.getElementById('ingredient-lookup-filter-summary');
+    const filterInputs = [...form.querySelectorAll('input[name]')];
+    const setMobileFilterOpen = open => {
+        if (!mobileFilter || !mobileFilterTrigger) return;
+        mobileFilter.classList.toggle('is-open', open);
+        mobileFilterTrigger.setAttribute('aria-expanded', String(open));
+    };
+    const syncMobileFilterSummary = () => {
+        const activeLabels = filterInputs
+            .filter(input => input.value.trim())
+            .map(input => input.closest('label')?.childNodes[0]?.textContent.trim())
+            .filter(Boolean);
+        mobileFilterSummary.textContent = activeLabels.length
+            ? `${activeLabels[0]}${activeLabels.length > 1 ? ` +${activeLabels.length - 1}` : ''}`
+            : 'Tên thuốc';
+    };
+    mobileFilterTrigger?.addEventListener('click', () => {
+        closeSuggestions();
+        setMobileFilterOpen(!mobileFilter.classList.contains('is-open'));
+    });
+    filterInputs.forEach(input => input.addEventListener('input', syncMobileFilterSummary));
+    document.addEventListener('pointerdown', event => {
+        if (!mobileFilter?.contains(event.target)) setMobileFilterOpen(false);
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && mobileFilter?.classList.contains('is-open') && !activeDropdown) {
+            setMobileFilterOpen(false);
+            mobileFilterTrigger.focus();
+        }
+    });
+    syncMobileFilterSummary();
+
+    const fitPanel = document.getElementById('ingredient-lookup-panel');
+    const fitContent = fitPanel?.querySelector('.ingredient-lookup-fit-content');
+    let fitFrame = 0;
+    const scheduleLookupFit = () => {
+        if (fitFrame) return;
+        fitFrame = requestAnimationFrame(() => {
+            fitFrame = 0;
+            if (!fitPanel?.classList.contains('active') || !fitContent) return;
+
+            const fitProperties = [
+                '--ingredient-lookup-fit-content-width',
+                '--ingredient-lookup-fit-content-height',
+                '--ingredient-lookup-fit-scale',
+            ];
+            if (window.matchMedia('(max-width: 980px)').matches) {
+                fitPanel.classList.remove('ingredient-lookup-fit');
+                fitProperties.forEach(property => fitPanel.style.removeProperty(property));
+                return;
+            }
+
+            fitPanel.classList.add('ingredient-lookup-fit');
+            const width = fitPanel.clientWidth;
+            const availableHeight = Math.max(1, fitPanel.clientHeight);
+            if (width <= 0) return;
+
+            let scale = 1;
+            let naturalHeight = 0;
+            for (let attempt = 0; attempt < 8; attempt += 1) {
+                fitPanel.style.setProperty('--ingredient-lookup-fit-content-width', `${width / scale}px`);
+                fitPanel.style.setProperty('--ingredient-lookup-fit-content-height', 'auto');
+                fitPanel.style.setProperty('--ingredient-lookup-fit-scale', String(scale));
+                naturalHeight = Math.max(fitContent.scrollHeight, fitContent.offsetHeight);
+                if (!naturalHeight) return;
+                const nextScale = Math.min(1, availableHeight / naturalHeight);
+                if (Math.abs(nextScale - scale) < 0.002) break;
+                scale = nextScale;
+            }
+
+            fitPanel.style.setProperty('--ingredient-lookup-fit-content-width', `${width / scale}px`);
+            fitPanel.style.setProperty('--ingredient-lookup-fit-content-height', `${availableHeight / scale}px`);
+            fitPanel.style.setProperty('--ingredient-lookup-fit-scale', String(scale));
+        });
+    };
+    window.addEventListener('resize', scheduleLookupFit, { passive: true });
+    if (typeof ResizeObserver !== 'undefined' && fitPanel) {
+        new ResizeObserver(scheduleLookupFit).observe(fitPanel);
+    }
+    document.fonts?.ready.then(scheduleLookupFit);
+    scheduleLookupFit();
+
     const body = document.getElementById('ingredient-lookup-body');
     const table = body.closest('table');
     const range = document.getElementById('ingredient-lookup-range');
@@ -451,6 +535,7 @@
     form.addEventListener('submit', event => {
         event.preventDefault();
         closeSuggestions();
+        setMobileFilterOpen(false);
         filters = filterValues();
         if (Object.values(filters).some(Boolean)) void load();
         else resetResults();
@@ -458,6 +543,8 @@
     document.getElementById('ingredient-lookup-clear').addEventListener('click', () => {
         closeSuggestions();
         form.reset();
+        setMobileFilterOpen(false);
+        syncMobileFilterSummary();
         filters = {};
         resetResults();
     });

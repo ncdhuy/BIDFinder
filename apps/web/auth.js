@@ -21,6 +21,10 @@
   const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   const PROFILE_SECTIONS = ['profile', 'password'];
   const SESSION_VERIFY_INTERVAL_MS = 5 * 60 * 1000;
+  const PASSWORD_TOGGLE_ICONS = {
+    hidden: '<svg class="auth-password-toggle-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8"></path><circle cx="12" cy="12" r="3"></circle></svg>',
+    visible: '<svg class="auth-password-toggle-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"></path><line x1="1" y1="1" x2="23" y2="23"></line><path d="M10.59 10.59a2 2 0 0 0 2.83 2.83"></path></svg>'
+  };
 
   function readStoredToken() {
     const sessionToken = TOKEN_STORAGE.getItem(STORAGE_KEY) || '';
@@ -570,14 +574,21 @@
     }
   }
 
+  function syncPasswordToggle(button, isVisible) {
+    const label = isVisible ? 'Ẩn mật khẩu' : 'Hiện mật khẩu';
+    button.innerHTML = isVisible ? PASSWORD_TOGGLE_ICONS.visible : PASSWORD_TOGGLE_ICONS.hidden;
+    button.setAttribute('aria-label', label);
+    button.title = label;
+    button.setAttribute('aria-pressed', String(isVisible));
+  }
+
   function resetPasswordVisibility(scope = document) {
     scope.querySelectorAll?.('[data-password-toggle]').forEach((button) => {
       const input = document.getElementById(button.dataset.passwordToggle || '');
       if (!input) return;
 
       input.type = 'password';
-      button.textContent = 'Hiện mật khẩu';
-      button.setAttribute('aria-pressed', 'false');
+      syncPasswordToggle(button, false);
     });
   }
 
@@ -592,8 +603,7 @@
 
         const willShow = input.type === 'password';
         input.type = willShow ? 'text' : 'password';
-        button.textContent = willShow ? 'Ẩn mật khẩu' : 'Hiện mật khẩu';
-        button.setAttribute('aria-pressed', String(willShow));
+        syncPasswordToggle(button, willShow);
         input.focus();
       });
     });

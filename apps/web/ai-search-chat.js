@@ -260,21 +260,29 @@
     }
 
     function positionPanel() {
-        if (window.innerWidth <= 640) {
+        const root = document.documentElement;
+        const viewport = window.visualViewport;
+        const viewportWidth = Math.min(root.clientWidth || window.innerWidth, viewport?.width || window.innerWidth);
+        const viewportHeight = Math.min(root.clientHeight || window.innerHeight, viewport?.height || window.innerHeight);
+        const viewportLeft = viewport?.offsetLeft || 0;
+        const viewportTop = viewport?.offsetTop || 0;
+        if (viewportWidth <= 640) {
             panel.style.removeProperty('--ai-chat-top');
+            panel.style.removeProperty('--ai-chat-left');
             panel.style.removeProperty('--ai-chat-right');
             return;
         }
         const buttonRect = openButton.getBoundingClientRect();
         if (!buttonRect.width || !buttonRect.height) return;
-        const panelWidth = Math.min(390, Math.max(0, window.innerWidth - 32));
-        const panelHeight = Math.min(560, Math.max(0, window.innerHeight - 112));
-        const maxRight = Math.max(16, window.innerWidth - panelWidth - 16);
-        const right = Math.min(maxRight, Math.max(16, window.innerWidth - buttonRect.right));
-        const maxTop = Math.max(16, window.innerHeight - panelHeight - 16);
-        const top = Math.min(maxTop, Math.max(16, buttonRect.bottom + 8));
+        const panelWidth = Math.min(390, Math.max(0, viewportWidth - 32));
+        const panelHeight = Math.min(560, Math.max(0, viewportHeight - 112));
+        const maxLeft = viewportLeft + viewportWidth - panelWidth - 16;
+        const left = Math.min(maxLeft, Math.max(viewportLeft + 16, buttonRect.right - panelWidth));
+        const maxTop = viewportTop + viewportHeight - panelHeight - 16;
+        const top = Math.min(maxTop, Math.max(viewportTop + 16, buttonRect.bottom + 8));
+        panel.style.setProperty('--ai-chat-left', `${Math.round(left)}px`);
         panel.style.setProperty('--ai-chat-top', `${Math.round(top)}px`);
-        panel.style.setProperty('--ai-chat-right', `${Math.round(right)}px`);
+        panel.style.setProperty('--ai-chat-right', 'auto');
     }
 
     function setOpen(open) {

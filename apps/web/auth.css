@@ -184,8 +184,8 @@ body.auth-state-guest #open-login-nav {
 }
 
 .search-login-notice {
-  width: min(440px, calc(100vw - 32px));
-  max-height: calc(100dvh - 32px);
+  width: min(440px, calc(var(--app-viewport-width, 100vw) - 32px));
+  max-height: calc(var(--app-viewport-height, 100dvh) - 32px);
   padding: 28px;
   border: 1px solid #c8deec;
   border-radius: 16px;
@@ -269,13 +269,13 @@ body.auth-state-guest #open-login-nav {
 .auth-dialog {
   position: relative;
   z-index: 1;
-  width: min(clamp(760px, 70vw, 980px), calc(100vw - 32px));
+  width: min(clamp(760px, 70vw, 980px), calc(var(--app-viewport-width, 100vw) - 32px));
   margin: 0;
   border-radius: var(--auth-shell-radius);
   overflow: hidden;
   background: linear-gradient(180deg, #fbfeff 0%, #f4fafc 100%);
   box-shadow: 0 32px 80px rgba(9, 24, 37, 0.24);
-  max-height: calc(100vh - 48px);
+  max-height: calc(var(--app-viewport-height, 100vh) - 48px);
 }
 
 .auth-close {
@@ -290,7 +290,7 @@ body.auth-state-guest #open-login-nav {
   display: grid;
   grid-template-columns: minmax(300px, 0.86fr) minmax(360px, 1fr);
   height: auto;
-  min-height: min(520px, calc(100dvh - 32px));
+  min-height: min(520px, calc(var(--app-viewport-height, 100dvh) - 32px));
 }
 
 .auth-brand-panel {
@@ -626,25 +626,38 @@ body.auth-state-guest #open-login-nav {
 }
 
 .auth-password-control input {
-  padding-right: 116px;
+  padding-right: 52px;
 }
 
 .auth-password-toggle {
   position: absolute;
-  right: 7px;
+  right: 5px;
   top: 50%;
   transform: translateY(-50%);
-  min-height: 28px;
-  padding: 0 9px;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  min-height: 36px;
+  padding: 0;
   border: 1px solid transparent;
   border-radius: 7px;
   background: transparent;
   color: #1d6c55;
   font-family: inherit;
-  font-size: 12px;
-  font-weight: 800;
+  font-size: 0;
   line-height: 1;
   cursor: pointer;
+}
+
+.auth-password-toggle svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
 }
 
 .auth-password-toggle:hover {
@@ -875,9 +888,9 @@ body.auth-state-guest #open-login-nav {
 }
 
 .auth-modal.is-profile .auth-dialog {
-  width: min(clamp(880px, 62vw, 1080px), calc(100vw - 36px));
+  width: min(clamp(880px, 62vw, 1080px), calc(var(--app-viewport-width, 100vw) - 36px));
   height: clamp(490px, 58dvh, 620px);
-  max-height: calc(100dvh - 36px);
+  max-height: calc(var(--app-viewport-height, 100dvh) - 36px);
   border-radius: 16px;
 }
 
@@ -982,13 +995,14 @@ body.auth-state-guest #open-login-nav {
 }
 
 .auth-modal.is-profile .auth-password-control input {
-  padding-right: 108px;
+  padding-right: 46px;
 }
 
 .auth-modal.is-profile .auth-password-toggle {
-  min-height: 26px;
+  width: 30px;
+  min-height: 30px;
   right: 5px;
-  font-size: 11px;
+  font-size: 0;
 }
 
 .auth-modal.is-profile .auth-field-note {
@@ -1018,12 +1032,12 @@ body.auth-state-guest #open-login-nav {
 
 @media (max-width: 860px) {
   .auth-dialog {
-    width: min(560px, calc(100vw - 24px));
-    max-height: calc(100vh - 24px);
+    width: min(560px, calc(var(--app-viewport-width, 100vw) - 24px));
+    max-height: calc(var(--app-viewport-height, 100vh) - 24px);
   }
 
   .auth-modal.is-profile .auth-dialog {
-    width: min(720px, calc(100vw - 24px));
+    width: min(720px, calc(var(--app-viewport-width, 100vw) - 24px));
     height: auto;
   }
 
@@ -1054,7 +1068,7 @@ body.auth-state-guest #open-login-nav {
   }
 
   .auth-dialog {
-    max-height: calc(100dvh - 24px);
+    max-height: calc(var(--app-viewport-height, 100dvh) - 24px);
   }
 
   .auth-grid {
@@ -1163,13 +1177,14 @@ body.auth-state-guest #open-login-nav {
   }
 
   .auth-password-control input {
-    padding-right: 108px;
+    padding-right: 50px;
   }
 
   .auth-password-toggle {
-    min-height: 26px;
+    width: 34px;
+    min-height: 34px;
     right: 5px;
-    font-size: 11px;
+    font-size: 0;
   }
 
   .auth-field-note {
@@ -1202,7 +1217,7 @@ body.auth-state-guest #open-login-nav {
   }
 
   .auth-dialog {
-    max-height: calc(100dvh - 20px);
+    max-height: calc(var(--app-viewport-height, 100dvh) - 20px);
   }
 
   .auth-grid {
@@ -1283,13 +1298,14 @@ body.auth-state-guest #open-login-nav {
   }
 
   .auth-password-control input {
-    padding-right: 108px;
+    padding-right: 50px;
   }
 
   .auth-password-toggle {
-    min-height: 26px;
+    width: 34px;
+    min-height: 34px;
     right: 5px;
-    font-size: 11px;
+    font-size: 0;
   }
 
   .auth-field-note {
@@ -1331,8 +1347,8 @@ body.auth-state-guest #open-login-nav {
   }
 
   .auth-modal.is-profile .auth-dialog {
-    width: min(920px, calc(100vw - 20px));
-    height: min(500px, calc(100dvh - 20px));
+    width: min(920px, calc(var(--app-viewport-width, 100vw) - 20px));
+    height: min(500px, calc(var(--app-viewport-height, 100dvh) - 20px));
   }
 
   .auth-modal.is-profile .auth-grid {
@@ -1359,7 +1375,7 @@ body.auth-state-guest #open-login-nav {
   }
 
   .auth-dialog {
-    max-height: calc(100vh - 16px);
+    max-height: calc(var(--app-viewport-height, 100vh) - 16px);
   }
 
   .auth-content-panel {

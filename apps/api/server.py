@@ -1668,9 +1668,8 @@ def build_token_condition(column: str, token_filter: TokenFilter, params: List[A
     if not token_filter or (not token_filter.tokens and not token_filter.groups):
         return None
 
-    and_parts = []
-    or_parts = []
-    not_parts = []
+    branches = []
+    current_branch = []
 
     for item in token_filter.tokens:
         value = (item.value or "").strip()
@@ -1679,20 +1678,21 @@ def build_token_condition(column: str, token_filter: TokenFilter, params: List[A
 
         p = next_param(params, f"%{value}%")
         expr = f"{column} ILIKE {p}"
-
-        if item.op == "NOT":
-            not_parts.append(f"{column} NOT ILIKE {p}")
-        elif item.op == "AND":
-            and_parts.append(expr)
+        if not current_branch:
+            current_branch.append(expr)
+        elif item.op == "OR":
+            branches.append(current_branch)
+            current_branch = [expr]
+        elif item.op == "NOT":
+            current_branch.append(f"{column} NOT ILIKE {p}")
         else:
-            or_parts.append(expr)
+            current_branch.append(expr)
 
     clauses = []
-    if and_parts:
-        clauses.append("(" + " AND ".join(and_parts) + ")")
-    if or_parts:
-        clauses.append("(" + " OR ".join(or_parts) + ")")
-    clauses.extend(not_parts)
+    if current_branch:
+        branches.append(current_branch)
+    if branches:
+        clauses.append("(" + " OR ".join("(" + " AND ".join(branch) + ")" for branch in branches) + ")")
 
     for group in token_filter.groups:
         alternatives = []

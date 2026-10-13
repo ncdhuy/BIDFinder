@@ -455,6 +455,7 @@ const RESETTABLE_UI_STORAGE_KEYS = [
     'colWidthDf1',
     'colWidthDf2',
     'colWidthDf3',
+    'bidfinder:ingredient-lookup-column-widths:v3',
     STORAGE_KEYS.hiddenColumns,
     STORAGE_KEYS.wrappedColumns,
     STORAGE_KEYS.frozenColumns,
@@ -621,6 +622,27 @@ const workingSetAvailable = {
     'extended-table': false,
     'traditional-table': false
 };
+const RESULT_TABLE_PAGE_KEYS = {
+    'standard-table': 'df1',
+    'extended-table': 'df2',
+    'traditional-table': 'df3'
+};
+let currentResultPages = {
+    'standard-table': 1,
+    'extended-table': 1,
+    'traditional-table': 1
+};
+function getResultTablePage(tableId) {
+    return Math.max(1, Number(currentResultPages[tableId] || 1));
+}
+function setResultTablePage(tableId, page) {
+    if (!RESULT_TABLE_PAGE_KEYS[tableId]) return;
+    const value = Number(page);
+    currentResultPages[tableId] = Number.isFinite(value) ? Math.max(1, value) : 1;
+}
+function resetResultTablePages(page = 1) {
+    Object.keys(RESULT_TABLE_PAGE_KEYS).forEach(tableId => setResultTablePage(tableId, page));
+}
 let currentQueryMeta = {
     df1HasMore: false,
     df2HasMore: false,
@@ -1889,14 +1911,23 @@ function getWorkingSetPage(tableId, page) {
     };
 }
 
-function refreshBoundedWorkingSetViews({ page = currentQueryRequest?.page || 1, resetScroll = true, redrawCharts = true } = {}) {
-    const nextPage = Math.max(1, Number(page || 1));
-    const df1 = getWorkingSetPage('standard-table', nextPage);
-    const df2 = getWorkingSetPage('extended-table', nextPage);
-    const df3 = getWorkingSetPage('traditional-table', nextPage);
+function refreshBoundedWorkingSetViews({ page, tableId, resetPages = false, resetScroll = true, redrawCharts = true } = {}) {
+    if (resetPages) resetResultTablePages(page ?? 1);
+    else if (tableId && page !== undefined) setResultTablePage(tableId, page);
 
-    currentQueryRequest = buildQueryRequest(currentQueryRequest, { page: nextPage });
-    currentQueryMeta.page = nextPage;
+    const df1 = workingSetAvailable['standard-table']
+        ? getWorkingSetPage('standard-table', getResultTablePage('standard-table'))
+        : { rows: currentFilteredDf1, total: currentQueryMeta.df1Total, hasMore: currentQueryMeta.df1HasMore };
+    const df2 = workingSetAvailable['extended-table']
+        ? getWorkingSetPage('extended-table', getResultTablePage('extended-table'))
+        : { rows: currentFilteredDf2, total: currentQueryMeta.df2Total, hasMore: currentQueryMeta.df2HasMore };
+    const df3 = workingSetAvailable['traditional-table']
+        ? getWorkingSetPage('traditional-table', getResultTablePage('traditional-table'))
+        : { rows: currentFilteredDf3, total: currentQueryMeta.df3Total, hasMore: currentQueryMeta.df3HasMore };
+    const activePage = getResultTablePage(getActiveResultViewContext().tableId);
+
+    currentQueryRequest = buildQueryRequest(currentQueryRequest, { page: activePage });
+    currentQueryMeta.page = activePage;
     currentQueryMeta.df1Displayed = df1.rows.length;
     currentQueryMeta.df1WorkingCount = df1.total;
     currentQueryMeta.df1HasMore = df1.hasMore;
@@ -1997,6 +2028,9 @@ function syncHeadersWithLocalStorage() {
             const th = createHeaderCell(tableId, colName, index);
             thead.appendChild(th);
         });
+
+        const emptyStateCell = table.querySelector('tbody .table-empty-state');
+        if (emptyStateCell) emptyStateCell.colSpan = thead.cells.length;
 
         ensureColGroup(table);
         syncStoredColumnWidths(tableId);
@@ -2608,6 +2642,58 @@ function handleQuerySuccess(result, options = {}) {
     const totalCount = Number(normalized.totalCount || 0);
     hideLimitWarning();
 
+    if (options.pageTableId && RESULT_TABLE_PAGE_KEYS[options.pageTableId]) {
+        const tableId = options.pageTableId;
+        const key = RESULT_TABLE_PAGE_KEYS[tableId];
+        const pageResult = normalized[key];
+        const hasWorkingSet = Array.isArray(result?.[key]?.working_set);
+        const rows = hasWorkingSet ? pageResult.working_set : pageResult.data || [];
+        const prefix = key;
+
+        workingSetAvailable[tableId] = hasWorkingSet;
+        currentQueryMeta[`${prefix}HasMore`] = Boolean(pageResult.has_more);
+        currentQueryMeta[`${prefix}Displayed`] = rows.length;
+        currentQueryMeta[`${prefix}Total`] = Number(pageResult.count || rows.length || 0);
+        currentQueryMeta[`${prefix}WorkingCount`] = hasWorkingSet ? rows.length : 0;
+        currentQueryMeta[`${prefix}WorkingSetTruncated`] = Boolean(pageResult.working_set_truncated);
+        currentQueryMeta[`${prefix}TotalLabel`] = String(pageResult.count_label || pageResult.count_summary || Number(pageResult.count || rows.length || 0).toLocaleString('vi-VN'));
+        currentQueryMeta.page = getResultTablePage(tableId);
+
+        if (key === 'df1') {
+            baseWorkingDf1 = [...rows]; serverBaseDf1 = baseWorkingDf1;
+            orderedWorkingDf1 = activeSortRule ? sortRowsLocally(baseWorkingDf1, key, activeSortRule) : [...baseWorkingDf1];
+            if (!hasWorkingSet) currentFilteredDf1 = rows;
+        } else if (key === 'df2') {
+            baseWorkingDf2 = [...rows]; serverBaseDf2 = baseWorkingDf2;
+            orderedWorkingDf2 = activeSortRule ? sortRowsLocally(baseWorkingDf2, key, activeSortRule) : [...baseWorkingDf2];
+            if (!hasWorkingSet) currentFilteredDf2 = rows;
+        } else {
+            baseWorkingDf3 = [...rows]; serverBaseDf3 = baseWorkingDf3;
+            orderedWorkingDf3 = activeSortRule ? sortRowsLocally(baseWorkingDf3, key, activeSortRule) : [...baseWorkingDf3];
+            if (!hasWorkingSet) currentFilteredDf3 = rows;
+        }
+
+        if (hasWorkingSet) {
+            refreshBoundedWorkingSetViews({
+                page: getResultTablePage(tableId),
+                tableId,
+                resetScroll: options.resetScroll !== false,
+                redrawCharts: true
+            });
+            document.dispatchEvent(new CustomEvent('bidfinder:query-result', {
+                detail: { result, query: currentQueryRequest }
+            }));
+        } else {
+            updateResults(currentFilteredDf1, currentFilteredDf2, currentFilteredDf3, {
+                resetMiniFilters: false,
+                preserveResultView: true,
+                resetScroll: options.resetScroll !== false
+            });
+            updateLegacyPagination();
+        }
+        return;
+    }
+
     if (!hasWorkingDf1 && !hasWorkingDf2 && !hasWorkingDf3) {
         // Keep the Full Search gate in sync even when an older API process
         // returns only the page payload.  Leaving the previous metadata alive
@@ -2659,6 +2745,9 @@ function handleQuerySuccess(result, options = {}) {
     workingSetAvailable['standard-table'] = hasWorkingDf1;
     workingSetAvailable['extended-table'] = hasWorkingDf2;
     workingSetAvailable['traditional-table'] = hasWorkingDf3;
+    if (!hasWorkingDf1) currentFilteredDf1 = nextDf1;
+    if (!hasWorkingDf2) currentFilteredDf2 = nextDf2;
+    if (!hasWorkingDf3) currentFilteredDf3 = nextDf3;
     currentQueryMeta = {
         df1HasMore: Boolean(normalized.df1.has_more),
         df2HasMore: Boolean(normalized.df2.has_more),
@@ -2691,6 +2780,8 @@ function handleQuerySuccess(result, options = {}) {
     if (options.resetMiniFilters !== false) resetMiniFilters();
     refreshBoundedWorkingSetViews({
         page: currentQueryRequest?.page || 1,
+        tableId: options.pageTableId,
+        resetPages: options.resetTablePages === true,
         resetScroll: options.resetScroll !== false,
         redrawCharts: true
     });
@@ -2707,6 +2798,11 @@ async function applyFilters(payload, options = {}) {
     currentQueryRequest = payload?.[AI_COMPILED_REQUEST_MARKER]
         ? payload
         : enrichLegacyQueryRequest(payload);
+    if (!options.pageTableId) {
+        resetResultTablePages(1);
+        currentQueryRequest = buildQueryRequest(currentQueryRequest, { page: 1 });
+        getProcurementSearchForm()?.setPage?.(1);
+    }
     closeFloatingTableUi();
 
     try {
@@ -2719,7 +2815,9 @@ async function applyFilters(payload, options = {}) {
         if (result.success) {
             handleQuerySuccess(result, {
                 resetMiniFilters: options.resetMiniFilters !== false,
-                resetScroll: options.resetScroll !== false
+                resetScroll: options.resetScroll !== false,
+                pageTableId: options.pageTableId,
+                resetTablePages: !options.pageTableId
             });
             setFilterUrlState(currentQueryRequest);
             currentAppliedPreview = {
@@ -2743,7 +2841,7 @@ async function applyFilters(payload, options = {}) {
             search_mode: 'standard',
             error: err?.message || 'unknown'
         });
-        if (!authRequired) {
+        if (!authRequired && !options.pageTableId) {
             resetQueryResultMeta();
             updateResults([], [], { resetMiniFilters: true });
             hideLimitWarning();
@@ -2841,6 +2939,7 @@ function hideLimitWarning() {
 }
 
 function resetQueryResultMeta() {
+    resetResultTablePages(1);
     serverBaseDf1 = [];
     serverBaseDf2 = [];
     serverBaseDf3 = [];
@@ -3017,6 +3116,7 @@ function updateScopeSwitcherCounts(df1Count, df2Count, df3Count = 0) {
         button.dataset.count = String(count);
         button.setAttribute('aria-label', `${button.querySelector('.scope-text')?.textContent || ''}: ${countLabel} kết quả`);
     });
+    syncMobileScopePicker();
 }
 
 function selectResultViewWithMostRows() {
@@ -3104,11 +3204,46 @@ const PANEL_CONFIG = {
     }
 };
 
+function getAppViewportSize() {
+    const root = document.documentElement;
+    const viewport = window.visualViewport;
+    return {
+        width: Math.min(root.clientWidth || window.innerWidth, viewport?.width || window.innerWidth),
+        height: Math.min(root.clientHeight || window.innerHeight, viewport?.height || window.innerHeight)
+    };
+}
+
 function initPanels() {
+    const syncAppViewport = () => {
+        const root = document.documentElement;
+        const viewport = window.visualViewport;
+        const { width, height } = getAppViewportSize();
+
+        root.style.setProperty('--app-viewport-width', `${width}px`);
+        root.style.setProperty('--app-viewport-height', `${height}px`);
+        root.style.setProperty('--app-viewport-left', `${viewport?.offsetLeft || 0}px`);
+        root.style.setProperty('--app-viewport-top', `${viewport?.offsetTop || 0}px`);
+        root.style.setProperty('--app-viewport-center-x', `${(viewport?.offsetLeft || 0) + width / 2}px`);
+        root.style.setProperty('--app-viewport-center-y', `${(viewport?.offsetTop || 0) + height / 2}px`);
+    };
+
+    syncAppViewport();
+    window.addEventListener('resize', syncAppViewport, { passive: true });
+    window.visualViewport?.addEventListener('resize', syncAppViewport, { passive: true });
+    window.visualViewport?.addEventListener('scroll', syncAppViewport, { passive: true });
+
     const overlay = document.getElementById('panel-overlay');
     if (!overlay) {
         console.warn('⚠️ Overlay element not found');
         return;
+    }
+
+    const filterPanel = document.getElementById(PANEL_CONFIG.filter.panel);
+    if (filterPanel && filterPanel.parentElement !== document.body) {
+        document.body.appendChild(filterPanel);
+    }
+    if (overlay.parentElement !== document.body) {
+        document.body.appendChild(overlay);
     }
 
     const panels = Object.entries(PANEL_CONFIG).map(([key, config]) => 
@@ -3814,6 +3949,7 @@ function getColumnMenuTrigger(tableId, columnName) {
 
 function positionFloatingLayer(wrapper, anchor, floating) {
     if (!wrapper || !anchor || !floating) return;
+    const { height: viewportHeight } = getAppViewportSize();
 
     const wrapperRect = wrapper.getBoundingClientRect();
     const anchorRect = anchor.getBoundingClientRect();
@@ -3832,7 +3968,7 @@ function positionFloatingLayer(wrapper, anchor, floating) {
         floating.style.maxHeight = '';
         const cardRect = wrapper.closest('.data-card')?.getBoundingClientRect();
         const visibleTop = Math.max(8, cardRect?.top ?? 8);
-        const visibleBottom = Math.min(window.innerHeight - 8, cardRect?.bottom ?? window.innerHeight - 8);
+        const visibleBottom = Math.min(viewportHeight - 8, cardRect?.bottom ?? viewportHeight - 8);
         const spaceBelow = Math.max(0, visibleBottom - anchorRect.bottom - 8);
         const spaceAbove = Math.max(0, anchorRect.top - visibleTop - 8);
         const naturalHeight = floating.scrollHeight || floating.offsetHeight;
@@ -4264,12 +4400,14 @@ function toggleColumnTextFilterPanel() {
 function commitColumnFilterChange(tableId) {
     syncHeaderDecorations(tableId);
     closeColumnMenu();
+    setResultTablePage(tableId, 1);
+    const activePage = getResultTablePage(getActiveResultViewContext().tableId);
     currentQueryRequest = buildQueryRequest(currentQueryRequest, {
-        page: 1,
+        page: activePage,
         columnFilters: collectColumnFiltersForUrl()
     });
-    getProcurementSearchForm()?.setPage?.(1);
-    refreshBoundedWorkingSetViews({ page: 1, resetScroll: false, redrawCharts: true });
+    getProcurementSearchForm()?.setPage?.(activePage);
+    refreshBoundedWorkingSetViews({ page: 1, tableId, resetScroll: false, redrawCharts: true });
     setFilterUrlState(currentQueryRequest);
 }
 
@@ -5769,18 +5907,61 @@ function getOrCreateProvinceMapTooltip(container) {
     return tooltip;
 }
 
-function moveProvinceMapTooltip(container, tooltip, event) {
-    const rect = container.getBoundingClientRect();
-    const offset = 64;
+function moveProvinceMapTooltip(container, tooltip, event, anchorPath = null) {
+    const containerRect = container.getBoundingClientRect();
+    const mapRect = anchorPath?.ownerSVGElement?.getBoundingClientRect() || containerRect;
     const tooltipRect = tooltip.getBoundingClientRect();
-    let left = event.clientX - rect.left + offset;
-    let top = event.clientY - rect.top - tooltipRect.height / 2;
+    const margin = 8;
+    const sideGap = 64;
+    const verticalGap = 12;
+    const minLeft = Math.max(margin, mapRect.left - containerRect.left + margin);
+    const maxLeft = Math.min(
+        containerRect.width - tooltipRect.width - margin,
+        mapRect.right - containerRect.left - tooltipRect.width - margin
+    );
+    const minTop = Math.max(margin, mapRect.top - containerRect.top + margin);
+    const maxTop = Math.min(
+        containerRect.height - tooltipRect.height - margin,
+        mapRect.bottom - containerRect.top - tooltipRect.height - margin
+    );
+    const anchorX = event.clientX - containerRect.left;
+    const anchorY = event.clientY - containerRect.top;
+    const clampLeft = value => Math.max(minLeft, Math.min(value, maxLeft));
+    const clampTop = value => Math.max(minTop, Math.min(value, maxTop));
+    const provinceRect = anchorPath?.getBoundingClientRect();
+    const provinceBounds = provinceRect ? {
+        left: provinceRect.left - containerRect.left - margin,
+        right: provinceRect.right - containerRect.left + margin,
+        top: provinceRect.top - containerRect.top - margin,
+        bottom: provinceRect.bottom - containerRect.top + margin
+    } : null;
+    const provinceOverlapArea = ({ left, top }) => {
+        if (!provinceBounds) return 0;
+        const overlapWidth = Math.max(0, Math.min(left + tooltipRect.width, provinceBounds.right) - Math.max(left, provinceBounds.left));
+        const overlapHeight = Math.max(0, Math.min(top + tooltipRect.height, provinceBounds.bottom) - Math.max(top, provinceBounds.top));
+        return overlapWidth * overlapHeight;
+    };
 
-    if (left + tooltipRect.width > rect.width - 8) {
-        left = event.clientX - rect.left - tooltipRect.width - offset;
-    }
-    tooltip.style.left = `${Math.max(8, left)}px`;
-    tooltip.style.top = `${Math.max(8, Math.min(top, rect.height - tooltipRect.height - 8))}px`;
+    const candidates = [];
+    const centeredTop = clampTop(anchorY - tooltipRect.height / 2);
+    const rightLeft = anchorX + sideGap;
+    const leftLeft = anchorX - tooltipRect.width - sideGap;
+    if (rightLeft >= minLeft && rightLeft <= maxLeft) candidates.push({ left: rightLeft, top: centeredTop });
+    if (leftLeft >= minLeft && leftLeft <= maxLeft) candidates.push({ left: leftLeft, top: centeredTop });
+
+    const centeredLeft = clampLeft(anchorX - tooltipRect.width / 2);
+    const aboveTop = (provinceBounds?.top ?? anchorY) - tooltipRect.height - verticalGap;
+    const belowTop = (provinceBounds?.bottom ?? anchorY) + verticalGap;
+    if (aboveTop >= minTop && aboveTop <= maxTop) candidates.push({ left: centeredLeft, top: aboveTop });
+    if (belowTop >= minTop && belowTop <= maxTop) candidates.push({ left: centeredLeft, top: belowTop });
+
+    const position = candidates.find(candidate => provinceOverlapArea(candidate) === 0)
+        || candidates.reduce((best, candidate) =>
+            provinceOverlapArea(candidate) < provinceOverlapArea(best) ? candidate : best,
+        candidates[0])
+        || { left: clampLeft(rightLeft), top: centeredTop };
+    tooltip.style.left = `${position.left}px`;
+    tooltip.style.top = `${position.top}px`;
 }
 
 function fitProvinceMapViewBox(svg) {
@@ -5879,16 +6060,7 @@ function renderProvinceValueMap(data = [], options = {}) {
 
     let activeProvincePath = null;
     let activeProvinceOutline = null;
-    const clearActiveProvincePath = () => {
-        if (activeProvincePath) {
-            activeProvincePath.classList.remove('is-active');
-            activeProvincePath = null;
-        }
-        activeProvinceOutline?.remove();
-        activeProvinceOutline = null;
-        tooltip.classList.remove('visible');
-    };
-
+    let selectedProvinceTooltip = null;
     const showProvinceOutline = (path) => {
         activeProvinceOutline?.remove();
         activeProvinceOutline = path.cloneNode(false);
@@ -5901,6 +6073,43 @@ function renderProvinceValueMap(data = [], options = {}) {
         activeProvinceOutline.setAttribute('pointer-events', 'none');
         activeProvinceOutline.setAttribute('vector-effect', 'non-scaling-stroke');
         svg.appendChild(activeProvinceOutline);
+    };
+
+    const showProvinceTooltip = (path, details, event = null) => {
+        if (activeProvincePath && activeProvincePath !== path) {
+            activeProvincePath.classList.remove('is-active');
+        }
+        activeProvincePath = path;
+        path.classList.add('is-active');
+        showProvinceOutline(path);
+        tooltip.replaceChildren();
+        const nameEl = document.createElement('strong');
+        const valueEl = document.createElement('span');
+        const partsEl = document.createElement('span');
+        nameEl.textContent = details.displayName;
+        valueEl.textContent = details.valueText;
+        partsEl.textContent = details.mergeStatus;
+        tooltip.append(nameEl, valueEl, partsEl);
+        tooltip.classList.add('visible');
+
+        const hasPointerPosition = Number.isFinite(event?.clientX) && Number.isFinite(event?.clientY);
+        const bounds = hasPointerPosition ? null : path.getBoundingClientRect();
+        moveProvinceMapTooltip(container, tooltip, hasPointerPosition ? event : {
+            clientX: bounds.left + bounds.width / 2,
+            clientY: bounds.top + bounds.height / 2
+        }, path);
+    };
+
+    const clearActiveProvincePath = () => {
+        if (activeProvincePath === selectedProvinceTooltip?.path) return;
+        activeProvincePath?.classList.remove('is-active');
+        activeProvincePath = null;
+        activeProvinceOutline?.remove();
+        activeProvinceOutline = null;
+        tooltip.classList.remove('visible');
+        if (selectedProvinceTooltip) {
+            showProvinceTooltip(selectedProvinceTooltip.path, selectedProvinceTooltip);
+        }
     };
 
     container.onpointerleave = clearActiveProvincePath;
@@ -5938,33 +6147,26 @@ function renderProvinceValueMap(data = [], options = {}) {
         path.classList.toggle('is-selected', isSelected);
         path.classList.toggle('is-dimmed', Boolean(selectedProvinceKey) && !isSelected);
         path.setAttribute('aria-pressed', String(isSelected));
+        const tooltipDetails = { path, displayName, valueText, mergeStatus };
+        if (isSelected) selectedProvinceTooltip = tooltipDetails;
 
-        path.addEventListener('pointerenter', (event) => {
-            if (activeProvincePath && activeProvincePath !== path) {
-                activeProvincePath.classList.remove('is-active');
-            }
-            activeProvincePath = path;
-            path.classList.add('is-active');
-            showProvinceOutline(path);
-            tooltip.replaceChildren();
-            const nameEl = document.createElement('strong');
-            const valueEl = document.createElement('span');
-            const partsEl = document.createElement('span');
-            nameEl.textContent = displayName;
-            valueEl.textContent = valueText;
-            partsEl.textContent = mergeStatus;
-            tooltip.append(nameEl, valueEl, partsEl);
-            tooltip.classList.add('visible');
-            moveProvinceMapTooltip(container, tooltip, event);
-        });
-        path.addEventListener('click', () => options.onProvinceSelect?.(displayName));
+        const selectProvince = event => {
+            showProvinceTooltip(path, tooltipDetails, event);
+            if (typeof options.onProvinceSelect !== 'function') return;
+            options.onProvinceSelect(displayName);
+            selectedProvinceTooltip = path.getAttribute('aria-pressed') === 'true' ? tooltipDetails : null;
+            if (!selectedProvinceTooltip) clearActiveProvincePath();
+        };
+
+        path.addEventListener('pointerenter', event => showProvinceTooltip(path, tooltipDetails, event));
+        path.addEventListener('click', selectProvince);
         path.addEventListener('keydown', event => {
             if (event.key !== 'Enter' && event.key !== ' ') return;
             event.preventDefault();
-            options.onProvinceSelect?.(displayName);
+            selectProvince(event);
         });
         path.addEventListener('pointermove', (event) => {
-            moveProvinceMapTooltip(container, tooltip, event);
+            moveProvinceMapTooltip(container, tooltip, event, path);
         });
         path.addEventListener('pointerleave', (event) => {
             if (event.relatedTarget?.closest?.('svg path')) {
@@ -5977,20 +6179,9 @@ function renderProvinceValueMap(data = [], options = {}) {
             }
         });
         path.addEventListener('focus', () => {
-            if (activeProvincePath && activeProvincePath !== path) {
-                activeProvincePath.classList.remove('is-active');
-            }
-            activeProvincePath = path;
-            path.classList.add('is-active');
-            showProvinceOutline(path);
+            showProvinceTooltip(path, tooltipDetails);
         });
-        path.addEventListener('blur', () => {
-            if (activeProvincePath === path) {
-                clearActiveProvincePath();
-            } else {
-                path.classList.remove('is-active');
-            }
-        });
+        path.addEventListener('blur', clearActiveProvincePath);
 
         svg.appendChild(path);
     });
@@ -5999,7 +6190,12 @@ function renderProvinceValueMap(data = [], options = {}) {
     appendFeaturedProvinceLabels(svg, valueByProvince, options);
     container.appendChild(createProvinceMapLegend(colorBuckets));
     provincePreviewVersion += 1;
-    requestAnimationFrame(() => fitProvinceMapViewBox(svg));
+    requestAnimationFrame(() => {
+        fitProvinceMapViewBox(svg);
+        if (selectedProvinceTooltip) {
+            showProvinceTooltip(selectedProvinceTooltip.path, selectedProvinceTooltip);
+        }
+    });
 }
 
 function renderInsightPreviewBars(containerId, values = []) {
@@ -7457,6 +7653,14 @@ function scheduleDashboardFit() {
         const panel = document.getElementById('dashboard-panel');
         const shell = panel?.querySelector('.dashboard-shell-card');
         if (!panel?.classList.contains('active') || !shell) return;
+
+        if (window.matchMedia('(max-width: 980px)').matches) {
+            panel.classList.remove('dashboard-fit');
+            panel.style.removeProperty('--dashboard-fit-content-width');
+            panel.style.removeProperty('--dashboard-fit-scale');
+            dashboardChartInstances.timeline?.resize();
+            return;
+        }
 
         panel.classList.add('dashboard-fit');
         const width = panel.clientWidth;
@@ -10624,7 +10828,7 @@ function getActiveResultViewContext() {
 
 function updateLegacyPagination() {
     const { key, tableId: activeTableId } = getActiveResultViewContext();
-    const page = Math.max(1, Number(currentQueryMeta.page || currentQueryRequest?.page || 1));
+    const page = getResultTablePage(activeTableId);
     const pageMeta = currentQueryMeta;
     const displayed = Number(pageMeta[`${key}Displayed`] || 0);
     const pageSize = Math.max(1, Number(currentQueryRequest?.limit || displayed || 1));
@@ -10670,11 +10874,13 @@ function initLegacyDatasetControls() {
 
 function initLegacyPagination() {
     document.getElementById('legacy-prev-page')?.addEventListener('click', () => {
-        const page = Math.max(1, Number(currentQueryRequest?.page || currentQueryMeta.page || 1) - 1);
+        const { tableId } = getActiveResultViewContext();
+        const page = Math.max(1, getResultTablePage(tableId) - 1);
         document.dispatchEvent(new CustomEvent('bidfinder:page-request', { detail: { page } }));
     });
     document.getElementById('legacy-next-page')?.addEventListener('click', () => {
-        const page = Math.max(1, Number(currentQueryRequest?.page || currentQueryMeta.page || 1) + 1);
+        const { tableId } = getActiveResultViewContext();
+        const page = getResultTablePage(tableId) + 1;
         document.dispatchEvent(new CustomEvent('bidfinder:page-request', { detail: { page } }));
     });
     document.getElementById('close-legacy-row-detail')?.addEventListener('click', () => {
@@ -10697,6 +10903,159 @@ function initResultViewSwitching() {
             const targetId = button.getAttribute('data-view');
             activateResultView(targetId);
         });
+    });
+
+    initMobileToolbarDropdowns();
+}
+
+function initMobileToolbarDropdowns() {
+    const scopeDropdown = document.getElementById('mobile-scope-dropdown');
+    const scopeMenu = document.getElementById('mobile-scope-menu');
+    const scopeTrigger = document.getElementById('mobile-scope-trigger');
+    const searchDropdown = document.getElementById('mobile-search-dropdown');
+    const searchMenu = document.getElementById('mobile-search-menu');
+    const dropdowns = [scopeDropdown, searchDropdown].filter(Boolean);
+    if (!dropdowns.length) return;
+    if (dropdowns.every(dropdown => dropdown.dataset.mobileDropdownInitialized === 'true')) {
+        syncMobileScopePicker();
+        return;
+    }
+
+    const closeDropdown = dropdown => {
+        dropdown.classList.remove('is-open');
+        dropdown.querySelector('.mobile-toolbar-dropdown-trigger')?.setAttribute('aria-expanded', 'false');
+    };
+
+    dropdowns.forEach(dropdown => {
+        const trigger = dropdown.querySelector('.mobile-toolbar-dropdown-trigger');
+        trigger?.addEventListener('click', () => {
+            const shouldOpen = !dropdown.classList.contains('is-open');
+            dropdowns.forEach(closeDropdown);
+            dropdown.classList.toggle('is-open', shouldOpen);
+            trigger.setAttribute('aria-expanded', String(shouldOpen));
+        });
+    });
+
+    document.addEventListener('click', event => {
+        dropdowns.forEach(dropdown => {
+            if (!dropdown.contains(event.target)) closeDropdown(dropdown);
+        });
+    });
+
+    document.addEventListener('keydown', event => {
+        if (event.key !== 'Escape') return;
+        const openDropdown = dropdowns.find(dropdown => dropdown.classList.contains('is-open'));
+        if (!openDropdown) return;
+        closeDropdown(openDropdown);
+        openDropdown.querySelector('.mobile-toolbar-dropdown-trigger')?.focus();
+    });
+
+    const scopeButtons = document.querySelectorAll('.result-table-tab-choice .scope-btn');
+    scopeButtons.forEach(source => {
+        const option = document.createElement('button');
+        option.type = 'button';
+        option.className = 'mobile-scope-option';
+        option.dataset.view = source.dataset.view || '';
+        option.setAttribute('role', 'menuitem');
+
+        const icon = document.createElement('span');
+        icon.className = 'mobile-scope-option-icon';
+        icon.setAttribute('aria-hidden', 'true');
+        const sourceIcon = source.querySelector('.scope-icon');
+        if (sourceIcon) icon.append(sourceIcon.cloneNode(true));
+
+        const label = document.createElement('span');
+        label.className = 'mobile-scope-option-label';
+        label.textContent = source.querySelector('.scope-text')?.textContent.trim() || '';
+
+        const count = document.createElement('span');
+        count.className = 'mobile-scope-option-count';
+        count.setAttribute('aria-hidden', 'true');
+
+        const indicator = document.createElement('span');
+        indicator.className = 'mobile-scope-option-indicator';
+        indicator.setAttribute('aria-hidden', 'true');
+
+        option.append(icon, label, count, indicator);
+        scopeMenu?.append(option);
+    });
+
+    [
+        ['open-run-history', 'Lịch sử cập nhật'],
+        ['open-bulk-search-modal', 'Tìm kiếm hàng loạt'],
+        ['open-ai-search', 'Tìm kiếm bằng AI']
+    ].forEach(([sourceId, label]) => {
+        const source = document.getElementById(sourceId);
+        if (!source || !searchMenu) return;
+        const option = source.cloneNode(true);
+        option.removeAttribute('id');
+        option.removeAttribute('aria-controls');
+        option.removeAttribute('aria-expanded');
+        option.querySelectorAll('[id]').forEach(element => element.removeAttribute('id'));
+        option.classList.add('mobile-search-action-option');
+        option.dataset.action = sourceId;
+        option.setAttribute('role', 'menuitem');
+        const text = document.createElement('span');
+        text.className = 'mobile-menu-action-label';
+        text.textContent = label;
+        option.append(text);
+        searchMenu.append(option);
+    });
+
+    scopeMenu?.querySelectorAll('.mobile-scope-option').forEach(option => {
+        option.addEventListener('click', () => {
+            document.querySelector(`.result-table-tab-choice .scope-btn[data-view="${option.dataset.view}"]`)?.click();
+            closeDropdown(scopeDropdown);
+            scopeTrigger?.focus();
+        });
+    });
+
+    searchMenu?.querySelectorAll('.mobile-search-action-option').forEach(option => {
+        option.addEventListener('click', () => {
+            document.getElementById(option.dataset.action)?.click();
+            closeDropdown(searchDropdown);
+        });
+    });
+
+    dropdowns.forEach(dropdown => {
+        dropdown.dataset.mobileDropdownInitialized = 'true';
+    });
+    syncMobileScopePicker();
+}
+
+function syncMobileScopePicker() {
+    const sourceButtons = [...document.querySelectorAll('.result-table-tab-choice .scope-btn')];
+    const activeButton = sourceButtons.find(button => button.classList.contains('active'))
+        || sourceButtons.find(button => button.dataset.view === 'df1-panel');
+    const trigger = document.getElementById('mobile-scope-trigger');
+    const currentIcon = document.querySelector('.mobile-scope-current-icon');
+    const currentLabel = document.querySelector('.mobile-scope-current-label');
+    const currentCount = document.querySelector('.mobile-scope-current-count');
+    if (!activeButton || !trigger || !currentIcon || !currentLabel) return;
+
+    const label = activeButton.querySelector('.scope-text')?.textContent.trim() || '';
+    const countText = activeButton.querySelector('.scope-count')?.textContent.trim() || '';
+    const hasResults = button => button.classList.contains('has-results')
+        || Number(button.dataset.count || 0) > 0;
+
+    currentIcon.replaceChildren();
+    const icon = activeButton.querySelector('.scope-icon');
+    if (icon) currentIcon.append(icon.cloneNode(true));
+    currentLabel.textContent = label;
+    if (currentCount) currentCount.textContent = countText;
+
+    const otherHasResults = sourceButtons.some(button =>
+        button !== activeButton && button.dataset.view !== 'dashboard-panel' && hasResults(button)
+    );
+    trigger.classList.toggle('has-other-results', otherHasResults);
+    trigger.setAttribute('aria-label', `${label}${countText ? `, ${countText} kết quả` : ''}. Chọn bảng dữ liệu${otherHasResults ? '. Bảng khác có kết quả' : ''}`);
+
+    document.querySelectorAll('.mobile-scope-option').forEach(option => {
+        const source = sourceButtons.find(button => button.dataset.view === option.dataset.view);
+        // Keep the full scope list visible; the current scope also remains selectable here.
+        option.classList.toggle('has-results', Boolean(source && hasResults(source)));
+        const count = option.querySelector('.mobile-scope-option-count');
+        if (count) count.textContent = source?.querySelector('.scope-count')?.textContent.trim() || '';
     });
 }
 
@@ -10754,6 +11113,7 @@ function activateResultView(targetId) {
     button.classList.add('active');
     button.setAttribute('aria-selected', 'true');
     syncScopeSwitcherSlider();
+    syncMobileScopePicker();
 
     if (!targetPanel) {
         updateLegacyPagination();
@@ -10938,13 +11298,14 @@ function initSearchFormEvents() {
 
     document.addEventListener('bidfinder:page-request', async event => {
         const page = Math.max(1, Number(event.detail?.page || 1));
-        const currentPage = Math.max(1, Number(currentQueryRequest?.page || currentQueryMeta.page || 1));
-        const pageSize = Math.max(1, Number(currentQueryRequest?.limit || 1));
         const { tableId: activeTableId } = getActiveResultViewContext();
+        const currentPage = getResultTablePage(activeTableId);
+        const pageSize = Math.max(1, Number(currentQueryRequest?.limit || 1));
+        if (page === currentPage) return;
         if (workingSetAvailable[activeTableId]) {
             currentQueryRequest = buildQueryRequest(currentQueryRequest, { page });
             searchForm.setPage?.(page);
-            refreshBoundedWorkingSetViews({ page, resetScroll: false, redrawCharts: true });
+            refreshBoundedWorkingSetViews({ page, tableId: activeTableId, resetScroll: false, redrawCharts: true });
             setFilterUrlState(currentQueryRequest);
             return;
         }
@@ -10954,9 +11315,20 @@ function initSearchFormEvents() {
             return;
         }
         const nextRequest = buildQueryRequest(currentQueryRequest, { page });
+        setResultTablePage(activeTableId, page);
         searchForm.setPage?.(page);
         try {
-            await applyFilters(nextRequest, { resetMiniFilters: false, resetScroll: false });
+            const result = await applyFilters(nextRequest, {
+                resetMiniFilters: false,
+                resetScroll: false,
+                pageTableId: activeTableId
+            });
+            if (!result && !pendingAuthSearch) {
+                setResultTablePage(activeTableId, currentPage);
+                currentQueryRequest = buildQueryRequest(currentQueryRequest, { page: currentPage });
+                searchForm.setPage?.(currentPage);
+                updateLegacyPagination();
+            }
         } finally {
             searchForm.setApplyLoading?.(false);
         }
@@ -11239,6 +11611,7 @@ function markJourneySurface(element) {
 }
 
 function closeJourneySurfaces() {
+    setJourneyMobileDropdown(null);
     closeFloatingTableUi();
     closeLegacyRowDetail({ restoreFocus: false });
     setJourneyTableToolsVisible(false);
@@ -11246,6 +11619,28 @@ function closeJourneySurfaces() {
     closeBulkSearchModal();
     closeFeedbackModal();
     document.getElementById('history-modal')?.classList.remove('show');
+}
+
+function isMobileProductJourney() {
+    return window.matchMedia?.('(max-width: 980px)').matches || false;
+}
+
+function setJourneyMobileDropdown(dropdownId) {
+    document.querySelectorAll('#mobile-scope-dropdown, #mobile-search-dropdown').forEach(dropdown => {
+        const isOpen = dropdown.id === dropdownId;
+        dropdown.classList.toggle('is-open', isOpen);
+        dropdown.querySelector('.mobile-toolbar-dropdown-trigger')?.setAttribute('aria-expanded', String(isOpen));
+    });
+}
+
+function getJourneyMobileSearchAction(sourceId) {
+    const option = document.querySelector(`#mobile-search-menu [data-action="${sourceId}"]`);
+    return isJourneyTargetVisible(option) ? option : document.getElementById('mobile-search-trigger');
+}
+
+function getJourneyMobileScopeOption(view) {
+    const option = document.querySelector(`#mobile-scope-menu .mobile-scope-option[data-view="${view}"]`);
+    return isJourneyTargetVisible(option) ? option : document.getElementById('mobile-scope-trigger');
 }
 
 function openHistoryForJourney() {
@@ -11340,8 +11735,14 @@ function getProductJourneySteps() {
             body: 'Theo dõi số liệu trong ngày và số gói thầu được phê duyệt theo thời gian.',
             afterTitle: 'Lịch sử cập nhật',
             afterBody: 'Theo dõi số gói thầu được phê duyệt theo thời gian.',
-            selector: '#open-run-history',
+            getElement: () => isMobileProductJourney()
+                ? getJourneyMobileSearchAction('open-run-history')
+                : document.getElementById('open-run-history'),
             focusAfterSelector: '#history-modal .history-content',
+            before: () => {
+                closeJourneySurfaces();
+                if (isMobileProductJourney()) setJourneyMobileDropdown('mobile-search-dropdown');
+            },
             afterClick: openHistoryForJourney
         },
         {
@@ -11349,9 +11750,14 @@ function getProductJourneySteps() {
             body: 'Tìm kiếm hàng loạt sản phẩm từ file Excel.',
             afterTitle: 'Tìm kiếm hàng loạt',
             afterBody: 'Tìm kiếm dựa trên file Excel có danh sách sản phẩm cần tìm kiếm. BIDFinder không lưu trữ file này.',
-            selector: '#open-bulk-search-modal',
+            getElement: () => isMobileProductJourney()
+                ? getJourneyMobileSearchAction('open-bulk-search-modal')
+                : document.getElementById('open-bulk-search-modal'),
             focusAfterSelector: '#bulk-search-modal .bulk-search-dialog',
-            before: closeJourneySurfaces,
+            before: () => {
+                closeJourneySurfaces();
+                if (isMobileProductJourney()) setJourneyMobileDropdown('mobile-search-dropdown');
+            },
             afterClick: openBulkForJourney
         },
         {
@@ -11372,15 +11778,35 @@ function getProductJourneySteps() {
         {
             title: 'Tìm kiếm bằng AI',
             body: 'Hỗ trợ người dùng diễn đạt yêu cầu tìm kiếm bằng ngôn ngữ tự nhiên và xây dựng truy vấn phù hợp.',
-            selector: '#open-ai-search', placement: 'bottom', before: closeJourneySurfaces
+            getElement: () => isMobileProductJourney()
+                ? getJourneyMobileSearchAction('open-ai-search')
+                : document.getElementById('open-ai-search'),
+            placement: 'bottom',
+            before: () => {
+                closeJourneySurfaces();
+                if (isMobileProductJourney()) setJourneyMobileDropdown('mobile-search-dropdown');
+            }
         },
         {
             title: '03 nhóm dữ liệu',
             body: 'Kết quả tìm kiếm được phân loại theo 03 nhóm: Hàng hóa, Thuốc và Dược liệu / Vị thuốc cổ truyền.',
-            selector: '#data-view-switcher .result-table-tab[data-view="df2-panel"]',
+            getElement: () => isMobileProductJourney()
+                ? document.getElementById('mobile-scope-trigger')
+                : document.querySelector('#data-view-switcher .result-table-tab[data-view="df2-panel"]'),
             highlightMargin: 8,
             highlightRightMargin: 0,
-            getRect: () => {
+            getRect: target => {
+                if (isMobileProductJourney()) {
+                    const rects = [target, ...document.querySelectorAll('#mobile-scope-menu .mobile-scope-option[data-view^="df"]')]
+                        .filter(isJourneyTargetVisible)
+                        .map(option => option.getBoundingClientRect());
+                    if (!rects.length) return null;
+                    const left = Math.min(...rects.map(rect => rect.left));
+                    const top = Math.min(...rects.map(rect => rect.top));
+                    const right = Math.max(...rects.map(rect => rect.right));
+                    const bottom = Math.max(...rects.map(rect => rect.bottom));
+                    return { left, top, right, bottom, width: right - left, height: bottom - top };
+                }
                 const rects = Array.from(document.querySelectorAll(
                     '#data-view-switcher .result-table-tab[data-view="df2-panel"], '
                     + '#data-view-switcher .result-table-tab[data-view="df1-panel"], '
@@ -11396,6 +11822,7 @@ function getProductJourneySteps() {
             placement: 'bottom',
             before: () => {
                 closeJourneySurfaces();
+                if (isMobileProductJourney()) setJourneyMobileDropdown('mobile-scope-dropdown');
                 activateResultView('df1-panel');
             }
         },
@@ -11472,13 +11899,20 @@ function getProductJourneySteps() {
         {
             title: 'Dashboard',
             body: 'Dashboard phân tích kết quả tìm kiếm hiện tại: tổng quan, phân bố tỉnh/thành, xu hướng thời gian, sản phẩm, nhà thầu và chủ đầu tư.',
-            selector: '.scope-btn[data-view="dashboard-panel"]', placement: 'bottom',
-            before: closeJourneySurfaces, afterClick: () => activateResultView('dashboard-panel'),
+            getElement: () => isMobileProductJourney()
+                ? getJourneyMobileScopeOption('dashboard-panel')
+                : document.querySelector('.scope-btn[data-view="dashboard-panel"]'),
+            placement: 'bottom',
+            before: () => {
+                closeJourneySurfaces();
+                if (isMobileProductJourney()) setJourneyMobileDropdown('mobile-scope-dropdown');
+            },
+            afterClick: () => activateResultView('dashboard-panel'),
             focusAfterSelector: '#dashboard-panel .dashboard-shell-card'
         },
         {
             title: 'Khám phá bằng cross-filtering',
-            body: 'Minh họa: chọn một sản phẩm để lọc các phần phân tích liên quan. Chọn lại giá trị đó để bỏ lọc. Lựa chọn trước hướng dẫn sẽ được khôi phục khi bạn thoát.',
+            body: 'Chọn một giá trị để kích hoạt cross-filtering, các biểu đồ còn lại sẽ lọc theo lựa chọn. Chọn lại để hủy thao tác.',
             unavailableBody: 'Khi Dashboard có dữ liệu, chọn một sản phẩm, tỉnh/thành, nhà thầu hoặc chủ đầu tư để lọc các phần phân tích liên quan. Chọn lại để bỏ lọc.',
             getElement: () => document.querySelector('#dashboard-top-products .dashboard-product-bar')
                 || document.querySelector('.dashboard-products-widget'),
@@ -11493,8 +11927,15 @@ function getProductJourneySteps() {
         {
             title: 'Tra cứu mã hoạt chất',
             body: 'Tra cứu mã và thông tin hoạt chất từ danh mục thuốc trúng thầu.',
-            selector: '.scope-btn[data-view="ingredient-lookup-panel"]', placement: 'bottom',
-            before: closeJourneySurfaces, afterClick: () => activateResultView('ingredient-lookup-panel'),
+            getElement: () => isMobileProductJourney()
+                ? getJourneyMobileScopeOption('ingredient-lookup-panel')
+                : document.querySelector('.scope-btn[data-view="ingredient-lookup-panel"]'),
+            placement: 'bottom',
+            before: () => {
+                closeJourneySurfaces();
+                if (isMobileProductJourney()) setJourneyMobileDropdown('mobile-scope-dropdown');
+            },
+            afterClick: () => activateResultView('ingredient-lookup-panel'),
             focusAfterSelector: '#ingredient-lookup-panel'
         },
         {
@@ -11647,11 +12088,12 @@ function scheduleJourneyTask(callback, delay) {
 function getJourneyTargetPoint(target) {
     const rect = target?.getBoundingClientRect?.();
     if (!rect) return null;
+    const { width: viewportWidth, height: viewportHeight } = getAppViewportSize();
     const wrapperRect = target.closest?.('.table-wrapper')?.getBoundingClientRect?.();
     const left = Math.max(8, rect.left, wrapperRect?.left ?? 0);
-    const right = Math.min(window.innerWidth - 8, rect.right, wrapperRect?.right ?? window.innerWidth);
+    const right = Math.min(viewportWidth - 8, rect.right, wrapperRect?.right ?? viewportWidth);
     const top = Math.max(8, rect.top, wrapperRect?.top ?? 0);
-    const bottom = Math.min(window.innerHeight - 8, rect.bottom, wrapperRect?.bottom ?? window.innerHeight);
+    const bottom = Math.min(viewportHeight - 8, rect.bottom, wrapperRect?.bottom ?? viewportHeight);
     if (right <= left || bottom <= top) return null;
     return {
         x: (left + right) / 2,
@@ -11737,6 +12179,7 @@ function resolveJourneyElement(step) {
 function positionProductJourney(step, target) {
     const state = productJourneyState;
     if (!state?.root || !target) return;
+    const { width: viewportWidth, height: viewportHeight } = getAppViewportSize();
 
     const rect = step.getRect?.(target) || target.getBoundingClientRect();
     const highlight = state.root.querySelector('.product-journey-highlight');
@@ -11745,8 +12188,8 @@ function positionProductJourney(step, target) {
     if (step.dialogOnly || state.dialogOnly) {
         highlight.hidden = true;
         const cardRect = card.getBoundingClientRect();
-        card.style.left = `${Math.max(12, (window.innerWidth - cardRect.width) / 2)}px`;
-        card.style.top = `${Math.max(12, (window.innerHeight - cardRect.height) / 2)}px`;
+        card.style.left = `${Math.max(12, (viewportWidth - cardRect.width) / 2)}px`;
+        card.style.top = `${Math.max(12, (viewportHeight - cardRect.height) / 2)}px`;
         return;
     }
 
@@ -11759,12 +12202,12 @@ function positionProductJourney(step, target) {
     const highlightRect = {
         left: leftEdge,
         top: topEdge,
-        width: Math.max(0, Math.min(window.innerWidth - 8, rect.right + rightMargin, wrapperRect?.right ?? window.innerWidth) - leftEdge),
-        height: Math.max(0, Math.min(window.innerHeight - 8, rect.bottom + margin, wrapperRect?.bottom ?? window.innerHeight) - topEdge)
+        width: Math.max(0, Math.min(viewportWidth - 8, rect.right + rightMargin, wrapperRect?.right ?? viewportWidth) - leftEdge),
+        height: Math.max(0, Math.min(viewportHeight - 8, rect.bottom + margin, wrapperRect?.bottom ?? viewportHeight) - topEdge)
     };
     if (!highlightRect.width || !highlightRect.height) {
         highlight.hidden = true;
-        card.style.left = `${Math.max(12, (window.innerWidth - card.getBoundingClientRect().width) / 2)}px`;
+        card.style.left = `${Math.max(12, (viewportWidth - card.getBoundingClientRect().width) / 2)}px`;
         card.style.top = '12px';
         return;
     }
@@ -11780,13 +12223,13 @@ function positionProductJourney(step, target) {
     let top = highlightRect.top + (highlightRect.height - cardRect.height) / 2;
 
     if (step.placement === 'center') {
-        left = (window.innerWidth - cardRect.width) / 2;
-        top = (window.innerHeight - cardRect.height) / 2;
+        left = (viewportWidth - cardRect.width) / 2;
+        top = (viewportHeight - cardRect.height) / 2;
     } else {
         const spaces = {
-            right: window.innerWidth - (highlightRect.left + highlightRect.width),
+            right: viewportWidth - (highlightRect.left + highlightRect.width),
             left: highlightRect.left,
-            bottom: window.innerHeight - (highlightRect.top + highlightRect.height),
+            bottom: viewportHeight - (highlightRect.top + highlightRect.height),
             top: highlightRect.top
         };
         const canFit = {
@@ -11795,7 +12238,7 @@ function positionProductJourney(step, target) {
             bottom: spaces.bottom >= cardRect.height + gap + 12,
             top: spaces.top >= cardRect.height + gap + 12
         };
-        const preferredOrder = window.innerWidth < 920
+        const preferredOrder = viewportWidth < 920
             ? ['bottom', 'top', 'right', 'left']
             : ['right', 'left', 'bottom', 'top'];
         const placement = (canFit[step.placement] && step.placement) || preferredOrder.find(side => canFit[side])
@@ -11813,8 +12256,8 @@ function positionProductJourney(step, target) {
         }
     }
 
-    left = Math.max(12, Math.min(left, window.innerWidth - cardRect.width - 12));
-    top = Math.max(12, Math.min(top, window.innerHeight - cardRect.height - 12));
+    left = Math.max(12, Math.min(left, viewportWidth - cardRect.width - 12));
+    top = Math.max(12, Math.min(top, viewportHeight - cardRect.height - 12));
     card.style.left = `${left}px`;
     card.style.top = `${top}px`;
 }
@@ -12056,6 +12499,7 @@ function getActionTooltipElement() {
 function positionActionTooltip() {
     if (!actionTooltipElement || !actionTooltipAnchor || !actionTooltipElement.classList.contains('is-visible')) return;
 
+    const { width: viewportWidth, height: viewportHeight } = getAppViewportSize();
     const anchorRect = actionTooltipAnchor.getBoundingClientRect();
     const tooltipRect = actionTooltipElement.getBoundingClientRect();
     const viewportMargin = 10;
@@ -12063,11 +12507,11 @@ function positionActionTooltip() {
     const centeredLeft = anchorRect.left + (anchorRect.width - tooltipRect.width) / 2;
     const left = Math.max(
         viewportMargin,
-        Math.min(centeredLeft, window.innerWidth - tooltipRect.width - viewportMargin)
+        Math.min(centeredLeft, viewportWidth - tooltipRect.width - viewportMargin)
     );
     const aboveTop = anchorRect.top - tooltipRect.height - gap;
     const belowTop = anchorRect.bottom + gap;
-    const top = aboveTop >= viewportMargin || belowTop + tooltipRect.height > window.innerHeight - viewportMargin
+    const top = aboveTop >= viewportMargin || belowTop + tooltipRect.height > viewportHeight - viewportMargin
         ? Math.max(viewportMargin, aboveTop)
         : belowTop;
 
