@@ -1476,7 +1476,14 @@ def get_full_search_actor_key(request: Request, user: Optional[Dict[str, Any]]) 
     return f"client:{get_rate_limit_client_key(request)}"
 
 
-async def get_full_search_usage_snapshot(request: Request, user: Optional[Dict[str, Any]]) -> Dict[str, int]:
+def is_full_search_unlimited_admin(user: Optional[Dict[str, Any]]) -> bool:
+    email = str((user or {}).get("email") or "").strip().lower()
+    return bool(email and email in ADMIN_EMAILS)
+
+
+async def get_full_search_usage_snapshot(request: Request, user: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if is_full_search_unlimited_admin(user):
+        return {"used": 0, "remaining": None, "limit": None}
     if FULL_SEARCH_DAILY_LIMIT <= 0:
         return {"used": 0, "remaining": 0, "limit": 0}
 
@@ -1495,7 +1502,9 @@ async def get_full_search_usage_snapshot(request: Request, user: Optional[Dict[s
     }
 
 
-async def consume_full_search_usage(request: Request, user: Optional[Dict[str, Any]]) -> Dict[str, int]:
+async def consume_full_search_usage(request: Request, user: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if is_full_search_unlimited_admin(user):
+        return {"used": 0, "remaining": None, "limit": None}
     if FULL_SEARCH_DAILY_LIMIT <= 0:
         return {"used": 0, "remaining": 0, "limit": 0}
 
@@ -1521,13 +1530,18 @@ async def build_full_search_quota_payload(
     *,
     user: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    unlimited = is_full_search_unlimited_admin(user)
     payload: Dict[str, Any] = {
-        "full_search_enabled": True,
-        "full_search_daily_limit": FULL_SEARCH_DAILY_LIMIT,
+        "full_search_enabled": unlimited or FULL_SEARCH_DAILY_LIMIT > 0,
+        "full_search_unlimited": unlimited,
+        "full_search_daily_limit": None if unlimited else FULL_SEARCH_DAILY_LIMIT,
         "full_search_daily_used": 0,
-        "full_search_daily_remaining": FULL_SEARCH_DAILY_LIMIT,
+        "full_search_daily_remaining": None if unlimited else FULL_SEARCH_DAILY_LIMIT,
         "full_search_limit_message": FULL_SEARCH_LIMIT_MESSAGE,
     }
+
+    if unlimited:
+        return payload
 
     if FULL_SEARCH_DAILY_LIMIT <= 0:
         payload["full_search_daily_remaining"] = 0
@@ -2624,7 +2638,7 @@ async def query_typesense_primary(request: Request, payload: QueryRequest) -> JS
             quota = await get_anonymous_full_query_usage_snapshot(request)
             if quota["remaining"] <= 0:
                 raise HTTPException(status_code=401, detail=ANONYMOUS_FULL_QUERY_LIMIT_MESSAGE)
-        if search_mode == "full":
+        if search_mode == "full" and not is_full_search_unlimited_admin(user):
             quota = await get_full_search_usage_snapshot(request, user)
             if quota["remaining"] <= 0:
                 raise HTTPException(status_code=429, detail=FULL_SEARCH_LIMIT_MESSAGE)
@@ -3064,23 +3078,29 @@ async def lifespan(app: FastAPI):
         auth_config_payload.get("google_status"),
         auth_config_payload.get("password_reset_status"),
     )
-    startup_status = await runtime_status()
-    logger.warning(
-        "Startup procurement: backend=%s fallback_enabled=%s serving_generation=%s typesense=%s generation_available=%s postgres=%s freshness=%s",
-        startup_status["backend"],
-        startup_status["fallback_enabled"],
-        startup_status["typesense"]["generation"],
-        startup_status["typesense"]["status"],
-        startup_status["typesense"]["generation_available"],
-        startup_status["postgres"]["status"],
-        startup_status["freshness"].get("coverage_through"),
-    )
-    if startup_status["status"] != "ready":
+    try:
+        startup_status = await asyncio.wait_for(runtime_status(), timeout=15)
+    except asyncio.TimeoutError:
         logger.warning(
-            "Startup procurement is degraded: status=%s fallback_enabled=%s",
-            startup_status["status"],
-            startup_status["fallback_enabled"],
+            "Startup procurement health check timed out after 15 seconds; continuing in degraded mode"
         )
+    else:
+        logger.warning(
+            "Startup procurement: backend=%s fallback_enabled=%s serving_generation=%s typesense=%s generation_available=%s postgres=%s freshness=%s",
+            startup_status["backend"],
+            startup_status["fallback_enabled"],
+            startup_status["typesense"]["generation"],
+            startup_status["typesense"]["status"],
+            startup_status["typesense"]["generation_available"],
+            startup_status["postgres"]["status"],
+            startup_status["freshness"].get("coverage_through"),
+        )
+        if startup_status["status"] != "ready":
+            logger.warning(
+                "Startup procurement is degraded: status=%s fallback_enabled=%s",
+                startup_status["status"],
+                startup_status["fallback_enabled"],
+            )
     yield
     if db_pool:
         await db_pool.close()
@@ -4696,7 +4716,7 @@ async def query_data(request: Request, payload: QueryRequest):
         async with pool.acquire() as conn:
             current_user = await enforce_data_access_policy(conn, request, "full_query")
 
-            if is_full_search:
+            if is_full_search and not is_full_search_unlimited_admin(current_user):
                 quota_snapshot = await get_full_search_usage_snapshot(request, current_user)
                 if quota_snapshot["remaining"] <= 0:
                     raise HTTPException(status_code=429, detail=FULL_SEARCH_LIMIT_MESSAGE)
@@ -4886,7 +4906,7 @@ async def bulk_query_data(request: Request, payload: BulkQueryRequest):
 
         async with pool.acquire() as conn:
             current_user = await enforce_data_access_policy(conn, request, "full_query")
-            if is_full_search:
+            if is_full_search and not is_full_search_unlimited_admin(current_user):
                 quota_snapshot = await get_full_search_usage_snapshot(request, current_user)
                 if quota_snapshot["remaining"] <= 0:
                     raise HTTPException(status_code=429, detail=FULL_SEARCH_LIMIT_MESSAGE)

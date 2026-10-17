@@ -6971,9 +6971,33 @@ body {
   color: var(--color-primary);
 }
 
+.column-menu-trigger.is-filtered {
+  background: #1765c1;
+  border-color: transparent;
+  color: #fff;
+  box-shadow: none;
+}
+
+.column-menu-trigger.is-filtered:hover {
+  background: #124e99;
+  border-color: transparent;
+  color: #fff;
+}
+
 .column-menu-trigger span {
   font-size: 10px;
   line-height: 1;
+}
+
+.column-menu-trigger span svg {
+  display: block;
+  width: 11px;
+  height: 11px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
 }
 
 .data-table thead th.has-mini-filter .column-header-label,
@@ -9230,6 +9254,8 @@ body.product-journey-active #panel-overlay.show {
 .dashboard-column-resizer:focus-visible::after { opacity: 0.85; }
 .dashboard-column-resizer:focus-visible { outline: 2px solid var(--dashboard-blue); outline-offset: -2px; }
 .dashboard-column-resizer:active::after { background: var(--dashboard-blue); opacity: 1; }
+.dashboard-resizable-table.is-resizing,
+.dashboard-resizable-table.is-resizing * { cursor: col-resize !important; user-select: none; }
 
 #dashboard-province-map {
   min-height: 0;

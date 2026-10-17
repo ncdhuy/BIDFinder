@@ -1755,15 +1755,17 @@ function getColumnRawValues(tableId, columnName, row) {
     return [rawValue === undefined || rawValue === null ? '' : String(rawValue).trim()];
 }
 
-function getFilteredWorkingSet(tableId, excludedColumnName = null) {
+function getFilteredWorkingSet(tableId, {
+    excludeValueColumn = null
+} = {}) {
     const filters = getColumnValueFilterEntries(tableId);
     const textFilters = getColumnTextFilterEntries(tableId);
-    const excludedKey = excludedColumnName === null
+    const excludedValueKey = excludeValueColumn === null
         ? null
-        : getColumnFilterStateKey(tableId, excludedColumnName);
+        : getColumnFilterStateKey(tableId, excludeValueColumn);
     return getWorkingSetData(tableId).filter(row => {
         const matchesValues = Array.from(filters.entries()).every(([columnName, selectedValues]) => {
-            if (getColumnFilterStateKey(tableId, columnName) === excludedKey || !(selectedValues instanceof Set)) return true;
+            if (getColumnFilterStateKey(tableId, columnName) === excludedValueKey || !(selectedValues instanceof Set)) return true;
             const selected = new Set(Array.from(selectedValues, normalizeColumnFilterValue));
             return getColumnRawValues(tableId, columnName, row)
                 .some(value => selected.has(normalizeColumnFilterValue(value)));
@@ -1771,8 +1773,7 @@ function getFilteredWorkingSet(tableId, excludedColumnName = null) {
         if (!matchesValues) return false;
 
         return Array.from(textFilters.entries()).every(([columnName, rule]) => (
-            columnName === excludedKey
-                || matchesColumnTextFilter(getColumnRawValues(tableId, columnName, row), rule)
+            matchesColumnTextFilter(getColumnRawValues(tableId, columnName, row), rule)
         ));
     });
 }
@@ -1780,7 +1781,10 @@ function getFilteredWorkingSet(tableId, excludedColumnName = null) {
 function getBoundedColumnValueOptions(tableId, columnName) {
     if (!workingSetAvailable[tableId]) return [];
     const counts = new Map();
-    getFilteredWorkingSet(tableId, columnName).forEach(row => {
+    // Keep this column's text rule when building its value list, so the
+    // checklist reflects the rows that already pass "Begins with", etc.
+    // Exclude only its value selection so users can still change that list.
+    getFilteredWorkingSet(tableId, { excludeValueColumn: columnName }).forEach(row => {
         const seenInRow = new Set();
         getColumnRawValues(tableId, columnName, row).forEach(rawValue => {
             const value = String(rawValue || '').trim();
@@ -2344,6 +2348,7 @@ function getFullSearchQuotaState() {
     const config = window.BIDFinderAuth?.getConfig?.() || {};
     return {
         enabled: config.full_search_enabled !== false,
+        unlimited: config.full_search_unlimited === true,
         limit: Number(config.full_search_daily_limit || 0),
         used: Number(config.full_search_daily_used || 0),
         remaining: Number(config.full_search_daily_remaining || 0),
@@ -2363,10 +2368,12 @@ function setFullSearchQuotaState({ used, remaining } = {}) {
 
 function reserveFullSearchQuota(quota) {
     fullSearchInFlight = true;
-    setFullSearchQuotaState({
-        used: Number(quota.used || 0) + 1,
-        remaining: Number(quota.remaining || 0) - 1
-    });
+    if (!quota.unlimited) {
+        setFullSearchQuotaState({
+            used: Number(quota.used || 0) + 1,
+            remaining: Number(quota.remaining || 0) - 1
+        });
+    }
     updateInsightEntryPoint();
 }
 
@@ -2377,7 +2384,7 @@ function releaseFullSearchQuotaReservation() {
 
 function rollbackFullSearchQuota(quota) {
     fullSearchInFlight = false;
-    setFullSearchQuotaState(quota);
+    if (!quota.unlimited) setFullSearchQuotaState(quota);
     updateInsightEntryPoint();
 }
 
@@ -2860,7 +2867,7 @@ async function triggerFullSearch() {
         quota_limit: quota.limit,
         quota_enabled: quota.enabled
     });
-    if (!quota.enabled || quota.remaining <= 0) {
+    if (!quota.unlimited && (!quota.enabled || quota.remaining <= 0)) {
         window.BIDFinderAnalytics?.track?.('quota_limit_reached', {
             feature: 'full_search',
             quota_remaining: quota.remaining,
@@ -2872,7 +2879,8 @@ async function triggerFullSearch() {
 
     const quotaSnapshot = {
         used: quota.used,
-        remaining: quota.remaining
+        remaining: quota.remaining,
+        unlimited: quota.unlimited
     };
     reserveFullSearchQuota(quotaSnapshot);
     let serverAccepted = false;
@@ -4023,6 +4031,18 @@ function syncHeaderDecorations(tableId) {
         const trigger = th.querySelector('.column-menu-trigger');
         if (trigger) {
             trigger.classList.toggle('is-active', Boolean(sortState || hasMiniFilter || isWrapped || isPinned));
+            trigger.classList.toggle('is-filtered', hasMiniFilter);
+            trigger.setAttribute(
+                'aria-label',
+                `Tùy chọn cột ${th.querySelector('.column-header-label')?.textContent?.trim() || columnName}${hasMiniFilter ? ', đang có bộ lọc' : ''}`
+            );
+
+            const triggerIcon = trigger.querySelector('span');
+            if (triggerIcon) {
+                triggerIcon.innerHTML = hasMiniFilter
+                    ? '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4h16l-6.5 7.5V19l-3 1.5v-9L4 4Z"/></svg>'
+                    : '▾';
+            }
         }
     });
 }
@@ -6602,6 +6622,9 @@ function formatInsightResultSummary(counts = getInsightResultCounts()) {
 }
 
 function formatDockQuotaLine(quota = getFullSearchQuotaState()) {
+    if (quota.unlimited) {
+        return 'Không giới hạn lượt hôm nay';
+    }
     if (!quota.enabled || Number(quota.limit || 0) <= 0) {
         return 'Tìm kiếm mở rộng hiện chưa khả dụng';
     }
@@ -6614,15 +6637,18 @@ function canRunDockFullSearch(quota = getFullSearchQuotaState()) {
     const hasLoadedRows = Number(currentQueryMeta.df1Displayed || 0)
         + Number(currentQueryMeta.df2Displayed || 0)
         + Number(currentQueryMeta.df3Displayed || 0) > 0;
+    if (!hasQuery || !hasLoadedRows || fullSearchInFlight) return false;
+
+    // Admins have no daily Full Search quota. Keep the action available for
+    // their current query, including after a previous Full Search completed.
+    if (quota.unlimited) return true;
+
     const hasMoreRows = ['standard-table', 'extended-table', 'traditional-table']
         .some(hasMoreRowsBeyondWorkingSet);
     const alreadyFullSearch = currentQueryMeta.searchMode === 'full'
         || (currentQueryMeta.searchMode === 'bulk' && currentQueryMeta.bulkSearchMode === 'full');
 
-    return hasQuery
-        && hasLoadedRows
-        && hasMoreRows
-        && !fullSearchInFlight
+    return hasMoreRows
         && !alreadyFullSearch
         && quota.enabled
         && Number(quota.limit || 0) > 0
@@ -6656,11 +6682,28 @@ function updateInsightEntryPoint() {
     const quota = getFullSearchQuotaState();
 
     if (dockFullSearchButton) {
-        dockFullSearchButton.disabled = !canRunDockFullSearch(quota);
-        dockFullSearchButton.classList.toggle('is-empty', !quota.enabled || quota.remaining <= 0);
-        if (dockFullSearchLabel) dockFullSearchLabel.textContent = Number(quota.remaining || 0).toLocaleString('vi-VN');
+        const canRunFullSearch = canRunDockFullSearch(quota);
+        dockFullSearchButton.disabled = !canRunFullSearch;
+        dockFullSearchButton.classList.toggle('is-empty', !quota.unlimited && (!quota.enabled || quota.remaining <= 0));
+        if (dockFullSearchLabel) dockFullSearchLabel.textContent = quota.unlimited ? '∞' : Number(quota.remaining || 0).toLocaleString('vi-VN');
+        let actionState = '';
+        if (fullSearchInFlight) actionState = 'Đang tìm kiếm mở rộng';
+        else if (!currentQueryRequest) actionState = 'Hãy chạy tìm kiếm trước';
+        else if (!(Number(currentQueryMeta.df1Displayed || 0) + Number(currentQueryMeta.df2Displayed || 0) + Number(currentQueryMeta.df3Displayed || 0) > 0)) {
+            actionState = 'Không có kết quả để tìm kiếm mở rộng';
+        } else if (!quota.unlimited && !canRunFullSearch) {
+            actionState = currentQueryMeta.searchMode === 'full'
+                || (currentQueryMeta.searchMode === 'bulk' && currentQueryMeta.bulkSearchMode === 'full')
+                ? 'Kết quả hiện đã ở chế độ tìm kiếm mở rộng'
+                : !quota.enabled || Number(quota.limit || 0) <= 0
+                    ? 'Tìm kiếm mở rộng hiện chưa khả dụng'
+                    : Number(quota.remaining || 0) <= 0
+                        ? 'Bạn đã dùng hết lượt hôm nay'
+                        : 'Không còn kết quả vượt giới hạn hiện tại';
+        }
         const quotaText = formatDockQuotaLine(quota);
-        setActionTooltip(dockFullSearchButton, `Tìm kiếm mở rộng. ${quotaText}`);
+        const status = actionState ? `${actionState}. ${quotaText}` : `Tìm kiếm mở rộng. ${quotaText}`;
+        setActionTooltip(dockFullSearchButton, status);
     }
 }
 
@@ -7578,26 +7621,29 @@ async function refreshDashboardAnalytics({ force = false } = {}) {
 }
 
 function resizeDashboardTableColumns(table, columnIndex, deltaPx, initialWidths = null) {
-    const columns = table.querySelectorAll('colgroup col');
-    const column = columns[columnIndex];
-    if (!column || columnIndex === 0 || columnIndex === columns.length - 1) return;
+    const columns = Array.from(table.querySelectorAll('colgroup col'));
+    if (columnIndex <= 0 || columnIndex >= columns.length) return;
 
-    const widths = initialWidths?.columns || Array.from(columns, col => col.getBoundingClientRect().width);
-    const tableWidth = initialWidths?.table || table.getBoundingClientRect().width;
-    if (tableWidth <= 0) return;
-    const baseWidth = Number(table.dataset.resizeBaseWidth) || tableWidth;
-    table.dataset.resizeBaseWidth = String(baseWidth);
-    const minWidth = Number(column.dataset.minWidth) || 40;
-    widths[columnIndex] = Math.max(minWidth, widths[columnIndex] + deltaPx);
-    const totalWidth = widths.reduce((sum, width) => sum + width, 0);
-    if (totalWidth < baseWidth) widths[widths.length - 1] += baseWidth - totalWidth;
+    const widths = initialWidths ? [...initialWidths] : columns.map(col => col.getBoundingClientRect().width);
+    if (widths.some(width => !Number.isFinite(width) || width <= 0) || !Number.isFinite(deltaPx)) return;
+    const neighborIndex = columnIndex === columns.length - 1 ? columnIndex - 1 : columnIndex + 1;
+    if (neighborIndex <= 0) return;
+    const minWidth = Number(columns[columnIndex].dataset.minWidth) || 40;
+    const neighborMinWidth = Number(columns[neighborIndex].dataset.minWidth) || 40;
+    const maxDelta = Math.max(0, widths[neighborIndex] - neighborMinWidth);
+    const minDelta = minWidth - widths[columnIndex];
+    if (maxDelta < minDelta) return;
+    const appliedDelta = Math.min(maxDelta, Math.max(minDelta, deltaPx));
+    if (!appliedDelta) return;
+
+    widths[columnIndex] += appliedDelta;
+    widths[neighborIndex] -= appliedDelta;
     columns.forEach((col, index) => { col.style.width = `${widths[index]}px`; });
-    table.style.width = `${Math.max(baseWidth, totalWidth)}px`;
 
     const handle = table.querySelector(`[data-column-resize="${columnIndex}"]`);
     if (handle) {
         handle.setAttribute('aria-valuemin', String(minWidth));
-        handle.setAttribute('aria-valuemax', String(Math.ceil(table.getBoundingClientRect().width)));
+        handle.setAttribute('aria-valuemax', String(Math.round(widths[columnIndex] + maxDelta - appliedDelta)));
         handle.setAttribute('aria-valuenow', String(Math.round(widths[columnIndex])));
     }
 }
@@ -7606,12 +7652,12 @@ function initDashboardTableResizing() {
     document.querySelectorAll('.dashboard-resizable-table').forEach(table => {
         if (table.dataset.columnResizeReady) return;
         table.dataset.columnResizeReady = 'true';
-        table.style.minWidth = `${Array.from(table.querySelectorAll('colgroup col')).reduce((sum, column) => sum + (Number(column.dataset.minWidth) || 40), 0)}px`;
+        const columns = Array.from(table.querySelectorAll('colgroup col'));
+        table.style.minWidth = `${columns.reduce((sum, column) => sum + (Number(column.dataset.minWidth) || 40), 0)}px`;
 
         table.querySelectorAll('.dashboard-column-resizer').forEach(handle => {
             const columnIndex = Number(handle.dataset.columnResize);
-            const columns = table.querySelectorAll('colgroup col');
-            if (!Number.isInteger(columnIndex) || columnIndex === 0 || !columns[columnIndex + 1]) return;
+            if (!Number.isInteger(columnIndex) || columnIndex <= 0 || columnIndex >= columns.length) return;
 
             handle.addEventListener('keydown', event => {
                 const delta = event.key === 'ArrowRight' ? 12 : event.key === 'ArrowLeft' ? -12 : 0;
@@ -7619,24 +7665,43 @@ function initDashboardTableResizing() {
                 event.preventDefault();
                 resizeDashboardTableColumns(table, columnIndex, delta);
             });
-            handle.addEventListener('focus', () => resizeDashboardTableColumns(table, columnIndex, 0));
 
             handle.addEventListener('pointerdown', event => {
-                if (event.button !== 0) return;
+                if (event.button !== 0 || event.isPrimary === false) return;
                 event.preventDefault();
-                const widths = Array.from(columns, column => column.getBoundingClientRect().width);
-                const tableWidth = table.getBoundingClientRect().width;
+
+                const widths = columns.map(column => column.getBoundingClientRect().width);
+                if (widths.some(width => !Number.isFinite(width) || width <= 0)) return;
+                const pointerId = event.pointerId;
                 const startX = event.clientX;
+                let latestDelta = 0;
+                let resizeFrame = 0;
+
+                const applyResize = () => {
+                    resizeFrame = 0;
+                    resizeDashboardTableColumns(table, columnIndex, latestDelta, widths);
+                };
                 const onMove = moveEvent => {
-                    if (moveEvent.pointerId !== event.pointerId) return;
-                    resizeDashboardTableColumns(table, columnIndex, moveEvent.clientX - startX, { columns: [...widths], table: tableWidth });
+                    if (moveEvent.pointerId !== pointerId) return;
+                    latestDelta = moveEvent.clientX - startX;
+                    if (!resizeFrame) resizeFrame = requestAnimationFrame(applyResize);
                 };
                 const onStop = stopEvent => {
-                    if (stopEvent.pointerId !== event.pointerId) return;
+                    if (stopEvent.pointerId !== pointerId) return;
                     window.removeEventListener('pointermove', onMove);
                     window.removeEventListener('pointerup', onStop);
                     window.removeEventListener('pointercancel', onStop);
+                    handle.removeEventListener('lostpointercapture', onStop);
+                    if (resizeFrame) {
+                        cancelAnimationFrame(resizeFrame);
+                        applyResize();
+                    }
+                    table.classList.remove('is-resizing');
                 };
+
+                try { handle.setPointerCapture(pointerId); } catch (_) { /* Keep window listeners as the fallback. */ }
+                table.classList.add('is-resizing');
+                handle.addEventListener('lostpointercapture', onStop);
                 window.addEventListener('pointermove', onMove);
                 window.addEventListener('pointerup', onStop);
                 window.addEventListener('pointercancel', onStop);

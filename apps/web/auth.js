@@ -59,6 +59,7 @@
       anonymous_full_query_login_required: false,
       anonymous_full_query_limit_message: 'Bạn đã dùng hết lượt tìm kiếm hôm nay. Vui lòng đăng nhập để tiếp tục.',
       full_search_enabled: true,
+      full_search_unlimited: false,
       full_search_daily_limit: 3,
       full_search_daily_used: 0,
       full_search_daily_remaining: 3,

@@ -889,11 +889,21 @@
             return `${tokenMarkup}<input id="criterion-keyword" type="text" placeholder="Gõ từ khóa và nhấn Enter" autocomplete="off" aria-label="Từ khóa tìm kiếm">${autocomplete}`;
         }
         syncEditorActions() {
-            const hasCriteria = Object.keys(this.state.criteria || {}).length > 0;
+            const hasCriteria = this.hasActiveCriteria();
             const resetButton = this.shadowRoot?.querySelector('[data-action="reset"]');
             const applyButton = this.shadowRoot?.querySelector('[data-action="apply"]');
             if (resetButton) resetButton.disabled = !hasCriteria;
             if (applyButton) applyButton.disabled = !hasCriteria || Boolean(this.state.loading) || this.hasZeroPreviewResult();
+        }
+        hasActiveCriteria() {
+            const hasValue = value => value !== null && value !== undefined && String(value).trim() !== '';
+            return Object.values(this.state.criteria || {}).some(criterion => {
+                if (!criterion) return false;
+                if (criterion.kind === 'tokens') return this.criterionTokens(criterion).length > 0;
+                if (criterion.kind === 'range') return hasValue(criterion.min) || hasValue(criterion.max);
+                if (criterion.kind === 'date-range') return hasValue(criterion.from) || hasValue(criterion.to);
+                return Array.isArray(criterion.values) && criterion.values.some(hasValue);
+            });
         }
         hasZeroPreviewResult() {
             const preview = this._previewState;
@@ -904,7 +914,7 @@
             const field = this.fieldMeta(this.state.activeField);
             if (!field) return '<p>Nhóm này chưa có biến tìm kiếm.</p>';
             const criterion = this.state.criteria[field.name];
-            const hasCriteria = Object.keys(this.state.criteria).length > 0;
+            const hasCriteria = this.hasActiveCriteria();
             let control;
             if (this.isDateField(field.name)) {
                 control = this.renderDateRangeControl(field.name, criterion);
@@ -1315,6 +1325,10 @@
         }
         requestPreview() {
             this.cancelPreview();
+            if (!this.hasActiveCriteria()) {
+                this.setPreviewResult({ idle: true });
+                return;
+            }
             this.setPreviewResult({ loading: true });
             this.previewTimer = setTimeout(() => this.dispatchEvent(new CustomEvent('preview-filters', { detail: this.collectFilterPayload(), bubbles: true, composed: true })), 300);
         }
@@ -1324,7 +1338,7 @@
         }
         submit() {
             this.commitPendingKeywordDrafts();
-            if (!Object.keys(this.state.criteria).length || this.hasZeroPreviewResult()) return;
+            if (!this.hasActiveCriteria() || this.hasZeroPreviewResult()) return;
             this.cancelPreview();
             const request = this.collectFilterPayload();
             this.setApplyLoading(true);
